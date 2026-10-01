@@ -11,6 +11,7 @@ import type { Config } from "./config.ts";
 import { ConversationAgent } from "./engine/conversation.ts";
 import type { AgentService } from "./engine/service.ts";
 import { createJevAdapter, type JevAdapter } from "./jev/adapter.ts";
+import type { LocalThreads } from "./threads.ts";
 
 export function agentConfigured(config: Config) {
   return (
@@ -29,7 +30,7 @@ export function makeRuntime(
   config: Config,
   service: AgentService,
   auth: Auth,
-  intelligence: CopilotKitIntelligence,
+  threads: CopilotKitIntelligence | LocalThreads,
 ) {
   // Built on first use, then shared so live mode reuses one TypeSafe client across requests.
   let jevAdapter: JevAdapter | undefined;
@@ -55,14 +56,21 @@ export function makeRuntime(
               sharedJevAdapter(),
             ),
   });
-  const runtime = new CopilotRuntime({
-    agents,
-    intelligence,
-    identifyUser: async (request) => ({
-      id: await auth.owner(request.headers.get("authorization") ?? undefined),
-      name: "OpenMuse user",
-    }),
-    generateThreadNames: false,
-  });
+  const runtime = new CopilotRuntime(
+    "withOwner" in threads
+      ? { agents, runner: threads }
+      : {
+          agents,
+          intelligence: threads,
+          identifyUser: async (request) => ({
+            id: await auth.owner(request.headers.get("authorization") ?? undefined),
+            name: "OpenMuse user",
+          }),
+          generateThreadNames: false,
+        },
+  );
+  // Some SDK entrypoints initialize telemetry before config.ts's ESM body executes.
+  // Disable this runtime's capture directly as well, independent of import order or shell settings.
+  runtime.telemetry.capture = async () => {};
   return createCopilotHonoHandler({ runtime, basePath: "/api/copilotkit" });
 }

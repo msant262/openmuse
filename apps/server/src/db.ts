@@ -68,6 +68,104 @@ export class Store {
     );
     return (result.rows[0]?.data as T | undefined) ?? null;
   }
+  /** Atomic append avoids losing streamed events to another database connection. */
+  async appendRecordEvent(owner: string, id: string, event: unknown): Promise<void> {
+    const result = await this.db.query(
+      `UPDATE records AS run SET data=jsonb_set(data,'{events}',COALESCE(data->'events','[]'::jsonb) || $3::jsonb),updated_at=now()
+       WHERE owner=$1 AND kind='thread-runs' AND id=$2 AND data->>'status'='running' AND EXISTS (
+         SELECT 1 FROM records thread WHERE thread.owner=run.owner AND thread.kind='threads' AND thread.id=run.data->>'threadId'
+         AND thread.data->>'runToken'=run.id AND (thread.data->>'leaseUntil')::timestamptz>clock_timestamp()
+       ) RETURNING data`,
+      [owner, id, JSON.stringify([event])],
+    );
+    if (!result.rows.length) throw new Error("Conversation run lease expired");
+  }
+  /** Database-clock lease shared by every API process using Postgres. */
+  async claimThread(
+    owner: string,
+    id: string,
+    runToken: string,
+    leaseMs: number,
+  ): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE records SET data=data || jsonb_build_object('runToken',$3::text,'stopRunToken',NULL,'leaseUntil',clock_timestamp() + ($4::text || ' milliseconds')::interval),updated_at=now()
+       WHERE owner=$1 AND kind='threads' AND id=$2 AND (data->>'runToken' IS NULL OR (data->>'leaseUntil')::timestamptz<=clock_timestamp()) RETURNING data`,
+      [owner, id, runToken, leaseMs],
+    );
+    return result.rows.length === 1;
+  }
+  async renewThread(
+    owner: string,
+    id: string,
+    runToken: string,
+    leaseMs: number,
+  ): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE records SET data=data || jsonb_build_object('leaseUntil',clock_timestamp() + ($4::text || ' milliseconds')::interval)
+       WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'runToken'=$3 AND (data->>'leaseUntil')::timestamptz>clock_timestamp() RETURNING data`,
+      [owner, id, runToken, leaseMs],
+    );
+    return result.rows.length === 1;
+  }
+  async threadLeaseActive(owner: string, id: string): Promise<boolean> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'runToken' IS NOT NULL AND (data->>'leaseUntil')::timestamptz>clock_timestamp()",
+      [owner, id],
+    );
+    return result.rows.length === 1;
+  }
+  /** One MVCC snapshot ties the event tail to the matching run's lease state. */
+  async threadSnapshot<T>(
+    owner: string,
+    id: string,
+  ): Promise<{ runs: T[]; activeRunToken: string | null }> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object(
+         'runs',COALESCE((SELECT jsonb_agg(run.data ORDER BY run.data->>'createdAt',run.id)
+           FROM records run WHERE run.owner=$1 AND run.kind='thread-runs' AND run.data->>'threadId'=$2),'[]'::jsonb),
+         'activeRunToken',CASE WHEN (data->>'leaseUntil')::timestamptz>clock_timestamp() THEN data->>'runToken' ELSE NULL END
+       ) AS data FROM records WHERE owner=$1 AND kind='threads' AND id=$2`,
+      [owner, id],
+    );
+    return (
+      (result.rows[0]?.data as { runs: T[]; activeRunToken: string | null } | undefined) ?? {
+        runs: [],
+        activeRunToken: null,
+      }
+    );
+  }
+  /** Recover the run and release only its matching lease in one crash-atomic SQL statement. */
+  async recoverThreadRun(
+    owner: string,
+    threadId: string,
+    token: string,
+    expectedEvents: unknown[],
+    patch: Record<string, unknown>,
+  ): Promise<boolean> {
+    const result = await this.db.query(
+      `WITH recovered AS (
+         UPDATE records AS run SET data=data || $5::jsonb,updated_at=now()
+         WHERE owner=$1 AND kind='thread-runs' AND id=$3 AND data->>'threadId'=$2
+         AND data->>'status'='running' AND data->'events'=$4::jsonb AND NOT EXISTS (
+           SELECT 1 FROM records thread WHERE thread.owner=run.owner AND thread.kind='threads' AND thread.id=$2
+           AND thread.data->>'runToken'=run.id AND (thread.data->>'leaseUntil')::timestamptz>clock_timestamp()
+         ) RETURNING data
+       ), released AS (
+         UPDATE records SET data=data || '{"runToken":null,"leaseUntil":null}'::jsonb,updated_at=now()
+         WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'runToken'=$3 AND EXISTS (SELECT 1 FROM recovered) RETURNING data
+       ) SELECT data FROM recovered`,
+      [owner, threadId, token, JSON.stringify(expectedEvents), JSON.stringify(patch)],
+    );
+    return result.rows.length === 1;
+  }
+  async expireThreadLease(owner: string, id: string, token: string): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE records SET data=data || '{"runToken":null,"leaseUntil":null}'::jsonb
+       WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'runToken'=$3 AND (data->>'leaseUntil')::timestamptz<=clock_timestamp() RETURNING data`,
+      [owner, id, token],
+    );
+    return result.rows.length === 1;
+  }
   async scan<T>(kind: string): Promise<{ owner: string; value: T }[]> {
     const result = await this.db.query(
       "SELECT jsonb_build_object('owner',owner,'value',data) AS data FROM records WHERE kind=$1 ORDER BY updated_at ASC",

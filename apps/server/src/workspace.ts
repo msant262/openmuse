@@ -324,6 +324,7 @@ export class WorkspaceService {
         configured: agentConfigured(this.config),
         openbotConfigured: false,
         richThreads: true,
+        threadStorage: this.config.intelligenceApiKey?.trim() ? "intelligence" : "local",
       },
     };
   }

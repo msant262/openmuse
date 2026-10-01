@@ -12,13 +12,14 @@ import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
-import { assertApiDeploymentConfig, type Config } from "./config.ts";
+import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
 import { agentRoutes } from "./engine/routes.ts";
 import { AgentService } from "./engine/service.ts";
 import { AppError } from "./errors.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
+import { LocalThreads } from "./threads.ts";
 import { WorkspaceService } from "./workspace.ts";
 
 export async function createApp(
@@ -26,7 +27,6 @@ export async function createApp(
   config: Config,
   options: { docker?: DockerRunner } = {},
 ) {
-  assertApiDeploymentConfig(config);
   const auth = await createAuth(db, config),
     files = new Files(db, config, auth),
     google = new GoogleAuth(db, config),
@@ -41,8 +41,10 @@ export async function createApp(
   const browser = new BrowserService(db, config, auth, files);
   const computer = new ComputerService(db, config, options.docker);
   const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
-  const intelligence = new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey });
-  const runtime = makeRuntime(config, agent, auth, intelligence);
+  const threads = config.intelligenceApiKey?.trim()
+    ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey.trim() })
+    : new LocalThreads(db);
+  const runtime = makeRuntime(config, agent, auth, threads);
   const app = new Hono<{ Variables: { owner: string } }>();
   const origins = new Set([...config.allowedOrigins, new URL(config.publicUrl).origin]);
   app.use("*", async (c, next) => {
@@ -212,14 +214,16 @@ export async function createApp(
     const main = await db.get<{ threadId: string }>(owner, "conversation-settings", "main");
     if (!main) throw new AppError("Main conversation could not be loaded", 503);
     try {
-      await intelligence.getOrCreateThread({
-        threadId: main.threadId,
-        userId: owner,
-        agentId: "default",
-      });
+      if (threads instanceof LocalThreads) await threads.ensure(owner, main.threadId);
+      else
+        await threads.getOrCreateThread({
+          threadId: main.threadId,
+          userId: owner,
+          agentId: "default",
+        });
     } catch {
       throw new AppError(
-        "Main conversation is unavailable. Check the Rich Threads connection and try again.",
+        "Main conversation could not be loaded. Check the server storage and try again.",
         502,
       );
     }
@@ -327,12 +331,25 @@ export async function createApp(
     return c.json({ ok: true });
   });
   app.all("/api/copilotkit/*", async (c) => {
+    if (threads instanceof LocalThreads) {
+      const response = await threads.handle(c.req.raw, c.get("owner"));
+      if (response) return response;
+    }
     if (!agentConfigured(config))
       throw new AppError(
         "Configure a model and provider API key, or a valid AG-UI endpoint, to start chat",
         503,
       );
-    const response = await runtime.fetch(c.req.raw);
+    const response = await (threads instanceof LocalThreads
+      ? threads.withOwner(c.get("owner"), () => runtime.fetch(c.req.raw))
+      : runtime.fetch(c.req.raw));
+    if (threads instanceof LocalThreads && c.req.path === "/api/copilotkit/info" && response.ok) {
+      return c.json({
+        ...(await response.json()),
+        telemetryDisabled: true,
+        threadEndpoints: { list: true, inspect: true, mutations: true, realtimeMetadata: false },
+      });
+    }
     // Runtime 1.70 emits SSE strings; a WHATWG Response body requires byte chunks.
     const encoder = new TextEncoder();
     const body = response.body?.pipeThrough(
@@ -347,5 +364,5 @@ export async function createApp(
   app.get("/", (c) =>
     c.json({ name: "OpenMuse", app: "http://localhost:8081", health: "/api/health" }),
   );
-  return { app, auth, files, actions, workspace, agent, computer };
+  return { app, auth, files, actions, workspace, agent, computer, threads };
 }

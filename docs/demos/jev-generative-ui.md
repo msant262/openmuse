@@ -10,7 +10,7 @@ For a repeatable, TypeSafe-key-free walkthrough, [watch the 81-second scripted s
 
 ## Run
 
-From the repository root, install dependencies and configure a server-only CopilotKit Intelligence project key in the private `.env` as described in [Quick start](../../README.md#quick-start). Both sample and live modes require that key for Rich Threads. The sample needs no TypeSafe key or general model provider key.
+From the repository root, install dependencies as described in [Quick start](../../README.md#quick-start). Rich Threads persist locally without a CopilotKit key. The sample needs no TypeSafe key or general model provider key; `pnpm dev:demo` always uses isolated local thread storage.
 
 ```sh
 pnpm --dir apps/worker exec playwright install chromium
@@ -49,7 +49,7 @@ The school, sender, recipient, message, and permission-slip document are fiction
 | Open Sea | Sea turtles, sardines, and tuna at a 90-foot viewing window | [Open Sea](https://www.montereybayaquarium.org/visit/exhibits/open-sea/) |
 | Rocky Shore | Bat-ray touch pool | [Rocky Shore](https://www.montereybayaquarium.org/visit/exhibits/rocky-shore) |
 
-For a fully live, non-scripted agent, run the ordinary API with `JEV_MODE=live`, a server-side `TYPESAFE_API_KEY`, and the required `CPK_INTELLIGENCE_API_KEY`. Configure a real model and browser worker separately. The isolated `pnpm dev:demo` command defaults to the labeled sample mode and does not forward a TypeSafe key unless `DEMO_JEV_MODE=live` is set. A sample recording must not be presented as evidence that live Jev was called.
+For a fully live, non-scripted agent, run the ordinary API with `JEV_MODE=live` and a server-side `TYPESAFE_API_KEY`. Configure a real model and browser worker separately. The isolated `pnpm dev:demo` command defaults to the labeled sample mode and does not forward a TypeSafe key unless `DEMO_JEV_MODE=live` is set. A sample recording must not be presented as evidence that live Jev was called.
 
 ## What live mode sends to TypeSafe
 

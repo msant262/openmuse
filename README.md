@@ -26,7 +26,7 @@ https://github.com/user-attachments/assets/0cc87de0-c3c1-4f24-b7df-e7d04bb946fd
 
 </div>
 
-> **Alpha, for self-hosting and building on.** Open-ended reasoning, live Google accounts, and CopilotKit Rich Threads require their own configuration. See [what is verified](docs/VERIFICATION.md) and the [roadmap](ROADMAP.md).
+> **Alpha, for self-hosting and building on.** Open-ended reasoning and live Google accounts require their own configuration. Conversations persist on your server without a CopilotKit key. See [what is verified](docs/VERIFICATION.md) and the [roadmap](ROADMAP.md).
 
 ## Demo
 
@@ -57,22 +57,19 @@ The computer combines **persistent Chromium and an optional Linux workspace**. T
 | **Finance** | Import transaction CSV to create a spending summary with categories, transactions, and a savings-goal action. |
 | **Gmail & Calendar** | Google OAuth adapters, complete mail threads, drafts/attachments, calendar discovery, and reviewed event creation/update/deletion. Live credentials required. |
 | **Personal context** | Editable name, tone, avatar, and memories. Background-update preferences and durable in-app notifications. |
-| **Rich Threads** | CopilotKit Intelligence persistence in every mode, with a stable main conversation, side chats, renaming, archiving, restoring, and replay. A server-only project key is required. |
+| **Rich Threads** | Self-hosted PGlite/Postgres persistence, stable main conversation, side chats, renaming, archiving, restoring and rich AG-UI replay. Optional legacy Intelligence storage. |
 
 The [feature inventory](docs/FEATURES.md) describes implemented capabilities and planned extensions. Health/bank/social connectors, device push, voice, generated executable tools, and automatic reservations/payments are on the [roadmap](ROADMAP.md).
 
 ## Quick start
 
-**Requirements:** Node 24 LTS, pnpm 11.19.0, and a CopilotKit Intelligence project key. The local sample app needs no model, Google account, or Docker.
+**Requirements:** Node 24 LTS and pnpm 11.19.0. The local sample app needs no model, vendor key, Google account or Docker.
 
 ```sh
 git clone https://github.com/CopilotKit/OpenMuse.git openmuse
 cd openmuse
 pnpm install --frozen-lockfile
 cp .env.example .env
-npx copilotkit@latest login
-npx copilotkit@latest project select
-# Set CPK_INTELLIGENCE_API_KEY in .env to the generated server-only project key.
 pnpm dev
 ```
 
@@ -106,11 +103,10 @@ For iOS or Android, use `pnpm --dir apps/mobile ios` or `pnpm --dir apps/mobile 
 3. Open the `openmuse-web` URL and sign in with that key.
 4. Send a message.
 
-The deploy form asks for two values you provide. Render generates the other two.
+The deploy form asks for the model key. Render generates the access and encryption keys.
 
 | Variable | Set by | If it is missing |
 |---|---|---|
-| `CPK_INTELLIGENCE_API_KEY` | You. Run `npx copilotkit@latest login`, then `npx copilotkit@latest project select`. Keep it on the server. | Chat cannot open a thread. |
 | `OPENAI_API_KEY` | You. Used by the default `openai/gpt-5`. Change `MODEL` and supply the matching provider key for Anthropic or Google. | The model call fails. |
 | `OPENMUSE_ACCESS_KEY` | Render | You cannot sign in. |
 | `TOKEN_ENCRYPTION_KEY` | Render | The API refuses to start in live mode. |
@@ -127,7 +123,7 @@ Health check: `https://<openmuse-api>/api/health`.
 
 **Standard** is the smallest plan that stays up. At 512 MB the process runs out of memory before it binds a port, because PGlite loads an embedded Postgres build.
 
-**The disk** holds the database, PDFs, and the signing key. A redeploy without it wipes that data. Chat threads are stored by CopilotKit Intelligence, so a thread can still load after you sign back in even when the disk was never attached.
+**The disk** holds the database, conversations, PDFs and signing key. A redeploy without it wipes that data. Keep a persistent disk and backups; if using `DATABASE_URL`, back up that Postgres database as well.
 
 **Live mode** is required. Render binds `0.0.0.0`, and sample mode rejects any host that is not loopback. The Blueprint sets `WORKSPACE_MODE=live`.
 
@@ -140,8 +136,8 @@ The Docker computer and Google mail or calendar need the setup in the sections b
 Copy the commented settings in [.env.example](.env.example) into your private `.env`:
 
 1. Set `AGENT_BACKEND=model`, `MODEL=provider/model-id`, and the matching provider key. CopilotKit supports the configured OpenAI, Anthropic or Google provider. Fictional data can still be used with a real model. Provider keys stay on the server.
-2. Create or select a CopilotKit Intelligence project with `npx copilotkit@latest login` and `npx copilotkit@latest project select`. Keep the generated `CPK_INTELLIGENCE_API_KEY` on the server.
-3. For personal mail/calendar, set `WORKSPACE_MODE=live`, the generated `CPK_INTELLIGENCE_API_KEY`, a random `OPENMUSE_ACCESS_KEY` of at least 24 characters, and `TOKEN_ENCRYPTION_KEY` containing 32 random bytes encoded as base64. Restart the API.
+2. Conversations persist in `.openmuse/postgres`, or `DATABASE_URL` when configured. Keep the data volume backed up. No CopilotKit key is needed.
+3. For personal mail/calendar, set `WORKSPACE_MODE=live`, a random `OPENMUSE_ACCESS_KEY` of at least 24 characters, and `TOKEN_ENCRYPTION_KEY` containing 32 random bytes encoded as base64. Restart the API.
 4. Configure a Google OAuth web client with Gmail and Calendar APIs enabled. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; register `${PUBLIC_API_URL}/api/google/callback` as its redirect URI. Configure consent/test-user access in your Google project.
 5. Open **Apps → Gmail** (or **Google Calendar**), connect read access, and grant write access when needed. Every send or calendar change still requires its own stored review. Changing/disconnecting the account invalidates pending connection-bound work.
 
@@ -181,9 +177,9 @@ No hidden retry occurs after an uncertain external write. Review its provider ou
 
 ## CopilotKit Rich Threads
 
-Every deployment requires `CPK_INTELLIGENCE_API_KEY` on the API server for CopilotKit Intelligence conversation persistence and replay. Create or select a project with `npx copilotkit@latest login` and `npx copilotkit@latest project select`, set the generated server-only key, and restart the API. The native menu uses `useThreads`; rich tool results link back to saved tasks, documents, and browser sessions.
+Conversations persist in OpenMuse's own PGlite/Postgres database by default. The native menu uses `useThreads`; rich tool results, state and replay remain on your server. No CopilotKit cloud calls are made in local mode. Set the optional server-only `CPK_INTELLIGENCE_API_KEY` to retain the legacy Intelligence behavior; switching backends does not migrate existing history.
 
-Intelligence is a separate service and is not included in this repository's MIT license. No project key is shipped. [Configuration and validation boundaries](docs/RICH-THREADS.md).
+The local adapter and existing CopilotKit client/runtime remain MIT licensed. Optional Intelligence is a separately hosted service. [Configuration and validation boundaries](docs/RICH-THREADS.md).
 
 ## Architecture
 
@@ -191,8 +187,10 @@ Intelligence is a separate service and is not included in this repository's MIT 
 flowchart TD
   Client[Expo / React Native / Web] -->|AG-UI and authenticated API| API[Hono + CopilotKit runtime]
   API --> Tasks[Durable task worker]
-  API --> Threads[CopilotKit Intelligence required in every mode]
+  API --> Threads[Local durable threads]
   API --> Store[(PGlite or PostgreSQL)]
+  Threads --> Store
+  API -. optional project key .-> Intelligence[CopilotKit Intelligence]
   Tasks --> Store
   Tasks --> Review[Stored action review]
   Review --> Google[Gmail / Calendar adapters]

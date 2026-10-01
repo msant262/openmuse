@@ -1351,7 +1351,13 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
               />
               <SettingsLine
                 label="Rich Threads"
-                value={w.runtime.richThreads ? "CopilotKit Intelligence" : "Not connected"}
+                value={
+                  w.runtime.threadStorage === "intelligence"
+                    ? "CopilotKit Intelligence"
+                    : w.runtime.richThreads
+                      ? "Saved on your server"
+                      : "Not connected"
+                }
               />
               <Button
                 small
