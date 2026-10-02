@@ -12,9 +12,20 @@ import { computerCommandSchema, workspacePath } from "./computer.ts";
 import { commandReceiptSchema, mediaSchema } from "./computer-contract.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
+import { RuntimePause, RuntimePausedError } from "./engine/runtime-pause.ts";
 import { AppError } from "./errors.ts";
 
 type Intent = ComputerCommand & { binding: string };
+export class ComputerBusyError extends AppError {
+  readonly notDispatched = true;
+  constructor() {
+    super(
+      "The personal computer is busy. This operation was not dispatched; retry with the same operation ID.",
+      409,
+    );
+    this.name = "ComputerBusyError";
+  }
+}
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const stateSchema = z.object({
   status: z.enum(["running", "stopped"]),
@@ -61,6 +72,21 @@ export class RpcComputerService {
       );
     }
     if (!response.ok) {
+      if (response.status === 409) {
+        const payload = await response
+          .clone()
+          .json()
+          .catch(() => undefined);
+        if (
+          payload &&
+          typeof payload === "object" &&
+          "code" in payload &&
+          payload.code === "busy" &&
+          "notDispatched" in payload &&
+          payload.notDispatched === true
+        )
+          throw new ComputerBusyError();
+      }
       const status =
         response.status === 404
           ? 404
@@ -185,6 +211,7 @@ export class RpcComputerService {
   }
   async start(owner: string) {
     await this.bind(owner);
+    await new RuntimePause(this.db).assertResumed(owner);
     stateSchema.parse(await this.request("/rpc/start", {}));
     return this.snapshot(owner);
   }
@@ -202,7 +229,12 @@ export class RpcComputerService {
   execute(
     owner: string,
     raw: unknown,
-    options: { idempotencyKey?: string; signal?: AbortSignal } = {},
+    options: {
+      idempotencyKey?: string;
+      signal?: AbortSignal;
+      dispatchGuard?: () => Promise<void>;
+      onDispatch?: (receiptId: string) => Promise<void>;
+    } = {},
   ) {
     const args = computerCommandSchema.parse(raw);
     return this.submit(owner, { ...args, cwd: workspacePath(args.cwd), kind: "command" }, options);
@@ -211,7 +243,12 @@ export class RpcComputerService {
     owner: string,
     kind: "transcribe" | "preview",
     raw: unknown,
-    options: { idempotencyKey?: string; signal?: AbortSignal } = {},
+    options: {
+      idempotencyKey?: string;
+      signal?: AbortSignal;
+      dispatchGuard?: () => Promise<void>;
+      onDispatch?: (receiptId: string) => Promise<void>;
+    } = {},
   ) {
     const { timeoutMs, background, ...parameters } = mediaSchema.parse(raw);
     for (const value of [
@@ -244,7 +281,12 @@ export class RpcComputerService {
       timeoutMs?: number;
       background?: boolean;
     },
-    options: { idempotencyKey?: string; signal?: AbortSignal },
+    options: {
+      idempotencyKey?: string;
+      signal?: AbortSignal;
+      dispatchGuard?: () => Promise<void>;
+      onDispatch?: (receiptId: string) => Promise<void>;
+    },
   ): Promise<ComputerCommand> {
     await this.bind(owner);
     const timeoutMs = args.timeoutMs ?? this.config.computerCommandTimeoutMs ?? 1800000;
@@ -257,6 +299,11 @@ export class RpcComputerService {
     if (prior) {
       if (prior.binding !== binding)
         throw new AppError("Operation ID already belongs to different arguments", 409);
+      if (prior.status === "rejected_not_dispatched") {
+        if (!(await this.db.resetRejectedComputerCommand(owner, id, binding)))
+          throw new AppError("This operation is already being retried", 409);
+        return this.submit(owner, args, options);
+      }
       return this.command(owner, id);
     }
     options.signal?.throwIfAborted();
@@ -276,14 +323,46 @@ export class RpcComputerService {
     };
     if (!(await this.db.insertIfAbsent(owner, "computer-commands", intent)))
       return this.submit(owner, args, options);
+    try {
+      await options.onDispatch?.(id);
+    } catch (error) {
+      await this.db.put(owner, "computer-commands", {
+        ...intent,
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        stderr: "Dispatch ownership was not confirmed; no RPC request was sent.",
+      });
+      throw error;
+    }
     let receipt: ComputerCommand;
     try {
+      // This guard is the final local check after ownership/audit persistence.
+      await options.dispatchGuard?.();
       receipt = await this.save(
         owner,
         intent,
         await this.request("/rpc/jobs", { ...request, id }, options.signal),
       );
     } catch (error) {
+      if (error instanceof ComputerBusyError) {
+        const rejected: Intent = {
+          ...intent,
+          status: "rejected_not_dispatched",
+          completedAt: new Date().toISOString(),
+          stderr: "The computer was busy. This operation was not dispatched and can be retried.",
+        };
+        await this.db.put(owner, "computer-commands", rejected);
+        return commandReceiptSchema.parse(rejected);
+      }
+      if (error instanceof RuntimePausedError) {
+        await this.db.put(owner, "computer-commands", {
+          ...intent,
+          status: "rejected_not_dispatched",
+          completedAt: new Date().toISOString(),
+          stderr: "Global pause prevented dispatch. This operation was not sent.",
+        });
+        throw error;
+      }
       await this.db.put(owner, "computer-commands", {
         ...intent,
         status: "interrupted",
@@ -311,6 +390,8 @@ export class RpcComputerService {
     extra: Record<string, unknown> = {},
   ) {
     await this.bind(owner);
+    if (["write", "mkdir", "write_binary"].includes(operation))
+      await new RuntimePause(this.db).assertResumed(owner);
     return this.request("/rpc/files", { operation, path: workspacePath(path), ...extra });
   }
   async list(owner: string, path = "/workspace"): Promise<ComputerDirectory> {

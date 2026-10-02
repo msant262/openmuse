@@ -8,6 +8,8 @@ import {
 import { ActionLog, unknownOutcome } from "./action-log.ts";
 import { type ApprovalPolicy, requiresApproval } from "./action-policy.ts";
 import type { Store } from "./db.ts";
+import { ResourceBusyError } from "./engine/resource-leases.ts";
+import { RuntimePausedError } from "./engine/runtime-pause.ts";
 import { AppError } from "./errors.ts";
 
 export interface ExternalAction {
@@ -42,6 +44,7 @@ interface Options {
   }>;
   connected: (owner: string) => Promise<boolean>;
   connection?: (owner: string) => Promise<{ id: string; account: string } | null>;
+  guardEffects?: (owner: string) => Promise<void>;
   now?: () => number;
 }
 export class ActionService {
@@ -299,6 +302,10 @@ export class ActionService {
     }
     let finished: ActionProposal;
     try {
+      // Recheck after the durable action claim, immediately before the adapter
+      // handoff. A paused action stays reviewable and is explicitly audited as
+      // not dispatched; it is never mislabeled as a failed external outcome.
+      await this.options.guardEffects?.(owner);
       if (claimed.taskId) {
         const task = await this.db.get<{ status: string }>(owner, "tasks", claimed.taskId);
         if (!task || !["running", "waiting_approval"].includes(task.status))
@@ -314,9 +321,11 @@ export class ActionService {
         const executor = bound && this.external.get(bound.tool);
         if (!bound || bound.hash !== claimed.hash || !executor)
           throw new AppError("External action binding changed or is unavailable", 409);
+        await this.options.guardEffects?.(owner);
         result = await executor(owner, bound.binding, claimed);
       } else {
         const input = proposalSchema.parse({ kind: claimed.kind, data: claimed.data });
+        await this.options.guardEffects?.(owner);
         result = await this.options.execute(
           owner,
           input,
@@ -326,6 +335,26 @@ export class ActionService {
       }
       finished = { ...claimed, status: "succeeded", result };
     } catch (error) {
+      if (error instanceof RuntimePausedError || error instanceof ResourceBusyError) {
+        const reviewable = await this.db.compareAndSwap<ActionProposal>(
+          owner,
+          "actions",
+          id,
+          { status: "executing", hash },
+          { status: "awaiting_review", error: error.message },
+        );
+        const current = reviewable ?? (await this.db.get<ActionProposal>(owner, "actions", id));
+        if (!current) throw new AppError("Action not found", 404);
+        await this.log.finish(owner, audit, "rejected_not_dispatched");
+        await this.record(
+          owner,
+          current,
+          error instanceof RuntimePausedError
+            ? "Global pause prevented dispatch; review remains available"
+            : "A required resource is occupied; review remains available",
+        );
+        return current;
+      }
       const unknown = unknownOutcome(error);
       finished = {
         ...claimed,

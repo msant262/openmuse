@@ -5,9 +5,11 @@ import { rasterMime } from "../../../packages/domain/src/attachments.ts";
 import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
 import { ActionLog } from "./action-log.ts";
 import { base64Limit, decodeBase64 } from "./base64.ts";
-import type { ComputerBackend } from "./computer-contract.ts";
+import { type ComputerBackend, commandReceiptSchema } from "./computer-contract.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
+import { ResourceBusyError } from "./engine/resource-leases.ts";
+import { RuntimePausedError } from "./engine/runtime-pause.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 import { modelProviderConfig } from "./providers/config.ts";
@@ -31,6 +33,7 @@ export class MediaService {
     raw: unknown,
     scope: string,
     signal?: AbortSignal,
+    beforeDispatch?: () => Promise<void>,
   ): Promise<Awaited<ReturnType<Files["reference"]>> | { disabled: boolean; message: string }> {
     const args = imageArgs.parse(raw);
     const provider = model
@@ -80,7 +83,10 @@ export class MediaService {
       summary: "Generate image",
     };
     await new ActionLog(this.db).append(owner, audit, "started");
+    let dispatchGuardPassed = false;
     try {
+      await beforeDispatch?.();
+      dispatchGuardPassed = true;
       const response = await provider.generate(
         {
           prompt: args.prompt,
@@ -146,6 +152,11 @@ export class MediaService {
       await new ActionLog(this.db).finish(owner, audit, "succeeded");
       return this.files.reference(owner, file.id);
     } catch (error) {
+      if (!dispatchGuardPassed) {
+        await new ActionLog(this.db).finish(owner, audit, "rejected_not_dispatched");
+        await this.db.remove(owner, "image-generations", id);
+        throw error;
+      }
       await new ActionLog(this.db).finish(owner, audit, "outcome_unknown");
       await this.db.put(owner, "image-generations", { id, binding, status: "uncertain" });
       throw error;
@@ -196,7 +207,11 @@ export function mediaTools(
     model: () => string | undefined;
     signal?: AbortSignal;
     before?: () => Promise<void>;
+    effectBefore?: () => Promise<void>;
     artifact?: (id: string) => Promise<void>;
+    onComputerDispatch?: (receiptId: string) => Promise<void>;
+    onComputerReceipt?: (receipt: z.infer<typeof commandReceiptSchema>) => Promise<void>;
+    onWaitingJob?: (receipt: { id: string; uncertain?: boolean }) => Promise<void>;
     queue?: <T>(operation: () => Promise<T>) => Promise<T>;
   },
 ) {
@@ -205,6 +220,7 @@ export function mediaTools(
     description: string,
     parameters: T,
     action: (args: z.output<T>) => Promise<unknown>,
+    automatedEffect = false,
   ) =>
     defineTool({
       name,
@@ -214,8 +230,21 @@ export function mediaTools(
         const operation = async () => {
           try {
             await options.before?.();
+            if (automatedEffect) await options.effectBefore?.();
             options.signal?.throwIfAborted();
             const result = await action(parameters.parse(args));
+            const receipt = commandReceiptSchema.safeParse(result);
+            if (automatedEffect && receipt.success) {
+              if (["succeeded", "failed", "rejected_not_dispatched"].includes(receipt.data.status))
+                await options.onComputerReceipt?.(receipt.data);
+              else
+                await options.onWaitingJob?.({
+                  id: receipt.data.id,
+                  ...(["interrupted", "timed_out"].includes(receipt.data.status) && {
+                    uncertain: true,
+                  }),
+                });
+            }
             const refs = z
               .object({
                 fileId: z.string().optional(),
@@ -230,6 +259,20 @@ export function mediaTools(
                 await options.artifact?.(id);
             return result;
           } catch (error) {
+            if (
+              error instanceof RuntimePausedError ||
+              error instanceof ResourceBusyError ||
+              (error instanceof Error && error.name === "LostLeaseError")
+            )
+              throw error;
+            const commandId =
+              error && typeof error === "object" && "computerCommandId" in error
+                ? String(error.computerCommandId)
+                : undefined;
+            if (automatedEffect && commandId && options.onWaitingJob) {
+              await options.onWaitingJob({ id: commandId, uncertain: true });
+              return { id: commandId, status: "running", outcomeUnknown: true };
+            }
             return { error: error instanceof Error ? error.message : "Media processing failed" };
           }
         };
@@ -267,7 +310,12 @@ export function mediaTools(
       owner,
       kind,
       { ...parameters, path },
-      { idempotencyKey: `${scope}:${operationId}`, signal: options.signal },
+      {
+        idempotencyKey: `${scope}:${operationId}`,
+        signal: options.signal,
+        dispatchGuard: options.effectBefore ?? options.before,
+        onDispatch: options.onComputerDispatch,
+      },
     );
     return media.completed(owner, computer, receipt);
   };
@@ -291,7 +339,16 @@ export function mediaTools(
       "generate_image",
       "Generate an image via the selected provider's configured image capability",
       imageArgs,
-      (args) => media.generatedImage(owner, options.model(), args, scope, options.signal),
+      (args) =>
+        media.generatedImage(
+          owner,
+          options.model(),
+          args,
+          scope,
+          options.signal,
+          options.effectBefore ?? options.before,
+        ),
+      true,
     ),
     tool(
       "transcribe",
@@ -307,6 +364,7 @@ export function mediaTools(
         operationId: z.string().min(1).max(120),
       }),
       (args) => runMedia("transcribe", args),
+      true,
     ),
     tool(
       "preview_computer_file",
@@ -318,6 +376,7 @@ export function mediaTools(
         operationId: z.string().min(1).max(120),
       }),
       (args) => runMedia("preview", args),
+      true,
     ),
     tool(
       "computer_command_status",

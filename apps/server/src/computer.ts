@@ -9,6 +9,7 @@ import type {
 } from "../../../packages/domain/src/computer.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
+import { RuntimePause } from "./engine/runtime-pause.ts";
 import { AppError } from "./errors.ts";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -445,7 +446,10 @@ export class ComputerService {
       const identity = computerIdentity(this.config, owner);
       const existing = await this.inspect(owner);
       if (existing) {
-        if (!existing.State.Running) await this.checked(["container", "start", identity.container]);
+        if (!existing.State.Running) {
+          await new RuntimePause(this.db).assertResumed(owner);
+          await this.checked(["container", "start", identity.container]);
+        }
         return;
       }
       const labels = Object.entries(identity.labels).flatMap(([key, value]) => [
@@ -462,8 +466,12 @@ export class ComputerService {
           "{{.Name}}",
         ])
       ).trim();
-      if (!volume) await this.checked(["volume", "create", ...labels, identity.volume]);
+      if (!volume) {
+        await new RuntimePause(this.db).assertResumed(owner);
+        await this.checked(["volume", "create", ...labels, identity.volume]);
+      }
       await this.verifyVolume(owner);
+      await new RuntimePause(this.db).assertResumed(owner);
       await this.checked([
         "container",
         "create",
@@ -509,6 +517,7 @@ export class ComputerService {
         "infinity",
       ]);
       await this.inspect(owner);
+      await new RuntimePause(this.db).assertResumed(owner);
       await this.checked(["container", "start", identity.container]);
     });
     return this.snapshot(owner);
@@ -593,7 +602,12 @@ export class ComputerService {
   async execute(
     owner: string,
     raw: unknown,
-    options: { idempotencyKey?: string; signal?: AbortSignal } = {},
+    options: {
+      idempotencyKey?: string;
+      signal?: AbortSignal;
+      dispatchGuard?: () => Promise<void>;
+      onDispatch?: (receiptId: string) => Promise<void>;
+    } = {},
   ): Promise<ComputerCommand> {
     this.enabled();
     const args = computerCommandSchema.parse(raw),
@@ -648,6 +662,24 @@ export class ComputerService {
             stderr: "Stopped before execution",
             completedAt: new Date().toISOString(),
           });
+        try {
+          await options.onDispatch?.(id);
+          await options.dispatchGuard?.();
+        } catch (error) {
+          await this.db.put(owner, "computer-commands", {
+            ...command,
+            status:
+              error instanceof Error && error.name === "RuntimePausedError"
+                ? "rejected_not_dispatched"
+                : "failed",
+            stderr:
+              error instanceof Error && error.name === "RuntimePausedError"
+                ? "Global pause prevented dispatch. This operation was not sent."
+                : "Dispatch ownership was not confirmed; execution did not start.",
+            completedAt: new Date().toISOString(),
+          });
+          throw error;
+        }
         let result: DockerResult;
         try {
           result = await this.docker(
@@ -768,6 +800,8 @@ export class ComputerService {
       throw new AppError("Text files must be 256 KB or smaller", 413);
     return this.exclusive(owner, async () => {
       const container = await this.running(owner);
+      if (["write", "mkdir", "write_binary", "write_pdf"].includes(operation))
+        await new RuntimePause(this.db).assertResumed(owner);
       const result = await this.docker(
         [
           "exec",

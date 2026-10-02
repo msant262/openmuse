@@ -17,6 +17,7 @@ import {
   type RunEvent,
 } from "../../../../packages/domain/src/agent.ts";
 import { PRODUCT_NAME } from "../../../../packages/domain/src/brand.ts";
+import type { ComputerCommand } from "../../../../packages/domain/src/computer.ts";
 import type {
   ActionProposal,
   Artifact,
@@ -24,6 +25,7 @@ import type {
   Mail,
   ProposalInput,
 } from "../../../../packages/domain/src/index.ts";
+import { type TaskTiming, taskTimingSchema } from "../../../../packages/domain/src/runtime.ts";
 import { ActionLog } from "../action-log.ts";
 import type { ActionService } from "../actions.ts";
 import { AgentProfile } from "../agent-profile.ts";
@@ -45,8 +47,12 @@ import { RoutinesService } from "../routines.ts";
 import { OperationDrain } from "../shutdown.ts";
 import type { LocalThreads } from "../threads.ts";
 import type { WorkspaceService } from "../workspace.ts";
+import { readComputerCommand, reconcileWaitingComputerTasks } from "./computer-jobs.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
+import { ResourceLeases } from "./resource-leases.ts";
+import { RuntimePause } from "./runtime-pause.ts";
+import { WorkAdmission } from "./work-admission.ts";
 import { LostLeaseError, type TaskContext, TaskWorker } from "./worker.ts";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -56,6 +62,9 @@ export class AgentService {
   readonly profiles: AgentProfile;
   readonly interactions: InteractionRequests;
   readonly worker: TaskWorker;
+  readonly runtimePause: RuntimePause;
+  readonly resourceLeases: ResourceLeases;
+  readonly workAdmission: WorkAdmission;
   readonly routines: RoutinesService;
   readonly memory: MemoryService;
   readonly mcp: McpService;
@@ -74,7 +83,7 @@ export class AgentService {
     if (this.routineRefreshing) return;
     this.routineRefreshing = true;
     try {
-      await this.routines.tick();
+      if (!(await this.runtimePause.get("__runtime__")).paused) await this.routines.tick();
       await this.push.recover();
       await this.flushPublications();
     } finally {
@@ -141,6 +150,9 @@ export class AgentService {
   ) {
     this.profiles = new AgentProfile(db);
     this.interactions = new InteractionRequests(db);
+    this.runtimePause = new RuntimePause(db);
+    this.resourceLeases = new ResourceLeases(db);
+    this.workAdmission = new WorkAdmission(db);
     this.routines = new RoutinesService(
       db,
       (owner, input, key) => this.createTask(owner, input, key),
@@ -148,11 +160,18 @@ export class AgentService {
     );
     this.memory = new MemoryService(db);
     this.mcp = new McpService(db, actions, config.mcpServers ?? []);
-    this.push = new PushService(db, nativePushAdapters(config.push ?? {}));
+    this.push = new PushService(
+      db,
+      nativePushAdapters(config.push ?? {}),
+      async (owner) => !(await this.runtimePause.get(owner)).paused,
+    );
     this.worker = new TaskWorker(db, (owner, task, context) => this.execute(owner, task, context), {
       settled: (owner, task) => this.publishOutcome(owner, task),
       browserReleased: async (owner, id) =>
         (await this.browser.control(owner, id)).control === "agent",
+      workAdmission: this.workAdmission,
+      resourceLeases: this.resourceLeases,
+      runtimePause: this.runtimePause,
     });
   }
   start() {
@@ -188,45 +207,56 @@ export class AgentService {
     if (this.refreshing) return;
     this.refreshing = true;
     try {
-      if (this.config.computerEnabled)
+      const globallyPaused = (await this.runtimePause.get("__runtime__")).paused;
+      if (this.config.computerEnabled) {
         await reconcileComputerAudit(this.computer, new ActionLog(this.db));
+        await reconcileWaitingComputerTasks(
+          this.db,
+          this.computer,
+          this.workAdmission,
+          this.resourceLeases,
+        );
+      }
       await new ActionLog(this.db).reconcile();
       // Recover publications if the process exited after committing an outcome.
       for (const { owner, value } of await this.db.scan<AgentTask>("tasks"))
         await this.publishOutcome(owner, value);
-      for (const { owner, value } of await this.db.scan<Monitor>("monitors"))
-        await this.activateMonitor(owner, value);
-      for (const { owner, value } of await this.db.scan<Idea>("ideas"))
-        if (
-          value.status === "accepted" &&
-          value.taskId &&
-          !(await this.db.get(owner, "tasks", value.taskId))
-        )
-          await this.decideIdea(owner, value.id, "accept").catch(async (error) => {
-            backgroundFailure("recover accepted idea", error);
-            await this.notify(
-              owner,
-              "Accepted idea needs attention",
-              "Open the idea again after making room for another task.",
-              undefined,
-              `idea-recovery:${value.id}`,
-            );
-          });
-      for (const { owner, value } of await this.db.scan<{ id: string; lastIdeasAt?: string }>(
-        "agent-settings",
-      )) {
-        if (value.id !== "identity") continue;
-        if (!value.lastIdeasAt || Date.now() - Date.parse(value.lastIdeasAt) > 15 * 60000)
-          await this.refreshIdeas(owner).catch(async () => {
-            await this.notify(
-              owner,
-              "Source refresh needs attention",
-              "Reconnect the source or refresh Ideas to see the error.",
-              undefined,
-              `source-error:${Math.floor(Date.now() / 3600000)}`,
-            );
-          });
-      }
+      if (!globallyPaused)
+        for (const { owner, value } of await this.db.scan<Monitor>("monitors"))
+          await this.activateMonitor(owner, value);
+      if (!globallyPaused)
+        for (const { owner, value } of await this.db.scan<Idea>("ideas"))
+          if (
+            value.status === "accepted" &&
+            value.taskId &&
+            !(await this.db.get(owner, "tasks", value.taskId))
+          )
+            await this.decideIdea(owner, value.id, "accept").catch(async (error) => {
+              backgroundFailure("recover accepted idea", error);
+              await this.notify(
+                owner,
+                "Accepted idea needs attention",
+                "Open the idea again after making room for another task.",
+                undefined,
+                `idea-recovery:${value.id}`,
+              );
+            });
+      if (!globallyPaused)
+        for (const { owner, value } of await this.db.scan<{ id: string; lastIdeasAt?: string }>(
+          "agent-settings",
+        )) {
+          if (value.id !== "identity") continue;
+          if (!value.lastIdeasAt || Date.now() - Date.parse(value.lastIdeasAt) > 15 * 60000)
+            await this.refreshIdeas(owner).catch(async () => {
+              await this.notify(
+                owner,
+                "Source refresh needs attention",
+                "Reconnect the source or refresh Ideas to see the error.",
+                undefined,
+                `source-error:${Math.floor(Date.now() / 3600000)}`,
+              );
+            });
+        }
     } finally {
       this.refreshing = false;
     }
@@ -240,17 +270,39 @@ export class AgentService {
   }
   async snapshot(owner: string): Promise<AgentWorkspace> {
     await this.ensure(owner);
-    const [tasks, goals, monitors, ideas, memories, artifacts, notifications, identity] =
-      await Promise.all([
-        this.db.list<AgentTask>(owner, "tasks"),
-        this.db.list<Goal>(owner, "goals"),
-        this.db.list<Monitor>(owner, "monitors"),
-        this.db.list<Idea>(owner, "ideas"),
-        this.db.list<AgentMemory>(owner, "memories"),
-        this.db.list<AgentArtifact>(owner, "agent-artifacts"),
-        this.db.list<AgentNotification>(owner, "notifications"),
-        this.db.get<AgentIdentity>(owner, "agent-settings", "identity"),
-      ]);
+    const [
+      tasks,
+      goals,
+      monitors,
+      ideas,
+      memories,
+      artifacts,
+      notifications,
+      identity,
+      runtimePause,
+      actions,
+      computerCommands,
+      imageGenerations,
+      mcpReceipts,
+      pushDeliveries,
+      admissions,
+    ] = await Promise.all([
+      this.db.list<AgentTask>(owner, "tasks"),
+      this.db.list<Goal>(owner, "goals"),
+      this.db.list<Monitor>(owner, "monitors"),
+      this.db.list<Idea>(owner, "ideas"),
+      this.db.list<AgentMemory>(owner, "memories"),
+      this.db.list<AgentArtifact>(owner, "agent-artifacts"),
+      this.db.list<AgentNotification>(owner, "notifications"),
+      this.db.get<AgentIdentity>(owner, "agent-settings", "identity"),
+      this.runtimePause.get(owner),
+      this.db.list<ActionProposal>(owner, "actions"),
+      this.db.list<{ status: string }>(owner, "computer-commands"),
+      this.db.list<{ status: string }>(owner, "image-generations"),
+      this.db.list<{ status: string }>(owner, "mcp-receipts"),
+      this.db.list<{ status: string }>(owner, "push-deliveries"),
+      this.db.scan<{ id: string; hold?: boolean }>("work-admissions"),
+    ]);
     const heartbeat = await this.db.get<{ lastTickAt: string }>("system", "worker-status", "tasks");
     const profile = await this.profiles.get(owner);
     return {
@@ -266,6 +318,30 @@ export class AgentService {
         name: profile.fields.assistantName,
         tone: profile.fields.tone,
         profile,
+      },
+      runtimePause,
+      runtimeStatus: {
+        activeTasks: new Set([
+          ...tasks
+            .filter((task) => ["running", "waiting_job"].includes(task.status))
+            .map((task) => task.id),
+          ...admissions.filter(({ value }) => value.hold).map(({ value }) => value.id),
+        ]).size,
+        activeOperations:
+          computerCommands.filter((command) => command.status === "running").length +
+          imageGenerations.filter((generation) => generation.status === "pending").length +
+          mcpReceipts.filter((receipt) => receipt.status === "sending").length +
+          pushDeliveries.filter((delivery) => delivery.status === "sending").length,
+        uncertainOperations:
+          actions.filter((action) => ["executing", "outcome_unknown"].includes(action.status))
+            .length +
+          computerCommands.filter((command) =>
+            ["interrupted", "timed_out"].includes(command.status),
+          ).length +
+          imageGenerations.filter((generation) => generation.status === "uncertain").length +
+          mcpReceipts.filter((receipt) => receipt.status === "outcome_unknown").length +
+          pushDeliveries.filter((delivery) => delivery.status === "outcome_unknown").length,
+        executorConfirmation: "unavailable",
       },
       worker: {
         running:
@@ -316,6 +392,7 @@ export class AgentService {
     const id = idempotencyKey ? hash(`task:${idempotencyKey}`) : randomUUID();
     const existing = await this.db.get<AgentTask>(owner, "tasks", id);
     if (existing) return existing;
+    if (!held) await this.runtimePause.assertResumed(owner);
     if (
       (await this.db.list<AgentTask>(owner, "tasks")).filter((t) => !terminal.has(t.status))
         .length >= 100
@@ -344,6 +421,7 @@ export class AgentService {
       originThreadId: input.originThreadId,
       originMessageId: input.originMessageId,
       status: held ? "paused" : "queued",
+      timing: input.timing ?? { priority: "normal" },
       plan: titles.map((title, i) => ({ id: String(i), title, status: "pending" })),
       evidence: [],
       input: input.input,
@@ -361,6 +439,24 @@ export class AgentService {
     await this.ensure(owner);
     await this.db.insertIfAbsent(owner, "tasks", task);
     return (await this.db.get<AgentTask>(owner, "tasks", id)) ?? task;
+  }
+  async setRuntimePause(owner: string, input: { paused: boolean; expectedRevision: number }) {
+    return this.runtimePause.set(owner, input);
+  }
+  async updateTaskPriority(owner: string, id: string, priority: TaskTiming["priority"]) {
+    const task = await this.getTask(owner, id);
+    if (terminal.has(task.status))
+      throw new AppError("Finished tasks cannot be reprioritized", 409);
+    const timing = taskTimingSchema.parse({ ...(task.timing ?? {}), priority });
+    const updated = await this.db.compareAndSwap<AgentTask>(
+      owner,
+      "tasks",
+      id,
+      { status: task.status, updatedAt: task.updatedAt },
+      { timing, updatedAt: date() },
+    );
+    if (!updated) throw new AppError("Task changed; refresh and try again", 409);
+    return updated;
   }
   async control(owner: string, id: string, action: "pause" | "resume" | "cancel" | "retry") {
     const task = await this.getTask(owner, id);
@@ -519,6 +615,7 @@ export class AgentService {
       await this.activateMonitor(owner, existing);
       return existing;
     }
+    await this.runtimePause.assertResumed(owner);
     const task = await this.createTask(
       owner,
       {
@@ -578,6 +675,7 @@ export class AgentService {
     if (!monitor) throw new AppError("Monitor not found", 404);
     if (monitor.status === "stopped" && action !== "stop")
       throw new AppError("Create a new watch to restart this stopped monitor", 409);
+    if (action === "resume" || action === "check") await this.runtimePause.assertResumed(owner);
     if (action === "pause" || action === "stop") {
       const status = action === "pause" ? "paused" : "stopped";
       const saved = await this.db.put(owner, "monitors", {
@@ -761,6 +859,13 @@ export class AgentService {
         { status: "new" },
         { status: "dismissed" },
       );
+    if (
+      idea.status === "new" ||
+      (idea.status === "accepted" &&
+        idea.taskId &&
+        !(await this.db.get(owner, "tasks", idea.taskId)))
+    )
+      await this.runtimePause.assertResumed(owner);
     if (idea.status === "new") {
       const claimed = await this.db.compareAndSwap<Idea>(
         owner,
@@ -882,6 +987,44 @@ export class AgentService {
       task.attempts === 1 ? "Started working" : "Resumed work",
       task.prompt,
     );
+    const waitingCommandId = task.state.waitingComputerCommandId;
+    if (typeof waitingCommandId === "string") {
+      let receipt: ComputerCommand | undefined;
+      try {
+        receipt = await readComputerCommand(this.computer, owner, waitingCommandId);
+      } catch {
+        // A failed poll cannot prove that the external process stopped.
+        return {
+          status: "waiting_job",
+          nextRunAt: new Date(Date.now() + 5000).toISOString(),
+          state: task.state,
+        };
+      }
+      if (!receipt || !["succeeded", "failed", "rejected_not_dispatched"].includes(receipt.status))
+        return {
+          status: "waiting_job",
+          nextRunAt: new Date(Date.now() + 5000).toISOString(),
+          state: task.state,
+        };
+      task = await context.checkpoint({
+        state: {
+          ...task.state,
+          // Keep the receipt as a recovery selector until worker admission and
+          // resource cleanup are both durably complete.
+          waitingComputerCommandId: waitingCommandId,
+          computerCleanupPendingId: waitingCommandId,
+          uncertainComputerCommand: false,
+          completedComputerJob: {
+            id: receipt.id,
+            status: receipt.status,
+            exitCode: receipt.exitCode,
+            stdout: receipt.stdout.slice(0, 12000),
+            stderr: receipt.stderr.slice(0, 4000),
+            truncated: receipt.truncated || receipt.stdout.length > 12000,
+          },
+        },
+      });
+    }
     if (task.actionId) {
       const action = await this.db.get<ActionProposal>(owner, "actions", task.actionId);
       if (!action) throw new Error("The linked review could not be found");
@@ -1202,6 +1345,8 @@ export class AgentService {
         owner,
         monitor.url,
         typeof task.state.sessionId === "string" ? task.state.sessionId : undefined,
+        task.id,
+        ctx.trackResourceLeases,
       );
     }
     const text = observation.text.replace(/\s+/g, " ").trim();

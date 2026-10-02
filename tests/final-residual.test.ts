@@ -93,6 +93,15 @@ test("browser act queued after a known pause dispatches once after fresh-executo
   const service = {
     agentSession: async () => sessionId,
     get: async () => ({ title: "Form", url: "https://example.com/" }),
+    runAutomated: async (
+      _owner: string,
+      _taskId: string | undefined,
+      _session: string | undefined,
+      _url: string | undefined,
+      _signal: AbortSignal | undefined,
+      _effect: boolean,
+      operation: (id: string) => Promise<unknown>,
+    ) => operation(sessionId),
     snapshot: async () => {
       throw new BrowserError("BROWSER_CONTROLLED", "Hand back", 409, sessionId);
     },

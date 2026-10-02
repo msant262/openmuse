@@ -186,6 +186,7 @@ export interface ActionLogEntry {
     | "succeeded"
     | "failed"
     | "outcome_unknown"
+    | "rejected_not_dispatched"
     | "denied"
     | "expired"
     | "cancelled";

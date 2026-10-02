@@ -1,5 +1,6 @@
 import {
   ArrowRight,
+  ArrowUp,
   Bell,
   CalendarDays,
   ChevronRight,
@@ -187,8 +188,10 @@ export function ChatWork() {
   );
 }
 export function AgentActivityScreen() {
-  const { data } = useAgentWorkspace();
+  const { data, mutate } = useAgentWorkspace();
   const [filter, setFilter] = useState("All");
+  const [pauseBusy, setPauseBusy] = useState(false);
+  const [pauseError, setPauseError] = useState("");
   const tasks = [...(data?.tasks || [])]
     .filter(
       (task) =>
@@ -198,6 +201,42 @@ export function AgentActivityScreen() {
   return (
     <View style={{ gap: 20 }}>
       <AgentStatus />
+      <ErrorNotice error={pauseError} />
+      {data && (
+        <View style={{ gap: 10 }}>
+          <Button
+            primary={!data.runtimePause.paused}
+            icon={data.runtimePause.paused ? Play : Pause}
+            busy={pauseBusy}
+            onPress={() => {
+              setPauseBusy(true);
+              setPauseError("");
+              void mutate("/runtime-pause", {
+                paused: !data.runtimePause.paused,
+                expectedRevision: data.runtimePause.revision,
+              })
+                .catch((error) => setPauseError(errorText(error)))
+                .finally(() => setPauseBusy(false));
+            }}
+          >
+            {data.runtimePause.paused ? "Resume automations" : "Pause automations"}
+          </Button>
+          {data.runtimePause.paused && (
+            <Card style={{ backgroundColor: colors.orange, gap: 6 }}>
+              <Text style={s.heading}>Global pause saved</Text>
+              <Text style={s.muted}>
+                Requested {stamp(data.runtimePause.changedAt)}. New automation is blocked. Existing
+                operations may still finish or have an uncertain outcome.
+              </Text>
+              <Text style={s.small}>
+                Executor confirmation: {data.runtimeStatus.executorConfirmation} ·{" "}
+                {data.runtimeStatus.activeTasks} tasks · {data.runtimeStatus.activeOperations}{" "}
+                operations active · {data.runtimeStatus.uncertainOperations} uncertain
+              </Text>
+            </Card>
+          )}
+        </View>
+      )}
       <View style={[s.row, { gap: 8 }]}>
         {["All", "In progress", "Finished"].map((item) => (
           <Button key={item} small primary={filter === item} onPress={() => setFilter(item)}>
@@ -428,6 +467,17 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 Retry task
               </Button>
             )}
+            {!["succeeded", "failed", "cancelled"].includes(task.status) &&
+              task.timing?.priority !== "high" && (
+                <Button
+                  small
+                  icon={ArrowUp}
+                  busy={busy}
+                  onPress={() => void act("priority", { priority: "high" })}
+                >
+                  Prioritize
+                </Button>
+              )}
             {activeTask(task) && (
               <Button
                 small

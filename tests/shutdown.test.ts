@@ -283,6 +283,7 @@ test("timer-owned aborted task with failed final receipt rejects HTTP shutdown",
   const db = await createStore();
   await workerTask(db);
   const compare = db.compareAndSwap.bind(db);
+  const compareTask = db.compareAndSwapTask.bind(db);
   let attempted = false,
     closed = false;
   db.compareAndSwap = async (owner, kind, id, expected, patch) => {
@@ -291,6 +292,13 @@ test("timer-owned aborted task with failed final receipt rejects HTTP shutdown",
       throw Error("final task receipt failed");
     }
     return compare(owner, kind, id, expected, patch);
+  };
+  db.compareAndSwapTask = async (owner, id, expected, patch) => {
+    if (patch.status === "queued") {
+      attempted = true;
+      throw Error("final task receipt failed");
+    }
+    return compareTask(owner, id, expected, patch);
   };
   const entered = deferred();
   const worker = new TaskWorker(
@@ -360,6 +368,7 @@ test("worker shutdown joins a heartbeat write already dispatched before task abo
   const db = await createStore();
   await workerTask(db);
   const compare = db.compareAndSwap.bind(db);
+  const compareTask = db.compareAndSwapTask.bind(db);
   const renewalEntered = deferred(),
     receipt = deferred(),
     entered = deferred();
@@ -369,6 +378,13 @@ test("worker shutdown joins a heartbeat write already dispatched before task abo
       await receipt.promise;
     }
     return compare(owner, kind, id, expected, patch);
+  };
+  db.compareAndSwapTask = async (owner, id, expected, patch) => {
+    if (Object.keys(patch).length === 1 && "leaseUntil" in patch) {
+      renewalEntered.resolve();
+      await receipt.promise;
+    }
+    return compareTask(owner, id, expected, patch);
   };
   const worker = new TaskWorker(
     db,

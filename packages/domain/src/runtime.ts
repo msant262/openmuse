@@ -218,3 +218,41 @@ export const taskMailboxSchema = z
     annotations: acceptedMessageSchema.shape.annotations,
   })
   .strict();
+export type WorkClass = "interactive" | "background";
+
+export const resourceRequestSchema = z
+  .object({
+    key: z.string().trim().min(1).max(500),
+    units: z.number().int().min(1).max(1000),
+    mode: z.enum(["shared", "exclusive"]),
+  })
+  .strict();
+export type ResourceRequest = z.infer<typeof resourceRequestSchema>;
+
+export const resourceLeaseSchema = z
+  .object({
+    id: z.string().min(1).max(200),
+    fence: z.number().int().min(0),
+    expiresAt: z.iso.datetime({ offset: true }),
+  })
+  .strict();
+export type ResourceLease = z.infer<typeof resourceLeaseSchema>;
+
+export const taskTimingSchema = z
+  .object({
+    priority: z.enum(["low", "normal", "high"]),
+    dueAt: z.iso.datetime({ offset: true }).optional(),
+    validUntil: z.iso.datetime({ offset: true }).optional(),
+    timezone: z.string().trim().min(1).max(100).optional(),
+  })
+  .strict();
+export type TaskTiming = z.infer<typeof taskTimingSchema>;
+
+export const runtimePauseStateSchema = z
+  .object({
+    paused: z.boolean(),
+    revision: z.number().int().min(0),
+    changedAt: z.iso.datetime({ offset: true }),
+  })
+  .strict();
+export type RuntimePauseState = z.infer<typeof runtimePauseStateSchema>;

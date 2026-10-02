@@ -10,6 +10,18 @@ Build the computer and gateway with the commands in `.env.example`. Choose
 `COMPUTER_COMMAND_TIMEOUT_MS` is 1,000..1,800,000. The old `docker` backend remains
 offline, 512 MB/30 seconds; it rejects long/background commands.
 
+`RESOURCE_HOST_ID` names the physical machine for shared resource locks. Every API
+worker that can use the same computer or browser profile must share this value;
+different physical machines need different values. The scheduler admits at most four
+durable background tasks across workers. One `cpu-heavy` computer job is admitted per
+host, and uncertain command receipts keep that resource held until a later receipt
+confirms completion. Resource requests currently support one unit per key.
+
+The Activity screen's global pause is stored durably and gates automated task/tool
+dispatch. It does not cancel a provider or computer operation already accepted. The
+screen reports the saved request, active and uncertain work, and that this runtime has
+no executor confirmation channel.
+
 The final VPS Compose/DEPLOY setup is supplied in milestone 7. This milestone establishes
 the following required deployment contract; running the raw RPC directly is not an
 open-network deployment:

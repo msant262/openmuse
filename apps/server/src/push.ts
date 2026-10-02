@@ -48,7 +48,14 @@ type Sender = (
 ) => Promise<"accepted" | "invalid_token" | "rejected">;
 type Delivery = {
   id: string;
-  status: "sending" | "accepted" | "invalid_token" | "rejected" | "outcome_unknown" | "suppressed";
+  status:
+    | "pending"
+    | "sending"
+    | "accepted"
+    | "invalid_token"
+    | "rejected"
+    | "outcome_unknown"
+    | "suppressed";
   deviceId: string;
   notificationId: string;
   leaseUntil?: string;
@@ -229,6 +236,10 @@ export class PushService {
     if (delivery.status === "sending") return;
     const log = new ActionLog(this.db);
     if (delivery.status !== "suppressed") await log.append(owner, this.audit(delivery), "started");
+    if (delivery.status === "pending") {
+      await log.finish(owner, this.audit(delivery), "rejected_not_dispatched");
+      return;
+    }
     await log.finish(
       owner,
       this.audit(delivery),
@@ -246,6 +257,7 @@ export class PushService {
   constructor(
     private readonly db: Store,
     private readonly senders: Partial<Record<Device["platform"], Sender>>,
+    private readonly dispatchAllowed: (owner: string) => Promise<boolean> = async () => true,
   ) {}
   async register(owner: string, raw: unknown) {
     const input = pushDeviceInput.parse(raw);
@@ -350,19 +362,26 @@ export class PushService {
       return;
     }
     const statuses: string[] = [];
-    const ids: string[] = [...(intent.deliveryIds ?? [])];
+    const deliveryId = (device: Device) =>
+      createHash("sha256").update(`${notice.id}:${device.id}:${device.token}`).digest("hex");
+    const ids = [
+      ...new Set([
+        ...(intent.deliveryIds ?? []),
+        ...intent.targets
+          .filter((device) => Boolean(this.senders[device.platform]))
+          .map(deliveryId),
+      ]),
+    ];
     for (const device of intent.targets) {
       const sender = this.senders[device.platform];
       if (!sender) {
         statuses.push("not_configured");
         continue;
       }
-      const id = createHash("sha256")
-        .update(`${notice.id}:${device.id}:${device.token}`)
-        .digest("hex");
-      ids.push(id);
+      const id = deliveryId(device);
       let delivery = await this.db.get<Delivery>(owner, "push-deliveries", id);
-      if (!delivery) {
+      if (!delivery || delivery.status === "pending") {
+        if (!(await this.dispatchAllowed(owner))) break;
         const claimed = await this.db.claimPushDelivery(
           owner,
           {
@@ -398,11 +417,28 @@ export class PushService {
                 latest.registrationId === device.registrationId
               ) {
                 this.abort.signal.throwIfAborted();
-                status = await sender(
-                  device,
-                  { id: notice.id, title: notice.title.slice(0, 160), taskId: notice.taskId },
-                  AbortSignal.any([this.abort.signal, AbortSignal.timeout(15000)]),
-                );
+                if (await this.dispatchAllowed(owner))
+                  status = await sender(
+                    device,
+                    { id: notice.id, title: notice.title.slice(0, 160), taskId: notice.taskId },
+                    AbortSignal.any([this.abort.signal, AbortSignal.timeout(15000)]),
+                  );
+                else {
+                  const pending = await this.db.compareAndSwap<Delivery>(
+                    owner,
+                    "push-deliveries",
+                    id,
+                    { status: "sending", leaseUntil: claimed.leaseUntil },
+                    { status: "pending", leaseUntil: null },
+                  );
+                  await new ActionLog(this.db).finish(
+                    owner,
+                    this.audit(claimed as Delivery),
+                    "rejected_not_dispatched",
+                  );
+                  delivery = pending ?? (await this.db.get<Delivery>(owner, "push-deliveries", id));
+                  continue;
+                }
               } else status = "suppressed";
             } else status = "suppressed";
           } catch {
@@ -422,6 +458,24 @@ export class PushService {
               deviceId: device.id,
               notificationId: notice.id,
             });
+          } else if (delivery.status === "pending") {
+            // A pending receipt can outlive the registration it was created for.
+            // Settle only after comparing the current registration; the CAS keeps
+            // a concurrent sender claim from being overwritten.
+            const current = await this.db.get<Device>(owner, "push-devices", device.id);
+            if (
+              current?.token !== device.token ||
+              current.platform !== device.platform ||
+              current.registrationId !== device.registrationId
+            )
+              delivery =
+                (await this.db.compareAndSwap<Delivery>(
+                  owner,
+                  "push-deliveries",
+                  id,
+                  { status: "pending" },
+                  { status: "suppressed", leaseUntil: null },
+                )) ?? (await this.db.get<Delivery>(owner, "push-deliveries", id));
           }
         }
       }

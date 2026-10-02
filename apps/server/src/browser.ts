@@ -14,6 +14,8 @@ import { browserConsole } from "./browser-console.ts";
 import { BrowserError, browserActionSchema, snapshotSchema } from "./browser-contract.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
+import { ResourceBusyError, ResourceLeases } from "./engine/resource-leases.ts";
+import { RuntimePause } from "./engine/runtime-pause.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 
@@ -45,6 +47,8 @@ export class BrowserService {
   private readonly log: ActionLog;
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly assets: BrowserAssets;
+  private readonly resourceLeases: ResourceLeases;
+  private readonly runtimePause: RuntimePause;
   private health?: { checkedAt: number; reachable: Promise<boolean> };
   constructor(
     private readonly db: Store,
@@ -55,56 +59,86 @@ export class BrowserService {
   ) {
     this.assets = new BrowserAssets(db, config.dataDir);
     this.log = new ActionLog(db);
+    this.resourceLeases = new ResourceLeases(db);
+    this.runtimePause = new RuntimePause(db);
   }
   configureActions(actions: ActionService) {
     this.actions = actions;
     actions.registerExternal("browser.act", async (owner, raw, proposal) => {
       const { sessionId, binding } = raw as { sessionId: string; binding: BrowserPaymentBinding };
-      return this.serial(sessionId, async () => {
-        await this.get(owner, sessionId);
-        if (proposal.taskId) {
-          const task = await this.db.get<{ status: string }>(owner, "tasks", proposal.taskId);
-          if (!task || !["running", "waiting_approval"].includes(task.status))
-            throw new AppError("Task was cancelled or paused before browser dispatch", 409);
-        }
-        if (!this.config.workerToken) throw new AppError("Browser worker is unavailable", 503);
-        const authorization = signBrowserAuthorization(this.config.workerToken, {
-          id: proposal.id,
-          sessionId,
-          binding,
-          expiresAt: Date.parse(proposal.expiresAt),
-        });
-        try {
-          const receipt = z
-            .object({ id: z.string(), status: z.literal("succeeded") })
-            .parse(
-              await (
-                await this.request(`/sessions/${sessionId}/reviewed-act`, { authorization })
-              ).json(),
+      await this.runtimePause.assertResumed(owner);
+      const leaseOwner = `browser-review:${proposal.id}`;
+      const requests = [
+        {
+          key: `browser-profile:${this.config.resourceHostId ?? "openmuse-server"}:${sessionId}`,
+          units: 1,
+          mode: "exclusive" as const,
+        },
+      ];
+      const leases = await this.resourceLeases.acquire(owner, leaseOwner, requests);
+      if (!leases) throw new ResourceBusyError(requests);
+      let retainForUncertainOutcome = false;
+      try {
+        return await this.serial(sessionId, async () => {
+          await this.get(owner, sessionId);
+          if (proposal.taskId) {
+            const task = await this.db.get<{ status: string }>(owner, "tasks", proposal.taskId);
+            if (!task || !["running", "waiting_approval"].includes(task.status))
+              throw new AppError("Task was cancelled or paused before browser dispatch", 409);
+          }
+          if (!this.config.workerToken) throw new AppError("Browser worker is unavailable", 503);
+          const authorization = signBrowserAuthorization(this.config.workerToken, {
+            id: proposal.id,
+            sessionId,
+            binding,
+            expiresAt: Date.parse(proposal.expiresAt),
+          });
+          // A local rejection is known not dispatched. Errors after this barrier
+          // require an explicit worker rejection to establish that fact.
+          await this.runtimePause.assertResumed(owner);
+          try {
+            const receipt = z
+              .object({ id: z.string(), status: z.literal("succeeded") })
+              .parse(
+                await (
+                  await this.request(`/sessions/${sessionId}/reviewed-act`, { authorization })
+                ).json(),
+              );
+            if (receipt.id !== proposal.id) throw new Error("Mismatched browser receipt");
+            return `Browser action completed · ${receipt.id}`;
+          } catch (error) {
+            if (
+              error instanceof BrowserError &&
+              [
+                "STALE_SNAPSHOT",
+                "BROWSER_CONTROLLED",
+                "SESSION_CLOSED",
+                "SESSION_NOT_FOUND",
+                "INVALID_APPROVAL",
+                "APPROVAL_FAILED",
+                "INVALID_ACTION",
+              ].includes(error.code)
+            )
+              throw error;
+            throw new BrowserError(
+              "OUTCOME_UNKNOWN",
+              "The browser could not confirm the reviewed action. Check the site before preparing another action.",
+              409,
             );
-          if (receipt.id !== proposal.id) throw new Error("Mismatched browser receipt");
-          return `Browser action completed · ${receipt.id}`;
-        } catch (error) {
-          if (
-            error instanceof BrowserError &&
-            [
-              "STALE_SNAPSHOT",
-              "BROWSER_CONTROLLED",
-              "SESSION_CLOSED",
-              "SESSION_NOT_FOUND",
-              "INVALID_APPROVAL",
-              "APPROVAL_FAILED",
-              "INVALID_ACTION",
-            ].includes(error.code)
-          )
-            throw error;
-          throw new BrowserError(
-            "OUTCOME_UNKNOWN",
-            "The browser could not confirm the reviewed action. Check the site before preparing another action.",
-            409,
-          );
+          }
+        });
+      } catch (error) {
+        if (error instanceof BrowserError && error.code === "OUTCOME_UNKNOWN") {
+          // Keep the profile unavailable until the person checks the uncertain
+          // remote effect; a lost response cannot prove that the page is idle.
+          retainForUncertainOutcome = true;
+          await this.resourceLeases.holdTask(leaseOwner);
         }
-      });
+        throw error;
+      } finally {
+        if (!retainForUncertainOutcome)
+          await Promise.all(leases.map((lease) => this.resourceLeases.release(lease)));
+      }
     });
   }
   private ownedRequest(owner: string, path: string, body?: unknown, signal?: AbortSignal) {
@@ -278,12 +312,111 @@ export class BrowserService {
   read(owner: string, id: string) {
     return this.serial(id, () => this.readOwned(owner, id));
   }
-  async observe(owner: string, url: string, existingId?: string) {
-    const id = existingId ?? (await this.agentSession(owner, undefined, url));
-    return this.serial(id, async () => {
-      if (existingId) await this.openOwned(owner, id, url);
-      return { sessionId: id, ...(await this.readOwned(owner, id)) };
-    });
+  async runAutomated<T>(
+    owner: string,
+    taskId: string | undefined,
+    sessionId: string | undefined,
+    url: string | undefined,
+    signal: AbortSignal | undefined,
+    effect: boolean,
+    operation: (sessionId: string) => Promise<T>,
+    guard?: () => Promise<void>,
+    trackResources?: (
+      leases: import("../../../packages/domain/src/runtime.ts").ResourceLease[],
+    ) => void,
+  ): Promise<T> {
+    const pause = await this.runtimePause.get(owner);
+    if (effect) await this.runtimePause.assertResumed(owner);
+    const id = sessionId ?? (await this.defaultProfile(owner)).sessionId;
+    if (pause.paused && !effect) {
+      const saved = await this.db.get<BrowserSession>(owner, "browsers", id);
+      if (saved?.status !== "active") await this.runtimePause.assertResumed(owner);
+    }
+    if (sessionId) await this.get(owner, id);
+    else
+      await this.db.insertIfAbsent(owner, "browsers", {
+        id,
+        url: url ?? "https://example.com/",
+        title: "Personal browser",
+        status: "idle",
+        control: "agent",
+        updatedAt: new Date().toISOString(),
+      });
+    const leaseTaskId = taskId ?? `browser-interaction:${randomUUID()}`;
+    const requests = [
+      {
+        key: `browser-profile:${this.config.resourceHostId ?? "openmuse-server"}:${id}`,
+        units: 1,
+        mode: "exclusive" as const,
+      },
+    ];
+    let leases = await this.resourceLeases.acquire(owner, leaseTaskId, requests);
+    // Chat tools are outside the durable task scheduler, but concurrent turns for
+    // one profile still need FIFO behavior. Task work reports contention to its
+    // scheduler; ephemeral chat calls wait while remaining cancellable.
+    while (!leases && !taskId) {
+      signal?.throwIfAborted();
+      await guard?.();
+      if (effect) await this.runtimePause.assertResumed(owner);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      leases = await this.resourceLeases.acquire(owner, leaseTaskId, requests);
+    }
+    if (!leases) throw new ResourceBusyError(requests);
+    trackResources?.(leases);
+    const renewals = new Set<Promise<unknown>>();
+    let leaseLost = false;
+    const heartbeat =
+      taskId === undefined
+        ? setInterval(() => {
+            const renewal = Promise.all(
+              leases?.map((lease) => this.resourceLeases.renew(lease)) ?? [],
+            ).then((renewed) => {
+              if (renewed.some((lease) => !lease)) leaseLost = true;
+            });
+            renewals.add(renewal);
+            void renewal.finally(() => renewals.delete(renewal));
+          }, 20_000)
+        : undefined;
+    try {
+      await guard?.();
+      if (effect) await this.runtimePause.assertResumed(owner);
+      if (leaseLost) throw new ResourceBusyError(requests);
+      const activeId = await this.agentSession(owner, id, url, signal);
+      await guard?.();
+      if (effect) await this.runtimePause.assertResumed(owner);
+      if (leaseLost) throw new ResourceBusyError(requests);
+      return await operation(activeId);
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+      await Promise.allSettled([...renewals]);
+      if (!taskId) await Promise.all(leases.map((lease) => this.resourceLeases.release(lease)));
+    }
+  }
+  async observe(
+    owner: string,
+    url: string,
+    existingId?: string,
+    taskId?: string,
+    trackResources?: (
+      leases: import("../../../packages/domain/src/runtime.ts").ResourceLease[],
+    ) => void,
+  ) {
+    return this.runAutomated(
+      owner,
+      taskId,
+      existingId,
+      url,
+      undefined,
+      true,
+      async (id) => {
+        return this.serial(id, async () => ({
+          sessionId: id,
+          ...(await this.readOwned(owner, id)),
+        }));
+      },
+      undefined,
+      trackResources,
+    );
   }
   async observeForThread(owner: string, threadId: string, url: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
@@ -301,14 +434,12 @@ export class BrowserService {
       updatedAt: new Date().toISOString(),
     });
     await this.db.put(owner, "chat-browsers", { id: threadId, sessionId: id });
-    return this.serial(id, async () => {
+    return this.runAutomated(owner, undefined, id, url, signal, true, async (activeId) => {
       signal?.throwIfAborted();
-      await this.openOwned(owner, id, url, signal);
-      signal?.throwIfAborted();
-      const page = await this.readOwned(owner, id, signal);
+      const page = await this.serial(activeId, () => this.readOwned(owner, activeId, signal));
       signal?.throwIfAborted();
       return {
-        sessionId: id,
+        sessionId: activeId,
         ...page,
         text: page.text.slice(0, 30_000),
         truncated: page.truncated || page.text.length > 30_000,

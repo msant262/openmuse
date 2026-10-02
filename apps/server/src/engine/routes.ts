@@ -79,6 +79,20 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
       .parse(await c.req.json());
     return c.json(await service.control(c.get("owner"), c.req.param("id"), action));
   });
+  app.post("/tasks/:id/priority", async (c) => {
+    const { priority } = z
+      .object({ priority: z.enum(["low", "normal", "high"]) })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(await service.updateTaskPriority(c.get("owner"), c.req.param("id"), priority));
+  });
+  app.post("/runtime-pause", async (c) => {
+    const body = z
+      .object({ paused: z.boolean(), expectedRevision: z.number().int().min(0) })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(await service.setRuntimePause(c.get("owner"), body));
+  });
   app.post("/tasks/:id/input", async (c) => {
     const body = z
       .object({

@@ -21,7 +21,9 @@ import { RpcComputerService } from "./computer-rpc.ts";
 import type { Config } from "./config.ts";
 import { ConversationInbox } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
+import { ResourceLeases } from "./engine/resource-leases.ts";
 import { agentRoutes } from "./engine/routes.ts";
+import { RuntimePause, RuntimePausedError } from "./engine/runtime-pause.ts";
 import { AgentService } from "./engine/service.ts";
 import { AppError } from "./errors.ts";
 import { Files } from "./files.ts";
@@ -38,6 +40,7 @@ export async function createApp(
     files = new Files(db, config, auth),
     google = new GoogleAuth(db, config),
     workspace = new WorkspaceService(db, config, files, google);
+  const runtimePause = new RuntimePause(db);
   const actions = new ActionService(db, {
     policy: approvalPolicy(config),
     execute: (owner, input, connectionId, targetVersion) =>
@@ -45,6 +48,10 @@ export async function createApp(
     prepare: (owner, input, connectionId) => workspace.prepare(owner, input, connectionId),
     connected: (owner) => workspace.connected(owner),
     connection: (owner) => workspace.connection(owner),
+    guardEffects: async (owner) => {
+      const state = await runtimePause.get(owner);
+      if (state.paused) throw new RuntimePausedError(state);
+    },
   });
   const browser = new BrowserService(db, config, auth, files);
   browser.configureActions(actions);
@@ -54,6 +61,9 @@ export async function createApp(
       : new ComputerService(db, config, options.docker),
     new ActionLog(db),
     config.computerBackend ?? "docker",
+    new ResourceLeases(db),
+    config.resourceHostId ?? "openmuse-server",
+    runtimePause,
   );
   const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
   const inbox = new ConversationInbox(db, (owner, id) => files.get(owner, id));

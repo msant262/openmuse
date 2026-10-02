@@ -66,6 +66,7 @@ export interface Config {
   computerEnabled?: boolean;
   computerImage?: string;
   computerDeploymentId?: string;
+  resourceHostId?: string;
   computerBackend?: "docker" | "rpc";
   computerProfile?: "offline" | "open";
   computerUrl?: string;
@@ -191,6 +192,7 @@ export function readConfig(): Config {
     computerEnabled: process.env.COMPUTER_ENABLED === "true",
     computerImage: process.env.COMPUTER_IMAGE ?? "openmuse-computer:local",
     computerDeploymentId: process.env.COMPUTER_DEPLOYMENT_ID,
+    resourceHostId: process.env.RESOURCE_HOST_ID?.trim() || "openmuse-server",
     computerBackend: (process.env.COMPUTER_BACKEND ?? "docker") as Config["computerBackend"],
     computerProfile: (process.env.COMPUTER_PROFILE ??
       (process.env.COMPUTER_BACKEND === "rpc" ? "open" : "offline")) as Config["computerProfile"],

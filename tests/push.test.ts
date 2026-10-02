@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { JWT } from "google-auth-library";
 import { createStore } from "../apps/server/src/db.ts";
 import { nativePushAdapters, PushService } from "../apps/server/src/push.ts";
+import type { AgentNotification } from "../packages/domain/src/agent.ts";
 
 test("native notification stays durable with explicit missing credentials and private device tokens", async () => {
   const db = await createStore();
@@ -66,6 +67,64 @@ test("native send claims once, marks uncertain dispatch without replay, and acce
     assert.equal(sends, 1);
     assert.equal((await db.get("wife", "notifications", "n"))?.nativeDelivery, "outcome_unknown");
   } finally {
+    await db.close();
+  }
+});
+
+test("global pause leaves a claimed but not dispatched notification pending for explicit resume", async () => {
+  const db = await createStore();
+  let dispatchChecks = 0;
+  let paused = true;
+  let sends = 0;
+  const push = new PushService(
+    db,
+    {
+      ios: async () => {
+        sends++;
+        return "accepted";
+      },
+    },
+    async () => {
+      dispatchChecks++;
+      return !paused || dispatchChecks === 1;
+    },
+  );
+  const notice = {
+    id: "paused-notification",
+    title: "Task result",
+    body: "Private result",
+    createdAt: new Date().toISOString(),
+    read: false,
+  };
+  try {
+    await push.register("owner", {
+      installationId: "phone",
+      platform: "ios",
+      token: "a".repeat(64),
+    });
+    await push.notify("owner", notice);
+    assert.equal(sends, 0);
+    assert.equal(
+      (await db.get<AgentNotification>("owner", "notifications", notice.id))?.nativeDelivery,
+      "pending",
+    );
+    const deliveries = await db.list<{ status: string }>("owner", "push-deliveries");
+    assert.equal(deliveries[0]?.status, "pending", "the durable outbox claim remains retryable");
+    assert.ok(
+      (await db.actionLog("owner")).entries.some(
+        (entry) => entry.result === "rejected_not_dispatched",
+      ),
+    );
+
+    paused = false;
+    await push.recover();
+    assert.equal(sends, 1);
+    assert.equal(
+      (await db.get<AgentNotification>("owner", "notifications", notice.id))?.nativeDelivery,
+      "accepted",
+    );
+  } finally {
+    await push.close();
     await db.close();
   }
 });

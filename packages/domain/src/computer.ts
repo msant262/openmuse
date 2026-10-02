@@ -2,7 +2,13 @@ export interface ComputerCommand {
   id: string;
   command: string;
   cwd: string;
-  status: "running" | "succeeded" | "failed" | "timed_out" | "interrupted";
+  status:
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "timed_out"
+    | "interrupted"
+    | "rejected_not_dispatched";
   exitCode?: number;
   stdout: string;
   stderr: string;

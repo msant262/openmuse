@@ -19,6 +19,10 @@ MAX_OUTPUT = 128 * 1024
 MAX_TIMEOUT = 1800000
 
 
+class BusyError(ValueError):
+    """An explicit rejection before any job or receipt is created."""
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -93,7 +97,7 @@ class Jobs:
             if not self.enabled or self.quarantined:
                 raise ValueError("Start the computer before running commands")
             if len(self.active) >= self.max_jobs or (kind != "command" and any(r.get("kind") != "command" for r in self.active.values())):
-                raise ValueError("Computer is busy; wait for a running job")
+                raise BusyError("Computer is busy; wait for a running job")
             receipt = {"id": job_id, "command": command, "cwd": cwd, "kind": kind, "status": "running", "stdout": "", "stderr": "",
                        "truncated": False, "startedAt": now(), "timeoutMs": timeout, "background": bool(request.get("background")), "binding": binding}
             self.receipts[job_id] = receipt
@@ -314,6 +318,8 @@ def handler(jobs):
                 self.respond(200, result)
             except KeyError:
                 self.respond(404, {"error": "Computer receipt or route not found"})
+            except BusyError:
+                self.respond(409, {"code": "busy", "notDispatched": True, "error": "Computer is busy; wait for a running job"})
             except (ValueError, OSError, TypeError):
                 self.respond(422, {"error": "Computer request failed. Check path, size, active jobs and operation ID."})
             except Exception:

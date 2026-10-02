@@ -1,98 +1,375 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
+import type { ResourceLease } from "../../../packages/domain/src/runtime.ts";
 import { type ActionLog, type LogAction, unknownOutcome } from "./action-log.ts";
+import { workspacePath } from "./computer.ts";
 import type { ComputerBackend } from "./computer-contract.ts";
+import { ResourceBusyError, ResourceLeases } from "./engine/resource-leases.ts";
+import type { RuntimePause } from "./engine/runtime-pause.ts";
+import { AppError } from "./errors.ts";
 import { backgroundFailure } from "./log.ts";
+
+const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+
+// The selected deployment has one API/embedded worker. A maintenance tick may
+// observe a prepared row while its own request is still awaiting local I/O.
+// Track the whole attempt, including acquisition before handle publication.
+const activePreflights = new Set<string>();
+async function withActivePreflight<T>(operation: (attemptId: string) => Promise<T>) {
+  const attemptId = randomUUID();
+  activePreflights.add(attemptId);
+  try {
+    return await operation(attemptId);
+  } finally {
+    activePreflights.delete(attemptId);
+  }
+}
+
+type ComputerAudit = LogAction & {
+  id: string;
+  operationId: string;
+  phase: "prepared" | "dispatching" | "abandoned" | "complete";
+  attemptId?: string;
+  leases?: ResourceLease[];
+  complete?: boolean;
+};
+const auditClaim = (audit: ComputerAudit) => ({
+  phase: audit.phase,
+  ...(audit.attemptId ? { attemptId: audit.attemptId } : {}),
+});
+
+/** Fence out a live preflight before freeing its exact handles. Retain the
+ * abandoned selector until cleanup succeeds, including across restart. */
+async function abandonPreflight(
+  log: ActionLog,
+  resources: ResourceLeases | undefined,
+  owner: string,
+  audit: ComputerAudit,
+  ownedRollback = false,
+) {
+  if (!ownedRollback && audit.attemptId && activePreflights.has(audit.attemptId)) return;
+  const claimed =
+    audit.phase === "abandoned"
+      ? audit
+      : await log.db.compareAndSwap<ComputerAudit>(
+          owner,
+          "computer-audit",
+          audit.id,
+          auditClaim(audit),
+          { phase: "abandoned" },
+        );
+  if (!claimed) return;
+  const handles = claimed.leases ?? (await resources?.listForTask(audit.id)) ?? [];
+  const cleanup = await Promise.allSettled(handles.map((handle) => resources?.release(handle)));
+  if (cleanup.some((result) => result.status === "rejected")) return;
+  await log.finish(owner, claimed, "rejected_not_dispatched");
+  await log.db.compareAndSwap(owner, "computer-audit", audit.id, auditClaim(claimed), {
+    complete: true,
+    phase: "complete",
+  });
+}
 
 /** Covers app and model calls at the shared backend boundary, without command/output payloads. */
 export function auditedComputer(
   backend: ComputerBackend,
   log: ActionLog,
   provider: "rpc" | "docker" = "docker",
+  resources?: ResourceLeases,
+  hostId = "openmuse-server",
+  runtimePause?: RuntimePause,
 ): ComputerBackend {
   const readCommand = backend.command?.bind(backend);
   const cancelCommand = backend.cancel?.bind(backend);
   const mediaCommand = backend.media?.bind(backend);
-  const run = <T>(owner: string, tool: string, operation: () => Promise<T>) =>
-    log.run(
-      owner,
-      { tool: `computer.${tool}`, target: "Private workspace", summary: `Computer ${tool}` },
-      operation,
-    );
+  const canonicalFilePath = (path: string) => {
+    try {
+      return workspacePath(path);
+    } catch {
+      // Preserve the backend's audited validation error for invalid paths.
+      return path;
+    }
+  };
+  const fileResource = (owner: string, path: string, mode: "shared" | "exclusive") => ({
+    key: `file:${hostId}:${hash(owner).slice(0, 20)}:${hash(canonicalFilePath(path)).slice(0, 32)}`,
+    units: 1,
+    mode,
+  });
+  const run = async <T>(
+    owner: string,
+    tool: string,
+    operation: () => Promise<T>,
+    request?: ReturnType<typeof fileResource>,
+  ) => {
+    const lockId = `computer-operation:${randomUUID()}`;
+    const lease = request && resources ? await resources.acquire(owner, lockId, [request]) : [];
+    if (request && resources && !lease) throw new ResourceBusyError([request]);
+    try {
+      return await log.run(
+        owner,
+        { tool: `computer.${tool}`, target: "Private workspace", summary: `Computer ${tool}` },
+        async () => {
+          if (!["read", "list", "export", "stop", "cancel"].includes(tool))
+            await runtimePause?.assertResumed(owner);
+          return operation();
+        },
+      );
+    } finally {
+      if (request && resources) await resources.releaseTask(lockId);
+    }
+  };
   const finish = async (owner: string, receipt: ComputerCommand) => {
     if (receipt.status === "running") return;
-    const action = await log.db.get<LogAction>(owner, "computer-audit", receipt.id);
-    if (!action) return;
-    await log.finish(
-      owner,
-      action,
-      receipt.status === "succeeded"
-        ? "succeeded"
-        : receipt.status === "interrupted" || receipt.status === "timed_out"
-          ? "outcome_unknown"
-          : "failed",
-    );
+    const action = await log.db.get<ComputerAudit>(owner, "computer-audit", receipt.id);
+    if (action)
+      await log.finish(
+        owner,
+        action,
+        receipt.status === "succeeded"
+          ? "succeeded"
+          : receipt.status === "rejected_not_dispatched"
+            ? "rejected_not_dispatched"
+            : receipt.status === "interrupted" || receipt.status === "timed_out"
+              ? "outcome_unknown"
+              : "failed",
+      );
+    // Interrupted/timed-out receipts are explicitly uncertain. Keep the heavy
+    // lease until a later backend receipt confirms the process is terminal.
+    if (
+      receipt.status === "succeeded" ||
+      receipt.status === "failed" ||
+      receipt.status === "rejected_not_dispatched"
+    ) {
+      if (receipt.status === "rejected_not_dispatched") {
+        const current = await log.db.get<ComputerCommand>(owner, "computer-commands", receipt.id);
+        if (current?.status !== receipt.status || action?.phase === "prepared") return;
+      }
+      const handles = action?.leases ?? (await resources?.listForTask(receipt.id)) ?? [];
+      await Promise.all(handles.map((lease) => resources?.release(lease)));
+      if (action && receipt.status === "rejected_not_dispatched")
+        await log.db.compareAndSwap(owner, "computer-audit", receipt.id, auditClaim(action), {
+          phase: "complete",
+          complete: true,
+        });
+    }
   };
   const command = async (
     owner: string,
     tool: string,
-    options: { idempotencyKey?: string; signal?: AbortSignal },
+    options: {
+      idempotencyKey?: string;
+      signal?: AbortSignal;
+      dispatchGuard?: () => Promise<void>;
+      onDispatch?: (receiptId: string) => Promise<void>;
+    },
     operation: (bound: typeof options) => Promise<ComputerCommand>,
-  ) => {
-    const bound = { ...options, idempotencyKey: options.idempotencyKey ?? randomUUID() };
-    const receiptId = createHash("sha256")
-      .update(
-        provider === "rpc"
-          ? `${owner}:${bound.idempotencyKey}`
-          : `computer-command:${bound.idempotencyKey}`,
-      )
-      .digest("hex");
-    const action = {
-      tool: `computer.${tool}`,
-      target: "Private workspace",
-      summary: `Computer ${tool}`,
-      operationId: receiptId,
-    };
-    await log.append(owner, action, "started");
-    await log.db.insertIfAbsent(owner, "computer-audit", { ...action, id: receiptId });
-    let receipt: ComputerCommand;
-    try {
-      receipt = await operation(bound);
-    } catch (error) {
-      const saved = await log.db.get<{ status: string }>(owner, "computer-commands", receiptId);
-      await log.finish(
-        owner,
-        action,
-        unknownOutcome(error) || saved?.status === "interrupted" || saved?.status === "timed_out"
-          ? "outcome_unknown"
-          : "failed",
-      );
-      throw error;
-    }
-    await log.db.insertIfAbsent(owner, "computer-audit", { ...action, id: receipt.id });
-    await finish(owner, receipt);
-    return receipt;
-  };
+  ) =>
+    withActivePreflight(async (attemptId) => {
+      let dispatchStarted = false;
+      const bound = { ...options, idempotencyKey: options.idempotencyKey ?? randomUUID() };
+      const receiptId = createHash("sha256")
+        .update(
+          provider === "rpc"
+            ? `${owner}:${bound.idempotencyKey}`
+            : `computer-command:${bound.idempotencyKey}`,
+        )
+        .digest("hex");
+      const requests = [
+        { key: `cpu-heavy:${hostId}`, units: 1, mode: "exclusive" as const },
+        { key: `system-admin:${hostId}`, units: 1, mode: "shared" as const },
+      ];
+      const priorReceipt = await log.db.get<ComputerCommand>(owner, "computer-commands", receiptId);
+      if (priorReceipt && priorReceipt.status !== "rejected_not_dispatched") {
+        // A replay borrows physical ownership; it cannot prepare or clean up the
+        // running command's leases. Let the adapter validate the argument binding.
+        const receipt = await operation({
+          ...bound,
+          onDispatch: async () => {
+            throw new AppError("Existing command cannot acquire new dispatch ownership", 409);
+          },
+        });
+        await bound.onDispatch?.(receipt.id);
+        await finish(owner, receipt);
+        return receipt;
+      }
+      const action = {
+        tool: `computer.${tool}`,
+        target: "Private workspace",
+        summary: `Computer ${tool}`,
+        operationId: receiptId,
+      };
+      const audit: ComputerAudit = {
+        ...action,
+        id: receiptId,
+        attemptId,
+        phase: "prepared",
+        complete: false,
+        leases: [],
+      };
+      const previousAudit = await log.db.get<ComputerAudit>(owner, "computer-audit", receiptId);
+      const prepared = previousAudit
+        ? previousAudit.phase === "complete"
+          ? await log.db.compareAndSwap(
+              owner,
+              "computer-audit",
+              receiptId,
+              auditClaim(previousAudit),
+              audit,
+            )
+          : null
+        : await log.db.insertIfAbsent(owner, "computer-audit", audit);
+      if (!prepared) throw new AppError("Computer preflight ownership is already claimed", 409);
+      let leases: ResourceLease[] = [];
+      try {
+        const acquired = resources
+          ? await resources.acquire(owner, receiptId, requests, attemptId)
+          : [];
+        if (!acquired) throw new ResourceBusyError(requests);
+        leases = acquired;
+        const saved = await log.db.compareAndSwap<ComputerAudit>(
+          owner,
+          "computer-audit",
+          receiptId,
+          auditClaim(audit),
+          { leases },
+        );
+        if (!saved) throw new AppError("Computer preflight ownership was withdrawn", 409);
+        audit.leases = leases;
+        for (const lease of leases) {
+          if (!(await resources?.hold(lease)))
+            throw new AppError("Computer preflight resource ownership was lost", 409);
+        }
+        await log.append(owner, action, "started");
+      } catch (error) {
+        await abandonPreflight(log, resources, owner, audit, true);
+        // These handles were acquired only after winning the unique preflight.
+        // Releasing by ID/fence cannot delete a successor's claim.
+        if (audit.leases !== leases)
+          await Promise.allSettled(leases.map((lease) => resources?.release(lease)));
+        throw error;
+      }
+      let receipt: ComputerCommand;
+      const backendOptions = {
+        idempotencyKey: bound.idempotencyKey,
+        signal: bound.signal,
+        onDispatch: async (actualId: string) => {
+          if (actualId !== receiptId)
+            throw new Error("Computer backend receipt ID did not match the audited operation");
+          if (dispatchStarted) return;
+          const claimed = await log.db.compareAndSwap(
+            owner,
+            "computer-audit",
+            receiptId,
+            auditClaim(audit),
+            { phase: "dispatching" },
+          );
+          if (!claimed) throw new AppError("Computer dispatch ownership was withdrawn", 409);
+          await bound.onDispatch?.(actualId);
+          dispatchStarted = true;
+        },
+        dispatchGuard: async () => {
+          await runtimePause?.assertResumed(owner);
+          await bound.dispatchGuard?.();
+        },
+      };
+      try {
+        await backendOptions.dispatchGuard();
+        receipt = await operation(backendOptions);
+        // Test and third-party backends may not expose a pre-dispatch hook. If
+        // they return a receipt, conservatively persist occupancy before using it.
+        await backendOptions.onDispatch(receipt.id);
+      } catch (error) {
+        const saved = await log.db.get<{ status: string }>(owner, "computer-commands", receiptId);
+        if (
+          !dispatchStarted ||
+          saved?.status === "failed" ||
+          saved?.status === "rejected_not_dispatched"
+        ) {
+          await Promise.all(leases.map((lease) => resources?.release(lease)));
+          await log.finish(owner, action, "rejected_not_dispatched");
+          throw error;
+        }
+        const uncertain = saved
+          ? !["succeeded", "failed", "rejected_not_dispatched"].includes(saved.status)
+          : unknownOutcome(error);
+        if (!uncertain) await Promise.all(leases.map((lease) => resources?.release(lease)));
+        await log.finish(owner, action, uncertain ? "outcome_unknown" : "failed");
+        if (uncertain) {
+          const pending =
+            error instanceof Error ? error : new Error("Computer command outcome is unknown");
+          Object.assign(pending, { computerCommandId: receiptId });
+          throw pending;
+        }
+        throw error;
+      }
+      await finish(owner, receipt);
+      return receipt;
+    });
   return {
     snapshot: async (owner) => {
       const value = await backend.snapshot(owner);
       for (const receipt of value.commands) await finish(owner, receipt);
       return value;
     },
-    start: (owner) => run(owner, "start", () => backend.start(owner)),
-    stop: (owner) => run(owner, "stop", () => backend.stop(owner)),
+    start: (owner) =>
+      run(owner, "start", () => backend.start(owner), {
+        key: `system-admin:${hostId}`,
+        units: 1,
+        mode: "exclusive",
+      }),
+    stop: (owner) =>
+      run(owner, "stop", () => backend.stop(owner), {
+        key: `system-admin:${hostId}`,
+        units: 1,
+        mode: "exclusive",
+      }),
     execute: (owner, raw, options = {}) =>
       command(owner, "command", options, (bound) => backend.execute(owner, raw, bound)),
-    list: (owner, path) => run(owner, "list", () => backend.list(owner, path)),
-    read: (owner, path) => run(owner, "read", () => backend.read(owner, path)),
-    write: (owner, path, text) => run(owner, "write", () => backend.write(owner, path, text)),
-    mkdir: (owner, path) => run(owner, "mkdir", () => backend.mkdir(owner, path)),
+    list: (owner, path) =>
+      run(
+        owner,
+        "list",
+        () => backend.list(owner, path),
+        fileResource(owner, path ?? "/workspace", "shared"),
+      ),
+    read: (owner, path) =>
+      run(owner, "read", () => backend.read(owner, path), fileResource(owner, path, "shared")),
+    write: (owner, path, text) =>
+      run(
+        owner,
+        "write",
+        () => backend.write(owner, path, text),
+        fileResource(owner, path, "exclusive"),
+      ),
+    mkdir: (owner, path) =>
+      run(owner, "mkdir", () => backend.mkdir(owner, path), fileResource(owner, path, "exclusive")),
     writePdf: (owner, path, bytes) =>
-      run(owner, "import", () => backend.writePdf(owner, path, bytes)),
-    pdfBytes: (owner, path) => run(owner, "export", () => backend.pdfBytes(owner, path)),
+      run(
+        owner,
+        "import",
+        () => backend.writePdf(owner, path, bytes),
+        fileResource(owner, path, "exclusive"),
+      ),
+    pdfBytes: (owner, path) =>
+      run(
+        owner,
+        "export",
+        () => backend.pdfBytes(owner, path),
+        fileResource(owner, path, "shared"),
+      ),
     writeBytes: (owner, path, bytes) =>
-      run(owner, "import", () => backend.writeBytes(owner, path, bytes)),
-    fileBytes: (owner, path) => run(owner, "export", () => backend.fileBytes(owner, path)),
+      run(
+        owner,
+        "import",
+        () => backend.writeBytes(owner, path, bytes),
+        fileResource(owner, path, "exclusive"),
+      ),
+    fileBytes: (owner, path) =>
+      run(
+        owner,
+        "export",
+        () => backend.fileBytes(owner, path),
+        fileResource(owner, path, "shared"),
+      ),
     ...(readCommand && {
       command: async (owner: string, id: string) => {
         const receipt = await readCommand(owner, id);
@@ -113,7 +390,12 @@ export function auditedComputer(
         owner: string,
         kind: "transcribe" | "preview",
         raw: unknown,
-        options: { idempotencyKey?: string; signal?: AbortSignal } = {},
+        options: {
+          idempotencyKey?: string;
+          signal?: AbortSignal;
+          dispatchGuard?: () => Promise<void>;
+          onDispatch?: (receiptId: string) => Promise<void>;
+        } = {},
       ) => command(owner, kind, options, (bound) => mediaCommand(owner, kind, raw, bound)),
     }),
   };
@@ -121,22 +403,33 @@ export function auditedComputer(
 
 /** Reconcile background results from their owned backend receipts, without rerunning commands. */
 export async function reconcileComputerAudit(backend: ComputerBackend, log: ActionLog) {
-  if (!backend.command) return;
-  for (const { owner, value } of await log.db.scan<{
-    id: string;
-    operationId: string;
-    complete?: boolean;
-  }>("computer-audit")) {
+  const resources = new ResourceLeases(log.db);
+  for (const { owner, value } of await log.db.scan<ComputerAudit>("computer-audit")) {
     if (value.complete) continue;
+    if (value.phase === "abandoned") {
+      await abandonPreflight(log, resources, owner, value);
+      continue;
+    }
     const saved = await log.db.get<{ status: string }>(owner, "computer-commands", value.id);
     if (!saved) {
-      await log.db.compareAndSwap(owner, "computer-audit", value.id, {}, { complete: true });
+      if (value.phase === "prepared") await abandonPreflight(log, resources, owner, value);
+      // A dispatching operation with no receipt remains uncertain.
       continue;
     }
     try {
-      const receipt = await backend.command(owner, value.id);
-      if (receipt.status !== "running")
-        await log.db.compareAndSwap(owner, "computer-audit", value.id, {}, { complete: true });
+      const receipt = backend.command
+        ? await backend.command(owner, value.id)
+        : (await backend.snapshot(owner)).commands.find((command) => command.id === value.id);
+      if (!receipt) continue;
+      if (
+        receipt.status === "succeeded" ||
+        receipt.status === "failed" ||
+        receipt.status === "rejected_not_dispatched"
+      )
+        await log.db.compareAndSwap(owner, "computer-audit", value.id, auditClaim(value), {
+          complete: true,
+          phase: "complete",
+        });
     } catch (error) {
       backgroundFailure("computer audit reconciliation", error);
     }

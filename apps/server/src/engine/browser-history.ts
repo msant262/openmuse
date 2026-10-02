@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Message } from "@ag-ui/core";
 import type { Store } from "../db.ts";
+import { ResourceBusyError } from "./resource-leases.ts";
+import { RuntimePausedError } from "./runtime-pause.ts";
 
 type Entry = {
   id: string;
@@ -146,7 +148,25 @@ export class TaskBrowserHistory {
     const entry: Entry = { id: randomUUID(), name, args, key, status: "started" };
     this.journal.entries.push(entry);
     await this.db.put(this.owner, "task-browser-history", this.journal);
-    const result = await operation(); // Throw/termination leaves the durable started intent.
+    let result: unknown;
+    try {
+      result = await operation();
+    } catch (error) {
+      if (
+        error instanceof ResourceBusyError ||
+        error instanceof RuntimePausedError ||
+        (error instanceof Error && error.name === "LostLeaseError")
+      ) {
+        entry.status = "skipped";
+        entry.result = {
+          error: error.message,
+          skipped: true,
+          dispatched: false,
+        };
+        await this.db.put(this.owner, "task-browser-history", this.journal);
+      }
+      throw error;
+    }
     const failure = result as { error?: string; code?: string } | undefined;
     entry.result = result;
     entry.status = knownSkip(result)

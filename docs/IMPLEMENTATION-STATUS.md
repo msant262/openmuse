@@ -6,7 +6,7 @@ Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-
 | --- | --- |
 | 1 — Device sessions and connector resilience | Reviewed and integrated; deployment/device acceptance pending |
 | 2 — Durable chat, questions and personality | Reviewed and integrated; physical device acceptance pending |
-| 3 — Four work slots, resources and global pause | In progress in an isolated worktree |
+| 3 — Four work slots, resources and global pause | Reviewed and integrated; native executor acceptance pending |
 | 4–12 | Pending integration |
 
 ## Milestone 1
@@ -44,3 +44,37 @@ An actual Android API 34 emulator also compiled and ran the native app during
 integration. A force-stop/reopen preserved its draft and paired device identity.
 This used a disposable x86_64 debug APK and local sample server. It does not prove
 physical-phone, release ARM64, reboot, offline or push-notification acceptance.
+
+## Milestone 3
+
+The scheduler admits at most four durable background work units, including child
+work and physical background jobs. Each run renews and releases its own fenced
+resource handles. Priority and timing affect eligible work without interrupting
+jobs already running. The mobile runtime controls expose persisted global pause,
+active jobs and uncertain external actions; resumption requires an explicit action.
+
+Command/media dispatch and mutable file/start handoffs recheck pause after local
+preparation. Reviewed browser actions share the profile lease with normal agent
+operations. Unclassified remote failures retain ownership as an unknown outcome.
+Resource admission distinguishes an explicit busy/not-dispatched rejection from
+an uncertain submission; the former can retry its original command identity.
+
+After the implementer's two deliveries, root corrected residual audit recovery,
+replay ownership, file pause, browser error classification and legacy read_web
+tracking defects. A live command attempt is tracked through claim, acquisition,
+publication and cleanup, so the selected single API/embedded-worker deployment's
+maintenance cannot retire it midway. Durable conditional claims and exact handle
+cleanup survive restart; internal generation-bound acquisition prevents a new
+preflight from borrowing a previous attempt's handles. This is not a distributed
+preflight-liveness implementation for multiple API/worker processes.
+
+Final root checks on 2026-10-02 passed `pnpm test` (512/512, 80.0 seconds),
+server/mobile typecheck and full lint (zero errors, 36 existing warnings). Focused
+ownership/pause/recovery checks passed 28/28. Computer Python contracts passed
+14/14 on the unchanged Python source. Final independent scoped review approved
+the two remaining same-key races, with three fresh targeted regressions passing.
+
+Native executor confirmation and measured host memory admission belong to milestone
+6. Safe resolution of an uncertain reviewed-browser hold belongs to milestones
+4/7; this milestone conservatively keeps that profile occupied and exposes the
+uncertainty. No physical Lenovo/VPS deployment acceptance is claimed here.

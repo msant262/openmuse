@@ -362,17 +362,22 @@ export class ConversationAgent extends AbstractAgent {
       }));
     const tools = [
       ...delegateTools(
-        browserTools(this.service.browser, this.owner, { signal: browserAbort.signal }),
+        browserTools(this.service.browser, this.owner, {
+          signal: browserAbort.signal,
+          effectBefore: () => this.service.runtimePause.assertResumed(this.owner).then(() => {}),
+        }),
       ),
       ...delegateTools(
         computerTools(this.service.computer, this.service.files, this.owner, `chat:${requestKey}`, {
           signal: browserAbort.signal,
+          effectBefore: () => this.service.runtimePause.assertResumed(this.owner).then(() => {}),
         }),
       ),
       ...delegateTools(
         mediaTools(this.service.media, this.service.computer, this.owner, `chat:${requestKey}`, {
           model: () => selectedModel,
           signal: browserAbort.signal,
+          effectBefore: () => this.service.runtimePause.assertResumed(this.owner).then(() => {}),
         }),
       ),
       ...(jev
@@ -523,6 +528,7 @@ export class ConversationAgent extends AbstractAgent {
         profileSource: latest
           ? { messageId: latest.id, threadId: input.threadId, runId: input.runId }
           : undefined,
+        effectBefore: () => this.service.runtimePause.assertResumed(this.owner).then(() => {}),
       }),
       ...delegateTools(remoteTools),
     ];

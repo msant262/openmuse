@@ -22,23 +22,34 @@ async function read<T>(path: string, body?: unknown, status = 200): Promise<T> {
   return response.json();
 }
 type CompareAndSwap = Store["compareAndSwap"];
-// Replaces the next tasks CAS that matches `when` with a lost write (null), then restores.
+type CompareAndSwapTask = Store["compareAndSwapTask"];
+// Replaces the next task CAS, including state-preserving checkpoints, with a lost write.
 function loseNextTaskWrite(when: (patch: Record<string, unknown>) => boolean) {
   const original: CompareAndSwap = db.compareAndSwap.bind(db);
+  const originalTask: CompareAndSwapTask = db.compareAndSwapTask.bind(db);
   let lost = 0;
-  db.compareAndSwap = (async (o, kind, id, expected, patch) => {
+  const intercept = (kind: string, patch: Record<string, unknown>) => {
     if (!lost && kind === "tasks" && when(patch)) {
       lost++;
-      return null;
+      return true;
     }
+    return false;
+  };
+  db.compareAndSwap = (async (o, kind, id, expected, patch) => {
+    if (intercept(kind, patch)) return null;
     return original(o, kind, id, expected, patch);
   }) as CompareAndSwap;
+  db.compareAndSwapTask = (async (o, id, expected, patch) => {
+    if (intercept("tasks", patch)) return null;
+    return originalTask(o, id, expected, patch);
+  }) as CompareAndSwapTask;
   return {
     get lost() {
       return lost;
     },
     restore() {
       db.compareAndSwap = original;
+      db.compareAndSwapTask = originalTask;
     },
   };
 }
@@ -122,7 +133,14 @@ test("a page change stays alertable when the task outcome is lost after the base
   } finally {
     fault.restore();
   }
-  assert.equal(fault.lost, 1);
+  assert.equal(
+    fault.lost,
+    1,
+    JSON.stringify({
+      task: await db.get<AgentTask>(owner, "tasks", monitor.taskId),
+      admissions: await db.list("__runtime__", "work-admissions"),
+    }),
+  );
   assert.equal((await db.get<AgentTask>(owner, "tasks", monitor.taskId))?.status, "queued");
 
   // Recovery: the requeued run executes, then a later scheduled check runs as well.

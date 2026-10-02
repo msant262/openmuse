@@ -14,7 +14,14 @@ export const commandReceiptSchema = z.object({
   id: z.string().min(1).max(128),
   command: z.string().max(16000),
   cwd: z.string().max(2048),
-  status: z.enum(["running", "succeeded", "failed", "timed_out", "interrupted"]),
+  status: z.enum([
+    "running",
+    "succeeded",
+    "failed",
+    "timed_out",
+    "interrupted",
+    "rejected_not_dispatched",
+  ]),
   exitCode: z.number().int().optional(),
   stdout: z.string().max(131072),
   stderr: z.string().max(131072),
@@ -37,7 +44,7 @@ export const commandReceiptSchema = z.object({
     })
     .optional(),
 });
-export type ComputerBackend = Pick<
+type BaseComputerBackend = Pick<
   ComputerService,
   | "snapshot"
   | "start"
@@ -51,13 +58,29 @@ export type ComputerBackend = Pick<
   | "pdfBytes"
   | "writeBytes"
   | "fileBytes"
-> & {
+>;
+export type ComputerBackend = Omit<BaseComputerBackend, "execute"> & {
+  execute: (
+    owner: string,
+    raw: unknown,
+    options?: {
+      idempotencyKey?: string;
+      signal?: AbortSignal;
+      dispatchGuard?: () => Promise<void>;
+      onDispatch?: (receiptId: string) => Promise<void>;
+    },
+  ) => Promise<z.infer<typeof commandReceiptSchema>>;
   command?: (owner: string, id: string) => Promise<z.infer<typeof commandReceiptSchema>>;
   cancel?: (owner: string, id: string) => Promise<z.infer<typeof commandReceiptSchema>>;
   media?: (
     owner: string,
     kind: "transcribe" | "preview",
     raw: unknown,
-    options?: { idempotencyKey?: string; signal?: AbortSignal },
+    options?: {
+      idempotencyKey?: string;
+      signal?: AbortSignal;
+      dispatchGuard?: () => Promise<void>;
+      onDispatch?: (receiptId: string) => Promise<void>;
+    },
   ) => Promise<z.infer<typeof commandReceiptSchema>>;
 };

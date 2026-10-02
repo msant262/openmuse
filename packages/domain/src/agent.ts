@@ -1,10 +1,14 @@
 import { z } from "zod";
+import { type RuntimePauseState, type TaskTiming, taskTimingSchema } from "./runtime.ts";
 
 export type TaskStatus =
   | "queued"
   | "running"
   | "waiting_approval"
   | "waiting_input"
+  | "waiting_resource"
+  | "waiting_global_pause"
+  | "waiting_job"
   | "scheduled"
   | "paused"
   | "succeeded"
@@ -32,6 +36,7 @@ export interface AgentTask {
   goalId?: string;
   originThreadId?: string;
   originMessageId?: string;
+  timing?: TaskTiming;
   plan: TaskStep[];
   evidence: Evidence[];
   input: Record<string, unknown>;
@@ -181,6 +186,13 @@ export interface AgentWorkspace {
   artifacts: AgentArtifact[];
   notifications: AgentNotification[];
   identity: AgentIdentity;
+  runtimePause: RuntimePauseState;
+  runtimeStatus: {
+    activeTasks: number;
+    activeOperations: number;
+    uncertainOperations: number;
+    executorConfirmation: "unavailable" | "confirmed" | "unknown";
+  };
   worker: { running: boolean; lastTickAt?: string };
 }
 export const createTaskSchema = z.object({
@@ -196,6 +208,7 @@ export const createTaskSchema = z.object({
     .optional(),
   originMessageId: z.string().min(1).max(256).optional(),
   input: z.record(z.string(), z.unknown()).default({}),
+  timing: taskTimingSchema.optional(),
 });
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export const monitorInputSchema = z

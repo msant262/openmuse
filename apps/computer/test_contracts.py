@@ -102,14 +102,31 @@ class JobsTests(unittest.TestCase):
             entered.set()
             return release.wait(3)
         self.jobs.sweep = cleanup  # Trusted injected fixture; never host process scanning.
+        server = None
+        thread = None
         try:
             self.submit("printf done")
             self.assertTrue(entered.wait(3))
             self.assertEqual(self.jobs.get("a"*64)["status"], "running")
             with self.assertRaisesRegex(ValueError,"busy"):
                 self.submit("true",id="b"*64)
+            server = ThreadingHTTPServer(("127.0.0.1",0),runtime.handler(self.jobs))
+            thread = threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+            connection = http.client.HTTPConnection("127.0.0.1",server.server_port,timeout=3)
+            try:
+                connection.request("POST","/rpc/jobs",json.dumps({"id":"c"*64,"command":"true","timeoutMs":1000,"background":True}),{"Content-Type":"application/json"})
+                response = connection.getresponse()
+                payload = json.loads(response.read())
+                self.assertEqual(response.status,409)
+                self.assertEqual(payload["code"],"busy")
+                self.assertTrue(payload["notDispatched"])
+                self.assertNotIn("c"*64,self.jobs.receipts)
+            finally:
+                connection.close()
         finally:
             release.set()
+            if server:
+                server.shutdown();server.server_close();thread.join()
         self.assertEqual(self.wait("a"*64)["status"],"succeeded")
     def test_unconfirmed_cleanup_quarantines_and_never_claims_success(self):
         def failed_cleanup():
