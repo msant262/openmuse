@@ -13,6 +13,21 @@ export type Section =
   | "ideas"
   | "goals"
   | "apps";
+export const workspaceCacheSchema = z.object({
+  provenance: z.enum(["verified", "unknown"]),
+  freshness: z.enum(["fresh", "stale", "unknown"]),
+  cachedAt: z.iso.datetime().optional(),
+});
+export type WorkspaceCache = z.infer<typeof workspaceCacheSchema>;
+export const workspaceSourceSchema = z.object({
+  status: z.enum(["available", "sample", "unavailable", "disconnected", "not_requested"]),
+  freshness: z.enum(["fresh", "stale", "unknown"]),
+  requiresFreshRead: z.boolean(),
+  unknownProvenanceIds: z.array(z.string()),
+  errorCode: z.string().optional(),
+});
+export type WorkspaceSource = z.infer<typeof workspaceSourceSchema>;
+export type WorkspaceSources = Record<"mail" | "calendar" | "files", WorkspaceSource>;
 export interface Mail {
   id: string;
   threadId: string;
@@ -25,6 +40,7 @@ export interface Mail {
   unread: boolean;
   label: string;
   attachments: string[];
+  cache?: WorkspaceCache;
 }
 export interface CalendarEvent {
   id: string;
@@ -37,6 +53,7 @@ export interface CalendarEvent {
   location: string;
   description: string;
   attendees: string[];
+  cache?: WorkspaceCache;
 }
 export interface Artifact {
   id: string;
@@ -198,6 +215,7 @@ export interface Workspace {
   actions: ActionProposal[];
   activity: ActivityEntry[];
   connections: Connection[];
+  sources?: WorkspaceSources;
   runtime: {
     provider: "sample" | "model" | "openbot";
     configured: boolean;

@@ -72,6 +72,7 @@ export interface Config {
   computerToken?: string;
   computerCommandTimeoutMs?: number;
   allowedOrigins: string[];
+  sessionDeviceIdleDays?: number;
 }
 
 /** Pinned so live rankings do not shift when TypeSafe moves the `jev-latest` alias. */
@@ -97,6 +98,33 @@ export function browserWorkerUrl(value?: string): string | undefined {
 // writes never re-fire here: they are dispatched outside the model loop through
 // reviewed, idempotency-keyed actions.
 export const MODEL_MAX_RETRIES = 2;
+function integer(name: string, fallback: number, min: number, max: number) {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isSafeInteger(value) || value < min || value > max)
+    throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  return value;
+}
+/** The API is mounted at /; subpaths require proxy rewriting and are not accepted. */
+function httpOrigin(value: string, name: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${name} must be an HTTP(S) origin`);
+  }
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !== "/"
+  )
+    throw new Error(
+      `${name} must be an HTTP(S) origin without credentials, query, fragment or subpath`,
+    );
+  return url.origin;
+}
 export function readConfig(): Config {
   const mode = process.env.WORKSPACE_MODE ?? "sample";
   if (mode !== "sample" && mode !== "live")
@@ -112,8 +140,11 @@ export function readConfig(): Config {
   const typesafeApiKey = process.env.TYPESAFE_API_KEY?.trim();
   if (jevMode === "live" && !typesafeApiKey)
     throw new Error("JEV_MODE=live requires a nonblank TYPESAFE_API_KEY");
-  const port = Number(process.env.PORT ?? 8787);
-  const publicUrl = process.env.PUBLIC_API_URL ?? `http://localhost:${port}`;
+  const port = integer("PORT", 8787, 1, 65535);
+  const publicUrl = httpOrigin(
+    process.env.PUBLIC_API_URL ?? `http://localhost:${port}`,
+    "PUBLIC_API_URL",
+  );
   const policy = process.env.APPROVAL_POLICY ?? "money";
   if (policy !== "money" && policy !== "all")
     throw new Error("APPROVAL_POLICY must be money or all");
@@ -131,6 +162,7 @@ export function readConfig(): Config {
       fcmProjectId: process.env.FCM_PROJECT_ID,
     },
     mode,
+    sessionDeviceIdleDays: integer("SESSION_DEVICE_IDLE_DAYS", 0, 0, 36500),
     port,
     host: process.env.HOST ?? "127.0.0.1",
     publicUrl,
@@ -165,9 +197,9 @@ export function readConfig(): Config {
     computerUrl: process.env.COMPUTER_URL?.replace(/\/+$/, ""),
     computerToken: process.env.COMPUTER_TOKEN,
     computerCommandTimeoutMs: Number(process.env.COMPUTER_COMMAND_TIMEOUT_MS ?? 1800000),
-    allowedOrigins: (
-      process.env.ALLOWED_ORIGINS ?? "http://localhost:8081,http://127.0.0.1:8081"
-    ).split(","),
+    allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "http://localhost:8081,http://127.0.0.1:8081")
+      .split(",")
+      .map((origin) => httpOrigin(origin.trim(), "ALLOWED_ORIGINS")),
   };
   if (config.model) orderedModels(config.model, config.modelFallbacks);
   if (

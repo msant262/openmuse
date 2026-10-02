@@ -184,7 +184,9 @@ test("failed tool receipt settled before shutdown remains unconfirmed", async ()
   await assert.rejects(drain.close(), /could not confirm/);
 });
 
-test("tool drain detects a swallowed audit write failure before shutdown", async () => {
+test("tool drain detects a swallowed audit write failure before shutdown", async (t) => {
+  const errors: { context: { phase: string }; error: string }[] = [];
+  t.mock.method(console, "error", (entry: (typeof errors)[number]) => errors.push(entry));
   const db = new Store({
     query: async (sql) => {
       if (sql.startsWith("INSERT INTO records")) throw Error("receipt persistence failed");
@@ -211,6 +213,11 @@ test("tool drain detects a swallowed audit write failure before shutdown", async
     /provider rejected/,
   );
   await assert.rejects(drain.close(), /could not confirm/);
+  assert.deepEqual(
+    errors.map((entry) => entry.context.phase),
+    ["external action audit completion"],
+  );
+  assert.equal(errors[0].error, "Error");
 });
 
 test("fully recorded ordinary tool error does not prevent clean shutdown", async () => {
@@ -270,7 +277,9 @@ async function workerTask(db: Store) {
   } satisfies AgentTask);
 }
 
-test("timer-owned aborted task with failed final receipt rejects HTTP shutdown", async () => {
+test("timer-owned aborted task with failed final receipt rejects HTTP shutdown", async (t) => {
+  const errors: { context: { phase: string }; error: string }[] = [];
+  t.mock.method(console, "error", (entry: (typeof errors)[number]) => errors.push(entry));
   const db = await createStore();
   await workerTask(db);
   const compare = db.compareAndSwap.bind(db);
@@ -316,6 +325,12 @@ test("timer-owned aborted task with failed final receipt rejects HTTP shutdown",
     assert(attempted);
     assert.equal(closed, false);
     await assert.rejects(worker.stop(), /could not confirm/);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(
+      errors.map((entry) => entry.context.phase),
+      ["initial task worker tick"],
+    );
+    assert.equal(errors[0].error, "Error");
   } finally {
     await worker.stop().catch(() => {});
     server.closeAllConnections();

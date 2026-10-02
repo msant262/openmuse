@@ -37,6 +37,91 @@ const eventResponse = {
 };
 const base64url = (text: string) => Buffer.from(text).toString("base64url");
 
+test("Google reads honor Retry-After and budget with jitter without retrying permission failures", async () => {
+  let now = 0,
+    calls = 0;
+  const delays: number[] = [];
+  const client = new GoogleClient({
+    getAccessToken: async () => "fixture",
+    retry: {
+      budgetMs: 5000,
+      now: () => now,
+      random: () => 0.5,
+      sleep: async (ms) => {
+        delays.push(ms);
+        now += ms;
+      },
+    },
+    fetch: async () => {
+      calls++;
+      return calls === 1
+        ? new Response("", { status: 429, headers: { "Retry-After": "1" } })
+        : Response.json({ items: [] });
+    },
+  });
+  assert.deepEqual(await client.listCalendars(), []);
+  assert.deepEqual(delays, [1000]);
+  assert.equal(calls, 2);
+  let denied = 0;
+  const permission = new GoogleClient({
+    getAccessToken: async () => "fixture",
+    fetch: async () => {
+      denied++;
+      return Response.json({ error: { message: "permission missing" } }, { status: 403 });
+    },
+  });
+  await assert.rejects(permission.listCalendars(), { status: 403 });
+  assert.equal(denied, 1);
+  let budgetCalls = 0;
+  const budget = new GoogleClient({
+    getAccessToken: async () => "fixture",
+    retry: { budgetMs: 500, now: () => 0 },
+    fetch: async () => {
+      budgetCalls++;
+      return new Response("", { status: 429, headers: { "Retry-After": "60" } });
+    },
+  });
+  await assert.rejects(budget.listCalendars(), /budget|429/i);
+  assert.equal(budgetCalls, 1);
+});
+
+test("Google read retries are abortable and external writes with uncertain outcomes dispatch once", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const client = new GoogleClient({
+    getAccessToken: async () => "fixture",
+    signal: controller.signal,
+    retry: {
+      sleep: async () => {
+        controller.abort(new Error("caller cancelled"));
+      },
+    },
+    fetch: async () => {
+      calls++;
+      return new Response("", { status: 503 });
+    },
+  });
+  await assert.rejects(client.listCalendars(), /cancelled/);
+  assert.equal(calls, 1);
+  let writes = 0;
+  const writer = new GoogleClient({
+    getAccessToken: async () => "fixture",
+    fetch: async () => {
+      writes++;
+      return new Response("", { status: 503 });
+    },
+  });
+  await assert.rejects(writer.createEvent(event()), OutcomeUnknownError);
+  assert.equal(writes, 1);
+});
+
+test("a quota 403 remains a rate-limit diagnostic after bounded read retries", async () => {
+  let calls = 0, now = 0;
+  const client = new GoogleClient({ getAccessToken: async () => "fixture", retry: { now: () => now, sleep: async (ms) => { now += ms; }, random: () => 0.5 }, fetch: async () => { calls++; return Response.json({ error: { message: "quota", errors: [{ reason: "rateLimitExceeded" }] } }, { status: 403 }); } });
+  await assert.rejects(client.listCalendars(), { status: 403, code: "GOOGLE_RATE_LIMITED" });
+  assert.equal(calls, 3);
+});
+
 test("mail reads nested plain text and attachment references over authenticated Gmail paths", async () => {
   const paths: URL[] = [];
   const client = clientWith((request) => {

@@ -203,7 +203,12 @@ export class GoogleAuth {
     return task;
   }
   private async refresh(owner: string, tokens: Tokens) {
-    if (!tokens.refreshToken) throw new AppError("Google session expired. Connect again.", 401);
+    if (!tokens.refreshToken)
+      throw new AppError(
+        "Google session expired. Connect again.",
+        401,
+        "GOOGLE_RECONNECT_REQUIRED",
+      );
     const response = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -215,7 +220,19 @@ export class GoogleAuth {
       }),
       signal: AbortSignal.timeout(15000),
     });
-    if (!response.ok) throw new AppError("Google session expired. Connect again.", 401);
+    if (!response.ok) {
+      if (response.status === 400 || response.status === 401)
+        throw new AppError(
+          "Google session expired. Connect again.",
+          401,
+          "GOOGLE_RECONNECT_REQUIRED",
+        );
+      throw new AppError(
+        "Google is temporarily unavailable. Try reconnecting later.",
+        502,
+        "GOOGLE_UNAVAILABLE",
+      );
+    }
     const token = tokenSchema.parse(await response.json());
     const refreshed = {
       ...tokens,

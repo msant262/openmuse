@@ -78,3 +78,31 @@ test("approval policy defaults to money and accepts only money or all", async ()
     else process.env.APPROVAL_POLICY = previous;
   }
 });
+
+test("server config rejects invalid numbers, origins and public URL paths or credentials", async () => {
+  const { readConfig } = await import("../apps/server/src/config.ts");
+  for (const [key, values] of Object.entries({
+    PORT: ["0", "65536", "12.5", "oops"],
+    SESSION_DEVICE_IDLE_DAYS: ["-1", "NaN", "0.1"],
+    PUBLIC_API_URL: [
+      "https://user:secret@example.com",
+      "https://example.com/api",
+      "https://example.com?query=1",
+      "https://example.com/#hash",
+      "ftp://example.com",
+    ],
+    ALLOWED_ORIGINS: ["*", "https://example.com/path", "https://user@example.com"],
+  })) {
+    const previous = process.env[key];
+    try {
+      for (const value of values) {
+        process.env[key] = value;
+        assert.throws(() => readConfig(), new RegExp(key));
+      }
+    } finally {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
+  }
+  assert.equal(readConfig().sessionDeviceIdleDays, 0);
+});

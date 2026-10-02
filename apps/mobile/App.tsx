@@ -32,7 +32,9 @@ import {
   IdeasScreen,
 } from "./src/agent-ui";
 import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace";
-import { API_URL, createSession, MuseApi } from "./src/api";
+import { API_URL, authManager, MuseApi } from "./src/api";
+import type { AuthManager } from "./src/auth-manager";
+import { installRuntimeAuthFetch } from "./src/auth-transport";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
@@ -67,7 +69,7 @@ const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   files: { title: "Files", subtitle: "Documents, forms and filled copies." },
 };
 export default function App() {
-  const [token, setToken] = useState("");
+  const [session, setSession] = useState(authManager.snapshot);
   const [accessKey, setAccessKey] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
@@ -75,8 +77,19 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      const session = await createSession(key);
-      setToken(session.token);
+      await authManager.pair(key);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+  const restore = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await authManager.restore();
+      if (authManager.snapshot.status === "missing") await authManager.pair();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -84,17 +97,34 @@ export default function App() {
     }
   }, []);
   useEffect(() => {
-    void connect();
-  }, [connect]);
+    const unsubscribe = authManager.subscribe(setSession);
+    const restoreFetch = installRuntimeAuthFetch(API_URL, authManager);
+    void restore();
+    const timer = setInterval(() => {
+      if (authManager.snapshot.token) void authManager.authorization().catch(() => {});
+    }, 30_000);
+    const listener = AppState.addEventListener("change", (state) => {
+      if (state === "active")
+        void (authManager.snapshot.token ? authManager.authorization() : restore()).catch(() => {});
+    });
+    return () => {
+      unsubscribe();
+      restoreFetch();
+      clearInterval(timer);
+      listener.remove();
+    };
+  }, [restore]);
   return (
     <SafeAreaProvider>
       <StatusBar style="dark" />
-      {token ? (
+      {session.token ? (
         <CopilotKitProvider
           runtimeUrl={`${API_URL}/api/copilotkit`}
-          headers={{ Authorization: `Bearer ${token}` }}
+          headers={{ Authorization: `Bearer ${session.token}` }}
+          credentials="include"
+          onError={({ error }) => setError(error.message)}
         >
-          <WorkspaceApp token={token} />
+          <WorkspaceApp auth={authManager} sessionError={error} />
         </CopilotKitProvider>
       ) : (
         <SafeAreaView
@@ -119,16 +149,24 @@ export default function App() {
             ) : (
               <Card style={{ width: "100%" }}>
                 <ErrorNotice error={error} />
-                <Field
-                  label="Workspace access key"
-                  value={accessKey}
-                  onChangeText={setAccessKey}
-                  secureTextEntry
-                  placeholder="Required for a live workspace"
-                />
-                <Button primary onPress={() => void connect(accessKey || undefined)}>
-                  Open workspace
-                </Button>
+                {session.status === "unavailable" ? (
+                  <Button primary onPress={() => void restore()}>
+                    Retry saved pairing
+                  </Button>
+                ) : (
+                  <>
+                    <Field
+                      label="Workspace access key"
+                      value={accessKey}
+                      onChangeText={setAccessKey}
+                      secureTextEntry
+                      placeholder="Required for a live workspace"
+                    />
+                    <Button primary onPress={() => void connect(accessKey || undefined)}>
+                      Open workspace
+                    </Button>
+                  </>
+                )}
                 <Text style={[s.small, { marginTop: 15 }]}>
                   Local workspaces open without a key. Make sure your OpenMuse server is running at{" "}
                   {API_URL}.
@@ -141,8 +179,8 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
-function WorkspaceApp({ token }: { token: string }) {
-  const api = useMemo(() => new MuseApi(token), [token]);
+function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError: string }) {
+  const api = useMemo(() => new MuseApi(auth), [auth]);
   const [workspace, setWorkspace] = useState<Workspace>();
   const [section, setSection] = useState<Section>("chat");
   const [detail, setDetail] = useState<Detail>();
@@ -150,10 +188,13 @@ function WorkspaceApp({ token }: { token: string }) {
   const [error, setError] = useState("");
   const [prompt, setPrompt] = useState<{ id: number; text: string }>();
   const refresh = useCallback(async () => {
-    const snapshot = await api.request<Workspace>("/api/workspace");
+    const requested = ["mail", "calendar", "files", "browser"].includes(section)
+      ? section
+      : "essential";
+    const snapshot = await api.request<Workspace>(`/api/workspace?section=${requested}`);
     setWorkspace(snapshot);
     setError("");
-  }, [api]);
+  }, [api, section]);
   useEffect(() => {
     void refresh().catch((e) => setError(String(e)));
   }, [refresh]);
@@ -212,13 +253,13 @@ function WorkspaceApp({ token }: { token: string }) {
       value={{ workspace, api, section, navigate, refresh, open, close, notify: setToast, ask }}
     >
       <AgentWorkspaceProvider>
-        <ComputerDraftProvider key={token}>
+        <ComputerDraftProvider>
           <ThreadsProvider>
             <WorkspaceShell
               detail={detail}
               toast={toast}
               clearToast={() => setToast("")}
-              error={error}
+              error={error || sessionError}
               prompt={prompt}
             />
           </ThreadsProvider>

@@ -851,7 +851,7 @@ function FileDetail({ file: initial }: { file: Artifact }) {
           ?.replace(/[^a-zA-Z0-9]/g, "") || "bin";
       const target = `${FileSystem.cacheDirectory}${f.id}.${extension}`;
       await FileSystem.downloadAsync(currentUrl, target, {
-        headers: { Authorization: `Bearer ${api.token}` },
+        headers: { Authorization: await api.authorization() },
       });
       if (await Sharing.isAvailableAsync())
         await Sharing.shareAsync(target, {

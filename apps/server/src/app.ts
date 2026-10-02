@@ -3,9 +3,11 @@ import { MessageSchema } from "@ag-ui/core";
 import { CopilotKitIntelligence } from "@copilotkit/runtime/v2";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { getCookie, setCookie } from "hono/cookie";
 import { cors } from "hono/cors";
 import { z } from "zod";
 import { emailDraftSchema, proposalSchema } from "../../../packages/domain/src/index.ts";
+import { GoogleApiError } from "../../../packages/integrations/src/google.ts";
 import { ActionLog } from "./action-log.ts";
 import { approvalPolicy } from "./action-policy.ts";
 import { ActionService } from "./actions.ts";
@@ -73,7 +75,7 @@ export async function createApp(
     "*",
     cors({
       origin: (origin) => (origins.has(origin) ? origin : undefined),
-      allowHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+      allowHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-OpenMuse-CSRF"],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       credentials: true,
     }),
@@ -88,7 +90,16 @@ export async function createApp(
   app.onError((error, c) => {
     if (error instanceof z.ZodError)
       return c.json({ error: error.issues.map((i) => i.message).join("; ") }, 422);
-    if (error instanceof AppError) return c.json({ error: error.message }, error.status);
+    if (error instanceof AppError)
+      return c.json(
+        { error: error.message, ...(error.code ? { code: error.code } : {}) },
+        error.status,
+      );
+    if (error instanceof GoogleApiError)
+      return c.json(
+        { error: error.message, code: error.code },
+        error.status === 401 ? 401 : error.status === 403 ? 403 : error.status === 429 ? 429 : 502,
+      );
     if (error.name === "PdfError" || error.name === "RecurringEventError")
       return c.json({ error: error.message }, 422);
     if (error instanceof SyntaxError) return c.json({ error: "Invalid request data" }, 400);
@@ -114,6 +125,15 @@ export async function createApp(
   );
   let loginWindow = 0,
     loginAttempts = 0;
+  const refreshCookie = "__Secure-openmuse-refresh";
+  const webOrigin = (origin: string | undefined, csrf: string | undefined) => {
+    if (!origin || !origins.has(origin) || csrf !== "1")
+      throw new AppError(
+        "Web session requests require an allowed origin and CSRF header",
+        403,
+        "SESSION_ORIGIN_REQUIRED",
+      );
+  };
   app.post("/api/session", async (c) => {
     if (Date.now() - loginWindow > 60000) {
       loginWindow = Date.now();
@@ -121,12 +141,62 @@ export async function createApp(
     }
     if (++loginAttempts > 30)
       throw new AppError("Too many sign-in attempts. Try again in a minute.", 429);
-    const body = z.object({ accessKey: z.string().optional() }).parse(await c.req.json());
-    const session = await auth.session(body.accessKey);
+    const body = z
+      .object({
+        accessKey: z.string().optional(),
+        deviceLabel: z.string().trim().min(1).max(80).optional(),
+        transport: z.enum(["native", "web"]).default("native"),
+      })
+      .parse(await c.req.json());
+    if (body.transport === "web")
+      webOrigin(c.req.header("origin"), c.req.header("X-OpenMuse-CSRF"));
+    const session = await auth.session(body.accessKey, body.deviceLabel, body.transport);
     await workspace.ensureSample("local-user", actions);
     await agent.ensure("local-user");
     if (config.mode === "sample") await agent.refreshIdeas("local-user");
-    return c.json(session);
+    if (body.transport === "native") return c.json(session);
+    setCookie(c, refreshCookie, `${session.deviceId}.${session.refreshToken}`, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax",
+      path: "/api/session",
+      maxAge: 34560000,
+    });
+    const { refreshToken: _secret, ...publicSession } = session;
+    return c.json(publicSession);
+  });
+  app.post("/api/session/refresh", async (c) => {
+    const body = z
+      .discriminatedUnion("transport", [
+        z.object({
+          transport: z.literal("native"),
+          deviceId: z.uuid(),
+          rotationId: z.string().min(8).max(128),
+          currentToken: z.string().min(1).max(256),
+          nextTokenHash: z.string().regex(/^[a-f0-9]{64}$/),
+        }),
+        z.object({ transport: z.literal("web"), rotationId: z.string().min(8).max(128) }).strict(),
+      ])
+      .parse(await c.req.json());
+    if (body.transport === "native")
+      return c.json({ ...(await auth.devices.refresh(body)), mode: config.mode });
+    webOrigin(c.req.header("origin"), c.req.header("X-OpenMuse-CSRF"));
+    const cookie = getCookie(c, refreshCookie);
+    if (!cookie)
+      throw new AppError("Pair this browser to open your workspace", 401, "SESSION_REQUIRED");
+    const [deviceId, currentToken, extra] = cookie.split(".");
+    if (!deviceId || !currentToken || extra)
+      throw new AppError("Invalid session cookie", 401, "SESSION_REFRESH_INVALID");
+    const result = await auth.devices.refreshWeb(deviceId, currentToken, body.rotationId);
+    setCookie(c, refreshCookie, `${result.deviceId}.${result.refreshToken}`, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax",
+      path: "/api/session",
+      maxAge: 34560000,
+    });
+    const { refreshToken: _secret, ...session } = result;
+    return c.json({ ...session, mode: config.mode });
   });
   app.get("/api/google/callback", async (c) => {
     if (c.req.query("error"))
@@ -151,9 +221,18 @@ export async function createApp(
     c.set("owner", owner);
     await next();
   });
+  app.get("/api/devices", async (c) => c.json(await auth.devices.list(c.get("owner"))));
+  app.post("/api/devices/:id/revoke", async (c) => {
+    await auth.devices.revoke(c.get("owner"), z.uuid().parse(c.req.param("id")));
+    return c.json({ revoked: true });
+  });
   app.get("/api/workspace", async (c) => {
+    const section = z
+      .enum(["essential", "mail", "calendar", "files", "browser", "all"])
+      .optional()
+      .parse(c.req.query("section"));
     const [snapshot, reachable] = await Promise.all([
-      workspace.snapshot(c.get("owner"), c.req.query("q")),
+      workspace.snapshot(c.get("owner"), c.req.query("q"), section, c.req.raw.signal),
       browser.reachable(),
     ]);
     snapshot.browsers = snapshot.browsers.map((s) => browser.decorate(c.get("owner"), s));

@@ -8,7 +8,10 @@ import type {
   Mail,
   ProposalInput,
   Workspace,
+  WorkspaceSource,
+  WorkspaceSources,
 } from "../../../packages/domain/src/index.ts";
+import { workspaceSourceSchema } from "../../../packages/domain/src/index.ts";
 import { GoogleClient } from "../../../packages/integrations/src/google.ts";
 import { createSamplePdf } from "../../../packages/integrations/src/pdf.ts";
 import { ActionLog, auditTarget } from "./action-log.ts";
@@ -20,6 +23,13 @@ import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 import type { GoogleAuth } from "./google-auth.ts";
+export type WorkspaceSection = "essential" | "mail" | "calendar" | "files" | "browser" | "all";
+type CachedRow<T> = T & { connectionId?: string; cachedAt?: string };
+export type WorkspaceSnapshot = Workspace & { sources: WorkspaceSources };
+const googleFailureCode = (error: unknown) =>
+  error && typeof error === "object" && "code" in error && typeof error.code === "string"
+    ? error.code
+    : "GOOGLE_UNAVAILABLE";
 
 export class WorkspaceService {
   private seeding = new Map<string, Promise<void>>();
@@ -29,8 +39,9 @@ export class WorkspaceService {
     private readonly files: Files,
     private readonly googleAuth: GoogleAuth,
   ) {}
-  google(owner: string, connectionId?: string) {
+  google(owner: string, connectionId?: string, signal?: AbortSignal) {
     return new GoogleClient({
+      signal,
       getAccessToken: () => this.googleAuth.accessToken(owner, connectionId),
       fetch: async (url, options) =>
         options?.method && options.method !== "GET"
@@ -108,7 +119,9 @@ export class WorkspaceService {
           imports.find((i) => i.id === ref && i.connectionId === connectionId)?.artifactId ?? ref,
       ),
     }));
-    for (const message of result) await this.db.put(owner, "mail", { ...message, connectionId });
+    const cachedAt = new Date().toISOString();
+    for (const message of result)
+      await this.db.put(owner, "mail", { ...message, connectionId, cachedAt });
     return result;
   }
   async thread(owner: string, id: string) {
@@ -273,28 +286,167 @@ export class WorkspaceService {
     await this.db.put(owner, "settings", { id: "google", enabled: true });
     await this.db.put(owner, "settings", { id: "seeded", value: true });
   }
-  async snapshot(owner: string, query?: string): Promise<Workspace> {
-    let mail: Mail[], events: CalendarEvent[];
-    const connected = await this.connected(owner);
-    if (this.config.mode === "live" && connected) {
-      const connection = await this.connection(owner);
-      if (!connection) throw new AppError("Google is disconnected", 409);
-      const google = this.google(owner, connection.id);
-      [mail, events] = await Promise.all([google.listMail(query), google.listEvents()]);
-      mail = await this.cacheMail(owner, mail, connection.id);
-      for (const event of events) await this.db.put(owner, "events", event);
-    } else if (this.config.mode === "sample" && connected) {
-      mail = await this.db.list<Mail>(owner, "mail");
-      events = await this.db.list<CalendarEvent>(owner, "events");
-      if (query)
-        mail = mail.filter((m) =>
-          `${m.sender} ${m.subject} ${m.body}`.toLowerCase().includes(query.toLowerCase()),
-        );
-    } else {
-      mail = [];
-      events = [];
+  async snapshot(
+    owner: string,
+    query?: string,
+    section: WorkspaceSection = "all",
+    signal?: AbortSignal,
+  ): Promise<WorkspaceSnapshot> {
+    let tokens: Awaited<ReturnType<GoogleAuth["tokens"]>> = null;
+    let googleStatus: "connected" | "disconnected" | "sample" | "unavailable" = "disconnected";
+    try {
+      if (this.config.mode === "live") tokens = await this.googleAuth.tokens(owner);
+    } catch {
+      googleStatus = "unavailable";
     }
-    const tokens = this.config.mode === "live" ? await this.googleAuth.tokens(owner) : null;
+    const connected = this.config.mode === "sample" ? await this.connected(owner) : Boolean(tokens);
+    if (connected) googleStatus = this.config.mode === "sample" ? "sample" : "connected";
+    const health = await this.db.get<{
+      connectionId: string;
+      status: "unavailable" | "disconnected";
+      errorCode?: string;
+    }>(owner, "settings", "google-health");
+    if (tokens && health?.connectionId === tokens.connectionId) googleStatus = health.status;
+    const cachedRows = <T extends Mail | CalendarEvent>(rows: CachedRow<T>[]): T[] =>
+      rows
+        .filter((row) =>
+          this.config.mode === "sample"
+            ? connected
+            : !row.connectionId || row.connectionId === tokens?.connectionId,
+        )
+        .map((row) => ({
+          ...row,
+          cache: {
+            provenance:
+              this.config.mode === "sample" || row.connectionId
+                ? ("verified" as const)
+                : ("unknown" as const),
+            freshness:
+              this.config.mode === "sample"
+                ? ("fresh" as const)
+                : row.connectionId
+                  ? ("stale" as const)
+                  : ("unknown" as const),
+            ...(row.cachedAt ? { cachedAt: row.cachedAt } : {}),
+          },
+        }));
+    let mail = cachedRows(await this.db.list<CachedRow<Mail>>(owner, "mail"));
+    let events = cachedRows(await this.db.list<CachedRow<CalendarEvent>>(owner, "events"));
+    const describe = (rows: (Mail | CalendarEvent)[], requested: boolean): WorkspaceSource =>
+      workspaceSourceSchema.parse({
+        status: !requested
+          ? "not_requested"
+          : this.config.mode === "sample" && connected
+            ? "sample"
+            : googleStatus === "connected"
+              ? "available"
+              : googleStatus,
+        freshness:
+          this.config.mode === "sample" && connected
+            ? "fresh"
+            : rows.length && rows.every((row) => row.cache?.provenance === "verified")
+              ? "stale"
+              : "unknown",
+        requiresFreshRead: !(this.config.mode === "sample" && connected),
+        unknownProvenanceIds: rows
+          .filter((row) => row.cache?.provenance === "unknown")
+          .map((row) => row.id),
+        ...(requested && ["disconnected", "unavailable"].includes(googleStatus)
+          ? {
+              errorCode:
+                health?.connectionId === tokens?.connectionId && health?.errorCode
+                  ? health.errorCode
+                  : googleStatus === "disconnected"
+                    ? "GOOGLE_RECONNECT_REQUIRED"
+                    : "GOOGLE_UNAVAILABLE",
+            }
+          : {}),
+      });
+    const sources: WorkspaceSources = {
+      mail: describe(mail, section === "all" || section === "mail"),
+      calendar: describe(events, section === "all" || section === "calendar"),
+      files: workspaceSourceSchema.parse({
+        status: ["all", "files", "essential"].includes(section) ? "available" : "not_requested",
+        freshness: "fresh",
+        requiresFreshRead: false,
+        unknownProvenanceIds: [],
+      }),
+    };
+    if (this.config.mode === "live" && tokens && ["all", "mail", "calendar"].includes(section)) {
+      const google = this.google(owner, tokens.connectionId, signal);
+      const results = await Promise.allSettled([
+        section === "all" || section === "mail" ? google.listMail(query) : Promise.resolve(null),
+        section === "all" || section === "calendar" ? google.listEvents() : Promise.resolve(null),
+      ]);
+      const failures = results.filter((result) => result.status === "rejected");
+      signal?.throwIfAborted();
+      if (failures.length) {
+        googleStatus = failures.some(
+          (result) =>
+            result.status === "rejected" && result.reason?.code === "GOOGLE_RECONNECT_REQUIRED",
+        )
+          ? "disconnected"
+          : "unavailable";
+        await this.db.put(owner, "settings", {
+          id: "google-health",
+          connectionId: tokens.connectionId,
+          status: googleStatus,
+          errorCode:
+            googleStatus === "disconnected"
+              ? "GOOGLE_RECONNECT_REQUIRED"
+              : googleFailureCode((failures[0] as PromiseRejectedResult).reason),
+        });
+      } else {
+        googleStatus = "connected";
+        await this.db.remove(owner, "settings", "google-health");
+      }
+      const mailResult = results[0],
+        eventResult = results[1];
+      const readSource = async <T extends Mail | CalendarEvent>(
+        source: "mail" | "calendar",
+        result: PromiseSettledResult<T[] | null>,
+        cached: T[],
+      ): Promise<T[]> => {
+        if (result.status === "rejected") {
+          const errorCode = googleFailureCode(result.reason);
+          sources[source] = workspaceSourceSchema.parse({
+            ...sources[source],
+            status: errorCode === "GOOGLE_RECONNECT_REQUIRED" ? "disconnected" : "unavailable",
+            errorCode,
+          });
+          return cached;
+        }
+        if (!result.value) return cached;
+        const cachedAt = new Date().toISOString();
+        const rows =
+          source === "mail"
+            ? await this.cacheMail(owner, result.value as Mail[], tokens.connectionId)
+            : result.value;
+        if (source === "calendar")
+          for (const event of rows)
+            await this.db.put(owner, "events", {
+              ...event,
+              connectionId: tokens.connectionId,
+              cachedAt,
+            });
+        sources[source] = workspaceSourceSchema.parse({
+          status: "available",
+          freshness: "fresh",
+          requiresFreshRead: false,
+          unknownProvenanceIds: [],
+        });
+        return rows.map((row) => ({
+          ...row,
+          cache: { provenance: "verified", freshness: "fresh", cachedAt },
+        })) as T[];
+      };
+      mail = await readSource("mail", mailResult, mail);
+      events = await readSource("calendar", eventResult, events);
+    }
+    if (query && this.config.mode === "sample")
+      mail = mail.filter((m) =>
+        `${m.sender} ${m.subject} ${m.body}`.toLowerCase().includes(query.toLowerCase()),
+      );
     return {
       mode: this.config.mode,
       profile: {
@@ -311,11 +463,7 @@ export class WorkspaceService {
         {
           id: "google",
           name: "Google",
-          status: connected
-            ? this.config.mode === "sample"
-              ? "sample"
-              : "connected"
-            : "disconnected",
+          status: googleStatus,
           account:
             tokens?.account ?? (this.config.mode === "sample" ? "alex@example.com" : undefined),
           capabilities:
@@ -334,6 +482,7 @@ export class WorkspaceService {
           capabilities: ["Integration adapter available"],
         },
       ],
+      sources,
       runtime: {
         provider: this.config.agentBackend === "sample" ? "sample" : "model",
         configured: agentConfigured(this.config),
@@ -431,7 +580,11 @@ export class WorkspaceService {
       input.kind === "calendar.create"
         ? await google.createEvent(input.data)
         : await google.updateEvent(input.data.eventId, input.data, targetVersion);
-    await this.db.put(owner, "events", event);
+    await this.db.put(owner, "events", {
+      ...event,
+      connectionId: tokens.connectionId,
+      cachedAt: new Date().toISOString(),
+    });
     return `Google Calendar event · ${event.id}`;
   }
   async importAttachment(owner: string, reference: string): Promise<Artifact> {

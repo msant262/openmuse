@@ -16,6 +16,29 @@ export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_JSON_BYTES = Math.ceil((MAX_ATTACHMENT_BYTES * 4) / 3) + 1024 * 1024;
 
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
 export class OutcomeUnknownError extends Error {
   readonly code = "outcome_unknown";
   constructor(
@@ -27,12 +50,23 @@ export class OutcomeUnknownError extends Error {
 }
 
 export class GoogleApiError extends Error {
+  readonly code: string;
   constructor(
     readonly status: number,
     detail: string,
+    code?: string,
   ) {
     super(`Google API (${status}): ${detail}`);
     this.name = "GoogleApiError";
+    this.code =
+      code ??
+      (status === 401
+        ? "GOOGLE_RECONNECT_REQUIRED"
+        : status === 403
+          ? "GOOGLE_PERMISSION_DENIED"
+          : status === 429
+            ? "GOOGLE_RATE_LIMITED"
+            : "GOOGLE_UNAVAILABLE");
   }
 }
 
@@ -430,7 +464,21 @@ async function readJson(response: Response): Promise<unknown> {
 export class GoogleClient {
   private readonly fetcher: typeof fetch;
   private readonly getAccessToken: () => Promise<string>;
-  constructor(options: { getAccessToken: () => Promise<string>; fetch?: typeof fetch }) {
+  private readDeadline?: number;
+  constructor(
+    private readonly options: {
+      getAccessToken: () => Promise<string>;
+      fetch?: typeof fetch;
+      signal?: AbortSignal;
+      retry?: {
+        budgetMs?: number;
+        maxAttempts?: number;
+        now?: () => number;
+        random?: () => number;
+        sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+      };
+    },
+  ) {
     this.fetcher = options.fetch ?? fetch;
     this.getAccessToken = options.getAccessToken;
   }
@@ -555,55 +603,131 @@ export class GoogleClient {
     conditionalHeaders: Record<string, string> = {},
   ): Promise<unknown> {
     const write = method !== "GET";
+    const now = this.options.retry?.now ?? Date.now;
+    const budgetMs = Math.min(60_000, Math.max(1, this.options.retry?.budgetMs ?? 10_000));
+    if (!write && this.readDeadline === undefined) this.readDeadline = now() + budgetMs;
+    const deadline = write ? now() + 30_000 : (this.readDeadline ?? now() + budgetMs);
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(Math.max(1, Math.ceil(deadline - now()))),
+      ...(this.options.signal ? [this.options.signal] : []),
+    ]);
+    signal.throwIfAborted();
     // Credential failures happen before dispatch, so their outcome is definite.
-    const token = await this.getAccessToken();
+    const token = await abortable(this.getAccessToken(), signal);
     if (!token || /[\r\n]/.test(token))
       throw new Error("Google access token is missing or invalid; reconnect Google");
-    let response: Response;
-    try {
-      response = await this.fetcher(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-          ...conditionalHeaders,
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(30000),
-        redirect: "error",
-      });
-    } catch {
-      if (write) throw new OutcomeUnknownError();
-      throw new Error("Could not reach Google; check the connection and try again");
-    }
-    if (write && (response.status >= 500 || response.status === 408)) {
+    const attempts = write ? 1 : Math.min(5, Math.max(1, this.options.retry?.maxAttempts ?? 3));
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      signal.throwIfAborted();
+      if (now() >= deadline) throw new Error("Google read retry budget exhausted");
+      let response: Response;
       try {
-        await response.body?.cancel();
+        response = await abortable(
+          this.fetcher(url, {
+            method,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+              ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+              ...conditionalHeaders,
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
+            signal,
+            redirect: "error",
+          }),
+          signal,
+        );
       } catch {
+        if (write) throw new OutcomeUnknownError();
+        signal.throwIfAborted();
+        if (attempt + 1 >= attempts)
+          throw new Error("Could not reach Google; check the connection and try again");
+        await this.backoff(attempt, undefined, deadline, signal);
+        continue;
+      }
+      if (write && (response.status >= 500 || response.status === 408)) {
+        try {
+          await response.body?.cancel();
+        } catch {
+          throw new OutcomeUnknownError();
+        }
         throw new OutcomeUnknownError();
       }
-      throw new OutcomeUnknownError();
-    }
-    if (!response.ok) {
-      let detail = response.statusText || "Request failed";
-      try {
-        const result = z
-          .object({ error: z.object({ message: z.string() }) })
-          .safeParse(await readJson(response));
-        if (result.success) detail = result.data.error.message.slice(0, 500);
-      } catch {
-        /* Preserve the definite HTTP rejection even if its body is not JSON. */
+      if (!response.ok) {
+        let detail = response.statusText || "Request failed";
+        let rateLimited = response.status === 429;
+        try {
+          const result = z
+            .object({
+              error: z.object({
+                message: z.string(),
+                errors: z.array(z.object({ reason: z.string().optional() })).optional(),
+              }),
+            })
+            .safeParse(await abortable(readJson(response), signal));
+          if (result.success) {
+            detail = result.data.error.message.slice(0, 500);
+            rateLimited ||=
+              response.status === 403 &&
+              (result.data.error.errors ?? []).some(({ reason }) =>
+                ["rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded"].includes(
+                  reason ?? "",
+                ),
+              );
+          }
+        } catch {
+          /* Preserve the definite HTTP rejection even if its body is not JSON. */
+        }
+        signal.throwIfAborted();
+        if (
+          !write &&
+          attempt + 1 < attempts &&
+          (rateLimited || response.status >= 500 || response.status === 408)
+        ) {
+          await this.backoff(
+            attempt,
+            response.headers.get("Retry-After") ?? undefined,
+            deadline,
+            signal,
+          );
+          continue;
+        }
+        throw new GoogleApiError(
+          response.status,
+          detail,
+          rateLimited ? "GOOGLE_RATE_LIMITED" : undefined,
+        );
       }
-      throw new GoogleApiError(response.status, detail);
+      if (method === "DELETE" && response.status === 204) return undefined;
+      try {
+        return await abortable(readJson(response), signal);
+      } catch {
+        if (write) throw new OutcomeUnknownError();
+        signal.throwIfAborted();
+        throw new Error("Google returned an invalid or oversized response");
+      }
     }
-    if (method === "DELETE" && response.status === 204) return undefined;
-    try {
-      return await readJson(response);
-    } catch {
-      if (write) throw new OutcomeUnknownError();
-      throw new Error("Google returned an invalid or oversized response");
-    }
+    throw new Error("Google read retry budget exhausted");
+  }
+
+  private async backoff(
+    attempt: number,
+    retryAfter: string | undefined,
+    deadline: number,
+    signal: AbortSignal,
+  ) {
+    const now = this.options.retry?.now ?? Date.now;
+    const jitter = 250 * 2 ** attempt * (0.5 + (this.options.retry?.random ?? Math.random)());
+    const requested =
+      retryAfter === undefined
+        ? 0
+        : /^\d+(?:\.\d+)?$/.test(retryAfter)
+          ? Number(retryAfter) * 1000
+          : Math.max(0, Date.parse(retryAfter) - now());
+    const delay = Math.max(jitter, Number.isFinite(requested) ? requested : 0);
+    if (delay >= deadline - now()) throw new Error("Google read retry budget exhausted");
+    await (this.options.retry?.sleep ?? waitForRetry)(delay, signal);
+    signal.throwIfAborted();
   }
 
   /** The latest 30 matching messages. Permission/read failures propagate visibly. */

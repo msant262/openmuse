@@ -1,18 +1,26 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { link, mkdir, open, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
+import { DeviceSessions } from "./device-sessions.ts";
 import { AppError } from "./errors.ts";
 
 const digest = (value: string) => createHash("sha256").update(value).digest();
 export class Auth {
+  readonly devices: DeviceSessions;
   constructor(
     private readonly db: Store,
     private readonly config: Config,
     private readonly signingKey: string,
-  ) {}
-  async session(accessKey?: string) {
+  ) {
+    this.devices = new DeviceSessions(db, signingKey, config.sessionDeviceIdleDays ?? 0);
+  }
+  async session(
+    accessKey?: string,
+    deviceLabel = "OpenMuse device",
+    transport: "native" | "web" = "native",
+  ) {
     if (
       this.config.mode === "live" &&
       (!accessKey ||
@@ -20,23 +28,23 @@ export class Auth {
         !timingSafeEqual(digest(accessKey), digest(this.config.accessKey)))
     )
       throw new AppError("Access key is incorrect", 401);
-    const token = randomBytes(32).toString("base64url");
-    await this.db.put("system", "sessions", {
-      id: digest(token).toString("hex"),
-      owner: "local-user",
-      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-    });
-    return { token, mode: this.config.mode };
+    return {
+      ...(await this.devices.pair("local-user", deviceLabel, transport)),
+      mode: this.config.mode,
+    };
   }
   async owner(authorization?: string) {
-    if (!authorization?.startsWith("Bearer ")) throw new AppError("Sign in to OpenMuse", 401);
+    if (!authorization?.startsWith("Bearer "))
+      throw new AppError("Sign in to OpenMuse", 401, "SESSION_REQUIRED");
+    if (authorization.slice(7).startsWith("om1."))
+      return this.devices.owner(authorization.slice(7));
     const session = await this.db.get<{ owner: string; expiresAt: number }>(
       "system",
       "sessions",
       digest(authorization.slice(7)).toString("hex"),
     );
     if (!session || session.expiresAt < Date.now())
-      throw new AppError("Session expired. Sign in again.", 401);
+      throw new AppError("Session expired. Pair this device again.", 401, "SESSION_EXPIRED");
     return session.owner;
   }
   sign(owner: string, path: string) {
@@ -66,15 +74,38 @@ export class Auth {
   }
 }
 export async function createAuth(db: Store, config: Config) {
-  await mkdir(config.dataDir, { recursive: true, mode: 0o700 });
-  const path = join(config.dataDir, "session-signing-key");
-  let key: string;
+  return new Auth(db, config, await getOrCreateSigningKey(config.dataDir));
+}
+
+/** Publish a fully written key by atomic hard-link; losers read the winning key. */
+export async function getOrCreateSigningKey(directory: string): Promise<string> {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const path = join(directory, "session-signing-key");
   try {
-    key = await readFile(path, "utf8");
+    return await readFile(path, "utf8");
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    key = randomBytes(32).toString("base64");
-    await writeFile(path, key, { mode: 0o600, flag: "wx" });
   }
-  return new Auth(db, config, key);
+  const temporary = join(directory, `.session-signing-key-${randomBytes(16).toString("hex")}`);
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(randomBytes(32).toString("base64"));
+    await handle.sync();
+    await handle.close();
+    try {
+      await link(temporary, path);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+    }
+    const dir = await open(directory, "r");
+    try {
+      await dir.sync();
+    } finally {
+      await dir.close();
+    }
+    return await readFile(path, "utf8");
+  } finally {
+    await handle.close();
+    await unlink(temporary);
+  }
 }

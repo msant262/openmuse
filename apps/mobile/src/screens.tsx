@@ -440,6 +440,13 @@ export function AgendaRow({
       />
       <View style={{ flex: 1, gap: 3 }}>
         <Text style={[s.text, { fontSize: 13, fontWeight: "500" }]}>{e.title}</Text>
+        {e.cache?.freshness !== "fresh" && e.cache && (
+          <Text style={[s.small, { fontSize: 11 }]}>
+            {e.cache.provenance === "unknown"
+              ? "Saved event · Google account unknown · verify before using"
+              : "Cached event · refresh needed"}
+          </Text>
+        )}
         <Text numberOfLines={1} style={[s.small, { fontSize: 11 }]}>
           {e.location || (e.attendees.length ? `${e.attendees.length} attendees` : "Time for you")}
         </Text>
@@ -648,7 +655,25 @@ export function CalendarScreen() {
       })
       .catch((e) => {
         if (active) {
-          setEvents([]);
+          const timeMin = Date.parse(zonedInstant(date, "00:00", zone));
+          const timeMax = Date.parse(zonedInstant(plusDays(date, all ? 30 : 1), "00:00", zone));
+          setEvents(
+            w.events
+              .filter(
+                (event) =>
+                  event.calendarId === calendarId &&
+                  Date.parse(event.end) > timeMin &&
+                  Date.parse(event.start) < timeMax,
+              )
+              .map((event) => ({
+                ...event,
+                cache: {
+                  ...event.cache,
+                  provenance: event.cache?.provenance ?? "verified",
+                  freshness: event.cache?.provenance === "unknown" ? "unknown" : "stale",
+                },
+              })),
+          );
           setError(e instanceof Error ? e.message : String(e));
         }
       })
@@ -947,17 +972,15 @@ export function FilesScreen() {
         form.append("file", file.file, file.name);
         artifact = await api.request<Artifact>("/api/files", form);
       } else {
-        const result = await FileSystem.uploadAsync(`${API_URL}/api/files`, file.uri, {
-          httpMethod: "POST",
-          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-          fieldName: "file",
-          mimeType: file.mimeType || "application/octet-stream",
-          headers: { Authorization: `Bearer ${api.token}` },
-        });
-        const payload = JSON.parse(result.body);
-        if (result.status < 200 || result.status >= 300)
-          throw new Error(payload.error || "Could not import this file.");
-        artifact = payload;
+        artifact = await api.upload<Artifact>((authorization) =>
+          FileSystem.uploadAsync(`${API_URL}/api/files`, file.uri, {
+            httpMethod: "POST",
+            uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+            fieldName: "file",
+            mimeType: file.mimeType || "application/octet-stream",
+            headers: { Authorization: authorization },
+          }),
+        );
       }
       await refresh();
       open({ type: "file", file: artifact });

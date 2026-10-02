@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { request } from "node:http";
@@ -34,7 +35,8 @@ test("browser API reopens an owned profile at the edited address and renews cons
   });
   const { app, auth, agent } = await createApp(db, config);
   t.after(() => agent.stop());
-  const { token } = await auth.session();
+  const paired = await auth.session();
+  const { token } = paired;
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   await db.put("local-user", "browsers", { ...savedSession, status: "closed" });
   const path = `/api/browsers/${sessionId}`;
@@ -62,6 +64,13 @@ test("browser API reopens an owned profile at the edited address and renews cons
   assert.ok(previous.consoleUrl);
   clock.mock.mockImplementation(() => start + 16 * 60_000);
   assert.equal((await app.request(previous.consoleUrl)).status, 401);
+  const access = await auth.devices.refresh({
+    deviceId: paired.deviceId,
+    rotationId: "browser-console-access-renewal",
+    currentToken: paired.refreshToken,
+    nextTokenHash: createHash("sha256").update("browser-fixture-successor").digest("hex"),
+  });
+  headers.Authorization = `Bearer ${access.token}`;
   const renewed: BrowserSession = await (await app.request(path, { headers })).json();
   assert.ok(renewed.consoleUrl);
   assert.notEqual(renewed.consoleUrl, previous.consoleUrl);
