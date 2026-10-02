@@ -9,7 +9,7 @@ import { createDemoModel, demoModel } from "../apps/server/src/demo/model.ts";
 import type { ActionProposal } from "../packages/domain/src/index.ts";
 import { browserFixture } from "./helpers/browser.ts";
 import { fixture as computerFixture } from "./helpers/computer.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
 test("CopilotKit model worker executes server tools and persists the confirmed outcome", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "openmuse-model-"));
@@ -47,6 +47,7 @@ test("CopilotKit model worker executes server tools and persists the confirmed o
       agentBackend: "model",
       intelligenceApiKey: "test-project-key-never-sent",
       model: "openai/fixture",
+      modelProviders: richChatFixtureProviders(directory),
       googleRedirectUri: "http://localhost:8787/api/google/callback",
       allowedOrigins: [],
       computerEnabled: true,

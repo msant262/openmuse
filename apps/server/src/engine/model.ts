@@ -15,10 +15,11 @@ import { computerInstructions, computerTools } from "../computer-tools.ts";
 import { mediaInstructions, mediaTools } from "../media-tools.ts";
 import { buildProfileContext } from "../profile-context.ts";
 import { modelProviderConfig } from "../providers/config.ts";
+import type { ProviderContinuationCheckpoint } from "../providers/models.ts";
 import type { AgentService } from "./service.ts";
 import { tanstackAgent } from "./tanstack-agent.ts";
 import { TaskBudgetExhaustedError } from "./task-actor.ts";
-import { modelHistory } from "./task-history.ts";
+import { modelHistory, providerContinuationCheckpointSchema } from "./task-history.ts";
 import {
   authorizeTaskEffect,
   TaskOutcomeUnknownError,
@@ -65,6 +66,7 @@ export async function executeModelTask(
   let selectedModel = config.model;
   let outcome: Partial<AgentTask> | undefined;
   let reachedStepLimit = false;
+  let providerCheckpoint: ProviderContinuationCheckpoint | undefined;
   let budgetAccountedAt = Date.now();
   // Providers can request parallel tools; durable task checkpoints must stay ordered.
   let toolQueue = Promise.resolve();
@@ -616,6 +618,12 @@ export async function executeModelTask(
     };
   };
   const agent = tanstackAgent({
+    workClass: "background",
+    onProviderInterrupted: async (checkpoint) => {
+      const saved = providerContinuationCheckpointSchema.parse(checkpoint);
+      task = await ctx.checkpoint({ state: { ...task.state, providerCheckpoint: saved } });
+      providerCheckpoint = saved;
+    },
     onStepLimit: () => {
       reachedStepLimit = true;
     },
@@ -781,6 +789,8 @@ export async function executeModelTask(
     } else if (error instanceof TaskSupersededError)
       outcome = { status: "queued", state: task.state };
     else if (error instanceof TaskOutcomeUnknownError) await recordBlocked(error);
+    else if (providerCheckpoint)
+      runError = error instanceof Error ? error.message : "Provider unavailable";
     else throw error;
   } finally {
     detachAbort();
@@ -792,8 +802,17 @@ export async function executeModelTask(
     await toolQueue;
     await service.actor.chargeElapsed(owner, task, Date.now() - budgetAccountedAt);
   }
+  if (providerCheckpoint && !outcome)
+    return {
+      status: "waiting_provider",
+      error: null,
+      question: runError ?? "Provider unavailable; saved progress retained",
+      state: { ...task.state, lastUpdate: text || providerCheckpoint.partialText },
+      ...(providerCheckpoint.retryAt ? { nextRunAt: providerCheckpoint.retryAt } : {}),
+    };
   if (runError && !outcome) throw new Error(runError);
-  if (outcome) return { ...outcome, state: { ...task.state, ...outcome.state } };
+  if (outcome)
+    return { ...outcome, state: { ...task.state, ...outcome.state, providerCheckpoint: null } };
   if (text) await ctx.event("step", "Agent update", text.slice(0, 12000));
   return (
     outcome ?? {

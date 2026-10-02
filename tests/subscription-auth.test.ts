@@ -318,7 +318,7 @@ test("SIWC concurrent refresh atomically rotates once, respects earliest time, a
   assert.equal(f.calls.length, 0);
   await writeProtected(f.file, expired);
   f.error({ code: "temporarily_unavailable", status: 503 });
-  await assert.rejects(chatGPTAccessToken(f.file, f.ctx), /temporarily unavailable/);
+  await assert.rejects(chatGPTAccessToken(f.file, f.ctx), /temporariamente indisponível/);
   assert.equal(
     ((await readProtected(f.file)) as Record<string, unknown>).refresh_token,
     original.refresh_token,

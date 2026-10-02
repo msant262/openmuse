@@ -8,6 +8,7 @@ export class ModelProviderError extends Error {
     readonly requestId?: string,
     readonly param?: string,
     readonly bodyShape?: "error" | "detail" | "other",
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "ModelProviderError";
@@ -15,7 +16,23 @@ export class ModelProviderError extends Error {
 }
 
 const usage =
-  "ChatGPT's usage limit for this app was reached. Manage usage at https://chatgpt.com/settings/usage, or use a configured fallback.";
+  "O limite de uso do ChatGPT para este aplicativo foi atingido. Veja https://chatgpt.com/settings/usage ou use outro provedor configurado.";
+
+export class ModelUnavailableError extends ModelProviderError {
+  constructor(
+    readonly reason: "capability" | "cooldown" | "quota",
+    readonly retryAt?: number,
+  ) {
+    super(
+      "models",
+      reason === "capability" ? "MODEL_CAPABILITY_UNAVAILABLE" : "MODEL_PROVIDER_UNAVAILABLE",
+      reason === "capability"
+        ? "Nenhum modelo configurado tem as capacidades ou o contexto necessários. O trabalho foi preservado; ajuste a configuração para continuar."
+        : "Os provedores configurados estão temporariamente indisponíveis. O progresso foi preservado e o trabalho aguarda um provedor.",
+    );
+    this.name = "ModelUnavailableError";
+  }
+}
 
 export function publicProviderMessage(provider: string, code?: string, status?: number): string {
   if (
@@ -29,23 +46,27 @@ export function publicProviderMessage(provider: string, code?: string, status?: 
       "refresh_token_reused",
     ].includes(code)
   )
-    return `${provider}'s sign-in session expired or was revoked. Sign in again, or use a configured fallback.`;
+    return `A sessão do ${provider} expirou ou foi revogada. Conecte a conta novamente ou use outro provedor configurado.`;
   if (code === "subscription_sharing_usage_limit_exceeded") return usage;
   if (code === "subscription_sharing_usage_unavailable" || status === 503)
-    return `${provider} is temporarily unavailable. Try again later or use a configured fallback.`;
+    return `${provider} está temporariamente indisponível. Tente mais tarde ou use outro provedor configurado.`;
   if (code === "subscription_sharing_unsupported_capability")
-    return "This capability is unavailable through Sign in with ChatGPT. Use local tools or another configured provider.";
+    return "Esta capacidade está indisponível via Sign in with ChatGPT. Use ferramentas locais ou outro provedor configurado.";
   if (provider === "grok" && status === 403)
-    return "xAI denied subscription API access for this account or tier. Logging in again may not fix it; check your xAI subscription or use a configured fallback.";
+    return "A xAI recusou o acesso à API de assinatura desta conta ou plano (tier). Verifique a assinatura ou use outro provedor configurado.";
   if (status === 401)
-    return `${provider} credentials were not accepted. Check the selected account and sign in again if its session was revoked.`;
+    return `As credenciais do ${provider} foram recusadas. Verifique a conta selecionada e reconecte se a sessão foi revogada.`;
   if (status === 403)
-    return `${provider} access is restricted for this account, workspace, or region. Check permissions or use a configured fallback.`;
+    return `O acesso ao ${provider} está restrito para esta conta, espaço ou região. Verifique as permissões ou use outro provedor configurado.`;
   if (status === 429)
-    return `${provider} usage is currently limited. Try later or use a configured fallback.`;
+    return `O uso do ${provider} está limitado. Tente mais tarde ou use outro provedor configurado.`;
   if (status && status >= 500)
-    return `${provider} could not complete the request. Try again later.`;
-  return `${provider} could not accept this model request${code ? ` (${code})` : ""}. Check its configuration.`;
+    return `${provider} não conseguiu concluir a solicitação. Tente novamente mais tarde.`;
+  if (code === "provider_network_error" || code === "provider_timeout")
+    return `Não foi possível alcançar o ${provider}. O progresso foi preservado; tente mais tarde.`;
+  if (code === "provider_stream_incomplete")
+    return `A resposta do ${provider} foi interrompida. O progresso e os recibos concluídos foram preservados.`;
+  return `${provider} não aceitou a solicitação do modelo${code ? ` (${code})` : ""}. Verifique a configuração.`;
 }
 
 export const safeCode = (value: unknown): string | undefined =>
@@ -66,7 +87,15 @@ export async function httpProviderError(provider: string, response: Response) {
     requestId,
     safeCode(error?.param),
     error ? "error" : raw && typeof raw === "object" && "detail" in raw ? "detail" : "other",
+    retryAfter(response.headers.get("retry-after")),
   );
+}
+
+export function retryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - now;
+  return Number.isFinite(delay) && delay >= 0 ? Math.ceil(delay) : undefined;
 }
 
 export function fallbackAllowed(error: unknown): boolean {
@@ -77,6 +106,12 @@ export function fallbackAllowed(error: unknown): boolean {
       "credentials_expired",
       "plan_disabled",
       "provider_network_error",
+      "provider_timeout",
+      "provider_stream_incomplete",
+      "subscription_sharing_usage_limit_exceeded",
+      "subscription_sharing_usage_unavailable",
+      "subscription_sharing_unsupported_capability",
+      "model_not_found",
       "invalid_grant",
       "invalid_refresh_token",
       "token_expired",

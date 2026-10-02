@@ -14,7 +14,7 @@ import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
 import { buildProfileContext } from "../apps/server/src/profile-context.ts";
 import { modelProviderConfig } from "../apps/server/src/providers/config.ts";
 import { browserFixture } from "./helpers/browser.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
 test("profile migration preserves chosen names; global/conversation revisions are independent and CAS retries idempotent", async () => {
   const db = await createStore();
@@ -218,6 +218,7 @@ test("shared profile is refreshed at task safe points, survives disk restart/pro
     agentBackend: "model",
     intelligenceApiKey: "test-project-key-never-sent",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(directory),
     googleRedirectUri: "http://localhost:8787/api/google/callback",
     allowedOrigins: [],
   };
@@ -299,6 +300,14 @@ test("shared profile is refreshed at task safe points, survives disk restart/pro
     const providers = modelProviderConfig(directory, {
       OPENAI_COMPATIBLE_BASE_URL: process.env.OPENAI_BASE_URL,
       OPENAI_COMPATIBLE_API: "responses",
+      MODEL_CAPABILITIES: JSON.stringify({
+        "compatible/fixture-after-restart": {
+          tools: true,
+          vision: false,
+          structuredOutput: true,
+          contextTokens: 131072,
+        },
+      }),
     });
     server = await createApp(db, {
       ...config,
@@ -606,7 +615,12 @@ test("mutable chat tools create a durable task receipt with thread provenance in
       ? { name: "browser_navigate", arguments: { url: "https://example.org/account" } }
       : undefined,
   );
-  const config = { ...fixture.config, agentBackend: "model" as const, model: "openai/fixture" };
+  const config = {
+    ...fixture.config,
+    agentBackend: "model" as const,
+    model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(fixture.config.dataDir),
+  };
   const server = await createApp(fixture.db, config);
   try {
     const body = {

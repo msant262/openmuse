@@ -56,7 +56,7 @@ import {
   type OutboxMessage,
 } from "./message-outbox";
 import { messageStorage } from "./message-storage";
-import { modelUsageUrl } from "./model-errors";
+import { modelSelectionNotice, modelUsageUrl } from "./model-errors";
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
 import { type Selection, useMuseThread } from "./threads";
 import { Button, Card, CheckRow, colors, ErrorNotice, s } from "./ui";
@@ -329,6 +329,7 @@ export function ChatScreen({
   const [showResults, setShowResults] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [modelNotice, setModelNotice] = useState<string>();
   const [loaded, setLoaded] = useState(false);
   const [picking, setPicking] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
@@ -396,6 +397,10 @@ export function ChatScreen({
     setHistoryError("");
     setLoaded(queue instanceof MessageOutbox && queue.getSnapshot().loaded);
     const replay = agent.subscribe({
+      onCustomEvent: ({ event }) => {
+        if (active && event.name === "openmuse.model")
+          setModelNotice(modelSelectionNotice(event.value));
+      },
       onMessagesChanged: ({ messages }) => {
         if (active && richThreads && messages.length) setLoaded(true);
       },
@@ -1025,6 +1030,7 @@ export function ChatScreen({
             ))}
           </View>
         )}
+        {!!modelNotice && <Text style={s.small}>{modelNotice}</Text>}
         <ErrorNotice error={error} />
         {modelUsageUrl(error) && (
           <Button
@@ -1036,7 +1042,7 @@ export function ChatScreen({
               );
             }}
           >
-            Manage ChatGPT usage
+            Ver uso do ChatGPT
           </Button>
         )}
         {!!error && (

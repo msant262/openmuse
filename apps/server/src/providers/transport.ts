@@ -1,11 +1,113 @@
 import { CHATGPT_RESOURCE, chatGPTAccessToken } from "./chatgpt-auth.ts";
 import type { ModelProviderConfig } from "./config.ts";
-import { httpProviderError, ModelProviderError } from "./errors.ts";
+import { httpProviderError, ModelProviderError, publicProviderMessage } from "./errors.ts";
 import { GROK_API_URL, grokAccessToken } from "./grok-auth.ts";
 
 export interface DispatchState {
   accepted: boolean;
+  expectedStreaming?: boolean;
+  requiresCompletion?: boolean;
+  completed?: boolean;
   failure?: ModelProviderError;
+}
+
+/** SDKs may synthesize success on EOF. Only the provider terminal event confirms success. */
+function verifiedCompletion(
+  response: Response,
+  provider: string,
+  state: DispatchState,
+  api: "responses" | "chat-completions",
+) {
+  state.requiresCompletion = true;
+  state.completed = false;
+  if (!response.body) return response;
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const inspect = (frame: string) => {
+    const data = frame
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data || data === "[DONE]") return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (!parsed || typeof parsed !== "object") return;
+    const event = parsed as Record<string, unknown>;
+    if (api === "chat-completions") {
+      const choices = Array.isArray(event.choices) ? event.choices : [];
+      for (const choice of choices) {
+        if (!choice || typeof choice !== "object") continue;
+        const reason = (choice as Record<string, unknown>).finish_reason;
+        if (typeof reason !== "string") continue;
+        if (["stop", "tool_calls", "function_call"].includes(reason)) state.completed = true;
+        else {
+          state.failure = new ModelProviderError(
+            provider,
+            "provider_stream_incomplete",
+            publicProviderMessage(provider, "provider_stream_incomplete"),
+          );
+          throw state.failure;
+        }
+      }
+      return;
+    }
+    const result =
+      event.response && typeof event.response === "object"
+        ? (event.response as Record<string, unknown>)
+        : undefined;
+    const error =
+      result?.error && typeof result.error === "object"
+        ? (result.error as Record<string, unknown>)
+        : undefined;
+    if (event.type === "response.completed" && result?.status === "completed")
+      state.completed = true;
+    if (event.type === "response.failed" || event.type === "response.incomplete") {
+      const code =
+        error?.code === "subscription_sharing_usage_limit_exceeded"
+          ? "subscription_sharing_usage_limit_exceeded"
+          : "provider_stream_incomplete";
+      state.failure = new ModelProviderError(
+        provider,
+        code,
+        code === "subscription_sharing_usage_limit_exceeded"
+          ? publicProviderMessage(provider, code)
+          : "A resposta do provedor foi interrompida. O progresso e os recibos concluídos foram preservados.",
+      );
+      throw state.failure;
+    }
+  };
+  const check = (final = false) => {
+    const frames = buffer.split(/\r?\n\r?\n/);
+    buffer = final ? "" : (frames.pop() ?? "");
+    for (const frame of frames) inspect(frame);
+  };
+  const stream = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true });
+        check();
+        controller.enqueue(chunk);
+      },
+      flush() {
+        buffer += decoder.decode();
+        check(true);
+        if (!state.completed) {
+          state.failure = new ModelProviderError(
+            provider,
+            "provider_stream_incomplete",
+            "A resposta do provedor terminou sem confirmação. O progresso e os recibos concluídos foram preservados.",
+          );
+          throw state.failure;
+        }
+      },
+    }),
+  );
+  return new Response(stream, { status: response.status, headers: response.headers });
 }
 const forbidden = [
   "background",
@@ -135,9 +237,32 @@ export function providerFetch(
         headers.delete("Authorization");
         dispatched = new Request(dispatched, { headers });
       }
+      const path = new URL(dispatched.url).pathname;
+      const protocol = path.endsWith("/responses")
+        ? "responses"
+        : path.endsWith("/chat/completions")
+          ? "chat-completions"
+          : undefined;
+      let streaming = state.expectedStreaming === true;
+      if (protocol && !streaming) {
+        const body: unknown = await dispatched
+          .clone()
+          .json()
+          .catch(() => undefined);
+        streaming = Boolean(
+          body && typeof body === "object" && "stream" in body && body.stream === true,
+        );
+      }
+      if (protocol && streaming) {
+        // Request semantics decide the boundary, never a provider-controlled MIME header.
+        state.requiresCompletion = true;
+        state.completed = false;
+      }
       const response = await upstream(dispatched, { redirect: "error" });
-      if (response.ok) state.accepted = true;
-      else {
+      if (response.ok) {
+        state.accepted = true;
+        if (protocol && streaming) return verifiedCompletion(response, provider, state, protocol);
+      } else {
         state.failure = await httpProviderError(provider, response.clone());
         if (!legacy)
           return new Response(
@@ -160,7 +285,7 @@ export function providerFetch(
           : new ModelProviderError(
               provider,
               "provider_network_error",
-              `${provider} could not be reached. Check its endpoint or try later.`,
+              publicProviderMessage(provider, "provider_network_error"),
             );
       throw state.failure;
     }

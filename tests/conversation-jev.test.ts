@@ -11,7 +11,7 @@ import { JevService } from "../apps/server/src/jev/service.ts";
 import { presentChoicesParameters } from "../apps/server/src/jev/tools.ts";
 import { encodeJevAction } from "../packages/domain/src/jev.ts";
 import { browserFixture } from "./helpers/browser.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
 const options = [{ id: "explore", label: "Explore exhibits", details: [], sources: [] }];
 const comparisonOption = (url: string) => ({
@@ -70,6 +70,7 @@ async function fixture(
     ...browser.config,
     agentBackend: "model" as const,
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
     jevMode: "sample" as const,
   };
   const app = await createApp(browser.db, config);
@@ -179,6 +180,7 @@ test("live choices reject unobserved source pages without creating a panel", asy
     ...browser.config,
     agentBackend: "model" as const,
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
     jevMode: "live" as const,
   };
   const app = await createApp(browser.db, config);
@@ -230,6 +232,7 @@ test("a redirected browse does not prove the requested source URL", async (t) =>
     ...browser.config,
     agentBackend: "model" as const,
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
     jevMode: "live" as const,
   };
   const app = await createApp(browser.db, config);
@@ -270,6 +273,7 @@ test("mail read in an earlier run does not authorize a new live clarification", 
     ...browser.config,
     agentBackend: "model" as const,
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
     jevMode: "live" as const,
   };
   const app = await createApp(browser.db, config);
@@ -344,6 +348,7 @@ test("live refinement reuses the verified stored sources with no new browse or o
     ...browser.config,
     agentBackend: "model" as const,
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
     jevMode: "live" as const,
   };
   const app = await createApp(browser.db, config);
@@ -399,6 +404,7 @@ test("generic live clarification succeeds without mail, but an unobserved mail t
     ...browser.config,
     agentBackend: "model" as const,
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
     jevMode: "live" as const,
   };
   const app = await createApp(browser.db, config);
@@ -441,6 +447,7 @@ test("Jev judges the person's own message, not the agent's summary of it", async
     ...browser.config,
     agentBackend: "model" as const,
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
     jevMode: "live" as const,
   };
   const app = await createApp(browser.db, config);
@@ -501,6 +508,7 @@ test("live comparison rejects a factual detail absent from the read page", async
     ...browser.config,
     agentBackend: "model" as const,
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
     jevMode: "live" as const,
   };
   const app = await createApp(browser.db, config);
@@ -548,6 +556,7 @@ test("an empty browser read does not authorize a live comparison", async (t) => 
     ...browser.config,
     agentBackend: "model" as const,
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
     jevMode: "live" as const,
   };
   const app = await createApp(browser.db, config);
@@ -625,6 +634,7 @@ for (const [name, candidate, error] of [
       ...browser.config,
       agentBackend: "model" as const,
       model: "openai/fixture",
+      modelProviders: richChatFixtureProviders(browser.config.dataDir),
       jevMode: "live" as const,
     };
     const app = await createApp(browser.db, config);

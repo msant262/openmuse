@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createApp } from "../apps/server/src/app.ts";
 import { browserFixture } from "./helpers/browser.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
 for (const interruption of ["takeover", "crash", "uncertain"] as const) {
   test(`ordinary browser receipt survives ${interruption} and fresh snapshot references`, async (t) => {
@@ -100,6 +100,7 @@ for (const interruption of ["takeover", "crash", "uncertain"] as const) {
       mode: "live",
       agentBackend: "model",
       model: "openai/fixture",
+      modelProviders: richChatFixtureProviders(browser.config.dataDir),
     });
     t.after(() => app.agent.stop());
     const task = await app.agent.createTask("owner", { prompt: "Submit the form once" });
@@ -112,6 +113,7 @@ for (const interruption of ["takeover", "crash", "uncertain"] as const) {
         mode: "live",
         agentBackend: "model",
         model: "openai/fixture",
+        modelProviders: richChatFixtureProviders(browser.config.dataDir),
       });
       await browser.db.compareAndSwap(
         "owner",
@@ -161,6 +163,7 @@ test("task inference deadline does not expire while a 30-minute foreground comma
     mode: "live",
     agentBackend: "model",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
   });
   t.after(() => app.agent.stop());
   let release!: () => void, began!: () => void;
@@ -227,6 +230,7 @@ test("accepted but unconfirmed browser action is fenced after a fresh executor r
     mode: "live",
     agentBackend: "model",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
   });
   t.after(() => app.agent.stop());
   const task = await app.agent.createTask("owner", { prompt: "Submit once" });
@@ -252,6 +256,7 @@ test("accepted but unconfirmed browser action is fenced after a fresh executor r
     mode: "live",
     agentBackend: "model",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
   });
   await app.agent.worker.tick();
   const saved = await app.agent.getTask("owner", task.id);
@@ -276,6 +281,7 @@ test("task cancellation propagates and joins foreground receipt before releasing
     ...browser.config,
     agentBackend: "model",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
   });
   let began!: () => void, settle!: () => void;
   const started = new Promise<void>((r) => {
@@ -344,6 +350,7 @@ test("idle inference deadline fails promptly without cancelling an explicit back
     ...browser.config,
     agentBackend: "model",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
   });
   t.after(() => app.agent.stop());
   app.agent.computer.execute = async (_owner, args) => {
@@ -357,21 +364,48 @@ test("idle inference deadline fails promptly without cancelling an explicit back
       ReturnType<typeof app.agent.computer.execute>
     >;
   };
-  const original = globalThis.setTimeout;
-  let expire: (() => void) | undefined;
+  const original = globalThis.setTimeout,
+    originalClear = globalThis.clearTimeout;
+  const timers = new Set<() => void>(),
+    handles = new Map<unknown, () => void>();
   globalThis.setTimeout = ((callback: () => void, ms?: number, ...args: unknown[]) => {
-    if (ms === 300000) expire = callback;
-    return original(callback, ms, ...args);
+    const handle = original(callback, ms, ...args);
+    if (ms === 300000) {
+      timers.add(callback);
+      handles.set(handle, callback);
+    }
+    return handle;
   }) as typeof setTimeout;
+  globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
+    const callback = handles.get(handle);
+    if (callback) timers.delete(callback);
+    return originalClear(handle);
+  }) as typeof clearTimeout;
   try {
     const task = await app.agent.createTask("owner", {
       prompt: "Start background job then explain",
     });
     const tick = app.agent.worker.tick();
     await started;
+    // Quota admission also uses five-minute timers, which are cleared before dispatch.
+    assert.equal(timers.size, 1, "only the task idle deadline remains armed after admission");
+    const [expire] = timers;
     assert.ok(expire);
     expire();
-    await tick;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        tick,
+        new Promise<never>((_, reject) => {
+          deadline = original(
+            () => reject(new Error("Task did not settle promptly after its idle deadline")),
+            5000,
+          );
+        }),
+      ]);
+    } finally {
+      if (deadline) originalClear(deadline);
+    }
     assert.equal((await app.agent.getTask("owner", task.id)).status, "failed");
     assert.match((await app.agent.getTask("owner", task.id)).error ?? "", /inference timed out/);
     assert.equal(
@@ -381,5 +415,6 @@ test("idle inference deadline fails promptly without cancelling an explicit back
   } finally {
     release();
     globalThis.setTimeout = original;
+    globalThis.clearTimeout = originalClear;
   }
 });

@@ -10,7 +10,7 @@ import { createStore } from "../apps/server/src/db.ts";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
 import type { LocalThreads } from "../apps/server/src/threads.ts";
 import type { AgentNotification, AgentTask, Routine } from "../packages/domain/src/agent.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
 test("natural-language tools save memory and a routine; real worker posts once after busy chat and restart", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "openmuse-routine-integration-"));
@@ -37,6 +37,7 @@ test("natural-language tools save memory and a routine; real worker posts once a
     dataDir: directory,
     agentBackend: "model",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(directory),
     routineTimezone: "Europe/Berlin",
     googleRedirectUri: "http://localhost:8787/api/google/callback",
     allowedOrigins: [],

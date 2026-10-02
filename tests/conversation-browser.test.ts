@@ -6,7 +6,7 @@ import { lastValueFrom, toArray } from "rxjs";
 import { createApp } from "../apps/server/src/app.ts";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
 import { browserFixture } from "./helpers/browser.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
 const requestedUrl = "https://example.org/article";
 const observed = {
@@ -43,7 +43,12 @@ async function chatFixture(t: TestContext, failure?: string) {
           },
     };
   });
-  const config = { ...fixture.config, agentBackend: "model", model: "openai/fixture" } as const;
+  const config = {
+    ...fixture.config,
+    agentBackend: "model",
+    model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(fixture.config.dataDir),
+  } as const;
   const server = await createApp(fixture.db, config);
   t.after(() => server.agent.stop());
   return {

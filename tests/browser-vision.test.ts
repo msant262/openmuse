@@ -94,6 +94,14 @@ for (const protocol of ["responses", "chat-completions", "chatgpt"] as const) {
     const providers = modelProviderConfig(dir, {
       OPENAI_COMPATIBLE_BASE_URL: base,
       OPENAI_COMPATIBLE_API: protocol === "chat-completions" ? protocol : "responses",
+      MODEL_CAPABILITIES: JSON.stringify({
+        [protocol === "chatgpt" ? "chatgpt/vision" : "compatible/vision"]: {
+          tools: true,
+          vision: true,
+          structuredOutput: true,
+          contextTokens: 32768,
+        },
+      }),
     });
     if (protocol === "chatgpt") {
       await writeProtected(providers.chatgptFile, {

@@ -24,6 +24,8 @@ import { taskOperationId } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 import type { GoogleAuth } from "./google-auth.ts";
+import { modelProviderConfig, orderedModels } from "./providers/config.ts";
+import { sharedModelRouter } from "./providers/model-router.ts";
 export type WorkspaceSection = "essential" | "mail" | "calendar" | "files" | "browser" | "all";
 type CachedRow<T> = T & { connectionId?: string; cachedAt?: string };
 export type WorkspaceSnapshot = Workspace & { sources: WorkspaceSources };
@@ -503,6 +505,21 @@ export class WorkspaceService {
         richThreads: true,
         threadStorage: this.config.intelligenceApiKey?.trim() ? "intelligence" : "local",
         approvalPolicy: approvalPolicy(this.config),
+        ...(this.config.agentBackend === "model" && this.config.model
+          ? {
+              modelRouting: (() => {
+                const router = sharedModelRouter(
+                  this.config.modelProviders ?? modelProviderConfig(this.config.dataDir),
+                );
+                router.register(
+                  orderedModels(this.config.model ?? "", this.config.modelFallbacks).map(
+                    (model) => model.spec,
+                  ),
+                );
+                return router.status();
+              })(),
+            }
+          : {}),
       },
     };
   }

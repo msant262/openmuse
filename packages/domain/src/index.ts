@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ModelRoutingStatus } from "./runtime.ts";
 
 export type WorkspaceMode = "sample" | "live";
 export type Section =
@@ -224,6 +225,7 @@ export interface Workspace {
     richThreads?: boolean;
     threadStorage?: "local" | "intelligence";
     approvalPolicy?: "money" | "all";
+    modelRouting?: ModelRoutingStatus;
   };
 }
 

@@ -18,12 +18,35 @@ Subscription providers never fall through to an API key. To use a billed provide
 ```dotenv
 AGENT_BACKEND=model
 MODEL=chatgpt/your-account-model-slug
-MODEL_FALLBACKS=mimo/mimo-v2.5-pro,local/your-installed-model
+MODEL_FALLBACKS=grok/your-account-model-id,mimo/your-plan-model-id
 ```
 
-Fallback switches only the current model request after an admission/network/usage failure, before a successful HTTP stream opens. Each candidate receives the current full tool/history context. Completed tools are never reexecuted by fallback. A stream interrupted after acceptance stops the run, keeping completed tool results; send a follow-up to continue. Invalid configuration, unsupported input, and cancellation stop without trying another model. Once a fallback succeeds, later steps in that run continue from it and may advance further. A new run starts with the configured primary again.
+Fallback switches the current inference after an admission/network/usage failure, before a successful HTTP stream opens. Candidates must satisfy the request's tools, vision, structured output and context requirements. Each receives the current full history. Completed tools are never reexecuted by pre-admission fallback. Invalid configuration, unsupported input and cancellation stop without trying another model. Once a fallback succeeds, later steps in that run continue from it and may advance further. A new run considers the configured primary again, subject to shared health/cooldown.
 
-The AG-UI `openmuse.model` event records fallback provider/model selection without credentials or endpoint URLs. SDK retries stay bounded for the existing providers and compatible endpoints. Subscription inference does not blindly retry an admission error; an explicitly ordered fallback can handle it.
+Streaming acceptance is distinct from completion: Responses requires `response.completed` with completed status and a successfully exhausted stream. Chat Completions requires an explicit `stop`, `tool_calls` or legacy `function_call` finish reason; `length` and `content_filter` preserve an incomplete result. Verification follows known streaming request semantics and cannot be disabled by a missing, incorrect or differently cased response Content-Type. Genuine non-streaming structured JSON remains supported. Clean EOF, `response.incomplete`, `response.failed`, late failure and socket loss never confirm success. Tool fragments are buffered until completion; a complete-looking argument fragment is never an effect authorization. Visible text is retained. After an accepted interruption, the run stops without restarting its turn. The task is saved as `waiting_provider`, with `task.state.providerCheckpoint` carrying validated AG-UI input history, completed tool IDs/results and partial public text. No hydrated image bytes, reasoning or provider metadata enter this checkpoint. The durable actor must consume its operation journal and this checkpoint before automatic continuation; this provider milestone alone does not claim restart/replay acceptance.
+
+The AG-UI `openmuse.model` event records every selected provider/model and whether a fallback occurred, without credentials or endpoint URLs. Chat shows a discreet notice; Apps shows active selection and safe Portuguese temporary-unavailability messages. A provider failure does not disconnect OpenMuse or other connectors. ChatGPT usage errors retain the fixed Usage settings link.
+
+## Capabilities and inference quota
+
+```dotenv
+MODEL_QUOTA_SCOPE=process
+MODEL_PROVIDER_QUOTAS={"chatgpt":{"total":4},"grok":{"total":4},"mimo":{"total":4}}
+MODEL_CAPABILITIES={"chatgpt/your-account-model-slug":{"tools":true,"vision":true,"structuredOutput":true,"contextTokens":32768},"grok/your-account-model-id":{"tools":true,"vision":false,"structuredOutput":true,"contextTokens":32768},"mimo/your-plan-model-id":{"tools":true,"vision":false,"structuredOutput":true,"contextTokens":32768}}
+MODEL_MAX_ATTEMPTS=3
+MODEL_DEADLINE_MS=300000
+MODEL_ATTEMPT_TIMEOUT_MS=60000
+MODEL_COOLDOWN_MS=200
+MODEL_IMAGE_CONTEXT_TOKENS=8192
+```
+
+Use the model IDs and limits supported by the selected account/endpoint. Model declarations are Zod-validated operator configuration, not proof of account access. Unspecified models retain the existing text/tool/schema wire compatibility assumption with a finite 32768-token context bound; vision defaults to false. Public status labels this `compatibility_assumption`, distinct from `declared` or an explicit validated preflight result. `ModelRouter.confirmCapabilities` accepts an actual preflight result; it does not invent a catalog or probe an undocumented route. Select the SIWC model from `pnpm auth chatgpt models`; an environment-selected ID alone does not establish availability. Request context uses a conservative UTF-8 byte bound for prompt/tool/schema text plus `MODEL_IMAGE_CONTEXT_TOKENS` per image. That default allowance is an estimate, not an exact universal tokenizer; calibrate it against the actual selected models or supply a measured request bound through the engine requirements seam. Transport base64 is never counted as ordinary text or stripped from dispatch. No history is silently removed. Screenshot/file image promotion requires an explicitly vision-capable model. Automatic compaction belongs to a later milestone.
+
+One router and provider health pool serve independently constructed chat/task adapters in the chosen deployment: one API process with the embedded TaskWorker and PGlite. Inference quota is separate from the four global background work units. The default per-provider bound is three background calls and one interactive call; configure a lower `total`, `background` (1–3), or `interactive` (1). Provider aliases share their seats. For total ≥2, background is capped to reserve a chat seat; at total=1, idle background is admitted and queued chat receives the next free seat. Active inference is never canceled just because chat arrives, so quota one cannot promise an immediate reply. A measured concurrency bound can reduce the pool through `ModelRouter.observeQuota`; request/token-per-minute limits are never mistaken for concurrency limits.
+
+These leases are process-local. PostgreSQL and the standalone worker remain supported, but multiple API/worker processes do not share an account's inference pool. Operators must divide that account's budget explicitly among processes or supply a future shared admission adapter. `MODEL_QUOTA_SCOPE=shared` fails at startup with an explicit diagnostic; it cannot silently claim a shared quota. Public runtime status also reports `quotaScope: process`.
+
+Retries are centralized: SDK retries are zero; `MODEL_MAX_ATTEMPTS` bounds total attempts across candidates, and the same overall deadline covers queueing and failover. A per-attempt timeout leaves budget for another candidate. Admission, retry and exhausted-attempt diagnostics use the same canonical capability/context filter, including preflight declarations. Incapable healthy fallbacks cannot mask a capable model's rate limit or erase its wake-up time. Shared model cooldown honors numeric/date `Retry-After`; long waits park the work instead of looping. Models in cooldown are excluded across new adapters. Streaming and non-streaming structured output use the same capability filter and inference seats; SIWC remains on its streaming-only Responses route. No retries or capability changes authorize an external effect.
 
 ## Continue with ChatGPT on a laptop
 

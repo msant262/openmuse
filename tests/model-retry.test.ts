@@ -66,7 +66,8 @@ test("a non-retryable provider failure fails fast without a retry", async (t) =>
   const { requests } = await modelFixture(t, () => undefined, { errorStatus: () => 400 });
   const outcome = await run(agent());
   assert.equal(outcome.finished, false);
-  assert.match(outcome.error ?? "", /Fixture provider failure/);
+  assert.match(outcome.error ?? "", /provider_http_error/);
+  assert.doesNotMatch(outcome.error ?? "", /Fixture provider failure/);
   assert.equal(requests.length, 1, "a 400 must never be retried");
 });
 
@@ -95,7 +96,7 @@ test("a provider error part after the stream starts is not retried", async (t) =
   });
   const outcome = await run(agent());
   assert.equal(outcome.finished, false);
-  assert.match(outcome.error ?? "", /Provider reported response.failed/);
+  assert.match(outcome.error ?? "", /resposta do provedor foi interrompida/);
   assert.equal(requests.length, 1, "an error part in a started stream is not retried");
 });
 

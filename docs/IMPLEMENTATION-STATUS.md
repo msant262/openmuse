@@ -8,7 +8,8 @@ Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-
 | 2 — Durable chat, questions and personality | Reviewed and integrated; physical device acceptance pending |
 | 3 — Four work slots, resources and global pause | Reviewed and integrated; native executor acceptance pending |
 | 4 — Task direction, recovery and verified completion | Reviewed and integrated; native/provider composition follows |
-| 5–12 | Pending integration |
+| 5 — Capability-aware model fallback | Reviewed and integrated; real subscription acceptance pending |
+| 6–12 | Pending integration |
 
 ## Milestone 1
 
@@ -106,3 +107,27 @@ Production model-router composition follows in milestone 5. Native executor
 authority, desktop session generations and bounded context composition remain
 required in milestones 6, 7 and 10. No physical Lenovo/VPS, real provider account
 or Android acceptance is claimed by this milestone.
+
+## Milestone 5
+
+Model routing uses an ordered provider list, declared/preflight capabilities,
+context limits and provider cooldowns. The supported single API process reserves
+interactive inference capacity separately from background work. The app displays
+provider limits and recoverable waiting states. Distributed quota sharing is
+explicitly unsupported; this deployment uses one API process and embedded worker.
+
+An interrupted accepted stream retains its completed tool history and a separate
+partial-text buffer. The M4 journal consumes that checkpoint after restart without
+repeating a completed external action. Incomplete streams cannot flush partial
+tool calls even when a provider sends an incorrect content-type header.
+
+The actual HTTP file-write → provider EOF → disk DB restart → resumed task test
+passed with exactly one physical write and one logical write operation. Routing
+and restart checks passed 38/38; combined M4/M5 regressions passed 52/52 after
+declaring the synthetic test models' rich-context capacity. Production capability
+checks and conservative defaults were preserved. Final combined validation on 2026-10-02 passed all 610 tests in 113.2 seconds,
+server/mobile typecheck, and changed-source lint with zero errors.
+
+Real ChatGPT/Grok/MiMo entitlement, model capabilities and account quotas still
+require account acceptance. No subscription support was invented for Anthropic
+or Cursor. M10 supplies bounded context/history integration later.

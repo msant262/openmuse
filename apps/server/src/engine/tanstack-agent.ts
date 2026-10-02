@@ -18,9 +18,11 @@ import {
 } from "@tanstack/ai";
 import { finalize, map, mergeMap, type Observable } from "rxjs";
 import { z } from "zod";
+import type { ModelRequirements, WorkClass } from "../../../../packages/domain/src/runtime.ts";
 import type { BrowserImageLoader } from "../providers/browser-images.ts";
 import type { ModelProviderConfig } from "../providers/config.ts";
-import type { ModelSelection } from "../providers/models.ts";
+import type { ModelRouter } from "../providers/model-router.ts";
+import type { ModelSelection, ProviderContinuationCheckpoint } from "../providers/models.ts";
 import { modelAdapter } from "../providers/models.ts";
 
 export { unknownProvider } from "../providers/models.ts";
@@ -81,6 +83,10 @@ export function tanstackAgent(options: {
   onModelSelected?: (model: ModelSelection) => void;
   /** Said when the step limit, not the model, ends a run; otherwise the reply just stops. */
   stepLimitNote?: string;
+  workClass?: WorkClass;
+  requirements?: Partial<ModelRequirements>;
+  modelRouter?: ModelRouter;
+  onProviderInterrupted?: (checkpoint: ProviderContinuationCheckpoint) => Promise<void> | void;
 }) {
   // Runtime 1.70's TanStack converter drops CUSTOM chunks; relay provider attribution here.
   const modelNotices = new Map<string, BaseEvent[]>();
@@ -121,6 +127,12 @@ export function tanstackAgent(options: {
           },
           options.loadBrowserImage,
           options.loadFileImage,
+          {
+            workClass: options.workClass,
+            requirements: options.requirements,
+            router: options.modelRouter,
+            onInterrupted: options.onProviderInterrupted,
+          },
         ),
         messages: converted.messages,
         systemPrompts: system ? [system] : [],

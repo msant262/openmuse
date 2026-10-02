@@ -63,6 +63,7 @@ import {
 import { useWorkspace } from "./workspace";
 
 export function statusLabel(value: string) {
+  if (value === "waiting_provider") return "Aguardando provedor";
   return value.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 }
 function stamp(value?: string) {
@@ -111,7 +112,7 @@ export function TaskCard({
   const { open } = useWorkspace();
   const done = task.plan.filter((step) => step.status === "succeeded").length;
   const next = task.plan.find((step) => ["running", "waiting"].includes(step.status));
-  const waiting = ["waiting_input", "waiting_approval"].includes(task.status);
+  const waiting = ["waiting_input", "waiting_approval", "waiting_provider"].includes(task.status);
   return (
     <Pressable
       accessibilityRole="button"
@@ -167,7 +168,11 @@ export function TaskCard({
         )}
         {waiting && (
           <Text style={[s.small, { color: colors.blueDark, fontWeight: "600" }]}>
-            {task.status === "waiting_approval" ? "Review requested" : "Your input is needed"}
+            {task.status === "waiting_provider"
+              ? "Progresso preservado; aguardando modelo"
+              : task.status === "waiting_approval"
+                ? "Review requested"
+                : "Your input is needed"}
           </Text>
         )}
       </Card>
@@ -441,9 +446,14 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
             {task.prompt}
           </Text>
           <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
-            {["queued", "running", "scheduled", "waiting_input", "waiting_approval"].includes(
-              task.status,
-            ) && (
+            {[
+              "queued",
+              "running",
+              "scheduled",
+              "waiting_input",
+              "waiting_approval",
+              "waiting_provider",
+            ].includes(task.status) && (
               <Button
                 small
                 icon={Pause}

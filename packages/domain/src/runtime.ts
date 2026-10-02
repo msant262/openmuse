@@ -352,3 +352,40 @@ export type ExecutorCapability =
   | "command"
   | "files"
   | "transcribe";
+
+export const workClassSchema = z.enum(["interactive", "background"]);
+export const modelRequirementsSchema = z.object({
+  tools: z.boolean(),
+  vision: z.boolean(),
+  structuredOutput: z.boolean(),
+  contextTokens: z.number().int().nonnegative(),
+});
+export type ModelRequirements = z.infer<typeof modelRequirementsSchema>;
+
+export const modelRoutingStatusSchema = z.object({
+  quotaScope: z.literal("process"),
+  active: z.object({ provider: z.string(), model: z.string(), fallback: z.boolean() }).optional(),
+  providers: z.array(
+    z.object({
+      provider: z.string(),
+      active: z.number().int().nonnegative(),
+      quota: z.object({
+        total: z.number().int().positive(),
+        background: z.number().int().positive(),
+        interactive: z.number().int().positive(),
+      }),
+    }),
+  ),
+  models: z.array(
+    z.object({
+      model: z.string(),
+      capabilitySource: z.enum(["declared", "preflight", "compatibility_assumption"]),
+      capabilities: modelRequirementsSchema,
+      failures: z.number().int().nonnegative(),
+      cooldownUntil: z.number().nonnegative(),
+      code: z.string().optional(),
+      message: z.string().optional(),
+    }),
+  ),
+});
+export type ModelRoutingStatus = z.infer<typeof modelRoutingStatusSchema>;

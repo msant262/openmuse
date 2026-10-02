@@ -1387,6 +1387,19 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                       : "Not connected"
                 }
               />
+              {w.runtime.modelRouting?.active && (
+                <SettingsLine
+                  label="Provedor ativo"
+                  value={`${w.runtime.modelRouting.active.provider} · ${w.runtime.modelRouting.active.model}${w.runtime.modelRouting.active.fallback ? " · alternativo" : ""}`}
+                />
+              )}
+              {w.runtime.modelRouting?.models
+                .filter((model) => model.failures > 0 && model.message)
+                .map((model) => (
+                  <Text key={model.model} style={s.small}>
+                    Último aviso · {model.model}: {model.message}
+                  </Text>
+                ))}
               <Button
                 small
                 icon={ArrowDownToLine}
