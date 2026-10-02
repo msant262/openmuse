@@ -1,11 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseEnv } from "node:util";
+import { type McpServerConfig, readMcpConfig } from "./mcp.ts";
 import {
   type ModelProviderConfig,
   modelProviderConfig,
   orderedModels,
 } from "./providers/config.ts";
+import type { PushConfig } from "./push.ts";
 
 /** .env keys whose file value loses to a different value already set in the environment. */
 export function shadowedEnvKeys(
@@ -33,6 +35,9 @@ process.env.DO_NOT_TRACK = "1";
 process.env.COPILOTKIT_TELEMETRY_DISABLED = "true";
 
 export interface Config {
+  routineTimezone?: string;
+  mcpServers?: McpServerConfig[];
+  push?: PushConfig;
   mode: "sample" | "live";
   approvalPolicy?: "money" | "all";
   port: number;
@@ -114,6 +119,17 @@ export function readConfig(): Config {
     throw new Error("APPROVAL_POLICY must be money or all");
   const config: Config = {
     approvalPolicy: policy,
+    routineTimezone: process.env.ROUTINE_TIMEZONE?.trim() || "UTC",
+    mcpServers: readMcpConfig(),
+    push: {
+      apnsKeyFile: process.env.APNS_KEY_FILE,
+      apnsKeyId: process.env.APNS_KEY_ID,
+      apnsTeamId: process.env.APNS_TEAM_ID,
+      apnsTopic: process.env.APNS_TOPIC,
+      apnsSandbox: process.env.APNS_SANDBOX === "true",
+      fcmCredentialsFile: process.env.FCM_CREDENTIALS_FILE,
+      fcmProjectId: process.env.FCM_PROJECT_ID,
+    },
     mode,
     port,
     host: process.env.HOST ?? "127.0.0.1",

@@ -287,21 +287,21 @@ test("a resume during outcome publication is not paused again by the failure rec
   );
 
   // The user resumes while publishOutcome() is sending the paused notice.
-  const originalInsert = db.insertIfAbsent.bind(db);
+  const originalInsert = db.insertNotification.bind(db);
   let resuming: Promise<Response> | undefined;
-  db.insertIfAbsent = (async (o: string, kind: string, value: { id: string }) => {
-    if (!resuming && kind === "notifications") {
+  db.insertNotification = async (o, value, platforms) => {
+    if (!resuming) {
       resuming = Promise.resolve(request(`/monitors/${monitor.id}/control`, { action: "resume" }));
       await resuming;
     }
-    return originalInsert(o, kind, value);
-  }) as Store["insertIfAbsent"];
+    return originalInsert(o, value, platforms);
+  };
   try {
     await (
       server.agent as unknown as { publishOutcome(o: string, t: AgentTask): Promise<void> }
     ).publishOutcome(owner, task);
   } finally {
-    db.insertIfAbsent = originalInsert;
+    db.insertNotification = originalInsert;
   }
   const resumed = await resuming;
   assert.equal(resumed?.status, 200, await resumed?.clone().text());

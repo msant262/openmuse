@@ -35,6 +35,8 @@ import type {
 } from "../../../packages/domain/src/agent";
 import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { useAgentWorkspace } from "./agent-workspace";
+import { NativePushSettings } from "./native-push-settings";
+import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
 import {
   Button,
@@ -209,6 +211,7 @@ export function AgentActivityScreen() {
           detail="Delegate a task in Chat. Its plan, progress and results stay here."
         />
       )}
+      <RoutinesPanel />
       <SectionHeading title="Reviews & receipts" />
       <ActivityScreen />
     </View>
@@ -1646,6 +1649,17 @@ export function NotificationsSheet() {
             </View>
             <Text style={s.muted}>{item.body}</Text>
             <Text style={s.small}>{stamp(item.createdAt)}</Text>
+            {item.nativeDelivery && (
+              <Text style={s.small}>
+                {item.nativeDelivery === "accepted"
+                  ? "Phone notification accepted by provider"
+                  : item.nativeDelivery === "not_configured"
+                    ? "Available in-app; phone delivery not configured"
+                    : item.nativeDelivery === "outcome_unknown"
+                      ? "Phone delivery uncertain; result stays here"
+                      : `Phone delivery: ${item.nativeDelivery}`}
+              </Text>
+            )}
             <Button small onPress={() => void read(item.id, item.taskId)}>
               {item.taskId ? "View task" : item.read ? "Read" : "Mark read"}
             </Button>
@@ -1728,6 +1742,8 @@ export function AppsScreen() {
   return (
     <View style={{ gap: 22 }}>
       <AgentStatus />
+      <RoutinesPanel />
+      <NativePushSettings />
       <Field
         label="Search apps"
         value={query}

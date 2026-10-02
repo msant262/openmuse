@@ -221,9 +221,29 @@ test("memories can be edited and forgotten while identity changes persist", asyn
   );
   assert.equal(snapshot.memories.find((item) => item.id === memory.id)?.text, updated.text);
   assert.deepEqual(await db.get("other-user", "agent-settings", "identity"), privateIdentity);
+  const remembered = await read<AgentMemory>(
+    "/memories",
+    { text: memory.text, source: "You" },
+    201,
+  );
+  assert.equal(remembered.text, memory.text);
+  assert.notEqual(remembered.id, memory.id);
+  assert.equal(
+    (await read<AgentMemory>("/memories", { text: updated.text }, 201)).id,
+    memory.id,
+    "create deduplicates current edited content while keeping its API identity",
+  );
+  const large = await read<AgentMemory>("/memories", { text: "z".repeat(4000) }, 201);
+  assert.equal(large.text.length, 4000);
+  assert.equal((await request("/memories", { text: "z".repeat(4001) })).status, 422);
+  assert.equal((await request(`/memories/${memory.id}`, { text: "z".repeat(4001) })).status, 422);
   assert.deepEqual(await read(`/memories/${memory.id}/forget`, {}), { ok: true });
   assert.ok(!(await read<AgentWorkspace>("")).memories.some((item) => item.id === memory.id));
   assert.ok(await db.get("other-user", "memories", "private-memory"));
+  assert.equal(
+    (await db.get<AgentMemory>("local-user", "memories", remembered.id))?.text,
+    memory.text,
+  );
 });
 
 test("idea dismissal survives refresh and concurrent acceptance creates one goal and task", async () => {

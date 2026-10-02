@@ -922,3 +922,95 @@ test("substantial screenshot assets remain references across 30 cumulative turns
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("1,000 settled turns project cumulative inputs once, preserve chronological users/state and owner scope", async (t) => {
+  const db = await createStore();
+  try {
+    const threads = new LocalThreads(db);
+    await threads.ensure("wife", "scale");
+    const messages: import("@ag-ui/core").Message[] = [];
+    let rawJsonBytes = 0;
+    for (let i = 0; i < 1000; i++) {
+      messages.push({ id: `u${i}`, role: "user", content: `History turn ${i}: ${"x".repeat(64)}` });
+      const record = {
+        id: `run-${i.toString().padStart(4, "0")}`,
+        threadId: "scale",
+        runId: `r${i}`,
+        status: "finished",
+        createdAt: new Date(1000 + i).toISOString(),
+        messages: [...messages],
+        inputMessages: [...messages],
+        state: { ready: true },
+        events: [
+          {
+            type: EventType.RUN_STARTED,
+            runId: `r${i}`,
+            threadId: "scale",
+            input: { ...input("scale", `r${i}`), messages: [...messages] },
+          },
+          { type: EventType.RUN_FINISHED, runId: `r${i}`, threadId: "scale" },
+        ],
+      };
+      rawJsonBytes += Buffer.byteLength(JSON.stringify(record));
+      await db.put("wife", "thread-runs", record);
+    }
+    const snapshot = await db.threadSnapshot("wife", "scale");
+    t.diagnostic(
+      `1,000 turns: projected SQL snapshot ${Buffer.byteLength(JSON.stringify(snapshot))} bytes; cumulative raw fixture JSON ${rawJsonBytes} bytes (not physical DB size)`,
+    );
+    assert.ok(
+      JSON.stringify(snapshot).length < 1000000,
+      "SQL must not return every cumulative history/input",
+    );
+    const events = await collect(
+      threads.withOwner("wife", () => threads.connect({ threadId: "scale" })),
+    );
+    class Replay extends AbstractAgent {
+      run() {
+        return of(...events);
+      }
+    }
+    const reader = new Replay();
+    await reader.runAgent(input("scale"));
+    assert.deepEqual(reader.messages, messages);
+    assert.deepEqual(reader.state, { ready: true });
+    assert.equal((await db.searchThreads("wife", "History turn 0:", 20, false)).length, 1);
+    assert.equal((await db.searchThreads("wife", "History turn 999:", 20, false)).length, 1);
+    assert.deepEqual((await db.threadSnapshot("other", "scale")).runs, []);
+  } finally {
+    await db.close();
+  }
+});
+
+test("background post queues behind active lease then atomically publishes once and is searchable by owner", async () => {
+  const db = await createStore();
+  try {
+    const threads = new LocalThreads(db);
+    await threads.ensure("wife", "main");
+    await db.claimThread("wife", "main", "chat-active", 60000);
+    assert.equal(
+      await threads.appendBackground("wife", "main", "routine-result", "Your agenda is ready"),
+      false,
+    );
+    await db.compareAndSwap(
+      "wife",
+      "threads",
+      "main",
+      { runToken: "chat-active" },
+      { runToken: null, leaseUntil: null },
+    );
+    assert.equal(
+      await threads.appendBackground("wife", "main", "routine-result", "Your agenda is ready"),
+      true,
+    );
+    assert.equal(
+      await threads.appendBackground("wife", "main", "routine-result", "Your agenda is ready"),
+      true,
+    );
+    assert.equal((await threads.history("wife", "main")).messages.length, 1);
+    assert.equal((await db.searchThreads("wife", "agenda", 20, false)).length, 1);
+    assert.deepEqual(await db.searchThreads("other", "agenda", 20, false), []);
+  } finally {
+    await db.close();
+  }
+});

@@ -34,7 +34,12 @@ import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { backgroundFailure } from "../log.ts";
+import { McpService } from "../mcp.ts";
 import { MediaService } from "../media-tools.ts";
+import { MemoryService } from "../memory.ts";
+import { nativePushAdapters, PushService } from "../push.ts";
+import { RoutinesService } from "../routines.ts";
+import type { LocalThreads } from "../threads.ts";
 import type { WorkspaceService } from "../workspace.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
@@ -45,6 +50,76 @@ const date = () => new Date().toISOString();
 const terminal = new Set(["succeeded", "failed", "cancelled"]);
 export class AgentService {
   readonly worker: TaskWorker;
+  readonly routines: RoutinesService;
+  readonly memory: MemoryService;
+  readonly mcp: McpService;
+  readonly push: PushService;
+  private localThreads?: LocalThreads;
+  private routineTimer?: ReturnType<typeof setInterval>;
+  private routineRefreshing = false;
+  configureThreads(threads: LocalThreads) {
+    this.localThreads = threads;
+  }
+  async initialize() {
+    await this.push.recover();
+  }
+  async routineTick() {
+    if (this.routineRefreshing) return;
+    this.routineRefreshing = true;
+    try {
+      await this.routines.tick();
+      await this.push.recover();
+      await this.flushPublications();
+    } finally {
+      this.routineRefreshing = false;
+    }
+  }
+  private async flushPublications() {
+    for (const { owner, value } of await this.db.scan<{
+      id: string;
+      threadId: string;
+      text: string;
+      taskId: string;
+      title: string;
+      status: string;
+      notificationSent?: boolean;
+    }>("thread-publications")) {
+      if (
+        !this.localThreads ||
+        value.notificationSent ||
+        !["pending", "posted"].includes(value.status)
+      )
+        continue;
+      if (
+        value.status === "posted" ||
+        (await this.localThreads.appendBackground(owner, value.threadId, value.id, value.text))
+      ) {
+        await this.db.compareAndSwap(
+          owner,
+          "thread-publications",
+          value.id,
+          { status: "pending" },
+          { status: "posted" },
+        );
+        // A restart between the post and notification resumes here. Both IDs and
+        // native delivery claims are deterministic, so recovery never redoes work.
+        await this.notify(
+          owner,
+          value.title,
+          value.text,
+          value.taskId,
+          `task-done:${value.taskId}`,
+        );
+        await this.db.compareAndSwap(
+          owner,
+          "thread-publications",
+          value.id,
+          { status: "posted" },
+          { notificationSent: true },
+        );
+      }
+    }
+  }
   private maintenance?: ReturnType<typeof setInterval>;
   private refreshing = false;
   constructor(
@@ -57,6 +132,14 @@ export class AgentService {
     readonly computer: ComputerBackend = new ComputerService(db, config),
     readonly media: MediaService = new MediaService(db, files, config),
   ) {
+    this.routines = new RoutinesService(
+      db,
+      (owner, input, key) => this.createTask(owner, input, key),
+      config.routineTimezone ?? "UTC",
+    );
+    this.memory = new MemoryService(db);
+    this.mcp = new McpService(db, actions, config.mcpServers ?? []);
+    this.push = new PushService(db, nativePushAdapters(config.push ?? {}));
     this.worker = new TaskWorker(db, (owner, task, context) => this.execute(owner, task, context), {
       settled: (owner, task) => this.publishOutcome(owner, task),
       browserReleased: async (owner, id) =>
@@ -65,6 +148,10 @@ export class AgentService {
   }
   start() {
     this.worker.start();
+    void this.routineTick().catch((error) => backgroundFailure("routine scheduler", error));
+    this.routineTimer = setInterval(() => {
+      void this.routineTick().catch((error) => backgroundFailure("routine scheduler", error));
+    }, 1000);
     // Maintenance is independent of the HTTP response and reconciles durable records.
     void this.maintain().catch((error) => backgroundFailure("initial maintenance", error));
     this.maintenance = setInterval(() => {
@@ -73,9 +160,16 @@ export class AgentService {
   }
   async stop() {
     if (this.maintenance) clearInterval(this.maintenance);
+    if (this.routineTimer) clearInterval(this.routineTimer);
+    this.routineTimer = undefined;
     this.maintenance = undefined;
+    // Abort connector discovery/auth and native sends before waiting on tasks:
+    // startup requests must not hold shutdown open behind the task worker.
+    const adaptersClosed = Promise.all([this.push.close(), this.mcp.close()]);
     await this.worker.stop();
-    while (this.refreshing) await new Promise((resolve) => setTimeout(resolve, 10));
+    while (this.refreshing || this.routineRefreshing)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    await adaptersClosed;
   }
   private async maintain() {
     if (this.refreshing) return;
@@ -674,7 +768,7 @@ export class AgentService {
       createdAt: date(),
       read: false,
     };
-    await this.db.insertIfAbsent(owner, "notifications", value);
+    await this.push.notify(owner, value);
   }
   mailEvidence(mail: Mail): Evidence {
     return { id: mail.id, kind: "mail", title: mail.subject, excerpt: mail.body.slice(0, 400) };
@@ -846,13 +940,36 @@ export class AgentService {
   private async publishOutcome(owner: string, saved: AgentTask) {
     const task = await this.getTask(owner, saved.id);
     if (task.status === "succeeded") {
-      await this.notify(
-        owner,
-        task.title,
-        task.result ?? "Work completed",
-        task.id,
-        `task-done:${task.id}`,
-      );
+      if (typeof task.input.routineId === "string") {
+        await this.db.insertIfAbsent(owner, "conversation-settings", {
+          id: "main",
+          threadId: randomUUID(),
+          existing: false,
+        });
+        const main = await this.db.get<{ threadId: string }>(
+          owner,
+          "conversation-settings",
+          "main",
+        );
+        if (main)
+          await this.db.insertIfAbsent(owner, "thread-publications", {
+            id: `routine:${task.id}`,
+            threadId: main.threadId,
+            taskId: task.id,
+            title: task.title,
+            text: task.result ?? "Routine completed",
+            status: this.localThreads ? "pending" : "unsupported_cloud_mode",
+          });
+        await this.flushPublications();
+      }
+      if (typeof task.input.routineId !== "string" || !this.localThreads)
+        await this.notify(
+          owner,
+          task.title,
+          task.result ?? "Work completed",
+          task.id,
+          `task-done:${task.id}`,
+        );
       if (task.goalId) {
         for (let attempt = 0; attempt < 8; attempt++) {
           const goal = await this.db.get<Goal>(owner, "goals", task.goalId);

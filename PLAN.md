@@ -64,9 +64,9 @@ conversion remain unverified. Final Compose/resource/egress acceptance belongs t
 
 ### Task 6: Routines, MCP and memory
 
-- [ ] Add cron routine CRUD, natural-language agent tool, durable task-worker execution, main-thread results and push notifications.
-- [ ] Add remote streamable HTTP/SSE MCP client with per-server allowlists and optional Composio configuration; apply action policy/audit.
-- [ ] Add memory save/recall/forget/context injection and past-thread search; test leases/dedup/restarts/allowlists/memory ownership; run suite/types; commit milestone 6.
+- [x] Add cron routine CRUD, natural-language agent tool, durable task-worker execution, main-thread results and push notifications.
+- [x] Add remote streamable HTTP/SSE MCP client with per-server allowlists and optional Composio configuration; apply action policy/audit.
+- [x] Add memory save/recall/forget/context injection and past-thread search; test leases/dedup/restarts/allowlists/memory ownership; run suite/types; commit milestone 6.
 
 ### Task 7: VPS deployment
 

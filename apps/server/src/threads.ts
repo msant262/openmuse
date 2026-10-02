@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   AbstractAgent,
   type BaseEvent,
@@ -148,7 +148,75 @@ export class LocalThreads extends AgentRunner {
       last?.status === "running"
         ? await this.replaySnapshot(last)
         : { messages: last?.messages ?? [], state: last?.state ?? {} };
-    return { events, ...snapshot };
+    return { events: this.canonicalEvents(events, snapshot), ...snapshot };
+  }
+  // AG-UI snapshots retain existing message order. Clear before restoring the canonical
+  // transcript so old user inputs remain correctly interleaved with assistant/tool receipts.
+  private canonicalEvents(
+    events: BaseEvent[],
+    snapshot: { messages: Message[]; state: Record<string, unknown> },
+  ) {
+    const values: BaseEvent[] = [
+      { type: EventType.MESSAGES_SNAPSHOT, messages: [] },
+      { type: EventType.MESSAGES_SNAPSHOT, messages: snapshot.messages },
+      { type: EventType.STATE_SNAPSHOT, snapshot: snapshot.state },
+    ];
+    if (!events.length) return events;
+    const last = events.at(-1);
+    return last &&
+      [EventType.RUN_FINISHED, EventType.RUN_ERROR].includes(last.type as EventType.RUN_FINISHED)
+      ? [...events.slice(0, -1), ...values, last]
+      : [...events, ...values];
+  }
+  /** Busy chats defer publication. The task never runs again merely to retry its message. */
+  async appendBackground(
+    owner: string,
+    threadId: string,
+    key: string,
+    text: string,
+  ): Promise<boolean> {
+    const id = createHash("sha256").update(`publication:${owner}:${threadId}:${key}`).digest("hex");
+    if (await this.db.get(owner, "thread-runs", id)) return true;
+    await this.ensure(owner, threadId);
+    await this.recover(owner, threadId);
+    const token = randomUUID();
+    if (!(await this.db.claimThread(owner, threadId, token, this.leaseMs))) return false;
+    try {
+      await this.recover(owner, threadId);
+      const latest = (await this.runs(owner, threadId)).at(-1);
+      const messageId = `publication-${id}`;
+      const createdAt = new Date(
+        Math.max(Date.now(), Date.parse(latest?.createdAt ?? "") + 1 || 0),
+      ).toISOString();
+      const state = latest?.state ?? {};
+      return await this.db.insertThreadPublication(owner, threadId, token, {
+        id,
+        threadId,
+        runId: id,
+        createdAt,
+        status: "finished",
+        state,
+        messages: [
+          ...(latest?.messages ?? []),
+          { id: messageId, role: "assistant", content: text },
+        ],
+        events: [
+          { type: EventType.RUN_STARTED, threadId, runId: id },
+          { type: EventType.TEXT_MESSAGE_START, messageId, role: "assistant" },
+          { type: EventType.TEXT_MESSAGE_CONTENT, messageId, delta: text },
+          { type: EventType.TEXT_MESSAGE_END, messageId },
+          { type: EventType.RUN_FINISHED, threadId, runId: id },
+        ],
+      });
+    } finally {
+      await this.db.compareAndSwap(
+        owner,
+        "threads",
+        threadId,
+        { runToken: token },
+        { runToken: null, leaseUntil: null },
+      );
+    }
   }
   run(request: AgentRunnerRunRequest): Observable<BaseEvent> {
     const owner = this.owner();
@@ -202,7 +270,9 @@ export class LocalThreads extends AgentRunner {
       id: token,
       threadId,
       runId: input.runId,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(
+        Math.max(Date.now(), Date.parse(previous?.createdAt ?? "") + 1 || 0),
+      ).toISOString(),
       status: "running",
       events: [],
       messages,
@@ -357,7 +427,15 @@ export class LocalThreads extends AgentRunner {
           const runs = snapshot.runs;
           if (cancelled) return;
           if (first) {
-            for (const event of compactEvents(runs.flatMap((run) => run.events)))
+            const last = runs.at(-1);
+            const canonical =
+              last?.status === "running"
+                ? await this.replaySnapshot(last)
+                : { messages: last?.messages ?? [], state: last?.state ?? {} };
+            for (const event of this.canonicalEvents(
+              compactEvents(runs.flatMap((run) => run.events)),
+              canonical,
+            ))
               subscriber.next(event);
             for (const run of runs) seen.set(run.id, run.events.length);
             first = false;

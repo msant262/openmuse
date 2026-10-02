@@ -13,3 +13,6 @@ apps/mobile/android/
 artifacts/
 __pycache__/
 *.pyc
+# Native platform push credentials/configuration are local deployment inputs.
+apps/mobile/google-services.json
+*.p8

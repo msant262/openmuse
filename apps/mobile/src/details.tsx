@@ -40,6 +40,7 @@ import { browserAddress, browserSite } from "./browser-address";
 import { ComputerSheet } from "./computer";
 import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
+import { connectorReviewLines } from "./external-action-preview";
 import PdfReader from "./PdfReader";
 import {
   Button,
@@ -645,9 +646,13 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
               />
             )}
             {!!d.action && <ReviewLine label="Operation" value={String(d.action)} />}
+            {connectorReviewLines(d).map((line) => (
+              <ReviewLine key={line.label} label={line.label} value={line.value} />
+            ))}
             <Text style={s.small}>
-              Inspect the page, amount and recipient before approving. Approval applies only to this
-              prepared action; page changes or human takeover require a fresh review.
+              {d.tool === "mcp.call"
+                ? "Review this request, amount and recipient before approving. Approval applies only to these arguments, connector and account; changes require a fresh review."
+                : "Inspect the page, amount and recipient before approving. Approval applies only to this prepared action; page changes or human takeover require a fresh review."}
             </Text>
             {typeof d.sessionId === "string" && (
               <Button

@@ -56,6 +56,8 @@ export async function createApp(
   const threads = config.intelligenceApiKey?.trim()
     ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey.trim() })
     : new LocalThreads(db);
+  if (threads instanceof LocalThreads) agent.configureThreads(threads);
+  await agent.initialize();
   const runtime = makeRuntime(config, agent, auth, threads);
   const app = new Hono<{ Variables: { owner: string } }>();
   const origins = new Set([...config.allowedOrigins, new URL(config.publicUrl).origin]);

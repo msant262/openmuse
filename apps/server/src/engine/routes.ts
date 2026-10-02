@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import type {
@@ -7,6 +6,7 @@ import type {
   AgentNotification,
 } from "../../../../packages/domain/src/agent.ts";
 import { AppError } from "../errors.ts";
+import { routineInput } from "../routines.ts";
 import type { AgentService } from "./service.ts";
 
 const text = z.string().trim().min(1).max(4000);
@@ -83,13 +83,7 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
   });
   app.post("/memories", async (c) => {
     const body = memorySchema.parse(await c.req.json());
-    const memory: AgentMemory = {
-      id: randomUUID(),
-      text: body.text,
-      source: body.source ?? "You",
-      createdAt: new Date().toISOString(),
-    };
-    return c.json(await service.db.put(c.get("owner"), "memories", memory), 201);
+    return c.json(await service.memory.save(c.get("owner"), body.text, body.source ?? "You"), 201);
   });
   app.post("/memories/:id", async (c) => {
     const body = memorySchema.parse(await c.req.json());
@@ -104,10 +98,36 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     return c.json(memory);
   });
   app.post("/memories/:id/forget", async (c) => {
-    if (!(await service.db.take(c.get("owner"), "memories", c.req.param("id"))))
-      throw new AppError("Memory not found", 404);
+    await service.memory.forget(c.get("owner"), c.req.param("id"));
     return c.json({ ok: true });
   });
+  app.get("/routines", async (c) =>
+    c.json({
+      routines: await service.routines.list(c.get("owner")),
+      timezone: service.routines.timezone,
+    }),
+  );
+  app.post("/routines", async (c) => {
+    const { idempotencyKey, ...body } = z
+      .object({ ...routineInput.shape, idempotencyKey: z.string().min(16).max(160) })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(await service.routines.create(c.get("owner"), body, idempotencyKey), 201);
+  });
+  app.post("/routines/:id", async (c) =>
+    c.json(await service.routines.update(c.get("owner"), c.req.param("id"), await c.req.json())),
+  );
+  app.post("/routines/:id/delete", async (c) => {
+    await service.routines.remove(c.get("owner"), c.req.param("id"));
+    return c.json({ deleted: true });
+  });
+  app.get("/push/devices", async (c) => c.json(await service.push.devices(c.get("owner"))));
+  app.post("/push/devices", async (c) =>
+    c.json(await service.push.register(c.get("owner"), await c.req.json()), 201),
+  );
+  app.post("/push/devices/:id/delete", async (c) =>
+    c.json(await service.push.unregister(c.get("owner"), c.req.param("id"))),
+  );
   app.post("/identity", async (c) => {
     const body = z
       .object({

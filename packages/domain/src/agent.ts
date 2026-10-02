@@ -113,6 +113,7 @@ export interface AgentNotification {
   body: string;
   createdAt: string;
   read: boolean;
+  nativeDelivery?: "not_configured" | "pending" | "accepted" | "rejected" | "outcome_unknown";
 }
 export interface AgentIdentity {
   name: string;
@@ -162,3 +163,19 @@ export const goalInputSchema = z.object({
   category: z.string().max(80).default("Personal"),
   milestones: z.array(z.string().min(1).max(200)).max(20).default([]),
 });
+
+export interface Routine {
+  id: string;
+  title: string;
+  prompt: string;
+  cron: string;
+  timezone: string;
+  enabled: boolean;
+  revision: number;
+  nextRunAt: string;
+  createdAt: string;
+  updatedAt: string;
+  pending: { key: string; slot: string; prompt: string; title: string; revision: number } | null;
+  lastTaskId?: string;
+  skipped?: number;
+}

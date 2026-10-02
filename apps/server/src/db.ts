@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import pg from "pg";
+import type { AgentMemory, AgentNotification } from "../../../packages/domain/src/agent.ts";
 import type { ActionLogEntry } from "../../../packages/domain/src/index.ts";
 import { backgroundFailure } from "./log.ts";
 
@@ -50,6 +51,88 @@ export class Store {
       [owner, kind, id],
     );
     return (result.rows[0]?.data as T | undefined) ?? null;
+  }
+  async notificationDelivery(
+    owner: string,
+    id: string,
+    status: NonNullable<AgentNotification["nativeDelivery"]>,
+  ) {
+    // Parallel publishers may see an in-flight receipt. Keep final/uncertain
+    // native status from being replaced by that stale pending observation.
+    await this.db.query(
+      "UPDATE records SET data=jsonb_set(data,'{nativeDelivery}',$3::jsonb),updated_at=now() WHERE owner=$1 AND kind='notifications' AND id=$2 AND ($4::text<>'pending' OR COALESCE(data->>'nativeDelivery','pending')='pending') AND (COALESCE(data->>'nativeDelivery','')<>'outcome_unknown' OR $4::text='outcome_unknown')",
+      [owner, id, JSON.stringify(status), status],
+    );
+  }
+  /** Notification and its original eligible devices share one durable snapshot. */
+  async insertNotification(owner: string, value: AgentNotification, platforms: string[]) {
+    const result = await this.db.query(
+      `WITH notice AS (
+       INSERT INTO records(owner,kind,id,data) VALUES($1,'notifications',$2,$3::jsonb)
+       ON CONFLICT DO NOTHING RETURNING data
+      ), intent AS (
+       INSERT INTO records(owner,kind,id,data)
+       SELECT $1,'push-intents',$2,jsonb_build_object('id',$2::text,'status','pending','targets',
+         (SELECT COALESCE(jsonb_agg(device.data ORDER BY device.id),'[]'::jsonb)
+          FROM records device WHERE device.owner=$1 AND device.kind='push-devices'
+          AND device.data->>'platform'=ANY($4::text[]))) FROM notice
+       ON CONFLICT DO NOTHING
+      ) SELECT data FROM notice`,
+      [owner, value.id, JSON.stringify(value), platforms],
+    );
+    return (result.rows[0]?.data as unknown as AgentNotification | undefined) ?? null;
+  }
+  async pushDeliveries<T>(owner: string, notificationId: string): Promise<T[]> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='push-deliveries' AND data->>'notificationId'=$2 ORDER BY id",
+      [owner, notificationId],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  /** Same-token refresh keeps consent identity; replacement/re-enrollment gets a new one. */
+  async registerPushDevice<T extends { id: string }>(owner: string, value: T): Promise<T> {
+    const result = await this.db.query(
+      `INSERT INTO records AS registration(owner,kind,id,data) VALUES($1,'push-devices',$2,$3::jsonb)
+       ON CONFLICT(owner,kind,id) DO UPDATE SET data=excluded.data || jsonb_build_object('registrationId',
+         CASE WHEN registration.data->>'token'=excluded.data->>'token'
+              AND registration.data->>'platform'=excluded.data->>'platform'
+         THEN COALESCE(registration.data->'registrationId',excluded.data->'registrationId')
+         ELSE excluded.data->'registrationId' END),updated_at=now() RETURNING data`,
+      [owner, value.id, JSON.stringify(value)],
+    );
+    return result.rows[0].data as T;
+  }
+  /** Claim only the still-consenting original registration, never a replacement. */
+  async claimPushDelivery<T extends { id: string }>(
+    owner: string,
+    value: T,
+    device: { id: string; token: string; platform: string; registrationId?: string },
+  ): Promise<T | null> {
+    const result = await this.db.query(
+      `INSERT INTO records(owner,kind,id,data) SELECT $1,'push-deliveries',$2,$3::jsonb
+       WHERE EXISTS (SELECT 1 FROM records WHERE owner=$1 AND kind='push-devices' AND id=$4
+         AND data->>'token'=$5 AND data->>'platform'=$6 AND data->>'registrationId' IS NOT DISTINCT FROM $7::text)
+       ON CONFLICT DO NOTHING RETURNING data`,
+      [
+        owner,
+        value.id,
+        JSON.stringify(value),
+        device.id,
+        device.token,
+        device.platform,
+        device.registrationId ?? null,
+      ],
+    );
+    return (result.rows[0]?.data as T | undefined) ?? null;
+  }
+  async takePushDevice(
+    owner: string,
+    device: { id: string; token: string; platform: string; registrationId?: string },
+  ): Promise<void> {
+    await this.db.query(
+      "DELETE FROM records WHERE owner=$1 AND kind='push-devices' AND id=$2 AND data->>'token'=$3 AND data->>'platform'=$4 AND data->>'registrationId' IS NOT DISTINCT FROM $5::text",
+      [owner, device.id, device.token, device.platform, device.registrationId ?? null],
+    );
   }
   async list<T = Record<string, unknown>>(owner: string, kind: string): Promise<T[]> {
     const result = await this.db.query(
@@ -148,9 +231,19 @@ export class Store {
     id: string,
   ): Promise<{ runs: T[]; activeRunToken: string | null }> {
     const result = await this.db.query(
-      `SELECT jsonb_build_object(
-         'runs',COALESCE((SELECT jsonb_agg(run.data ORDER BY run.data->>'createdAt',run.id)
-           FROM records run WHERE run.owner=$1 AND run.kind='thread-runs' AND run.data->>'threadId'=$2),'[]'::jsonb),
+      `WITH ordered AS (
+         SELECT run.id,run.data,row_number() OVER (ORDER BY run.data->>'createdAt' DESC,run.id DESC) AS position
+         FROM records run WHERE run.owner=$1 AND run.kind='thread-runs' AND run.data->>'threadId'=$2
+       ), projected AS (
+         SELECT id,CASE WHEN data->>'status'='running' THEN data ELSE
+           (CASE WHEN position=1 THEN data - 'inputMessages' - 'initialState'
+             ELSE data - 'messages' - 'inputMessages' - 'state' - 'initialState' END)
+           || jsonb_build_object('events',COALESCE((SELECT jsonb_agg(
+             CASE WHEN event->>'type'='RUN_STARTED' THEN event - 'input' ELSE event END ORDER BY n)
+             FROM jsonb_array_elements(COALESCE(data->'events','[]'::jsonb)) WITH ORDINALITY AS e(event,n)), '[]'::jsonb)) END AS data
+         FROM ordered
+       ) SELECT jsonb_build_object(
+         'runs',COALESCE((SELECT jsonb_agg(run.data ORDER BY run.data->>'createdAt',run.id) FROM projected run),'[]'::jsonb),
          'activeRunToken',CASE WHEN (data->>'leaseUntil')::timestamptz>clock_timestamp() THEN data->>'runToken' ELSE NULL END
        ) AS data FROM records WHERE owner=$1 AND kind='threads' AND id=$2`,
       [owner, id],
@@ -194,6 +287,59 @@ export class Store {
     );
     return result.rows.length === 1;
   }
+  async findMemories(owner: string, query: string, limit: number): Promise<AgentMemory[]> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='memories' AND strpos(lower(data->>'text'),lower($2))>0 ORDER BY updated_at DESC,id LIMIT $3",
+      [owner, query, Math.min(40, limit)],
+    );
+    return result.rows.map((row) => row.data as unknown as AgentMemory);
+  }
+  /** Fact IDs survive edits; deduplication compares the current text atomically. */
+  async saveMemory(owner: string, value: AgentMemory): Promise<AgentMemory> {
+    const result = await this.db.query("SELECT openmuse_save_memory($1,$2::jsonb) AS data", [
+      owner,
+      JSON.stringify(value),
+    ]);
+    return result.rows[0].data as unknown as AgentMemory;
+  }
+  /** Latest canonical transcript per thread, filtered in SQL; never load cumulative run copies. */
+  async searchThreads(owner: string, query: string, limit: number, archived: boolean) {
+    const result = await this.db.query(
+      `WITH latest AS (
+      SELECT DISTINCT ON (data->>'threadId') data FROM records
+      WHERE owner=$1 AND kind='thread-runs' AND data->>'status'<>'running'
+      ORDER BY data->>'threadId',data->>'createdAt' DESC,id DESC
+    ) SELECT jsonb_build_object('threadId',thread.id,'name',thread.data->>'name',
+      'messageId',message->>'id','role',message->>'role','excerpt',substring(message->>'content' FROM greatest(1,strpos(lower(message->>'content'),lower($2))-80) FOR 500),'date',latest.data->>'createdAt') AS data
+      FROM latest JOIN records thread ON thread.owner=$1 AND thread.kind='threads' AND thread.id=latest.data->>'threadId',
+      jsonb_array_elements(COALESCE(latest.data->'messages','[]'::jsonb)) message
+      WHERE ($4::boolean OR thread.data->>'archived'='false') AND message->>'role' IN ('user','assistant')
+      AND jsonb_typeof(message->'content')='string' AND strpos(lower(message->>'content'),lower($2))>0
+      ORDER BY latest.data->>'createdAt' DESC,message->>'id' LIMIT $3`,
+      [owner, query, Math.min(30, Math.max(1, limit)), archived],
+    );
+    return result.rows.map((row) => row.data);
+  }
+  async insertThreadPublication(
+    owner: string,
+    threadId: string,
+    token: string,
+    run: { id: string } & Record<string, unknown>,
+  ) {
+    const result = await this.db.query(
+      `WITH saved AS (
+      INSERT INTO records(owner,kind,id,data) SELECT $1,'thread-runs',$4,$5::jsonb
+      WHERE EXISTS(SELECT 1 FROM records WHERE owner=$1 AND kind='threads' AND id=$2
+        AND data->>'runToken'=$3 AND (data->>'leaseUntil')::timestamptz>clock_timestamp())
+      ON CONFLICT DO NOTHING RETURNING data
+    ), released AS (
+      UPDATE records SET data=data || '{"runToken":null,"leaseUntil":null}'::jsonb,updated_at=now()
+      WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'runToken'=$3 AND EXISTS(SELECT 1 FROM saved) RETURNING data
+    ) SELECT data FROM saved`,
+      [owner, threadId, token, run.id, JSON.stringify(run)],
+    );
+    return result.rows.length === 1;
+  }
   async scan<T>(kind: string): Promise<{ owner: string; value: T }[]> {
     const result = await this.db.query(
       "SELECT jsonb_build_object('owner',owner,'value',data) AS data FROM records WHERE kind=$1 ORDER BY updated_at ASC",
@@ -219,10 +365,15 @@ export class Store {
       `UPDATE records SET data=data || '{"status":"outcome_unknown","error":"Server restarted during execution. Check the provider before creating another action."}'::jsonb WHERE kind='actions' AND data->>'status'='executing'`,
     );
   }
-  async take<T>(owner: string, kind: string, id: string): Promise<T | null> {
+  async take<T>(
+    owner: string,
+    kind: string,
+    id: string,
+    expected: Record<string, unknown> = {},
+  ): Promise<T | null> {
     const result = await this.db.query(
-      "DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3 RETURNING data",
-      [owner, kind, id],
+      "DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3 AND data @> $4::jsonb RETURNING data",
+      [owner, kind, id, JSON.stringify(expected)],
     );
     return (result.rows[0]?.data as T | undefined) ?? null;
   }
@@ -263,6 +414,21 @@ export async function createStore(
   }
   await database.query(
     "CREATE TABLE IF NOT EXISTS records(owner text NOT NULL,kind text NOT NULL,id text NOT NULL,data jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,kind,id))",
+  );
+  // A transaction-scoped owner lock serializes concurrent saves. Locking the
+  // matching row also makes a concurrent edit/forget observe a consistent fact.
+  await database.query(
+    `CREATE OR REPLACE FUNCTION openmuse_save_memory(fact_owner text, fact jsonb) RETURNS jsonb LANGUAGE plpgsql AS $$
+     DECLARE saved jsonb;
+     BEGIN
+       PERFORM pg_advisory_xact_lock(hashtextextended('openmuse-memory:' || fact_owner,0));
+       SELECT data INTO saved FROM records WHERE owner=fact_owner AND kind='memories'
+         AND lower(normalize(data->>'text',NFKC))=lower(normalize(fact->>'text',NFKC))
+         ORDER BY updated_at DESC,id LIMIT 1 FOR UPDATE;
+       IF FOUND THEN RETURN saved; END IF;
+       INSERT INTO records(owner,kind,id,data) VALUES(fact_owner,'memories',fact->>'id',fact);
+       RETURN fact;
+     END $$`,
   );
   await database.query(
     "CREATE TABLE IF NOT EXISTS external_action_log(owner text NOT NULL,id text NOT NULL,time timestamptz NOT NULL,data jsonb NOT NULL,PRIMARY KEY(owner,id))",

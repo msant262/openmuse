@@ -311,6 +311,58 @@ export function ChatScreen({
       if (richThreads) void agent.detachActiveRun().catch(() => {});
     };
   }, [agent, agentId, api, copilotkit, isReady, historyAttempt, richThreads, selection.existing]);
+  const seenRoutinePost = useRef("");
+  const routinePost = agentWorkspace?.notifications.find((notice) =>
+    agentWorkspace.tasks.some(
+      (task) =>
+        task.id === notice.taskId &&
+        typeof task.input.routineId === "string" &&
+        task.status === "succeeded",
+    ),
+  )?.id;
+  useEffect(() => {
+    if (
+      !routinePost ||
+      seenRoutinePost.current === routinePost ||
+      !active ||
+      !richThreads ||
+      selection.id !== mainId ||
+      !isReady ||
+      !loaded ||
+      busy ||
+      agent.isRunning ||
+      runLock.current
+    )
+      return;
+    // The server sends this notice only after the durable main-thread post.
+    // Reconnect while idle so background results appear without another send.
+    seenRoutinePost.current = routinePost;
+    runLock.current = true;
+    void runConversationTurn(
+      agentId,
+      () => copilotkit.connectAgent({ agent }),
+      (onError) => copilotkit.subscribe({ onError }),
+    )
+      .catch((e) => {
+        seenRoutinePost.current = "";
+        setHistoryError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        runLock.current = false;
+      });
+  }, [
+    routinePost,
+    active,
+    richThreads,
+    selection.id,
+    mainId,
+    isReady,
+    loaded,
+    busy,
+    agent,
+    agentId,
+    copilotkit,
+  ]);
   const saveHistory = useCallback(async () => {
     if (!richThreads) await api.request("/api/conversation", { messages: agent.messages }, "PUT");
     setSaveError("");

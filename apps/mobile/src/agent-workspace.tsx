@@ -13,6 +13,7 @@ import type {
   AgentWorkspace,
   CreateTaskInput,
 } from "../../../packages/domain/src/agent";
+import { startNativePush } from "./native-push";
 import { useWorkspace } from "./workspace";
 
 interface AgentContextValue {
@@ -24,7 +25,7 @@ interface AgentContextValue {
 }
 const AgentContext = createContext<AgentContextValue | null>(null);
 export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
-  const { api } = useWorkspace();
+  const { api, open, navigate } = useWorkspace();
   const [data, setData] = useState<AgentWorkspace>();
   const [error, setError] = useState("");
   const requestVersion = useRef(0);
@@ -71,6 +72,15 @@ export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
         document.removeEventListener("visibilitychange", poll);
     };
   }, [refresh]);
+  useEffect(
+    () =>
+      startNativePush(api, (taskId) => {
+        void refresh().catch(() => {});
+        if (taskId) open({ type: "task", taskId });
+        else navigate("chat");
+      }),
+    [api],
+  );
   const mutate = useCallback(
     async <T,>(path: string, body: unknown): Promise<T> => {
       const result = await api.request<T>(`/api/agent${path}`, body);
