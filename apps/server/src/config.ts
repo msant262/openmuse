@@ -60,6 +60,11 @@ export interface Config {
   computerEnabled?: boolean;
   computerImage?: string;
   computerDeploymentId?: string;
+  computerBackend?: "docker" | "rpc";
+  computerProfile?: "offline" | "open";
+  computerUrl?: string;
+  computerToken?: string;
+  computerCommandTimeoutMs?: number;
   allowedOrigins: string[];
 }
 
@@ -133,11 +138,57 @@ export function readConfig(): Config {
     computerEnabled: process.env.COMPUTER_ENABLED === "true",
     computerImage: process.env.COMPUTER_IMAGE ?? "openmuse-computer:local",
     computerDeploymentId: process.env.COMPUTER_DEPLOYMENT_ID,
+    computerBackend: (process.env.COMPUTER_BACKEND ?? "docker") as Config["computerBackend"],
+    computerProfile: (process.env.COMPUTER_PROFILE ??
+      (process.env.COMPUTER_BACKEND === "rpc" ? "open" : "offline")) as Config["computerProfile"],
+    computerUrl: process.env.COMPUTER_URL?.replace(/\/+$/, ""),
+    computerToken: process.env.COMPUTER_TOKEN,
+    computerCommandTimeoutMs: Number(process.env.COMPUTER_COMMAND_TIMEOUT_MS ?? 1800000),
     allowedOrigins: (
       process.env.ALLOWED_ORIGINS ?? "http://localhost:8081,http://127.0.0.1:8081"
     ).split(","),
   };
   if (config.model) orderedModels(config.model, config.modelFallbacks);
+  if (
+    !["docker", "rpc"].includes(config.computerBackend ?? "") ||
+    !["offline", "open"].includes(config.computerProfile ?? "")
+  )
+    throw new Error("COMPUTER_BACKEND must be docker or rpc and COMPUTER_PROFILE offline or open");
+  if (
+    !Number.isInteger(config.computerCommandTimeoutMs) ||
+    (config.computerCommandTimeoutMs ?? 0) < 1000 ||
+    (config.computerCommandTimeoutMs ?? 0) > 1800000
+  )
+    throw new Error("COMPUTER_COMMAND_TIMEOUT_MS must be 1000..1800000");
+  if (
+    config.computerEnabled &&
+    config.computerProfile === "open" &&
+    config.computerBackend !== "rpc"
+  )
+    throw new Error("The open computer profile requires the guarded RPC backend");
+  if (config.computerEnabled && config.computerBackend === "rpc") {
+    if (
+      config.computerProfile !== "open" ||
+      !config.computerUrl ||
+      !config.computerToken ||
+      config.computerToken.length < 32
+    )
+      throw new Error(
+        "RPC computer requires COMPUTER_PROFILE=open, COMPUTER_URL and COMPUTER_TOKEN (32+ characters)",
+      );
+    const url = new URL(config.computerUrl);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      url.pathname !== "/"
+    )
+      throw new Error(
+        "COMPUTER_URL must be the guarded HTTP(S) RPC origin without credentials or path",
+      );
+  }
   if (
     mode === "live" &&
     (!config.accessKey || config.accessKey.length < 24 || !config.encryptionKey)

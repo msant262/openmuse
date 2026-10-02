@@ -181,6 +181,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
     private readonly config: ModelProviderConfig,
     private readonly onSelected?: (model: ModelSelection) => void,
     private readonly loadBrowserImage?: BrowserImageLoader,
+    private readonly loadFileImage?: BrowserImageLoader,
   ) {
     this.model = modelSpec(models[0]).model;
     for (const spec of models) {
@@ -189,7 +190,11 @@ class OrderedModelAdapter implements AnyTextAdapter {
     }
   }
   async *chatStream(options: TextOptions): AsyncIterable<AdapterYieldChunk> {
-    const messages = await browserImageMessages(options.messages, this.loadBrowserImage);
+    const messages = await browserImageMessages(
+      options.messages,
+      this.loadBrowserImage,
+      this.loadFileImage,
+    );
     for (let index = this.selected; index < this.models.length; index++) {
       options.request?.signal?.throwIfAborted();
       let current: ReturnType<typeof attempt> | undefined;
@@ -299,12 +304,14 @@ export function modelAdapter(
   config = modelProviderConfig(process.env.DATA_DIR ?? ".openmuse"),
   onSelected?: (model: ModelSelection) => void,
   loadBrowserImage?: BrowserImageLoader,
+  loadFileImage?: BrowserImageLoader,
 ): AnyTextAdapter {
   return new OrderedModelAdapter(
     orderedModels(model, fallbacks).map(({ spec }) => spec),
     config,
     onSelected,
     loadBrowserImage,
+    loadFileImage,
   );
 }
 

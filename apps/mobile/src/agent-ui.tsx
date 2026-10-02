@@ -33,6 +33,7 @@ import type {
   Monitor,
   RunEvent,
 } from "../../../packages/domain/src/agent";
+import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { useAgentWorkspace } from "./agent-workspace";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
 import {
@@ -570,7 +571,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
             <LinkRow
               key={file.id}
               title={file.name}
-              detail={`${file.pageCount} pages · PDF`}
+              detail={attachmentLabel(file)}
               icon={FileText}
               onPress={() => open({ type: "file", file })}
             />

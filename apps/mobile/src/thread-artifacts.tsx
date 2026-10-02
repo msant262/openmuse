@@ -1,26 +1,33 @@
 import { ChevronRight, FileText } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Image, Pressable, Text, View } from "react-native";
 import type { Artifact, BrowserSession } from "../../../packages/domain/src";
 import type { AgentArtifact, AgentTask } from "../../../packages/domain/src/agent";
+import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { ArtifactCard, TaskCard } from "./agent-ui";
 import { BrowserThreadCard } from "./computer";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function FileThreadCard({ file }: { file: Artifact }) {
-  const { open } = useWorkspace();
+  const { open, api } = useWorkspace();
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Open PDF: ${file.name}`}
+      accessibilityLabel={`Open attachment: ${file.name}`}
       onPress={() => open({ type: "file", file })}
       style={{ width: "100%", maxWidth: 440 }}
     >
       <Card style={{ padding: 18, backgroundColor: "#F0F1F2", gap: 18 }}>
         <View style={{ borderRadius: 12, padding: 22, backgroundColor: "#FFF", gap: 14 }}>
           <Text style={[s.heading, { fontSize: 18 }]}>{file.name.replace(/\.pdf$/i, "")}</Text>
-          {file.fields?.length ? (
+          {file.mimeType.startsWith("image/") ? (
+            <Image
+              source={{ uri: api.url(file.url) }}
+              style={{ width: "100%", aspectRatio: 1, borderRadius: 8 }}
+              resizeMode="contain"
+            />
+          ) : file.fields?.length ? (
             file.fields.slice(0, 4).map((field) => (
               <View
                 key={field.name}
@@ -38,9 +45,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
               </View>
             ))
           ) : (
-            <Text style={s.muted}>
-              {file.pageCount} {file.pageCount === 1 ? "page" : "pages"} · Tap to read the document
-            </Text>
+            <Text style={s.muted}>{attachmentLabel(file)} · Tap to open or download</Text>
           )}
         </View>
         <View style={[s.row, { gap: 13 }]}>
@@ -51,7 +56,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
             <Text numberOfLines={2} style={s.heading}>
               {file.name}
             </Text>
-            <Text style={s.muted}>PDF</Text>
+            <Text style={s.muted}>{attachmentLabel(file)}</Text>
           </View>
           <ChevronRight size={18} color={colors.muted} />
         </View>

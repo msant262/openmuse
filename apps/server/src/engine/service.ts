@@ -26,11 +26,13 @@ import type {
 import type { ActionService } from "../actions.ts";
 import type { BrowserService } from "../browser.ts";
 import { ComputerService } from "../computer.ts";
+import type { ComputerBackend } from "../computer-contract.ts";
 import type { Config } from "../config.ts";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { backgroundFailure } from "../log.ts";
+import { MediaService } from "../media-tools.ts";
 import type { WorkspaceService } from "../workspace.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
@@ -50,7 +52,8 @@ export class AgentService {
     readonly files: Files,
     readonly actions: ActionService,
     readonly browser: BrowserService,
-    readonly computer: ComputerService = new ComputerService(db, config),
+    readonly computer: ComputerBackend = new ComputerService(db, config),
+    readonly media: MediaService = new MediaService(db, files, config),
   ) {
     this.worker = new TaskWorker(db, (owner, task, context) => this.execute(owner, task, context), {
       settled: (owner, task) => this.publishOutcome(owner, task),

@@ -29,6 +29,7 @@ import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
 import { BrowserThreadCard } from "./computer";
 import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
 import { runConversationTurn } from "./conversation-run";
+import { FileToolCard } from "./file-tool-card";
 import { confirmedJevSelection, displayJevUserMessage, latestJevPanelId } from "./jev-actions";
 import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
 import { MailToolCard } from "./mail-tool-card";
@@ -44,7 +45,26 @@ const displayParameters = z.record(z.string(), z.unknown());
 // types omit that value, but react-native-web passes it through.
 const noFocusRing =
   Platform.OS === "web" ? ({ outlineStyle: "none" } as unknown as TextStyle) : undefined;
+function useComputerToolCard(name: string) {
+  useRenderTool({
+    name,
+    description: "Show computer jobs and downloadable files",
+    parameters: displayParameters,
+    render: ({ result, status }) => (
+      <FileToolCard result={result} loading={status !== "complete"} />
+    ),
+  });
+}
 export function WorkspaceTools() {
+  useComputerToolCard("export_computer_file");
+  useComputerToolCard("export_computer_pdf");
+  useComputerToolCard("transcribe");
+  useComputerToolCard("preview_computer_file");
+  useComputerToolCard("generate_image");
+  useComputerToolCard("view_file");
+  useComputerToolCard("computer_command_status");
+  useComputerToolCard("run_command");
+  useComputerToolCard("run_computer_command");
   const { workspace, section } = useWorkspace();
   useAgentContext({
     description:

@@ -47,9 +47,14 @@ Test durable replay after restart, ownership and simultaneous runs; fallback wit
 
 ### Task 4: Open computer, files and media
 
-- [ ] Add configurable isolated open profile, persistent home/workspace, bounded long commands/background jobs and enforced egress firewall deployment.
-- [ ] Build image with Office/Python/PDF/media tooling, CPU int8 faster-whisper small and `gog`; implement attachment transfer/download cards, transcription/text/SRT and capability-gated image generation.
-- [ ] Test command/file/media contracts and isolation; run suite/typechecks, real Docker checks where available; commit milestone 4.
+- [x] Add configurable isolated open profile, persistent home/workspace, bounded long commands/background jobs and a fail-closed egress gateway with a documented deployment contract.
+- [x] Add image definitions with Office/Python/PDF/media tooling, CPU int8 faster-whisper small and `gog`; implement attachment transfer/download cards, transcription/text/SRT and capability-gated image generation.
+- [x] Test command/file/media and firewall contracts; run suite/typechecks/builds, record unavailable Docker checks; commit milestone 4.
+
+Milestone 4 validation: 327 tests pass, server/mobile typechecks and server/web builds pass,
+14 Python contracts pass, and real offline EN/PT/DE/video transcription passed. No Docker
+engine is available; image builds, kernel/namespace isolation and actual LibreOffice
+conversion remain unverified. Final Compose/resource/egress acceptance belongs to Task 7.
 
 ### Task 5: Autonomy and audit
 

@@ -10,6 +10,7 @@ import {
 import { useEffect, useState } from "react";
 import { AppState, Image, Pressable, Text, View } from "react-native";
 import type { BrowserSession } from "../../../packages/domain/src";
+import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { browserAddress } from "./browser-address";
 import { useComputerDraft } from "./computer-drafts";
 import { LinuxWorkspace } from "./computer-workspace";
@@ -231,13 +232,13 @@ export function ComputerSheet() {
         ) : tab === "Files" ? (
           <>
             <Text style={s.heading}>Documents</Text>
-            <Text style={s.small}>PDFs saved from mail, browser downloads, and your uploads.</Text>
+            <Text style={s.small}>Files saved from your agent, mail and uploads.</Text>
             {workspace.files.map((file) => (
               <LinkRow
                 key={file.id}
                 icon={FileText}
                 title={file.name}
-                detail={`${file.pageCount} pages · PDF`}
+                detail={attachmentLabel(file)}
                 onPress={() => open({ type: "file", file })}
               />
             ))}

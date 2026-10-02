@@ -12,6 +12,7 @@ import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
+import { RpcComputerService } from "./computer-rpc.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
 import { agentRoutes } from "./engine/routes.ts";
@@ -39,7 +40,10 @@ export async function createApp(
     connection: (owner) => workspace.connection(owner),
   });
   const browser = new BrowserService(db, config, auth, files);
-  const computer = new ComputerService(db, config, options.docker);
+  const computer =
+    config.computerBackend === "rpc"
+      ? new RpcComputerService(db, config)
+      : new ComputerService(db, config, options.docker);
   const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
   const threads = config.intelligenceApiKey?.trim()
     ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey.trim() })
@@ -64,12 +68,12 @@ export async function createApp(
       credentials: true,
     }),
   );
-  app.use(
-    "*",
+  app.use("*", async (c, next) =>
     bodyLimit({
-      maxSize: 12 * 1024 * 1024,
-      onError: (c) => c.json({ error: "Request is too large; PDFs must be 10 MB or smaller" }, 413),
-    }),
+      maxSize: (c.req.path === "/api/files" ? 26 : 12) * 1024 * 1024,
+      onError: (c) =>
+        c.json({ error: "Request is too large; attachments must be 25 MB or smaller" }, 413),
+    })(c, next),
   );
   app.onError((error, c) => {
     if (error instanceof z.ZodError)
@@ -242,23 +246,30 @@ export async function createApp(
   app.post("/api/files", async (c) => {
     const data = await c.req.parseBody();
     const file = data.file;
-    if (!(file instanceof File)) throw new AppError("Choose a PDF file");
+    if (!(file instanceof File)) throw new AppError("Choose a file");
     return c.json(
-      await files.import(
+      await files.importAttachment(
         c.get("owner"),
         file.name,
         new Uint8Array(await file.arrayBuffer()),
         "Uploaded by you",
+        file.type,
       ),
       201,
     );
   });
   app.get("/api/files/:id/content", async (c) => {
     const file = await files.get(c.get("owner"), c.req.param("id"));
-    c.header("Content-Type", "application/pdf");
-    c.header("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    c.header("Content-Type", file.mimeType);
+    c.header(
+      "Content-Disposition",
+      `${file.mimeType === "application/pdf" || file.mimeType.startsWith("image/") ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+    );
     return c.body(await files.bytes(c.get("owner"), file.id));
   });
+  app.get("/api/files/:id", async (c) =>
+    c.json(files.signed(c.get("owner"), await files.get(c.get("owner"), c.req.param("id")))),
+  );
   app.post("/api/files/:id/fill", async (c) => {
     const body = z
       .object({ fields: z.record(z.string(), z.union([z.string(), z.boolean()])) })

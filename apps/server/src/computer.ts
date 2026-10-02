@@ -19,6 +19,8 @@ const leaseDuration = 180000;
 export const computerCommandSchema = z.object({
   command: z.string().trim().min(1).max(16000),
   cwd: z.string().default("/workspace"),
+  timeoutMs: z.number().int().min(1000).max(1800000).optional(),
+  background: z.boolean().optional(),
 });
 export const computerPathSchema = z.object({ path: z.string().min(1).max(2048) });
 export const computerWriteSchema = computerPathSchema.extend({ text: z.string().max(fileLimit) });
@@ -39,7 +41,7 @@ export type DockerRunner = (
 // element or stdin, never a host shell program. Do not add a shell fallback here.
 export const runDocker: DockerRunner = (args, options) =>
   new Promise((resolve) => {
-    const limit = Math.min(options.maxOutputBytes ?? outputLimit, 15 * 1024 * 1024);
+    const limit = Math.min(options.maxOutputBytes ?? outputLimit, 36 * 1024 * 1024);
     const result: DockerResult = {
       stdout: "",
       stderr: "",
@@ -596,6 +598,11 @@ export class ComputerService {
     this.enabled();
     const args = computerCommandSchema.parse(raw),
       cwd = workspacePath(args.cwd);
+    if (args.background || (args.timeoutMs && args.timeoutMs > 30000))
+      throw new AppError(
+        "Long commands and background jobs require the open RPC computer profile",
+        422,
+      );
     const id = options.idempotencyKey
       ? hash(`computer-command:${options.idempotencyKey}`)
       : randomUUID();
@@ -778,7 +785,12 @@ export class ComputerService {
         {
           timeoutMs: 10000,
           input: JSON.stringify({ operation, path, text, base64 }),
-          maxOutputBytes: operation === "read_pdf" ? 15 * 1024 * 1024 : 2 * 1024 * 1024,
+          maxOutputBytes:
+            operation === "read_binary"
+              ? 36 * 1024 * 1024
+              : operation === "read_pdf"
+                ? 15 * 1024 * 1024
+                : 2 * 1024 * 1024,
         },
       );
       if (result.exitCode !== 0 || result.timedOut || result.interrupted || result.truncated)
@@ -804,6 +816,21 @@ export class ComputerService {
   }
   mkdir(owner: string, path: string) {
     return this.file<{ path: string }>(owner, "mkdir", path);
+  }
+  async writeBytes(owner: string, path: string, bytes: Uint8Array) {
+    if (bytes.length > 25 * 1024 * 1024)
+      throw new AppError("Attachments must be 25 MB or smaller", 413);
+    return this.file<{ path: string }>(
+      owner,
+      "write_binary",
+      path,
+      undefined,
+      Buffer.from(bytes).toString("base64"),
+    );
+  }
+  async fileBytes(owner: string, path: string) {
+    const result = await this.file<{ path: string; base64: string }>(owner, "read_binary", path);
+    return { name: posix.basename(result.path), bytes: Buffer.from(result.base64, "base64") };
   }
   async writePdf(owner: string, path: string, bytes: Uint8Array) {
     if (bytes.length > 10 * 1024 * 1024 || Buffer.from(bytes.subarray(0, 5)).toString() !== "%PDF-")

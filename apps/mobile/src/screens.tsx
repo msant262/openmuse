@@ -38,6 +38,7 @@ import type {
   CalendarEvent,
   EmailDraft,
 } from "../../../packages/domain/src";
+import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { API_URL } from "./api";
 import { localDateTime, zonedInstant } from "./date-time";
 import {
@@ -932,7 +933,7 @@ export function FilesScreen() {
     setBusy(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: "application/pdf",
+        type: "*/*",
         copyToCacheDirectory: true,
       });
       if (result.canceled) return;
@@ -949,12 +950,12 @@ export function FilesScreen() {
           httpMethod: "POST",
           uploadType: FileSystem.FileSystemUploadType.MULTIPART,
           fieldName: "file",
-          mimeType: "application/pdf",
+          mimeType: file.mimeType || "application/octet-stream",
           headers: { Authorization: `Bearer ${api.token}` },
         });
         const payload = JSON.parse(result.body);
         if (result.status < 200 || result.status >= 300)
-          throw new Error(payload.error || "Could not import this PDF.");
+          throw new Error(payload.error || "Could not import this file.");
         artifact = payload;
       }
       await refresh();
@@ -972,7 +973,7 @@ export function FilesScreen() {
           Documents, with a little room to work.
         </Text>
         <Button primary icon={Upload} busy={busy} onPress={() => void upload()}>
-          Import PDF
+          Import file
         </Button>
       </View>
       <ErrorNotice error={error} />
@@ -1022,7 +1023,7 @@ export function FilesScreen() {
                   ))}
                 </View>
                 <View style={{ position: "absolute", bottom: 12, right: 14 }}>
-                  <Chip>PDF</Chip>
+                  <Chip>{f.name.split(".").at(-1)?.toUpperCase() || "FILE"}</Chip>
                 </View>
               </View>
               <View style={{ padding: 21, gap: 6 }}>
@@ -1030,8 +1031,7 @@ export function FilesScreen() {
                   {f.name}
                 </Text>
                 <Text style={s.small}>
-                  {f.pageCount} {f.pageCount === 1 ? "page" : "pages"} ·{" "}
-                  {Math.max(1, Math.round(f.size / 1024))} KB
+                  {attachmentLabel(f)} · {Math.max(1, Math.round(f.size / 1024))} KB
                 </Text>
                 <View style={[s.between, { marginTop: 9 }]}>
                   <Chip>{f.source}</Chip>
@@ -1047,7 +1047,7 @@ export function FilesScreen() {
           <Empty
             icon={FileText}
             title="Your documents live here"
-            detail="Import a PDF or open a mail attachment to read, fill supported form fields, and share a copy."
+            detail="Import an Office document, PDF, image, audio or video. Read supported previews and save or share a copy."
           />
         </Card>
       )}

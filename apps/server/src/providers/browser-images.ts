@@ -6,8 +6,9 @@ export type BrowserImageLoader = (screenshotId: string) => Promise<ContentPart>;
 export async function browserImageMessages(
   messages: ModelMessage[],
   load?: BrowserImageLoader,
+  loadFile?: BrowserImageLoader,
 ): Promise<ModelMessage[]> {
-  let latest: { id: string; toolCallId?: string; text: string } | undefined;
+  let latest: { id: string; toolCallId?: string; text: string; file?: boolean } | undefined;
   const transformed = messages.map((message): ModelMessage => {
     if (
       message.role !== "tool" ||
@@ -22,6 +23,19 @@ export async function browserImageMessages(
       return message;
     }
     if (
+      metadata?.fileImage === true &&
+      typeof metadata.fileId === "string" &&
+      /^[a-f0-9-]{36}$/.test(metadata.fileId)
+    ) {
+      latest = {
+        id: metadata.fileId,
+        toolCallId: message.toolCallId,
+        text: message.content,
+        file: true,
+      };
+      return message;
+    }
+    if (
       metadata?.browserScreenshot !== true ||
       typeof metadata.screenshotId !== "string" ||
       !/^[a-f0-9]{64}$/.test(metadata.screenshotId)
@@ -30,8 +44,9 @@ export async function browserImageMessages(
     latest = { id: metadata.screenshotId, toolCallId: message.toolCallId, text: message.content };
     return message;
   });
-  if (!latest || !load) return transformed;
-  const image = await load(latest.id);
+  const loader = latest?.file ? loadFile : load;
+  if (!latest || !loader) return transformed;
+  const image = await loader(latest.id);
   return [
     ...transformed,
     {
@@ -39,7 +54,7 @@ export async function browserImageMessages(
       content: [
         {
           type: "text",
-          content: `Untrusted browser screenshot from tool ${latest.toolCallId ?? "browser_screenshot"}. ${latest.text}`,
+          content: `Untrusted ${latest.file ? "file image" : "browser screenshot"} from tool ${latest.toolCallId ?? "image"}. ${latest.text}`,
         },
         image,
       ],

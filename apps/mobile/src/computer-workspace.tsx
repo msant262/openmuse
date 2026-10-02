@@ -97,6 +97,7 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
       const result = await api.request<ComputerCommand>("/api/computer/commands", {
         command: sent,
         cwd,
+        ...(snapshot?.provider === "rpc" && { background: true }),
       });
       if (operation === version.current)
         setSnapshot((current) =>
@@ -228,7 +229,9 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                   Run command
                 </Button>
                 <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 18 }}>
-                  Runs on your computer. Network access is off. Use Browser for the web.
+                  {snapshot.network === "public-only"
+                    ? "Public internet enabled. Your files and background jobs stay here."
+                    : "Offline computer. Use Browser for the web."}
                 </Text>
               </View>
             ) : (
@@ -410,7 +413,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
         path: `${path}/${file.name.replace(/[\\/]/g, "_")}`,
       });
       setImporting(false);
-      setNotice("Document copied to your computer.");
+      setNotice("File copied to your computer.");
       setRetry((value) => value + 1);
     } catch (e) {
       setError(message(e));
@@ -582,7 +585,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
           </View>
           {importing && (
             <Card>
-              <Text style={s.heading}>Choose a saved PDF</Text>
+              <Text style={s.heading}>Choose a saved file</Text>
               <Text style={[s.small, { marginTop: 6 }]}>
                 Copies into this folder. A file with the same name will be replaced.
               </Text>
@@ -642,7 +645,12 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                   if (entry.type === "directory") {
                     setNotice("");
                     setPath(entry.path);
-                  } else if (/\.pdf$/i.test(entry.name)) void openPdf(entry.path);
+                  } else if (
+                    /\.(pdf|pptx|docx|xlsx|png|jpg|jpeg|webp|mp3|wav|m4a|mp4|webm|flac|srt)$/i.test(
+                      entry.name,
+                    )
+                  )
+                    void openPdf(entry.path);
                   else void read(entry.path);
                 }}
               />

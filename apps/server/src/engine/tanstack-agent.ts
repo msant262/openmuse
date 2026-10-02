@@ -11,6 +11,7 @@ import { finalize, map, mergeMap, type Observable } from "rxjs";
 import { z } from "zod";
 import type { BrowserImageLoader } from "../providers/browser-images.ts";
 import type { ModelProviderConfig } from "../providers/config.ts";
+import type { ModelSelection } from "../providers/models.ts";
 import { modelAdapter } from "../providers/models.ts";
 
 export { unknownProvider } from "../providers/models.ts";
@@ -56,6 +57,8 @@ export function tanstackAgent(options: {
   tools: ToolDefinition[];
   prompt: string;
   loadBrowserImage?: BrowserImageLoader;
+  loadFileImage?: BrowserImageLoader;
+  onModelSelected?: (model: ModelSelection) => void;
   /** Said when the step limit, not the model, ends a run; otherwise the reply just stops. */
   stepLimitNote?: string;
 }) {
@@ -85,6 +88,7 @@ export function tanstackAgent(options: {
           options.fallbacks,
           options.providers,
           (model) => {
+            options.onModelSelected?.(model);
             if (model.fallback)
               modelNotices.set(input.runId, [
                 ...(modelNotices.get(input.runId) ?? []),
@@ -96,6 +100,7 @@ export function tanstackAgent(options: {
               ]);
           },
           options.loadBrowserImage,
+          options.loadFileImage,
         ),
         messages: converted.messages,
         systemPrompts: system ? [system] : [],

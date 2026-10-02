@@ -32,6 +32,8 @@ import {
   type Mail,
   type ProposalInput,
 } from "../../../packages/domain/src";
+import { attachmentLabel } from "../../../packages/domain/src/attachments";
+import type { ComputerCommand } from "../../../packages/domain/src/computer";
 import { DelegateSheet, NotificationsSheet, TaskDetail } from "./agent-ui";
 import BrowserConsole from "./BrowserConsole";
 import { browserAddress, browserSite } from "./browser-address";
@@ -734,8 +736,22 @@ function ReviewLine({ label, value }: { label: string; value: string }) {
     </View>
   );
 }
-function FileDetail({ file: f }: { file: Artifact }) {
+function FileDetail({ file: initial }: { file: Artifact }) {
   const { api, refresh, open, close } = useWorkspace();
+  const [f, setFile] = useState(initial);
+  const [preview, setPreview] = useState<Artifact>();
+  useEffect(() => {
+    let active = true;
+    void api
+      .request<Artifact>(`/api/files/${initial.id}`)
+      .then((file) => {
+        if (active) setFile(file);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [api, initial.id]);
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
     Object.fromEntries(
       (f.fields || [])
@@ -765,29 +781,82 @@ function FileDetail({ file: f }: { file: Artifact }) {
   async function share() {
     setError("");
     try {
+      const current = await api.request<Artifact>(`/api/files/${f.id}`);
+      setFile(current);
+      const currentUrl = api.url(current.url);
       if (Platform.OS === "web") {
-        await Linking.openURL(url);
+        await Linking.openURL(currentUrl);
         return;
       }
-      const target = `${FileSystem.cacheDirectory}${f.id}.pdf`;
-      await FileSystem.downloadAsync(url, target, {
+      const extension =
+        f.name
+          .split(".")
+          .at(-1)
+          ?.replace(/[^a-zA-Z0-9]/g, "") || "bin";
+      const target = `${FileSystem.cacheDirectory}${f.id}.${extension}`;
+      await FileSystem.downloadAsync(currentUrl, target, {
         headers: { Authorization: `Bearer ${api.token}` },
       });
       if (await Sharing.isAvailableAsync())
-        await Sharing.shareAsync(target, { mimeType: "application/pdf", UTI: "com.adobe.pdf" });
+        await Sharing.shareAsync(target, {
+          mimeType: f.mimeType,
+          ...(f.mimeType === "application/pdf" && { UTI: "com.adobe.pdf" }),
+        });
       else throw new Error("Sharing is not available on this device.");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
+  async function createPreview() {
+    setBusy(true);
+    setError("");
+    try {
+      await api.request("/api/computer/start", {});
+      const path = `/workspace/preview-${f.id}.${f.name.split(".").at(-1)}`;
+      await api.request("/api/computer/files/import", { fileId: f.id, path });
+      const receipt = await api.request<ComputerCommand>("/api/computer/preview", {
+        path,
+        background: false,
+        timeoutMs: 120000,
+      });
+      if (receipt.status !== "succeeded" || !receipt.result?.previewPath)
+        throw new Error(
+          receipt.stderr ||
+            "Office preview did not complete. Check the computer's installed tools.",
+        );
+      const file = await api.request<Artifact>("/api/computer/files/export", {
+        path: receipt.result.previewPath,
+      });
+      setPreview(file);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
-    <Sheet
-      title={f.name}
-      subtitle={`${f.pageCount} pages · ${Math.max(1, Math.round(f.size / 1024))} KB · ${f.source}`}
-      onClose={close}
-      wide
-    >
-      <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
+    <Sheet title={f.name} subtitle={`${attachmentLabel(f)} · ${f.source}`} onClose={close} wide>
+      {f.mimeType === "application/pdf" ? (
+        <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
+      ) : f.mimeType.startsWith("image/") ? (
+        <Image
+          source={{ uri: url }}
+          style={{ width: "100%", aspectRatio: 1 }}
+          resizeMode="contain"
+        />
+      ) : preview ? (
+        <PdfReader url={api.url(preview.url)} token={api.token} pageCount={preview.pageCount} />
+      ) : (
+        <Card style={{ gap: 12 }}>
+          <Text style={s.muted}>Save or share this file to open it in another app.</Text>
+          {/\.(pptx|docx|xlsx|odt|odp|ods)$/i.test(f.name) && (
+            <Button busy={busy} onPress={() => void createPreview()}>
+              Create PDF preview
+            </Button>
+          )}
+        </Card>
+      )}
       <View style={[s.row, { gap: 10, marginVertical: 18, flexWrap: "wrap" }]}>
         <Button icon={Download} onPress={() => void share()}>
           {Platform.OS === "web" ? "Open / download" : "Save or share"}

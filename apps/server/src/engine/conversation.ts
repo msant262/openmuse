@@ -17,6 +17,7 @@ import type { Config } from "../config.ts";
 import { createJevAdapter, type JevAdapter } from "../jev/adapter.ts";
 import { JevService } from "../jev/service.ts";
 import { presentChoicesTool } from "../jev/tools.ts";
+import { mediaInstructions, mediaTools } from "../media-tools.ts";
 import { modelProviderConfig } from "../providers/config.ts";
 import type { AgentService } from "./service.ts";
 import { tanstackAgent } from "./tanstack-agent.ts";
@@ -140,9 +141,20 @@ export class ConversationAgent extends AbstractAgent {
     const key = (name: string, value: unknown) =>
       `${requestKey}:${name}:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
     const browserAbort = new AbortController();
+    let selectedModel = this.service.config.model;
     const tools = [
       ...browserTools(this.service.browser, this.owner, { signal: browserAbort.signal }),
-      ...computerTools(this.service.computer, this.service.files, this.owner, `chat:${requestKey}`),
+      ...computerTools(
+        this.service.computer,
+        this.service.files,
+        this.owner,
+        `chat:${requestKey}`,
+        { signal: browserAbort.signal },
+      ),
+      ...mediaTools(this.service.media, this.service.computer, this.owner, `chat:${requestKey}`, {
+        model: () => selectedModel,
+        signal: browserAbort.signal,
+      }),
       ...(jev
         ? [
             presentChoicesTool(
@@ -298,6 +310,10 @@ export class ConversationAgent extends AbstractAgent {
       }),
     ];
     const agent = tanstackAgent({
+      onModelSelected: (model) => {
+        selectedModel = `${model.provider}/${model.model}`;
+      },
+      loadFileImage: (id) => this.service.files.imageContent(this.owner, id),
       loadBrowserImage: (id) => this.service.browser.screenshotImage(this.owner, id),
       model: this.config.model ?? "openai/unconfigured",
       fallbacks: this.config.modelFallbacks,
@@ -313,7 +329,8 @@ export class ConversationAgent extends AbstractAgent {
         (jev
           ? " When a request has several possible next steps, call present_choices with factual clarification options. If those choices depend on email, first search and read the relevant thread, then provide its mailThreadId to present_choices. Generic choices need no mail. For exhibit or other research comparisons, call browse_web for every cited source before calling present_choices with a comparison. Comparison details must be exact phrases from the returned page text, and each source URL must be the final URL from successful browsing. If source reading fails, report the failure and do not present a sourced comparison. To refine a panel, pass its refinementPanelId with empty options; retained candidates will be ranked again. A selection is a preference; continue the user's requested planning from it."
           : "") +
-        computerInstructions,
+        computerInstructions +
+        mediaInstructions,
     });
     return this.expireOnUserTurn(
       new Observable((subscriber) => {

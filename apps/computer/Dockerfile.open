@@ -1,0 +1,34 @@
+# OpenMuse MIT. Public-network computer; gateway isolation is required at deployment.
+FROM node:22.22.0-bookworm-slim
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash python3 python3-pip python3-venv git curl jq coreutils poppler-utils \
+    ffmpeg imagemagick libreoffice-writer libreoffice-impress libreoffice-calc fonts-liberation \
+    ca-certificates && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /opt/openmuse/models /workspace /home/node /usr/share/licenses/gogcli \
+    && chown 1000:1000 /workspace /home/node
+COPY requirements.txt /opt/openmuse/requirements.txt
+RUN python3 -m venv /opt/openmuse/venv \
+    && /opt/openmuse/venv/bin/pip install --no-cache-dir -r /opt/openmuse/requirements.txt \
+    && HF_HUB_DISABLE_IMPLICIT_TOKEN=1 /opt/openmuse/venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('Systran/faster-whisper-small', revision='536b0662742c02347bc0e980a01041f333bce120', local_dir='/opt/openmuse/models/whisper-small', allow_patterns=['config.json','model.bin','tokenizer.json','vocabulary.*','preprocessor_config.json'])" \
+    && /opt/openmuse/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('/opt/openmuse/models/whisper-small',device='cpu',compute_type='int8',cpu_threads=2,num_workers=1,local_files_only=True)"
+# Official pinned release, architecture-specific digest; do not execute a remote installer.
+RUN case "$TARGETARCH" in \
+      amd64) digest=a16d4b8b917e36b96b09b30ecb7a5049d06ff1e88b856a101eec12b86b33fe05 ;; \
+      arm64) digest=f66e3c9ab7664b7633d57d2d5303e0db75deb4045e1b32c3493c0d8ba68a70f7 ;; \
+      *) exit 1 ;; esac \
+    && curl -fLSs "https://github.com/openclaw/gogcli/releases/download/v0.43.0/gogcli_0.43.0_linux_${TARGETARCH}.tar.gz" -o /tmp/gog.tar.gz \
+    && printf '%s  /tmp/gog.tar.gz\n' "$digest" | sha256sum -c - \
+    && tar -xzf /tmp/gog.tar.gz -C /usr/local/bin gog \
+    && tar -xzf /tmp/gog.tar.gz -C /usr/share/licenses/gogcli LICENSE \
+    && rm /tmp/gog.tar.gz
+COPY files.py media.py runtime.py /opt/openmuse/
+COPY LICENSE THIRD-PARTY.md /usr/share/licenses/openmuse/
+COPY resolv.conf /opt/openmuse/resolv.conf
+RUN chmod 0555 /opt/openmuse/*.py && chmod -R a-w /opt/openmuse
+ENV HOME=/home/node LANG=C.UTF-8 PATH=/opt/openmuse/venv/bin:/usr/local/bin:/usr/bin:/bin \
+    HF_HUB_OFFLINE=1 HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+WORKDIR /workspace
+USER 1000:1000
+VOLUME ["/workspace", "/home/node"]
+ENTRYPOINT ["/opt/openmuse/venv/bin/python", "-I", "/opt/openmuse/runtime.py"]

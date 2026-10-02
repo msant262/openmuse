@@ -7,6 +7,7 @@ RUN apt-get update \
     && chown 1000:1000 /workspace
 
 COPY files.py /opt/openmuse/files.py
+COPY LICENSE /usr/share/licenses/openmuse/LICENSE
 RUN chmod 0555 /opt/openmuse/files.py
 
 ENV HOME=/workspace LANG=C.UTF-8

@@ -1,0 +1,7 @@
+# OpenMuse MIT: isolated network policy/RPC gateway, no host namespaces or mounts.
+FROM python:3.11.16-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends iptables && rm -rf /var/lib/apt/lists/*
+COPY gateway.py /opt/openmuse/gateway.py
+COPY LICENSE /usr/share/licenses/openmuse/LICENSE
+RUN chmod 0555 /opt/openmuse/gateway.py
+ENTRYPOINT ["python3", "-I", "/opt/openmuse/gateway.py"]
