@@ -1,6 +1,6 @@
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
 import type { ComputerCommand } from "../../../../packages/domain/src/computer.ts";
-import type { ComputerBackend } from "../computer-contract.ts";
+import { type ComputerBackend, computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Store } from "../db.ts";
 import { ResourceLeases } from "./resource-leases.ts";
 import type { WorkAdmission } from "./work-admission.ts";
@@ -13,11 +13,6 @@ export async function readComputerCommand(
   if (computer.command) return computer.command(owner, id);
   return (await computer.snapshot(owner)).commands.find((command) => command.id === id);
 }
-
-const terminalReceipt = (receipt: ComputerCommand) =>
-  receipt.status === "succeeded" ||
-  receipt.status === "failed" ||
-  receipt.status === "rejected_not_dispatched";
 
 /** Release abandoned task slots only after a durable computer receipt proves termination. */
 export async function reconcileWaitingComputerTasks(
@@ -48,7 +43,7 @@ export async function reconcileWaitingComputerTasks(
       // A failed poll cannot establish that the physical process has stopped.
       continue;
     }
-    if (!receipt || !terminalReceipt(receipt)) continue;
+    if (!receipt || !computerCommandCleanupConfirmed(receipt)) continue;
     const selector =
       typeof task.state.computerCleanupPendingId === "string"
         ? { computerCleanupPendingId: id }

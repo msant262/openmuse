@@ -16,6 +16,7 @@ import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
 import { ResourceBusyError, ResourceLeases } from "./engine/resource-leases.ts";
 import { RuntimePause } from "./engine/runtime-pause.ts";
+import { authorizeTaskEffect } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 
@@ -64,7 +65,7 @@ export class BrowserService {
   }
   configureActions(actions: ActionService) {
     this.actions = actions;
-    actions.registerExternal("browser.act", async (owner, raw, proposal) => {
+    actions.registerExternal("browser.act", async (owner, raw, proposal, beforeDispatch) => {
       const { sessionId, binding } = raw as { sessionId: string; binding: BrowserPaymentBinding };
       await this.runtimePause.assertResumed(owner);
       const leaseOwner = `browser-review:${proposal.id}`;
@@ -96,6 +97,7 @@ export class BrowserService {
           // A local rejection is known not dispatched. Errors after this barrier
           // require an explicit worker rejection to establish that fact.
           await this.runtimePause.assertResumed(owner);
+          await beforeDispatch();
           try {
             const receipt = z
               .object({ id: z.string(), status: z.literal("succeeded") })
@@ -381,10 +383,12 @@ export class BrowserService {
       await guard?.();
       if (effect) await this.runtimePause.assertResumed(owner);
       if (leaseLost) throw new ResourceBusyError(requests);
+      await authorizeTaskEffect();
       const activeId = await this.agentSession(owner, id, url, signal);
       await guard?.();
       if (effect) await this.runtimePause.assertResumed(owner);
       if (leaseLost) throw new ResourceBusyError(requests);
+      if (effect) await authorizeTaskEffect();
       return await operation(activeId);
     } finally {
       if (heartbeat) clearInterval(heartbeat);

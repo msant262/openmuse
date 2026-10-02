@@ -243,7 +243,20 @@ export const taskTimingSchema = z
     priority: z.enum(["low", "normal", "high"]),
     dueAt: z.iso.datetime({ offset: true }).optional(),
     validUntil: z.iso.datetime({ offset: true }).optional(),
-    timezone: z.string().trim().min(1).max(100).optional(),
+    timezone: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .refine((value) => {
+        try {
+          new Intl.DateTimeFormat("en", { timeZone: value }).format();
+          return true;
+        } catch {
+          return false;
+        }
+      }, "Enter a valid IANA timezone")
+      .optional(),
   })
   .strict();
 export type TaskTiming = z.infer<typeof taskTimingSchema>;
@@ -256,3 +269,86 @@ export const runtimePauseStateSchema = z
   })
   .strict();
 export type RuntimePauseState = z.infer<typeof runtimePauseStateSchema>;
+
+export const operationStatusSchema = z.enum([
+  "queued",
+  "dispatching",
+  "running",
+  "succeeded",
+  "failed",
+  "rejected_not_dispatched",
+  "superseded",
+  "outcome_unknown",
+]);
+export type OperationStatus = z.infer<typeof operationStatusSchema>;
+export const operationIntentSchema = z
+  .object({
+    id: runtimeId,
+    taskId: runtimeId,
+    revision: z.number().int().nonnegative(),
+    bindingHash: z.string().regex(/^[a-f0-9]{64}$/),
+    executorId: runtimeId,
+    executorEpoch: z.number().int().positive(),
+    resourceFence: z.number().int().nonnegative(),
+    status: operationStatusSchema,
+  })
+  .strict();
+export type OperationIntent = z.infer<typeof operationIntentSchema>;
+export const completionCriterionSchema = z
+  .object({
+    id: runtimeId,
+    description: z.string().trim().min(1).max(1000),
+    kind: z.enum(["artifact", "file", "receipt", "observation"]),
+    referenceId: runtimeId.optional(),
+    format: z.string().max(100).optional(),
+    effect: z
+      .enum([
+        "email.send",
+        "calendar.create",
+        "calendar.update",
+        "calendar.delete",
+        "command",
+        "browser",
+        "external",
+      ])
+      .optional(),
+    requiredItems: z.array(z.string().trim().min(1).max(300)).max(30).default([]),
+  })
+  .strict();
+export type CompletionCriterion = z.infer<typeof completionCriterionSchema>;
+export const completionAssessmentSchema = z
+  .object({
+    status: z.enum(["verified", "partial", "unverified"]),
+    checks: z.array(
+      z
+        .object({ criterionId: runtimeId, passed: z.boolean(), evidenceIds: z.array(runtimeId) })
+        .strict(),
+    ),
+    remaining: z.array(z.string()),
+  })
+  .strict();
+export type CompletionAssessment = z.infer<typeof completionAssessmentSchema>;
+export const taskBudgetSchema = z
+  .object({
+    id: runtimeId,
+    revision: z.number().int().nonnegative(),
+    maxSteps: z.number().int().min(1).max(10000),
+    usedSteps: z.number().int().nonnegative(),
+    maxMilliseconds: z.number().int().positive(),
+    usedMilliseconds: z.number().int().nonnegative(),
+  })
+  .strict();
+export type TaskBudget = z.infer<typeof taskBudgetSchema>;
+export type DirectiveReceipt = Pick<
+  TaskMailbox,
+  "id" | "taskId" | "seq" | "desiredRevision" | "status"
+>;
+export type ExecutorCapability =
+  | "browser.dom"
+  | "browser.screenshot"
+  | "browser.pointer"
+  | "browser.drag"
+  | "desktop"
+  | "command"
+  | "files"
+  | "transcribe";

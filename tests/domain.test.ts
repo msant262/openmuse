@@ -52,7 +52,7 @@ test("email drafts reject malformed addresses", () => {
 });
 
 test("timed events require an explicit UTC offset", () => {
-  assert.equal(eventDraftSchema.parse(event).timeZone, "America/Los_Angeles");
+  assert.equal(eventDraftSchema.parse(event).timeZone, "Europe/Berlin");
   assert.equal(
     eventDraftSchema.safeParse({ ...event, start: "2026-10-10T10:00:00" }).success,
     false,

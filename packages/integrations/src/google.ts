@@ -470,6 +470,7 @@ export class GoogleClient {
       getAccessToken: () => Promise<string>;
       fetch?: typeof fetch;
       signal?: AbortSignal;
+      beforeWrite?: () => Promise<void>;
       retry?: {
         budgetMs?: number;
         maxAttempts?: number;
@@ -621,6 +622,10 @@ export class GoogleClient {
       signal.throwIfAborted();
       if (now() >= deadline) throw new Error("Google read retry budget exhausted");
       let response: Response;
+      // Refresh/review reads may await network I/O. Authorize the concrete
+      // mutable request only after those waits and outside unknown-outcome
+      // handling, so a denied barrier remains definitely not dispatched.
+      if (write) await this.options.beforeWrite?.();
       try {
         response = await abortable(
           this.fetcher(url, {

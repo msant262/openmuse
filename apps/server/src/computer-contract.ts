@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
 import type { ComputerService } from "./computer.ts";
 
 export const mediaSchema = z.object({
@@ -10,6 +11,18 @@ export const mediaSchema = z.object({
   timeoutMs: z.number().int().min(1000).max(1800000).optional(),
   background: z.boolean().default(false),
 });
+export function computerCommandCleanupConfirmed(receipt: {
+  status: ComputerCommand["status"];
+  cleanupConfirmed?: boolean;
+}) {
+  return (
+    receipt.status === "succeeded" ||
+    receipt.status === "failed" ||
+    receipt.status === "rejected_not_dispatched" ||
+    ((receipt.status === "interrupted" || receipt.status === "timed_out") &&
+      receipt.cleanupConfirmed === true)
+  );
+}
 export const commandReceiptSchema = z.object({
   id: z.string().min(1).max(128),
   command: z.string().max(16000),
@@ -31,6 +44,8 @@ export const commandReceiptSchema = z.object({
   background: z.boolean().optional(),
   timeoutMs: z.number().int().max(1800000).optional(),
   kind: z.enum(["command", "transcribe", "preview"]).optional(),
+  outcomeUnknown: z.boolean().optional(),
+  cleanupConfirmed: z.boolean().optional(),
   result: z
     .object({
       text: z.string().max(32000).optional(),

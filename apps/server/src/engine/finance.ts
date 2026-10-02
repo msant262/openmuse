@@ -26,6 +26,8 @@ export function analyzeSpending(csv: string) {
   }
   if (quoted) throw new Error("CSV has an unclosed quoted field");
   const header = rows.shift()?.map((v) => v.trim().toLowerCase());
+  if (header && new Set(header).size !== header.length)
+    throw new Error("Ambiguous CSV: duplicate column names");
   if (!header || !["date", "description", "amount", "category"].every((v) => header.includes(v)))
     throw new Error("CSV needs date,description,amount,category columns");
   if (!rows.length || rows.length > 5000)

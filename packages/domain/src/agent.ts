@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { type RuntimePauseState, type TaskTiming, taskTimingSchema } from "./runtime.ts";
+import {
+  type CompletionAssessment,
+  type CompletionCriterion,
+  completionCriterionSchema,
+  type RuntimePauseState,
+  type TaskTiming,
+  taskTimingSchema,
+} from "./runtime.ts";
 
 export type TaskStatus =
   | "queued"
@@ -9,6 +16,8 @@ export type TaskStatus =
   | "waiting_resource"
   | "waiting_global_pause"
   | "waiting_job"
+  | "waiting_provider"
+  | "waiting_children"
   | "scheduled"
   | "paused"
   | "succeeded"
@@ -20,6 +29,10 @@ export interface Evidence {
   title: string;
   excerpt: string;
   url?: string;
+  acquiredAt?: string;
+  revision?: number;
+  origin?: string;
+  version?: string;
 }
 export interface TaskStep {
   id: string;
@@ -37,6 +50,8 @@ export interface AgentTask {
   originThreadId?: string;
   originMessageId?: string;
   timing?: TaskTiming;
+  criteria?: CompletionCriterion[];
+  completion?: CompletionAssessment;
   plan: TaskStep[];
   evidence: Evidence[];
   input: Record<string, unknown>;
@@ -112,6 +127,7 @@ export interface AgentArtifact {
   summary: string;
   data: Record<string, unknown>;
   createdAt: string;
+  revision?: number;
 }
 export interface AgentNotification {
   id: string;
@@ -209,6 +225,7 @@ export const createTaskSchema = z.object({
   originMessageId: z.string().min(1).max(256).optional(),
   input: z.record(z.string(), z.unknown()).default({}),
   timing: taskTimingSchema.optional(),
+  criteria: z.array(completionCriterionSchema).min(1).max(30).optional(),
 });
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export const monitorInputSchema = z
@@ -249,4 +266,5 @@ export interface Routine {
   pending: { key: string; slot: string; prompt: string; title: string; revision: number } | null;
   lastTaskId?: string;
   skipped?: number;
+  blockedTaskId?: string | null;
 }

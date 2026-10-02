@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  ArrowUp,
   Bell,
   CalendarDays,
   ChevronRight,
@@ -42,6 +41,8 @@ import { NativePushSettings } from "./native-push-settings";
 import { ProfileSettings } from "./profile-settings";
 import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
+import { TaskBudgetControls, TaskCompletion, TaskTimingControls } from "./task-runtime-controls";
+import { completionLabel } from "./task-runtime-state";
 import { useMuseThread } from "./threads";
 import {
   Button,
@@ -141,6 +142,7 @@ export function TaskCard({
             <Text style={s.heading}>{task.title}</Text>
             <Text style={s.small}>
               {statusLabel(task.status)}
+              {task.completion ? ` · ${completionLabel(task.completion)}` : ""}
               {task.plan.length ? ` · ${done}/${task.plan.length} steps` : ""}
             </Text>
           </View>
@@ -313,6 +315,10 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
   );
 }
 export function TaskDetail({ taskId }: { taskId: string }) {
+  const { api } = useWorkspace();
+  return <TaskDetailContent key={`${api.identityKey}:${taskId}`} taskId={taskId} />;
+}
+function TaskDetailContent({ taskId }: { taskId: string }) {
   const { api, workspace, close, open, refresh: refreshWorkspace } = useWorkspace();
   const { data, mutate } = useAgentWorkspace();
   const [detail, setDetail] = useState<{
@@ -467,17 +473,6 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 Retry task
               </Button>
             )}
-            {!["succeeded", "failed", "cancelled"].includes(task.status) &&
-              task.timing?.priority !== "high" && (
-                <Button
-                  small
-                  icon={ArrowUp}
-                  busy={busy}
-                  onPress={() => void act("priority", { priority: "high" })}
-                >
-                  Prioritize
-                </Button>
-              )}
             {activeTask(task) && (
               <Button
                 small
@@ -490,6 +485,9 @@ export function TaskDetail({ taskId }: { taskId: string }) {
               </Button>
             )}
           </View>
+          <TaskTimingControls task={task} />
+          <TaskBudgetControls task={task} />
+          <TaskCompletion task={task} />
           {task.status === "waiting_approval" && (
             <Card style={{ backgroundColor: colors.lavender, gap: 12 }}>
               <Text style={s.heading}>Ready for your review</Text>
@@ -600,7 +598,11 @@ export function TaskDetail({ taskId }: { taskId: string }) {
             </Card>
           )}
           {!!task.result && (
-            <Card style={{ backgroundColor: colors.green }}>
+            <Card
+              style={{
+                backgroundColor: task.completion?.status === "verified" ? colors.green : colors.sky,
+              }}
+            >
               <Text selectable style={s.text}>
                 {resultSummary(task.result)}
               </Text>

@@ -41,6 +41,9 @@ importers:
       '@typesafe-ai/sdk':
         specifier: 0.6.0
         version: 0.6.0
+      '@xmldom/xmldom':
+        specifier: 0.9.12
+        version: 0.9.12
       cron-parser:
         specifier: 5.6.0
         version: 5.6.0

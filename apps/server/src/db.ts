@@ -12,6 +12,7 @@ import type {
   WorkClass,
 } from "../../../packages/domain/src/runtime.ts";
 import { initializeDurableConversations } from "./durable-schema.ts";
+import { initializeTaskRuntime } from "./engine/task-schema.ts";
 import { backgroundFailure } from "./log.ts";
 
 type Row = { data: Record<string, unknown> };
@@ -21,6 +22,50 @@ interface Database {
 }
 
 export class Store {
+  async applyTaskMailbox<T>(owner: string, taskId: string, runToken: string): Promise<T | null> {
+    const result = await this.write("SELECT openmuse_apply_task_mailbox($1,$2,$3) AS data", [
+      owner,
+      taskId,
+      runToken,
+    ]);
+    return (result.rows[0]?.data as T | undefined) ?? null;
+  }
+  async authorizeTaskOperation<T>(
+    owner: string,
+    operationId: string,
+    revision: number,
+    runToken: string,
+    handles: ResourceLease[],
+    validateOnly = false,
+  ) {
+    const result = await this.write(
+      "SELECT openmuse_authorize_task_operation($1,$2,$3::bigint,$4,$5::jsonb,$6::boolean) AS data",
+      [owner, operationId, revision, runToken, JSON.stringify(handles), validateOnly],
+    );
+    return result.rows[0].data as unknown as { code: string; operation?: T };
+  }
+  async guardTaskAction(owner: string, id: string, validateOnly = false) {
+    const result = await this.write("SELECT openmuse_guard_task_action($1,$2,$3) AS data", [
+      owner,
+      id,
+      validateOnly,
+    ]);
+    return result.rows[0].data as unknown as string;
+  }
+  async consumeTaskBudget<T>(owner: string, rootId: string, elapsedMs: number): Promise<T | null> {
+    const result = await this.write(
+      "SELECT openmuse_consume_task_budget($1,$2,$3::bigint) AS data",
+      [owner, rootId, Math.max(0, Math.floor(elapsedMs))],
+    );
+    return (result.rows[0]?.data as T | undefined) ?? null;
+  }
+  async chargeTaskBudget<T>(owner: string, rootId: string, elapsedMs: number): Promise<T | null> {
+    const result = await this.write(
+      "SELECT openmuse_charge_task_budget($1,$2,$3::bigint) AS data",
+      [owner, rootId, Math.max(0, Math.floor(elapsedMs))],
+    );
+    return (result.rows[0]?.data as T | undefined) ?? null;
+  }
   /** A run row is the dispatch boundary: no row permits retry, any row forbids uncertain repetition. */
   async recordInboxFailure(owner: string, messageId: string, runToken: string): Promise<boolean> {
     const result = await this.write("SELECT openmuse_inbox_failure($1,$2,$3) AS data", [
@@ -288,7 +333,11 @@ export class Store {
             ((COALESCE(data->'state','{}'::jsonb) || $4::jsonb->'state') ||
               jsonb_strip_nulls(jsonb_build_object(
                 'desiredRevision',data->'state'->'desiredRevision',
-                'mailboxSeq',data->'state'->'mailboxSeq')))
+                'mailboxSeq',data->'state'->'mailboxSeq',
+                'appliedRevision',data->'state'->'appliedRevision',
+                'appliedMailboxSeq',data->'state'->'appliedMailboxSeq',
+                'directives',data->'state'->'directives',
+                'timingRevision',data->'state'->'timingRevision')))
           ELSE data->'state' END),updated_at=now()
        WHERE owner=$1 AND kind='tasks' AND id=$2 AND data @> $3::jsonb RETURNING data`,
       [owner, id, JSON.stringify(expected), JSON.stringify(patch)],
@@ -303,6 +352,7 @@ export class Store {
          data->>'status' IN ('queued','waiting_resource','waiting_global_pause') OR
          (data->>'status'='scheduled' AND (data->>'nextRunAt')::timestamptz <= $1::timestamptz) OR
          (data->>'status'='waiting_job' AND COALESCE((data->>'nextRunAt')::timestamptz,'-infinity'::timestamptz) <= $1::timestamptz) OR
+         (data->>'status'='waiting_provider' AND data->>'nextRunAt' IS NOT NULL AND (data->>'nextRunAt')::timestamptz <= $1::timestamptz) OR
          (data->>'status'='running' AND (data->>'leaseUntil')::timestamptz <= $1::timestamptz) OR
          data->>'status'='waiting_approval' OR
          (data->>'status'='paused' AND jsonb_typeof(data->'state'->'awaitingBrowserSessionId')='string')
@@ -705,6 +755,7 @@ export async function createStore(
     "CREATE TABLE IF NOT EXISTS records(owner text NOT NULL,kind text NOT NULL,id text NOT NULL,data jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,kind,id))",
   );
   await initializeDurableConversations((sql) => database.query(sql));
+  await initializeTaskRuntime((sql) => database.query(sql));
   await database.query(
     "CREATE INDEX IF NOT EXISTS task_scheduler_due ON records(kind,(data->>'status'),(data->>'nextRunAt')) WHERE kind='tasks'",
   );

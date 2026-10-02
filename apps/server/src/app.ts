@@ -19,7 +19,6 @@ import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
 import { RpcComputerService } from "./computer-rpc.ts";
 import type { Config } from "./config.ts";
-import { ConversationInbox } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
 import { ResourceLeases } from "./engine/resource-leases.ts";
 import { agentRoutes } from "./engine/routes.ts";
@@ -43,8 +42,8 @@ export async function createApp(
   const runtimePause = new RuntimePause(db);
   const actions = new ActionService(db, {
     policy: approvalPolicy(config),
-    execute: (owner, input, connectionId, targetVersion) =>
-      workspace.execute(owner, input, connectionId, targetVersion),
+    execute: (owner, input, connectionId, targetVersion, beforeDispatch) =>
+      workspace.execute(owner, input, connectionId, targetVersion, beforeDispatch),
     prepare: (owner, input, connectionId) => workspace.prepare(owner, input, connectionId),
     connected: (owner) => workspace.connected(owner),
     connection: (owner) => workspace.connection(owner),
@@ -66,7 +65,7 @@ export async function createApp(
     runtimePause,
   );
   const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
-  const inbox = new ConversationInbox(db, (owner, id) => files.get(owner, id));
+  const inbox = agent.inbox;
   const threads = config.intelligenceApiKey?.trim()
     ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey.trim() })
     : new LocalThreads(db);

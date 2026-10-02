@@ -19,6 +19,8 @@ export interface ComputerCommand {
   timeoutMs?: number;
   kind?: "command" | "transcribe" | "preview";
   result?: ComputerMediaResult;
+  outcomeUnknown?: boolean;
+  cleanupConfirmed?: boolean;
 }
 export interface ComputerMediaResult {
   text?: string;

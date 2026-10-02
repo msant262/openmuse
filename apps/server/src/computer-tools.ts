@@ -1,9 +1,14 @@
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import { computerCommandSchema, computerPathSchema, computerWriteSchema } from "./computer.ts";
-import { type ComputerBackend, commandReceiptSchema } from "./computer-contract.ts";
+import {
+  type ComputerBackend,
+  commandReceiptSchema,
+  computerCommandCleanupConfirmed,
+} from "./computer-contract.ts";
 import { ResourceBusyError } from "./engine/resource-leases.ts";
 import { RuntimePausedError } from "./engine/runtime-pause.ts";
+import { taskOperationId } from "./engine/task-journal.ts";
 import type { Files } from "./files.ts";
 
 export const computerInstructions =
@@ -44,7 +49,7 @@ export function computerTools(
             const result = await action(parameters.parse(args));
             const receipt = commandReceiptSchema.safeParse(result);
             if (automatedEffect && receipt.success) {
-              if (["succeeded", "failed", "rejected_not_dispatched"].includes(receipt.data.status))
+              if (computerCommandCleanupConfirmed(receipt.data))
                 await options.onComputerReceipt?.(receipt.data);
               else
                 await options.onWaitingJob?.({
@@ -65,9 +70,19 @@ export function computerTools(
             return result;
           } catch (error) {
             if (
+              (error instanceof Error &&
+                "outcomeUnknown" in error &&
+                error.outcomeUnknown === true) ||
               error instanceof RuntimePausedError ||
               error instanceof ResourceBusyError ||
-              (error instanceof Error && error.name === "LostLeaseError")
+              (error instanceof Error &&
+                [
+                  "LostLeaseError",
+                  "TaskAbortError",
+                  "TaskSupersededError",
+                  "TaskValidityExpiredError",
+                  "TaskOutcomeUnknownError",
+                ].includes(error.name))
             )
               throw error;
             const commandId =
@@ -110,7 +125,7 @@ export function computerTools(
       computerCommandSchema.extend({ operationId: z.string().min(1).max(120) }),
       async ({ operationId, ...args }) =>
         computer.execute(owner, args, {
-          idempotencyKey: `${scope}:${operationId}`,
+          idempotencyKey: taskOperationId() ?? `${scope}:${operationId}`,
           signal: options.signal,
           dispatchGuard: options.effectBefore ?? options.before,
           onDispatch: options.onComputerDispatch,
@@ -166,7 +181,7 @@ export function computerTools(
         computerCommandSchema.extend({ operationId: z.string().min(1).max(120) }),
         async ({ operationId, ...args }) =>
           computer.execute(owner, args, {
-            idempotencyKey: `${scope}:${operationId}`,
+            idempotencyKey: taskOperationId() ?? `${scope}:${operationId}`,
             signal: options.signal,
             dispatchGuard: options.effectBefore ?? options.before,
             onDispatch: options.onComputerDispatch,

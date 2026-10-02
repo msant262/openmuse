@@ -25,7 +25,7 @@ import type {
   Mail,
   ProposalInput,
 } from "../../../../packages/domain/src/index.ts";
-import { type TaskTiming, taskTimingSchema } from "../../../../packages/domain/src/runtime.ts";
+import type { TaskBudget, TaskTiming } from "../../../../packages/domain/src/runtime.ts";
 import { ActionLog } from "../action-log.ts";
 import type { ActionService } from "../actions.ts";
 import { AgentProfile } from "../agent-profile.ts";
@@ -33,7 +33,9 @@ import { reconcileComputerAudit } from "../audited-computer.ts";
 import type { BrowserService } from "../browser.ts";
 import { ComputerService } from "../computer.ts";
 import type { ComputerBackend } from "../computer-contract.ts";
+import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Config } from "../config.ts";
+import { ConversationInbox } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
@@ -52,6 +54,11 @@ import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
 import { ResourceLeases } from "./resource-leases.ts";
 import { RuntimePause } from "./runtime-pause.ts";
+import { TaskActor } from "./task-actor.ts";
+import { TaskJournal, validateTaskEffect } from "./task-journal.ts";
+import { TaskMailbox } from "./task-mailbox.ts";
+import { TaskTiming as TaskTimingService } from "./task-timing.ts";
+import { mandatoryTaskCriteria, TaskVerification } from "./task-verification.ts";
 import { WorkAdmission } from "./work-admission.ts";
 import { LostLeaseError, type TaskContext, TaskWorker } from "./worker.ts";
 
@@ -69,6 +76,12 @@ export class AgentService {
   readonly memory: MemoryService;
   readonly mcp: McpService;
   readonly push: PushService;
+  readonly journal: TaskJournal;
+  readonly inbox: ConversationInbox;
+  readonly mailbox: TaskMailbox;
+  readonly actor: TaskActor;
+  readonly timing: TaskTimingService;
+  readonly verification: TaskVerification;
   readonly toolOperations = new OperationDrain(() => this.db.persistenceFailed);
   private localThreads?: LocalThreads;
   private routineTimer?: ReturnType<typeof setInterval>;
@@ -148,6 +161,18 @@ export class AgentService {
     readonly computer: ComputerBackend = new ComputerService(db, config),
     readonly media: MediaService = new MediaService(db, files, config),
   ) {
+    this.journal = new TaskJournal(db);
+    this.inbox = new ConversationInbox(db, (owner, id) => files.get(owner, id));
+    this.mailbox = new TaskMailbox(db, this.inbox);
+    this.actor = new TaskActor(db, this.mailbox, this.journal);
+    this.inbox.subscribeAccepted((owner, message) => {
+      if (message.targetTaskId)
+        void this.actor
+          .wake(owner, message.targetTaskId, "directive")
+          .catch((error) => backgroundFailure("wake task direction", error));
+    });
+    this.timing = new TaskTimingService(db, config.routineTimezone ?? "Europe/Berlin");
+    this.verification = new TaskVerification(db, files, this.journal);
     this.profiles = new AgentProfile(db);
     this.interactions = new InteractionRequests(db);
     this.runtimePause = new RuntimePause(db);
@@ -156,7 +181,16 @@ export class AgentService {
     this.routines = new RoutinesService(
       db,
       (owner, input, key) => this.createTask(owner, input, key),
-      config.routineTimezone ?? "UTC",
+      config.routineTimezone ?? "Europe/Berlin",
+      Date.now,
+      (owner, routine, taskId) =>
+        this.notify(
+          owner,
+          `${routine.title}: previous run is waiting`,
+          "An occurrence was skipped while the previous run is unfinished. Future occurrences resume after it settles.",
+          taskId,
+          `routine-blocked:${routine.id}:${taskId}`,
+        ).then(() => {}),
     );
     this.memory = new MemoryService(db);
     this.mcp = new McpService(db, actions, config.mcpServers ?? []);
@@ -219,8 +253,33 @@ export class AgentService {
       }
       await new ActionLog(this.db).reconcile();
       // Recover publications if the process exited after committing an outcome.
-      for (const { owner, value } of await this.db.scan<AgentTask>("tasks"))
+      for (const { owner, value } of await this.db.scan<AgentTask>("tasks")) {
+        if (value.state.nativeCleanupPending === true && value.status !== "running") {
+          const physical = (await this.journal.operations(owner, value.id)).filter(
+            (op) => op.nativeEnvelope && op.effect,
+          );
+          const confirmed =
+            physical.length > 0 &&
+            physical.every(
+              (op) =>
+                ["succeeded", "failed", "rejected_not_dispatched", "superseded"].includes(
+                  op.status,
+                ) ||
+                (op.receipt as { data?: { cleanupConfirmed?: boolean } })?.data
+                  ?.cleanupConfirmed === true,
+            );
+          if (confirmed) {
+            await this.workAdmission.releaseHeld(value.id);
+            await this.db.compareAndSwapTask(
+              owner,
+              value.id,
+              { status: value.status, state: { nativeCleanupPending: true } },
+              { state: { ...value.state, nativeCleanupPending: false } },
+            );
+          }
+        }
         await this.publishOutcome(owner, value);
+      }
       if (!globallyPaused)
         for (const { owner, value } of await this.db.scan<Monitor>("monitors"))
           await this.activateMonitor(owner, value);
@@ -358,6 +417,11 @@ export class AgentService {
   }
   async detail(owner: string, id: string) {
     const task = await this.getTask(owner, id);
+    const rootBudget = await this.db.get<TaskBudget>(
+      owner,
+      "task-budgets",
+      typeof task.state.rootTaskId === "string" ? task.state.rootTaskId : task.id,
+    );
     const files = (await this.db.list<Artifact>(owner, "files")).filter((file) =>
       task.artifactIds.includes(file.id),
     );
@@ -365,7 +429,7 @@ export class AgentService {
       [task.state.browserId, task.state.sessionId].includes(browser.id),
     );
     return {
-      task,
+      task: rootBudget ? { ...task, state: { ...task.state, budget: rootBudget } } : task,
       interactions: await Promise.all(
         (
           await this.db.list<
@@ -383,9 +447,18 @@ export class AgentService {
       artifacts: (await this.db.list<AgentArtifact>(owner, "agent-artifacts")).filter(
         (a) => a.taskId === id,
       ),
+      directives: await this.mailbox.list(owner, id),
+      operations: await this.journal.operations(owner, id),
     };
   }
-  async createTask(owner: string, raw: unknown, idempotencyKey?: string, held = false) {
+  async createTask(
+    owner: string,
+    raw: unknown,
+    idempotencyKey?: string,
+    held = false,
+    parent?: { id: string; rootTaskId: string },
+    originalUserPrompt?: string,
+  ) {
     const input = createTaskSchema.parse(raw);
     if (input.goalId && !(await this.db.get(owner, "goals", input.goalId)))
       throw new AppError("Goal not found", 404);
@@ -414,18 +487,24 @@ export class AgentService {
             : ["Understand the outcome", "Plan the work", "Use connected tools", "Return a result"];
     const task: AgentTask = {
       id,
-      title: input.title ?? input.prompt.slice(0, 90),
-      prompt: input.prompt,
+      title: input.title ?? (originalUserPrompt ?? input.prompt).slice(0, 90),
+      prompt: originalUserPrompt ?? input.prompt,
       kind: input.kind,
       goalId: input.goalId,
       originThreadId: input.originThreadId,
       originMessageId: input.originMessageId,
       status: held ? "paused" : "queued",
-      timing: input.timing ?? { priority: "normal" },
+      timing: { timezone: "Europe/Berlin", priority: "normal", ...input.timing },
+      criteria: mandatoryTaskCriteria(input, input.criteria, originalUserPrompt),
       plan: titles.map((title, i) => ({ id: String(i), title, status: "pending" })),
       evidence: [],
       input: input.input,
       state: {
+        desiredRevision: 0,
+        appliedRevision: 0,
+        mailboxSeq: 0,
+        appliedMailboxSeq: 0,
+        ...(parent ? { parentTaskId: parent.id, rootTaskId: parent.rootTaskId } : {}),
         connectionId: (await this.workspace.connection(owner))?.id ?? null,
         ...(held && input.kind === "monitor" ? { initializingMonitor: true } : {}),
       },
@@ -440,6 +519,24 @@ export class AgentService {
     await this.db.insertIfAbsent(owner, "tasks", task);
     return (await this.db.get<AgentTask>(owner, "tasks", id)) ?? task;
   }
+  async createChildTask(
+    owner: string,
+    parent: AgentTask,
+    input: { prompt: string; title?: string },
+    key: string,
+  ) {
+    const children = (await this.db.list<AgentTask>(owner, "tasks")).filter(
+      (task) => task.state.parentTaskId === parent.id && !terminal.has(task.status),
+    );
+    if (children.length >= 4)
+      throw new AppError("This task already has four unfinished child tasks", 409);
+    const rootTaskId =
+      typeof parent.state.rootTaskId === "string" ? parent.state.rootTaskId : parent.id;
+    return this.createTask(owner, { ...input, kind: "plan", timing: parent.timing }, key, false, {
+      id: parent.id,
+      rootTaskId,
+    });
+  }
   async setRuntimePause(owner: string, input: { paused: boolean; expectedRevision: number }) {
     return this.runtimePause.set(owner, input);
   }
@@ -447,16 +544,11 @@ export class AgentService {
     const task = await this.getTask(owner, id);
     if (terminal.has(task.status))
       throw new AppError("Finished tasks cannot be reprioritized", 409);
-    const timing = taskTimingSchema.parse({ ...(task.timing ?? {}), priority });
-    const updated = await this.db.compareAndSwap<AgentTask>(
-      owner,
-      "tasks",
-      id,
-      { status: task.status, updatedAt: task.updatedAt },
-      { timing, updatedAt: date() },
-    );
-    if (!updated) throw new AppError("Task changed; refresh and try again", 409);
-    return updated;
+    return this.timing.update(owner, id, {
+      priority,
+      expectedRevision: Number(task.state.timingRevision ?? 0),
+      requestId: randomUUID(),
+    });
   }
   async control(owner: string, id: string, action: "pause" | "resume" | "cancel" | "retry") {
     const task = await this.getTask(owner, id);
@@ -506,7 +598,7 @@ export class AgentService {
       },
     );
     if (!updated) throw new AppError("Task changed; refresh and try again", 409);
-    this.worker.abort(id);
+    this.worker.abort(id, action === "pause" ? "explicit_pause" : "explicit_cancel");
     if (task.kind === "monitor")
       await this.db.compareAndSwap(
         owner,
@@ -918,7 +1010,16 @@ export class AgentService {
     await this.push.notify(owner, value);
   }
   mailEvidence(mail: Mail): Evidence {
-    return { id: mail.id, kind: "mail", title: mail.subject, excerpt: mail.body.slice(0, 400) };
+    const acquiredAt = (mail as Mail & { cachedAt?: string }).cachedAt;
+    return {
+      id: mail.id,
+      kind: "mail",
+      title: mail.subject,
+      excerpt: mail.body.slice(0, 400),
+      ...(acquiredAt ? { acquiredAt } : {}),
+      origin: `mail:${mail.threadId}`,
+      version: `${mail.id}:${acquiredAt ?? "unknown"}`,
+    };
   }
   async artifact(
     owner: string,
@@ -937,6 +1038,7 @@ export class AgentService {
       summary,
       data,
       createdAt: date(),
+      revision: Number(task.state.appliedRevision ?? 0),
     };
     await this.db.put(owner, "agent-artifacts", value);
     return value;
@@ -949,6 +1051,7 @@ export class AgentService {
     context: TaskContext,
   ) {
     await context.guard();
+    await validateTaskEffect();
     const connection = await this.workspace.connection(owner);
     if (connection?.id !== task.state.connectionId)
       throw new AppError(
@@ -965,7 +1068,8 @@ export class AgentService {
     try {
       await context.checkpoint({ actionId: proposal.id });
     } catch (error) {
-      if (proposal.status === "awaiting_review")
+      const latest = await this.db.get<AgentTask>(owner, "tasks", task.id);
+      if (proposal.status === "awaiting_review" && latest?.status === "cancelled")
         await this.actions.decide(owner, proposal.id, proposal.hash, "deny");
       throw error;
     }
@@ -982,6 +1086,34 @@ export class AgentService {
     task: AgentTask,
     context: TaskContext,
   ): Promise<Partial<AgentTask>> {
+    task = await this.actor.apply(owner, task, context);
+    if (task.state.nativeCleanupPending === true) {
+      const physical = (await this.journal.operations(owner, task.id)).filter(
+        (op) => op.nativeEnvelope && op.effect,
+      );
+      const confirmed =
+        physical.length > 0 &&
+        physical.every(
+          (op) =>
+            ["succeeded", "failed", "rejected_not_dispatched", "superseded"].includes(op.status) ||
+            (op.receipt as { data?: { cleanupConfirmed?: boolean } })?.data?.cleanupConfirmed ===
+              true,
+        );
+      if (!confirmed) {
+        await context.holdAdmission();
+        return {
+          status: "waiting_input",
+          question: "A native effect is still awaiting physical cleanup and reconciliation.",
+          state: task.state,
+        };
+      }
+      task = await context.checkpoint({ state: { ...task.state, nativeCleanupPending: false } });
+    }
+    const recovered = await this.journal.reconcileFiles(owner, task.id, this.files);
+    if (recovered.length)
+      task = await context.checkpoint({
+        artifactIds: [...new Set([...task.artifactIds, ...recovered])],
+      });
     await context.event(
       "status",
       task.attempts === 1 ? "Started working" : "Resumed work",
@@ -1000,12 +1132,13 @@ export class AgentService {
           state: task.state,
         };
       }
-      if (!receipt || !["succeeded", "failed", "rejected_not_dispatched"].includes(receipt.status))
+      if (!receipt || !computerCommandCleanupConfirmed(receipt))
         return {
           status: "waiting_job",
           nextRunAt: new Date(Date.now() + 5000).toISOString(),
           state: task.state,
         };
+      await this.journal.reconcileComputerReceipt(owner, task.id, receipt);
       task = await context.checkpoint({
         state: {
           ...task.state,
@@ -1021,9 +1154,23 @@ export class AgentService {
             stdout: receipt.stdout.slice(0, 12000),
             stderr: receipt.stderr.slice(0, 4000),
             truncated: receipt.truncated || receipt.stdout.length > 12000,
+            cleanupConfirmed: receipt.cleanupConfirmed,
+            outcomeUnknown: receipt.outcomeUnknown,
           },
         },
       });
+      if (receipt.outcomeUnknown || ["interrupted", "timed_out"].includes(receipt.status))
+        return {
+          status: "waiting_input",
+          question:
+            "The computer process stopped, but its effect remains uncertain. Inspect its receipt before authorizing more work.",
+          state: task.state,
+          completion: await this.verification.assess(
+            owner,
+            task.id,
+            Number(task.state.appliedRevision ?? 0),
+          ),
+        };
     }
     if (task.actionId) {
       const action = await this.db.get<ActionProposal>(owner, "actions", task.actionId);
@@ -1031,7 +1178,7 @@ export class AgentService {
       if (action.status === "succeeded") {
         await context.event("result", "Approved action completed", action.result);
         if (task.kind === "document")
-          return this.finish(task, context, action.result ?? "Reply completed");
+          return this.finish(task, context, action.result ?? "Reply completed", owner);
         task = await context.checkpoint({
           state: { ...task.state, approvalResult: action.result },
           actionId: null,
@@ -1040,7 +1187,22 @@ export class AgentService {
         throw new Error(
           `Reviewed action ${action.status}: ${action.error ?? "No further action was taken"}`,
         );
-      else return { status: "waiting_approval" };
+      else if (
+        action.status === "awaiting_review" &&
+        (action.preparedRevision ?? 0) !== Number(task.state.appliedRevision ?? 0)
+      ) {
+        await this.db.compareAndSwap<ActionProposal>(
+          owner,
+          "actions",
+          action.id,
+          { status: "awaiting_review", hash: action.hash },
+          {
+            status: "expired",
+            error: "A later direction changed the task; prepare a review for its current revision.",
+          },
+        );
+        task = await context.checkpoint({ actionId: null });
+      } else return { status: "waiting_approval" };
     }
     if (task.kind === "document") return this.document(owner, task, context);
     if (task.kind === "monitor") {
@@ -1109,21 +1271,67 @@ export class AgentService {
           },
         ],
       });
-      return this.finish(task, context, artifact.summary);
+      return this.finish(task, context, artifact.summary, owner);
     }
     return executeModelTask(this, owner, task, context);
   }
-  async finish(task: AgentTask, context: TaskContext, result: string) {
+  async finish(task: AgentTask, context: TaskContext, result: string, owner?: string) {
     await context.guard();
-    await context.event("result", "Work completed", result);
-    return {
-      status: "succeeded" as const,
+    // TaskContext executes under an owner; deterministic workflows pass it
+    // explicitly, model calls do likewise. Do not infer owner from model data.
+    if (!owner) throw new Error("Completion requires the authenticated task owner");
+    const completion = await this.verification.assess(
+      owner,
+      task.id,
+      Number(task.state.appliedRevision ?? 0),
+    );
+    await context.event(
+      "result",
+      completion.status === "verified" ? "Work completed" : "Partial delivery",
       result,
-      plan: task.plan.map((s) => ({ ...s, status: "succeeded" as const })),
+    );
+    return {
+      status:
+        completion.status === "verified" ? ("succeeded" as const) : ("waiting_input" as const),
+      result,
+      completion,
+      ...(completion.status !== "verified" ? { question: completion.remaining.join("\n") } : {}),
+      state: { ...task.state, verificationRevision: Number(task.state.appliedRevision ?? 0) },
     };
   }
   private async publishOutcome(owner: string, saved: AgentTask) {
     const task = await this.getTask(owner, saved.id);
+    if (terminal.has(task.status) && typeof task.state.parentTaskId === "string") {
+      const parent = await this.db.get<AgentTask>(owner, "tasks", task.state.parentTaskId);
+      const children = (await this.db.list<AgentTask>(owner, "tasks")).filter(
+        (child) => child.state.parentTaskId === task.state.parentTaskId,
+      );
+      if (
+        parent?.status === "waiting_children" &&
+        children.length &&
+        children.every((child) => terminal.has(child.status))
+      ) {
+        const updated = await this.db.compareAndSwapTask(
+          owner,
+          parent.id,
+          { status: "waiting_children" },
+          {
+            state: {
+              ...parent.state,
+              childrenResults: children.map((child) => ({
+                id: child.id,
+                title: child.title,
+                status: child.status,
+                result: child.result,
+                completion: child.completion,
+                artifactIds: child.artifactIds,
+              })),
+            },
+          },
+        );
+        if (updated) await this.actor.wake(owner, parent.id, "children");
+      }
+    }
     if (task.status === "succeeded") {
       if (task.originThreadId && typeof task.input.routineId !== "string") {
         await this.db.insertIfAbsent(owner, "thread-publications", {
@@ -1194,10 +1402,37 @@ export class AgentService {
       );
     } else if (task.status === "waiting_input") {
       await this.interactions.forTask(owner, task);
+      const delivery = [
+        task.result,
+        task.artifactIds.length ? `Saved artifacts: ${task.artifactIds.join(", ")}` : undefined,
+        task.completion?.checks.some((check) => check.passed)
+          ? `Verified criteria: ${task.completion.checks
+              .filter((check) => check.passed)
+              .map((check) => check.criterionId)
+              .join(", ")}`
+          : undefined,
+        task.completion?.remaining.length
+          ? `Remaining: ${task.completion.remaining.join("; ")}`
+          : undefined,
+        `Needs attention: ${task.question ?? task.error ?? "More information is required"}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      if (task.originThreadId) {
+        await this.db.insertIfAbsent(owner, "thread-publications", {
+          id: `partial:${task.id}:${task.attempts}:${Number(task.state.appliedRevision ?? 0)}`,
+          threadId: task.originThreadId,
+          taskId: task.id,
+          title: task.title,
+          text: delivery,
+          status: this.localThreads ? "pending" : "unsupported_cloud_mode",
+        });
+        await this.flushPublications();
+      }
       await this.notify(
         owner,
         "Your details are needed",
-        task.question ?? task.title,
+        delivery,
         task.id,
         `input:${task.id}:${hash(task.question ?? "")}`,
       );
@@ -1238,13 +1473,26 @@ export class AgentService {
       const ref = mail.attachments[0];
       if (!ref) throw new Error("This email has no PDF attachment");
       await ctx.guard();
-      let file: Artifact;
-      try {
-        file = await this.files.get(owner, ref);
-      } catch (error) {
-        if (!(error instanceof AppError && error.status === 404)) throw error;
-        file = await this.workspace.importAttachment(owner, ref);
-      }
+      const file = z.object({ id: z.string(), name: z.string() }).parse(
+        await this.journal.run(
+          owner,
+          task,
+          {
+            id: `document:${Number(task.state.appliedRevision ?? 0)}:source`,
+            name: "import_pdf",
+            args: { reference: ref },
+          },
+          async () => {
+            try {
+              return await this.files.get(owner, ref);
+            } catch (error) {
+              if (!(error instanceof AppError && error.status === 404)) throw error;
+              return this.workspace.importAttachment(owner, ref);
+            }
+          },
+          true,
+        ),
+      );
       source = { mail, fileId: file.id };
       task = await ctx.checkpoint({
         state: { ...task.state, source },
@@ -1280,7 +1528,19 @@ export class AgentService {
     let filledId = typeof task.state.filledId === "string" ? task.state.filledId : undefined;
     if (!filledId) {
       await ctx.guard();
-      const filled = await this.files.fill(owner, source.fileId, fields);
+      const filled = z.object({ id: z.string(), name: z.string() }).parse(
+        await this.journal.run(
+          owner,
+          task,
+          {
+            id: `document:${Number(task.state.appliedRevision ?? 0)}:fill`,
+            name: "fill_pdf",
+            args: { fileId: source.fileId, values: fields },
+          },
+          () => this.files.fill(owner, source.fileId, fields),
+          true,
+        ),
+      );
       filledId = filled.id;
       task = await ctx.checkpoint({
         state: { ...task.state, source, filledId },
@@ -1310,7 +1570,7 @@ export class AgentService {
     const proposal = await this.prepare(owner, task, input, "document-reply", ctx);
     if (proposal.status === "succeeded") {
       task = await ctx.checkpoint({ actionId: null });
-      return this.finish(task, ctx, proposal.result ?? "Reply completed");
+      return this.finish(task, ctx, proposal.result ?? "Reply completed", owner);
     }
     return {
       status: "waiting_approval",

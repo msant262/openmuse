@@ -44,6 +44,7 @@ export class RoutinesService {
     ) => Promise<{ id: string }>,
     readonly timezone = "UTC",
     private readonly now = Date.now,
+    private readonly onBlocked?: (owner: string, routine: Routine, taskId: string) => Promise<void>,
   ) {
     nextRoutineRun("0 8 * * *", timezone, now());
   }
@@ -128,6 +129,7 @@ export class RoutinesService {
     )) {
       let value = initial;
       if (value.deleted || !value.enabled) continue;
+      if (value.blockedTaskId) await this.onBlocked?.(owner, value, value.blockedTaskId);
       if (!value.pending && Date.parse(value.nextRunAt) <= this.now()) {
         const previousTask = value.lastTaskId
           ? await this.db.get<{ status: string }>(owner, "tasks", value.lastTaskId)
@@ -162,10 +164,15 @@ export class RoutinesService {
             ? {
                 nextRunAt: nextRoutineRun(value.cron, value.timezone, this.now()),
                 skipped: (value.skipped ?? 0) + 1,
+                blockedTaskId: value.lastTaskId,
               }
-            : { pending },
+            : { pending, blockedTaskId: null },
         );
-        if (!claimed || busy) continue;
+        if (!claimed) continue;
+        if (busy) {
+          if (claimed.blockedTaskId) await this.onBlocked?.(owner, claimed, claimed.blockedTaskId);
+          continue;
+        }
         value = claimed;
       }
       if (!value.pending) continue;

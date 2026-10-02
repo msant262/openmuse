@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { AgentTask } from "../../../packages/domain/src/agent.ts";
 import {
   type ActionProposal,
   type CalendarEvent,
@@ -9,7 +10,13 @@ import { ActionLog, unknownOutcome } from "./action-log.ts";
 import { type ApprovalPolicy, requiresApproval } from "./action-policy.ts";
 import type { Store } from "./db.ts";
 import { ResourceBusyError } from "./engine/resource-leases.ts";
-import { RuntimePausedError } from "./engine/runtime-pause.ts";
+import { RuntimePause, RuntimePausedError } from "./engine/runtime-pause.ts";
+import {
+  authorizeTaskEffect,
+  TaskSupersededError,
+  taskOperationId,
+} from "./engine/task-journal.ts";
+import { TaskValidityExpiredError } from "./engine/task-timing.ts";
 import { AppError } from "./errors.ts";
 
 export interface ExternalAction {
@@ -24,6 +31,7 @@ type ExternalExecutor = (
   owner: string,
   binding: unknown,
   proposal: ActionProposal,
+  beforeDispatch: () => Promise<void>,
 ) => Promise<string>;
 interface Options {
   policy?: ApprovalPolicy;
@@ -32,6 +40,7 @@ interface Options {
     input: ProposalInput,
     connectionId?: string,
     targetVersion?: string,
+    beforeDispatch?: () => Promise<void>,
   ) => Promise<string>;
   prepare?: (
     owner: string,
@@ -87,6 +96,7 @@ export class ActionService {
       id,
       hash,
       taskId,
+      ...(await this.proposalAuthority(owner, taskId)),
       kind: "external.action",
       title: input.summary,
       data: { tool: input.tool, target: input.target, summary: input.summary, ...input.display },
@@ -152,6 +162,7 @@ export class ActionService {
       id,
       requestHash,
       taskId,
+      ...(await this.proposalAuthority(owner, taskId)),
       title,
       kind: input.kind,
       data: input.data,
@@ -322,20 +333,39 @@ export class ActionService {
         if (!bound || bound.hash !== claimed.hash || !executor)
           throw new AppError("External action binding changed or is unavailable", 409);
         await this.options.guardEffects?.(owner);
-        result = await executor(owner, bound.binding, claimed);
+        await this.dispatchAuthority(owner, claimed.id, true);
+        result = await executor(owner, bound.binding, claimed, async () => {
+          await this.options.guardEffects?.(owner);
+          await this.dispatchAuthority(owner, claimed.id);
+        });
       } else {
         const input = proposalSchema.parse({ kind: claimed.kind, data: claimed.data });
         await this.options.guardEffects?.(owner);
+        await this.dispatchAuthority(owner, claimed.id, true);
         result = await this.options.execute(
           owner,
           input,
           claimed.connectionId,
           claimed.targetVersion,
+          async () => {
+            await this.options.guardEffects?.(owner);
+            await this.dispatchAuthority(owner, claimed.id);
+          },
         );
       }
-      finished = { ...claimed, status: "succeeded", result };
+      finished = {
+        ...claimed,
+        ...(await this.db.get<ActionProposal>(owner, "actions", id)),
+        status: "succeeded",
+        result,
+      };
     } catch (error) {
-      if (error instanceof RuntimePausedError || error instanceof ResourceBusyError) {
+      if (
+        error instanceof RuntimePausedError ||
+        error instanceof ResourceBusyError ||
+        error instanceof TaskValidityExpiredError ||
+        error instanceof TaskSupersededError
+      ) {
         const reviewable = await this.db.compareAndSwap<ActionProposal>(
           owner,
           "actions",
@@ -353,11 +383,14 @@ export class ActionService {
             ? "Global pause prevented dispatch; review remains available"
             : "A required resource is occupied; review remains available",
         );
+        if (error instanceof TaskValidityExpiredError || error instanceof TaskSupersededError)
+          throw error;
         return current;
       }
       const unknown = unknownOutcome(error);
       finished = {
         ...claimed,
+        ...(await this.db.get<ActionProposal>(owner, "actions", id)),
         status: unknown ? "outcome_unknown" : "failed",
         error: error instanceof Error ? error.message : "Execution failed",
       };
@@ -379,6 +412,26 @@ export class ActionService {
       throw error;
     }
     return finished;
+  }
+  private async dispatchAuthority(owner: string, id: string, validateOnly = false) {
+    // Adapter preflight does not dispatch an intention. The concrete outgoing
+    // request invokes this callback after catalogue, credential and file waits.
+    // The durable action check is last, including approvals without task ALS.
+    if (!validateOnly) await authorizeTaskEffect();
+    const code = await this.db.guardTaskAction(owner, id, validateOnly);
+    if (code === "paused") throw new RuntimePausedError(await new RuntimePause(this.db).get(owner));
+    if (code === "superseded") throw new TaskSupersededError();
+    if (code === "expired") throw new TaskValidityExpiredError();
+    if (code !== "authorized") throw new AppError("Action authority was lost before dispatch", 409);
+  }
+  private async proposalAuthority(owner: string, taskId?: string) {
+    if (!taskId) return {};
+    const task = await this.db.get<AgentTask>(owner, "tasks", taskId);
+    if (!task) throw new AppError("Task not found", 404);
+    const preparedRevision = Number(task.state?.appliedRevision ?? 0);
+    if (preparedRevision !== Number(task.state?.desiredRevision ?? 0))
+      throw new TaskSupersededError();
+    return { preparedRevision, operationId: taskOperationId() };
   }
   private async record(owner: string, action: ActionProposal, detail: string) {
     await this.db.put(owner, "activity", {

@@ -7,7 +7,8 @@ Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-
 | 1 — Device sessions and connector resilience | Reviewed and integrated; deployment/device acceptance pending |
 | 2 — Durable chat, questions and personality | Reviewed and integrated; physical device acceptance pending |
 | 3 — Four work slots, resources and global pause | Reviewed and integrated; native executor acceptance pending |
-| 4–12 | Pending integration |
+| 4 — Task direction, recovery and verified completion | Reviewed and integrated; native/provider composition follows |
+| 5–12 | Pending integration |
 
 ## Milestone 1
 
@@ -78,3 +79,30 @@ Native executor confirmation and measured host memory admission belong to milest
 6. Safe resolution of an uncertain reviewed-browser hold belongs to milestones
 4/7; this milestone conservatively keeps that profile occupied and exposes the
 uncertainty. No physical Lenovo/VPS deployment acceptance is claimed here.
+
+## Milestone 4
+
+Task directions now persist in a mailbox and apply at safe points without cancelling
+already dispatched work. A durable operation journal retains completed receipts,
+unknown outcomes and tool history for recovery. Adapter dispatch checks current
+task revision, pause, resource ownership and validity after awaited preparation.
+Children share their parent budget and current validity; bounded work can continue
+across turns and explicit budget extensions preserve usage already charged.
+
+The mobile task controls show received/applied directions, timing, budgets, partial
+delivery and uncertain operations. User file formats and supported explicit content
+requirements remain mandatory even when a model proposes a different workflow.
+Empty required headings cannot verify text or Office output. Completion is based
+on owned files and receipts; arbitrary prose quality is not universally verified.
+
+The implementer's final review passed the original nine adverse cases. Root then
+closed the two residual format/content findings and added actual runtime/provider
+and file regressions. Final root validation passed the complete existing test glob with explicit concurrency 4
+(571/571, 108.0 seconds), server/mobile typecheck, and changed-source Biome
+(56 files, zero errors, six existing warnings). Focused completion/dispatch cases
+passed 28/28. These checks were performed on 2026-10-02.
+
+Production model-router composition follows in milestone 5. Native executor
+authority, desktop session generations and bounded context composition remain
+required in milestones 6, 7 and 10. No physical Lenovo/VPS, real provider account
+or Android acceptance is claimed by this milestone.

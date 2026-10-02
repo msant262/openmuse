@@ -259,8 +259,18 @@ test("shared profile is refreshed at task safe points, survives disk restart/pro
     });
     calls = [
       {
-        name: "set_plan",
-        arguments: { steps: ["Check saved instructions", "Complete the requested work"] },
+        name: "save_artifact",
+        arguments: {
+          kind: "plan",
+          title: "Concrete saved plan",
+          summary: "Two concrete steps",
+          data: {
+            steps: [
+              "Read the saved preferences",
+              "Prepare the reply in the user's selected language",
+            ],
+          },
+        },
       },
       { name: "finish_task", arguments: { summary: "The requested plan is saved." } },
     ];
@@ -317,6 +327,18 @@ test("shared profile is refreshed at task safe points, survives disk restart/pro
     assert.equal(JSON.parse(requests[0].body).model, "fixture-after-restart");
     requests.length = 0;
     calls = [
+      {
+        name: "save_artifact",
+        arguments: {
+          kind: "report",
+          title: "Formal email draft",
+          summary: "Prepared English draft",
+          data: {
+            subject: "Meeting confirmation",
+            body: "Dear colleague, I confirm our meeting. Kind regards.",
+          },
+        },
+      },
       { name: "finish_task", arguments: { summary: "Routine completed from the shared profile." } },
     ];
     const routine = await server.agent.createTask("owner", {

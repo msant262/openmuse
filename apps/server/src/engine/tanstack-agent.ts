@@ -6,7 +6,16 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@copilotkit/runtime/v2";
-import { chat, maxIterations, type SchemaInput, toolDefinition } from "@tanstack/ai";
+import {
+  type ChatMiddleware,
+  type ChatMiddlewareConfig,
+  type ChatMiddlewareContext,
+  chat,
+  type ModelMessage,
+  maxIterations,
+  type SchemaInput,
+  toolDefinition,
+} from "@tanstack/ai";
 import { finalize, map, mergeMap, type Observable } from "rxjs";
 import { z } from "zod";
 import type { BrowserImageLoader } from "../providers/browser-images.ts";
@@ -60,6 +69,13 @@ export function tanstackAgent(options: {
   promptContext?: () => Promise<string>;
   /** The process owner joins tool receipts after an observable is canceled. */
   trackTool?: (execute: () => Promise<unknown>) => Promise<unknown>;
+  executeTool?: (
+    call: { id: string; toolCallId: string; name: string; args: unknown },
+    execute: () => Promise<unknown>,
+  ) => Promise<unknown>;
+  onMessages?: (messages: ModelMessage[], phase: string) => Promise<void>;
+  shouldContinue?: () => boolean;
+  onStepLimit?: () => void;
   loadBrowserImage?: BrowserImageLoader;
   loadFileImage?: BrowserImageLoader;
   onModelSelected?: (model: ModelSelection) => void;
@@ -108,16 +124,20 @@ export function tanstackAgent(options: {
         ),
         messages: converted.messages,
         systemPrompts: system ? [system] : [],
-        middleware: options.promptContext
-          ? [
-              {
-                name: "openmuse-profile",
-                onConfig: async () => ({
-                  systemPrompts: [(await options.promptContext!()) + system],
-                }),
-              },
-            ]
-          : [],
+        middleware:
+          options.promptContext || options.onMessages
+            ? ([
+                {
+                  name: "openmuse-profile",
+                  onConfig: async (ctx: ChatMiddlewareContext, config: ChatMiddlewareConfig) => {
+                    await options.onMessages?.(config.messages, ctx.phase);
+                    return options.promptContext
+                      ? { systemPrompts: [(await options.promptContext()) + system] }
+                      : {};
+                  },
+                },
+              ] as ChatMiddleware[])
+            : [],
         tools: [
           ...converted.tools,
           ...[...options.tools, ...stateTools].map((tool) =>
@@ -125,13 +145,30 @@ export function tanstackAgent(options: {
               name: tool.name,
               description: tool.description,
               inputSchema: tool.parameters as SchemaInput,
-            }).server((args) => {
+            }).server((args, context) => {
               const execute = () => (tool.execute as (args: unknown) => Promise<unknown>)(args);
-              return options.trackTool ? options.trackTool(execute) : execute();
+              const dispatch = () =>
+                options.executeTool
+                  ? options.executeTool(
+                      {
+                        id: `${input.runId}:${context?.toolCallId ?? randomUUID()}`,
+                        toolCallId: context?.toolCallId ?? randomUUID(),
+                        name: tool.name,
+                        args,
+                      },
+                      execute,
+                    )
+                  : execute();
+              return options.trackTool ? options.trackTool(dispatch) : dispatch();
             }),
           ),
         ],
-        agentLoopStrategy: maxIterations(options.maxSteps),
+        agentLoopStrategy: (state) => {
+          if (!(options.shouldContinue?.() ?? true)) return false;
+          const allowed = maxIterations(options.maxSteps)(state);
+          if (!allowed) options.onStepLimit?.();
+          return allowed;
+        },
         abortController,
       });
     },

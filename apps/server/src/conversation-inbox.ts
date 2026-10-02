@@ -57,11 +57,25 @@ export type InboxMessage = AcceptedMessageInput & {
 export class ConversationInbox {
   /** Scheduler/mailbox adapter: acceptance stays durable if delivery is interrupted. */
   onAccepted?: (owner: string, message: InboxMessage) => void;
+  private readonly acceptedListeners = new Set<(owner: string, message: InboxMessage) => void>();
+  subscribeAccepted(listener: (owner: string, message: InboxMessage) => void) {
+    this.acceptedListeners.add(listener);
+    return () => this.acceptedListeners.delete(listener);
+  }
+  private accepted(owner: string, message: InboxMessage) {
+    this.onAccepted?.(owner, message);
+    for (const listener of this.acceptedListeners) listener(owner, message);
+  }
   constructor(
     private readonly db: Store,
     private readonly validateAttachment?: (owner: string, id: string) => Promise<unknown>,
   ) {}
-  async acceptMessage(owner: string, raw: unknown, attempt = 0): Promise<ConversationAcceptance> {
+  async acceptMessage(
+    owner: string,
+    raw: unknown,
+    attempt = 0,
+    expectedRevision?: number,
+  ): Promise<ConversationAcceptance> {
     const input = acceptedMessageSchema.parse(raw);
     if (messageContentHash(input) !== input.contentHash)
       throw new AppError("Message content hash does not match", 422);
@@ -71,7 +85,7 @@ export class ConversationInbox {
     if (previous) {
       if (previous.contentHash !== input.contentHash)
         throw new AppError("This message ID was already accepted with different content", 409);
-      this.onAccepted?.(owner, previous);
+      this.accepted(owner, previous);
       return { messageId: previous.messageId, runId: previous.runId, duplicate: true };
     }
     for (const attachmentId of input.attachmentIds)
@@ -104,6 +118,11 @@ export class ConversationInbox {
         state: Record<string, unknown>;
       }>(owner, "tasks", input.targetTaskId);
       if (!task) throw new AppError("Task not found", 404);
+      if (
+        expectedRevision !== undefined &&
+        Number(task.state?.desiredRevision ?? 0) !== expectedRevision
+      )
+        throw new AppError("Task direction changed; refresh before sending", 409);
       const existingMail = (await this.db.list<TaskMailbox>(owner, "task-mailbox")).filter(
         (item) => item.taskId === task.id,
       );
@@ -167,10 +186,10 @@ export class ConversationInbox {
           "Task is changing rapidly; your message was not yet accepted. Retry shortly.",
           409,
         );
-      return this.acceptMessage(owner, input, attempt + 1);
+      return this.acceptMessage(owner, input, attempt + 1, expectedRevision);
     }
     const saved = result.values[0];
-    this.onAccepted?.(owner, saved);
+    this.accepted(owner, saved);
     return {
       messageId: saved.messageId,
       runId: saved.runId,

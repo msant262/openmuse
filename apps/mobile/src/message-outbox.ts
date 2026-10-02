@@ -7,12 +7,14 @@ import {
   type ConversationReplay,
   conversationEventSchema,
 } from "../../../packages/domain/src/runtime";
+import { ApiError } from "./api-errors";
 import { hashMessageContent } from "./message-hash";
 import type { MessageStorage } from "./message-storage";
 
 export type OutboxMessage = Omit<AcceptedMessageInput, "clientMessageId"> & {
   id: string;
   attempts: number;
+  delivery?: "uncertain" | "rejected";
 };
 type Persisted = {
   version: 1;
@@ -69,6 +71,7 @@ const savedOutboxSchema = z
       acceptedMessageSchema.omit({ clientMessageId: true }).extend({
         id: acceptedMessageSchema.shape.clientMessageId,
         attempts: z.number().int().min(0),
+        delivery: z.enum(["uncertain", "rejected"]).optional(),
       }),
     ),
     cursor: z.number().int().min(0),
@@ -183,7 +186,8 @@ export class MessageOutbox {
   }
   async remove(id: string) {
     await this.commit((previous) => {
-      if (previous.pending.find((message) => message.id === id)?.attempts)
+      const message = previous.pending.find((message) => message.id === id);
+      if (message?.attempts && message.delivery !== "rejected")
         throw new Error("Delivery may already be accepted. Retry to confirm it before removing.");
       return { pending: previous.pending.filter((message) => message.id !== id) };
     });
@@ -221,13 +225,20 @@ export class MessageOutbox {
     await this.open();
     if (this.state.running || this.state.paused) return;
     this.update({ running: true });
+    let pendingId: string | undefined;
+    let priorUncertain = false;
     try {
       while (this.state.pending.length && !this.state.paused) {
         const message = this.state.pending[0];
+        pendingId = message.id;
         await this.commit((previous) => ({
-          pending: previous.pending.map((item) =>
-            item.id === message.id ? { ...item, attempts: item.attempts + 1 } : item,
-          ),
+          pending: previous.pending.map((item) => {
+            if (item.id !== message.id) return item;
+            // Read the persisted disposition: a retry rejection cannot resolve
+            // an earlier request whose acknowledgement was lost.
+            priorUncertain = item.attempts > 0 && item.delivery !== "rejected";
+            return { ...item, attempts: item.attempts + 1, delivery: "uncertain" as const };
+          }),
         }));
         await send(message);
         // A lost ACK leaves this entry plus all later entries available after restart.
@@ -236,6 +247,15 @@ export class MessageOutbox {
         }));
       }
     } catch (error) {
+      const delivery =
+        !priorUncertain && error instanceof ApiError && error.status >= 400 && error.status < 500
+          ? ("rejected" as const)
+          : ("uncertain" as const);
+      await this.commit((previous) => ({
+        pending: previous.pending.map((message) =>
+          message.id === pendingId ? { ...message, delivery } : message,
+        ),
+      }));
       this.update({ paused: true });
       throw error;
     } finally {

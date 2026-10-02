@@ -860,3 +860,40 @@ test("single-event validation is repeated at execution and read failures never d
   await assert.rejects(failing.deleteEvent("primary", "event-1"), GoogleApiError);
   assert.equal(writes, 0);
 });
+
+test("Google's last write barrier follows awaited profile and credential preflight", async () => {
+  let tokenReads = 0,
+    writes = 0;
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let expired = false;
+  const google = new GoogleClient({
+    getAccessToken: async () => {
+      if (++tokenReads === 2) {
+        enter();
+        await released;
+      }
+      return "synthetic-access-token";
+    },
+    beforeWrite: async () => {
+      if (expired) throw new Error("Task validity expired before dispatch");
+    },
+    fetch: async (url, init) => {
+      if (init?.method === "POST") writes++;
+      return String(url).endsWith("/profile")
+        ? json({ emailAddress: "owner@example.test" })
+        : json({ id: "message-1", threadId: "thread-1" });
+    },
+  });
+  const sending = assert.rejects(google.sendEmail(email(), []), /validity expired/);
+  await entered;
+  expired = true;
+  release();
+  await sending;
+  assert.equal(writes, 0);
+});

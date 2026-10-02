@@ -99,7 +99,7 @@ export const eventDraftSchema = z
     start: z.string().min(1),
     end: z.string().min(1),
     allDay: z.boolean().default(false),
-    timeZone: z.string().default("America/Los_Angeles"),
+    timeZone: z.string().default("Europe/Berlin"),
     location: z.string().max(2000).default(""),
     description: z.string().max(10000).default(""),
     attendees: z.array(z.email()).max(50).default([]),
@@ -112,12 +112,8 @@ export const eventDraftSchema = z
     ) {
       ctx.addIssue({ code: "custom", message: "End must be after a valid start", path: ["end"] });
     }
-    const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
-    const timed = /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/;
-    if (
-      !(value.allDay ? dateOnly : timed).test(value.start) ||
-      !(value.allDay ? dateOnly : timed).test(value.end)
-    ) {
+    const valid = value.allDay ? z.iso.date() : z.iso.datetime({ offset: true });
+    if (!valid.safeParse(value.start).success || !valid.safeParse(value.end).success) {
       ctx.addIssue({
         code: "custom",
         message: value.allDay
@@ -152,6 +148,10 @@ export interface ActionProposal {
   target?: CalendarEvent;
   targetVersion?: string;
   taskId?: string;
+  preparedRevision?: number;
+  dispatchedRevision?: number;
+  dispatchedAt?: string;
+  operationId?: string;
   account?: string;
   connectionId?: string;
   id: string;

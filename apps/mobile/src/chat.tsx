@@ -33,6 +33,7 @@ import type {
   ConversationAcceptance,
   ConversationReplay,
   InteractionRequest,
+  TaskMailbox,
 } from "../../../packages/domain/src/runtime";
 import { ArtifactCard } from "./agent-ui";
 import { useAgentWorkspace } from "./agent-workspace";
@@ -310,6 +311,19 @@ export function ChatScreen({
   const { copilotkit } = useCopilotKit();
   const renderToolCall = useRenderToolCall();
   const [draft, setDraft] = useState("");
+  const [directionTarget, setDirectionTarget] = useState<string>();
+  useEffect(() => {
+    if (
+      directionTarget &&
+      agentWorkspace &&
+      !agentWorkspace.tasks.some(
+        (task) =>
+          task.id === directionTarget &&
+          !["succeeded", "failed", "cancelled"].includes(task.status),
+      )
+    )
+      setDirectionTarget(undefined);
+  }, [directionTarget, agentWorkspace]);
   const [focused, setFocused] = useState(false);
   const [inputHeight, setInputHeight] = useState(44);
   const [showResults, setShowResults] = useState(false);
@@ -612,7 +626,7 @@ export function ChatScreen({
       try {
         if (queue instanceof MessageOutbox) {
           const value = message as OutboxMessage;
-          const { id, attempts, ...envelope } = value;
+          const { id, attempts, delivery, ...envelope } = value;
           await api.request<ConversationAcceptance>(`/api/conversations/${threadId}/messages`, {
             ...envelope,
             clientMessageId: id,
@@ -646,13 +660,16 @@ export function ChatScreen({
         text,
         attachmentIds,
         clearDraft,
+        ...(queue instanceof MessageOutbox && directionTarget
+          ? { targetTaskId: directionTarget }
+          : {}),
       };
       await queue.enqueue(message);
       followLatest.current = true;
       setAwayFromLatest(false);
       flush();
     },
-    [queue, flush],
+    [queue, flush, directionTarget],
   );
   const sendChoice = useCallback(
     (text: string, retry = false): Promise<void> => {
@@ -1058,6 +1075,42 @@ export function ChatScreen({
         </Button>
       )}
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        {queue instanceof MessageOutbox &&
+          !!agentWorkspace?.tasks.some(
+            (task) => !["succeeded", "failed", "cancelled"].includes(task.status),
+          ) && (
+            <View style={{ padding: 12, gap: 6 }}>
+              <Text style={s.small}>Send the next message to</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={[s.row, { gap: 8 }]}>
+                  <Button
+                    small
+                    primary={!directionTarget}
+                    onPress={() => setDirectionTarget(undefined)}
+                  >
+                    Chat
+                  </Button>
+                  {agentWorkspace.tasks
+                    .filter((task) => !["succeeded", "failed", "cancelled"].includes(task.status))
+                    .map((task) => (
+                      <Button
+                        key={task.id}
+                        small
+                        primary={directionTarget === task.id}
+                        onPress={() => setDirectionTarget(task.id)}
+                      >
+                        {task.title}
+                      </Button>
+                    ))}
+                </View>
+              </ScrollView>
+              {!!directionTarget && (
+                <Text style={s.small}>
+                  This direction applies to the selected task at its next safe point.
+                </Text>
+              )}
+            </View>
+          )}
         <ErrorNotice error={saveError} />
         {!!saveError && (
           <Button
@@ -1081,6 +1134,11 @@ export function ChatScreen({
             {outbox.pending.map((message) => (
               <View key={message.id} style={[s.row, { gap: 8 }]}>
                 <Text numberOfLines={2} style={[s.muted, { flex: 1 }]}>
+                  {(message as OutboxMessage).delivery === "rejected"
+                    ? "Not accepted: "
+                    : (message as OutboxMessage).delivery === "uncertain"
+                      ? "Acceptance not yet confirmed: "
+                      : "Queued: "}
                   {displayJevUserMessage(message.text, messages)}
                 </Text>
                 <Pressable
@@ -1116,6 +1174,34 @@ export function ChatScreen({
             )}
           </View>
         )}
+        {queue instanceof MessageOutbox &&
+          queue.getSnapshot().events.some((event) => event.kind === "directive") && (
+            <View style={{ padding: 12, gap: 4 }}>
+              {Array.from(
+                new Map(
+                  queue
+                    .getSnapshot()
+                    .events.filter((event) => event.kind === "directive")
+                    .map((event) => [
+                      (event.payload as TaskMailbox).id,
+                      event.payload as TaskMailbox,
+                    ]),
+                ).values(),
+              )
+                .slice(-3)
+                .map((receipt) => (
+                  <Text key={receipt.id} style={s.small}>
+                    Direction{" "}
+                    {receipt.status === "received"
+                      ? "received; waiting to apply"
+                      : receipt.status === "applied"
+                        ? "applied"
+                        : "arrived after the task completed"}
+                    : {receipt.text}
+                  </Text>
+                ))}
+            </View>
+          )}
         {picking && (
           <Card style={{ marginBottom: 12, padding: 15 }}>
             <Text style={s.heading}>Add a document</Text>

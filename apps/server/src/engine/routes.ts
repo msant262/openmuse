@@ -12,6 +12,7 @@ import {
 import { AppError } from "../errors.ts";
 import { routineInput } from "../routines.ts";
 import type { AgentService } from "./service.ts";
+import { taskTimingUpdateSchema } from "./task-timing.ts";
 
 const text = z.string().trim().min(1).max(4000);
 const memorySchema = z.object({ text, source: z.string().trim().min(1).max(200).optional() });
@@ -69,6 +70,54 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
   );
   app.post("/tasks", async (c) =>
     c.json(await service.createTask(c.get("owner"), await c.req.json()), 201),
+  );
+  app.post("/tasks/:id/directives", async (c) =>
+    c.json(
+      await service.mailbox.enqueue(
+        c.get("owner"),
+        c.req.param("id"),
+        z
+          .object({
+            clientMessageId: z.string().min(1).max(256),
+            text: z.string().trim().min(1).max(24000),
+            expectedRevision: z.number().int().nonnegative().optional(),
+            threadId: z
+              .string()
+              .regex(/^[\w.-]+$/)
+              .optional(),
+            attachmentIds: z.array(z.string()).max(30).optional(),
+          })
+          .strict()
+          .parse(await c.req.json()),
+      ),
+      201,
+    ),
+  );
+  app.post("/tasks/:id/timing", async (c) =>
+    c.json(
+      await service.timing.update(
+        c.get("owner"),
+        c.req.param("id"),
+        taskTimingUpdateSchema.parse(await c.req.json()),
+      ),
+    ),
+  );
+  app.post("/tasks/:id/budget", async (c) =>
+    c.json(
+      await service.actor.extendBudget(
+        c.get("owner"),
+        c.req.param("id"),
+        z
+          .object({
+            requestId: z.string().min(1).max(256),
+            expectedRevision: z.number().int().nonnegative(),
+            additionalSteps: z.number().int().positive().max(10000),
+            additionalMilliseconds: z.number().int().positive().max(86400000).optional(),
+          })
+          .strict()
+          .parse(await c.req.json()),
+      ),
+    ),
   );
   app.get("/tasks/:id", async (c) =>
     c.json(await service.detail(c.get("owner"), c.req.param("id"))),

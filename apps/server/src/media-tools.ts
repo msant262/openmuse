@@ -5,11 +5,16 @@ import { rasterMime } from "../../../packages/domain/src/attachments.ts";
 import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
 import { ActionLog } from "./action-log.ts";
 import { base64Limit, decodeBase64 } from "./base64.ts";
-import { type ComputerBackend, commandReceiptSchema } from "./computer-contract.ts";
+import {
+  type ComputerBackend,
+  commandReceiptSchema,
+  computerCommandCleanupConfirmed,
+} from "./computer-contract.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
 import { ResourceBusyError } from "./engine/resource-leases.ts";
 import { RuntimePausedError } from "./engine/runtime-pause.ts";
+import { authorizeTaskEffect, taskOperationId } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 import { modelProviderConfig } from "./providers/config.ts";
@@ -49,7 +54,7 @@ export class MediaService {
         message:
           "Image generation is disabled for the selected provider. Configure its documented image model/endpoint; ChatGPT Sign in and MiMo do not expose an image route here.",
       };
-    const id = hash(`${scope}:${args.operationId}`);
+    const id = hash(taskOperationId() ?? `${scope}:${args.operationId}`);
     type Receipt = {
       id: string;
       binding: string;
@@ -86,6 +91,7 @@ export class MediaService {
     let dispatchGuardPassed = false;
     try {
       await beforeDispatch?.();
+      await authorizeTaskEffect();
       dispatchGuardPassed = true;
       const response = await provider.generate(
         {
@@ -235,7 +241,7 @@ export function mediaTools(
             const result = await action(parameters.parse(args));
             const receipt = commandReceiptSchema.safeParse(result);
             if (automatedEffect && receipt.success) {
-              if (["succeeded", "failed", "rejected_not_dispatched"].includes(receipt.data.status))
+              if (computerCommandCleanupConfirmed(receipt.data))
                 await options.onComputerReceipt?.(receipt.data);
               else
                 await options.onWaitingJob?.({
@@ -262,7 +268,14 @@ export function mediaTools(
             if (
               error instanceof RuntimePausedError ||
               error instanceof ResourceBusyError ||
-              (error instanceof Error && error.name === "LostLeaseError")
+              (error instanceof Error &&
+                [
+                  "LostLeaseError",
+                  "TaskAbortError",
+                  "TaskSupersededError",
+                  "TaskValidityExpiredError",
+                  "TaskOutcomeUnknownError",
+                ].includes(error.name))
             )
               throw error;
             const commandId =
@@ -311,7 +324,7 @@ export function mediaTools(
       kind,
       { ...parameters, path },
       {
-        idempotencyKey: `${scope}:${operationId}`,
+        idempotencyKey: taskOperationId() ?? `${scope}:${operationId}`,
         signal: options.signal,
         dispatchGuard: options.effectBefore ?? options.before,
         onDispatch: options.onComputerDispatch,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { messageContentHash } from "../../../apps/server/src/conversation-inbox.ts";
+import { ApiError } from "../src/api-errors.ts";
 import { hashMessageContent, sha256 } from "../src/message-hash.ts";
 import {
   ComposerSubmission,
@@ -30,6 +31,48 @@ function storage() {
   };
   return disk;
 }
+test("prior lost ACK remains uncertain after later authentication or task rejection", async () => {
+  const disk = storage();
+  let outbox = new MessageOutbox(disk, "task-guidance", "chat");
+  await outbox.enqueue({
+    id: "direction",
+    text: "Use a shorter title",
+    targetTaskId: "selected-task",
+  });
+  await assert.rejects(() =>
+    outbox.flush(async () => {
+      throw new Error("ACK lost");
+    }),
+  );
+  outbox = new MessageOutbox(disk, "task-guidance", "chat");
+  await outbox.open();
+  assert.equal(outbox.getSnapshot().pending[0].targetTaskId, "selected-task");
+  await assert.rejects(() => outbox.remove("direction"), /accepted/i);
+  await assert.rejects(() =>
+    outbox.flush(async () => {
+      throw new ApiError("Task was removed", 404);
+    }),
+  );
+  assert.equal(outbox.getSnapshot().pending[0].delivery, "uncertain");
+  assert.equal(outbox.getSnapshot().pending[0].attempts, 2);
+  await assert.rejects(() => outbox.remove("direction"), /accepted/i);
+  outbox = new MessageOutbox(disk, "task-guidance", "chat");
+  await outbox.open();
+  await assert.rejects(
+    outbox.flush(async () => {
+      throw new ApiError("Expired authentication", 401);
+    }),
+  );
+  assert.equal(outbox.getSnapshot().pending[0].delivery, "uncertain");
+  await assert.rejects(() => outbox.remove("direction"), /accepted/i);
+  outbox.resume();
+  await outbox.flush(async (message) => ({
+    messageId: message.id,
+    runId: "original-run",
+    duplicate: true,
+  }));
+  assert.equal(outbox.getSnapshot().pending.length, 0);
+});
 test("a persisted delivery failure stays visible after ACK/reopen and clears only when its original run starts", async () => {
   const disk = storage();
   let outbox = new MessageOutbox(disk, "owner:chat", "chat");
@@ -212,4 +255,17 @@ test("composer double taps/Enter coalesce before persistence and keep later offl
     outbox.enqueue({ id: "follow-up", text: "Independent next question" }),
   );
   assert.equal(outbox.getSnapshot().pending.length, 2);
+});
+
+test("a first definitive rejection can be removed without erasing another uncertain send", async () => {
+  const outbox = new MessageOutbox(storage(), "first-rejection", "chat");
+  await outbox.enqueue({ id: "never-accepted", text: "Guidance", targetTaskId: "selected-task" });
+  await assert.rejects(
+    outbox.flush(async () => {
+      throw new ApiError("Task removed", 404);
+    }),
+  );
+  assert.equal(outbox.getSnapshot().pending[0].delivery, "rejected");
+  await outbox.remove("never-accepted");
+  assert.equal(outbox.getSnapshot().pending.length, 0);
 });

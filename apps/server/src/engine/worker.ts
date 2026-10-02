@@ -1,11 +1,25 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTask, RunEvent } from "../../../../packages/domain/src/agent.ts";
 import type { ResourceLease, ResourceRequest } from "../../../../packages/domain/src/runtime.ts";
+import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Store } from "../db.ts";
 import { backgroundFailure } from "../log.ts";
 import { ResourceBusyError, ResourceLeases } from "./resource-leases.ts";
 import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
 import { WorkAdmission } from "./work-admission.ts";
+
+export type TaskAbortCause =
+  | "explicit_cancel"
+  | "explicit_pause"
+  | "shutdown"
+  | "lease_takeover"
+  | "heartbeat_failure";
+export class TaskAbortError extends Error {
+  constructor(readonly cause: TaskAbortCause) {
+    super(`Task interrupted: ${cause}`);
+    this.name = "TaskAbortError";
+  }
+}
 
 export class LostLeaseError extends Error {
   constructor() {
@@ -78,15 +92,15 @@ export class TaskWorker {
     this.stopping = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    for (const controller of this.active.values()) controller.abort();
+    for (const controller of this.active.values()) controller.abort(new TaskAbortError("shutdown"));
     await Promise.allSettled([...this.pendingTicks]);
     while (this.active.size || this.inFlight.size || this.ticking)
       await new Promise((r) => setTimeout(r, 10));
     if (this.drainFailed || this.db.persistenceFailed)
       throw new Error("Task worker shutdown could not confirm durable completion");
   }
-  abort(taskId: string) {
-    this.active.get(taskId)?.abort();
+  abort(taskId: string, cause: TaskAbortCause = "explicit_cancel") {
+    this.active.get(taskId)?.abort(new TaskAbortError(cause));
   }
   tick(): Promise<void> {
     const pending = this.tickInternal();
@@ -218,8 +232,8 @@ export class TaskWorker {
     };
     const guard = async () => {
       const latest = await this.db.get<AgentTask>(owner, "tasks", taskId);
-      if (controller.signal.aborted || latest?.leaseId !== leaseId || latest.status !== "running")
-        throw new LostLeaseError();
+      if (controller.signal.aborted) throw controller.signal.reason;
+      if (latest?.leaseId !== leaseId || latest.status !== "running") throw new LostLeaseError();
       await this.pause.assertResumed(owner);
     };
     const acquireResources = async (requests: ResourceRequest[]) => {
@@ -233,14 +247,52 @@ export class TaskWorker {
       keepAdmission = true;
     };
     const checkpoint = async (patch: Partial<AgentTask>) => {
-      if (controller.signal.aborted) throw new LostLeaseError();
+      if (controller.signal.aborted) throw controller.signal.reason;
+      const completionRevision =
+        patch.status === "succeeded" ? patch.state?.verificationRevision : undefined;
       const next = await this.db.compareAndSwapTask<AgentTask>(
         owner,
         taskId,
-        { leaseId, status: "running" },
+        {
+          leaseId,
+          status: "running",
+          ...(typeof completionRevision === "number"
+            ? {
+                state: { desiredRevision: completionRevision, appliedRevision: completionRevision },
+              }
+            : {}),
+        },
         { ...patch, updatedAt: new Date(this.now()).toISOString() },
       );
-      if (!next) throw new LostLeaseError();
+      if (!next) {
+        if (typeof completionRevision === "number") {
+          const latest = await this.db.get<AgentTask>(owner, "tasks", taskId);
+          if (latest?.status === "running" && latest.leaseId === leaseId) {
+            const resumed = await this.db.compareAndSwapTask<AgentTask>(
+              owner,
+              taskId,
+              { leaseId, status: "running" },
+              {
+                ...patch,
+                status: "queued",
+                completion: {
+                  ...patch.completion,
+                  status: "partial",
+                  remaining: [
+                    ...(patch.completion?.remaining ?? []),
+                    "Apply the latest direction and verify its result",
+                  ],
+                },
+              },
+            );
+            if (resumed) {
+              task = resumed;
+              return resumed;
+            }
+          }
+        }
+        throw new LostLeaseError();
+      }
       task = next;
       return next;
     };
@@ -262,6 +314,7 @@ export class TaskWorker {
     // non-waiting result releases it.
     let keepAdmission =
       previous.status === "waiting_job" ||
+      previous.state.nativeCleanupPending === true ||
       typeof previous.state.waitingComputerCommandId === "string";
     const heartbeat = setInterval(
       () => {
@@ -276,17 +329,17 @@ export class TaskWorker {
             this.admission.renew(taskId),
           ]);
           if (!taskRenewed || !admissionRenewed) {
-            controller.abort();
+            controller.abort(new TaskAbortError("lease_takeover"));
             return;
           }
           for (const lease of ownedResources.values())
             if (!(await this.resources.renew(lease))) {
-              controller.abort();
+              controller.abort(new TaskAbortError("heartbeat_failure"));
               return;
             }
         })().catch(() => {
           this.drainFailed = true;
-          controller.abort();
+          controller.abort(new TaskAbortError("heartbeat_failure"));
         });
         renewals.add(renewal);
         void renewal.finally(() => renewals.delete(renewal));
@@ -320,7 +373,7 @@ export class TaskWorker {
             }
           : result;
       await checkpoint({ ...checkpointResult, leaseId: null, leaseUntil: null });
-      if (result.status === "waiting_job") {
+      if (result.status === "waiting_job" || result.state?.nativeCleanupPending === true) {
         keepAdmission = await this.admission.hold(taskId);
         if (!keepAdmission) throw new LostLeaseError();
       } else keepAdmission = false;
@@ -329,7 +382,7 @@ export class TaskWorker {
         taskId,
         startedAt,
         finishedAt: new Date(this.now()).toISOString(),
-        status: result.status ?? task.status,
+        status: task.status,
       });
     } catch (error) {
       if (error instanceof RuntimePausedError) {
@@ -408,12 +461,17 @@ export class TaskWorker {
         if (!keepAdmission && cleanupFailure === undefined) {
           const cleanupId = task.state.computerCleanupPendingId;
           const completed = task.state.completedComputerJob as
-            | { id?: unknown; status?: unknown }
+            | { id?: unknown; status?: unknown; cleanupConfirmed?: boolean }
             | undefined;
           if (
             typeof cleanupId === "string" &&
             completed?.id === cleanupId &&
-            ["succeeded", "failed", "rejected_not_dispatched"].includes(String(completed.status)) &&
+            computerCommandCleanupConfirmed({
+              status: completed.status as Parameters<
+                typeof computerCommandCleanupConfirmed
+              >[0]["status"],
+              cleanupConfirmed: completed.cleanupConfirmed,
+            }) &&
             !(await this.db.get("__runtime__", "work-admissions", taskId))
           ) {
             const latest = await this.db.get<AgentTask>(owner, "tasks", taskId);

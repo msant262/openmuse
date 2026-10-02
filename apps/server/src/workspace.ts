@@ -20,6 +20,7 @@ import type { ActionService } from "./actions.ts";
 import { agentConfigured } from "./agent.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
+import { taskOperationId } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 import type { GoogleAuth } from "./google-auth.ts";
@@ -39,9 +40,15 @@ export class WorkspaceService {
     private readonly files: Files,
     private readonly googleAuth: GoogleAuth,
   ) {}
-  google(owner: string, connectionId?: string, signal?: AbortSignal) {
+  google(
+    owner: string,
+    connectionId?: string,
+    signal?: AbortSignal,
+    beforeWrite?: () => Promise<void>,
+  ) {
     return new GoogleClient({
       signal,
+      beforeWrite,
       getAccessToken: () => this.googleAuth.accessToken(owner, connectionId),
       fetch: async (url, options) =>
         options?.method && options.method !== "GET"
@@ -122,7 +129,7 @@ export class WorkspaceService {
     const cachedAt = new Date().toISOString();
     for (const message of result)
       await this.db.put(owner, "mail", { ...message, connectionId, cachedAt });
-    return result;
+    return result.map((message) => ({ ...message, cachedAt }));
   }
   async thread(owner: string, id: string) {
     const connection = await this.connection(owner);
@@ -136,7 +143,13 @@ export class WorkspaceService {
             connection.id,
           );
     if (!mail.length) throw new AppError("Mail thread not found", 404);
-    return mail.sort((a, b) => a.date.localeCompare(b.date));
+    return mail
+      .map((message) =>
+        this.config.mode === "sample"
+          ? { ...message, cachedAt: new Date().toISOString() }
+          : message,
+      )
+      .sort((a, b) => a.date.localeCompare(b.date));
   }
   async searchMail(owner: string, query: string) {
     const connection = await this.connection(owner);
@@ -517,10 +530,12 @@ export class WorkspaceService {
     input: ProposalInput,
     connectionId?: string,
     targetVersion?: string,
+    beforeDispatch?: () => Promise<void>,
   ): Promise<string> {
     if (this.config.mode === "sample") {
       if (input.kind === "email.send") {
         const id = randomUUID();
+        await beforeDispatch?.();
         await this.db.put(owner, "mail", {
           id,
           threadId: input.data.threadId ?? id,
@@ -537,10 +552,12 @@ export class WorkspaceService {
         return `Saved to local sent mail · ${id}`;
       }
       if (input.kind === "calendar.delete") {
+        await beforeDispatch?.();
         await this.db.remove(owner, "events", input.data.eventId);
         return "Removed from local calendar";
       }
       const id = input.kind === "calendar.update" ? input.data.eventId : randomUUID();
+      await beforeDispatch?.();
       await this.db.put(owner, "events", { ...input.data, id });
       return `Saved to local calendar · ${id}`;
     }
@@ -551,7 +568,7 @@ export class WorkspaceService {
       throw new AppError("Enable Google write access in Connections before executing", 403);
     if (tokens.connectionId !== connectionId)
       throw new AppError("Google account or connection changed. Prepare a new action.", 409);
-    const google = this.google(owner, connectionId);
+    const google = this.google(owner, connectionId, undefined, beforeDispatch);
     if ((input.kind === "calendar.update" || input.kind === "calendar.delete") && !targetVersion)
       throw new AppError(
         "This calendar review predates target-version checks. Prepare a new review.",
@@ -590,10 +607,12 @@ export class WorkspaceService {
   async importAttachment(owner: string, reference: string): Promise<Artifact> {
     const connection = await this.connection(owner);
     if (!connection) throw new AppError("Google is disconnected", 409);
+    const operationId = taskOperationId();
+    const importId = operationId ? `intent:${operationId}:${reference}` : reference;
     const cached = await this.db.get<{ artifactId: string; connectionId?: string }>(
       owner,
       "imports",
-      reference,
+      importId,
     );
     if (cached && cached.connectionId === connection.id)
       return this.files.signed(owner, await this.files.get(owner, cached.artifactId));
@@ -608,9 +627,11 @@ export class WorkspaceService {
       decodeURIComponent(filename),
       await this.google(owner, connection.id).getAttachment(messageId, attachmentId),
       `Gmail · ${message.subject}`,
+      undefined,
+      operationId,
     );
     await this.db.put(owner, "imports", {
-      id: reference,
+      id: importId,
       artifactId: file.id,
       connectionId: connection.id,
     });

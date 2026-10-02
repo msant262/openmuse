@@ -9,7 +9,9 @@ import { z } from "zod";
 import { ActionLog } from "./action-log.ts";
 import type { ActionService } from "./actions.ts";
 import { configuredSecretScrubber, scrubConfiguredValue } from "./configured-secrets.ts";
+import { bindingHash } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
+import { authorizeTaskEffect, taskOperationId } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import { mcpRequestPreview } from "./mcp-preview.ts";
 
@@ -133,15 +135,19 @@ export class McpService {
     private readonly actions: ActionService,
     readonly servers: McpServerConfig[],
   ) {
-    actions.registerExternal("mcp.call", (owner, raw, proposal) =>
+    actions.registerExternal("mcp.call", (owner, raw, proposal, beforeDispatch) =>
       this.track(async () => {
         const binding = raw as Binding;
         const { server, connection } = await this.bound(binding);
         const signal = this.signals.get(proposal.id);
         signal?.throwIfAborted();
+        // Durable approval authority must survive the awaited remote catalogue
+        // preflight. A rejected barrier is known not sent, without an unknown
+        // connector receipt or a dependency on ambient model task scope.
+        await beforeDispatch();
         let result: unknown;
         try {
-          result = await this.dispatch(connection, binding.tool, binding.args, true, signal);
+          result = await this.dispatch(connection, binding.tool, binding.args, true, signal, true);
         } catch (error) {
           await this.db
             .put(owner, "mcp-receipts", { id: proposal.id, status: "outcome_unknown" })
@@ -153,6 +159,10 @@ export class McpService {
           await this.db.put(owner, "mcp-receipts", {
             id: proposal.id,
             status: "succeeded",
+            actionHash: proposal.hash,
+            bindingHash: bindingHash(binding),
+            serverId: binding.serverId,
+            tool: binding.tool,
             result: cleaned,
           });
           return JSON.stringify(cleaned);
@@ -302,9 +312,11 @@ export class McpService {
     args: Record<string, unknown>,
     write: boolean,
     signal?: AbortSignal,
+    actionAuthorized = false,
   ) {
     this.abort.signal.throwIfAborted();
     signal?.throwIfAborted();
+    if (write && !actionAuthorized) await authorizeTaskEffect();
     try {
       const result = await connection.client.callTool({ name, arguments: args }, undefined, {
         timeout: 30000,
@@ -413,7 +425,9 @@ export class McpService {
                         await this.dispatch(connection, remote.name, args, false, options.signal),
                       ),
                   );
-                const key = digest({ owner, scope, server: server.id, tool: remote.name, args });
+                const key =
+                  taskOperationId() ??
+                  digest({ owner, scope, server: server.id, tool: remote.name, args });
                 const actionId = createHash("sha256").update(`external:mcp:${key}`).digest("hex");
                 if (options.signal) this.signals.set(actionId, options.signal);
                 let action: Awaited<ReturnType<ActionService["proposeExternal"]>>;

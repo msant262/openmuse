@@ -496,6 +496,9 @@ export class ConversationAgent extends AbstractAgent {
             this.owner,
             { ...args, originThreadId: input.threadId, originMessageId: latest?.id },
             key("task", args),
+            false,
+            undefined,
+            latestText || undefined,
           ),
       }),
       defineTool({

@@ -3,9 +3,10 @@ import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
 import type { ResourceLease } from "../../../packages/domain/src/runtime.ts";
 import { type ActionLog, type LogAction, unknownOutcome } from "./action-log.ts";
 import { workspacePath } from "./computer.ts";
-import type { ComputerBackend } from "./computer-contract.ts";
+import { type ComputerBackend, computerCommandCleanupConfirmed } from "./computer-contract.ts";
 import { ResourceBusyError, ResourceLeases } from "./engine/resource-leases.ts";
 import type { RuntimePause } from "./engine/runtime-pause.ts";
+import { authorizeTaskEffect } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import { backgroundFailure } from "./log.ts";
 
@@ -110,6 +111,7 @@ export function auditedComputer(
         async () => {
           if (!["read", "list", "export", "stop", "cancel"].includes(tool))
             await runtimePause?.assertResumed(owner);
+          await authorizeTaskEffect(lease ?? [], lockId);
           return operation();
         },
       );
@@ -134,11 +136,7 @@ export function auditedComputer(
       );
     // Interrupted/timed-out receipts are explicitly uncertain. Keep the heavy
     // lease until a later backend receipt confirms the process is terminal.
-    if (
-      receipt.status === "succeeded" ||
-      receipt.status === "failed" ||
-      receipt.status === "rejected_not_dispatched"
-    ) {
+    if (computerCommandCleanupConfirmed(receipt)) {
       if (receipt.status === "rejected_not_dispatched") {
         const current = await log.db.get<ComputerCommand>(owner, "computer-commands", receipt.id);
         if (current?.status !== receipt.status || action?.phase === "prepared") return;
@@ -269,6 +267,7 @@ export function auditedComputer(
         dispatchGuard: async () => {
           await runtimePause?.assertResumed(owner);
           await bound.dispatchGuard?.();
+          await authorizeTaskEffect(leases, receiptId);
         },
       };
       try {
@@ -278,7 +277,7 @@ export function auditedComputer(
         // they return a receipt, conservatively persist occupancy before using it.
         await backendOptions.onDispatch(receipt.id);
       } catch (error) {
-        const saved = await log.db.get<{ status: string }>(owner, "computer-commands", receiptId);
+        const saved = await log.db.get<ComputerCommand>(owner, "computer-commands", receiptId);
         if (
           !dispatchStarted ||
           saved?.status === "failed" ||
@@ -288,9 +287,7 @@ export function auditedComputer(
           await log.finish(owner, action, "rejected_not_dispatched");
           throw error;
         }
-        const uncertain = saved
-          ? !["succeeded", "failed", "rejected_not_dispatched"].includes(saved.status)
-          : unknownOutcome(error);
+        const uncertain = saved ? !computerCommandCleanupConfirmed(saved) : unknownOutcome(error);
         if (!uncertain) await Promise.all(leases.map((lease) => resources?.release(lease)));
         await log.finish(owner, action, uncertain ? "outcome_unknown" : "failed");
         if (uncertain) {
@@ -421,11 +418,7 @@ export async function reconcileComputerAudit(backend: ComputerBackend, log: Acti
         ? await backend.command(owner, value.id)
         : (await backend.snapshot(owner)).commands.find((command) => command.id === value.id);
       if (!receipt) continue;
-      if (
-        receipt.status === "succeeded" ||
-        receipt.status === "failed" ||
-        receipt.status === "rejected_not_dispatched"
-      )
+      if (computerCommandCleanupConfirmed(receipt))
         await log.db.compareAndSwap(owner, "computer-audit", value.id, auditClaim(value), {
           complete: true,
           phase: "complete",
