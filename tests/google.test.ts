@@ -116,8 +116,25 @@ test("Google read retries are abortable and external writes with uncertain outco
 });
 
 test("a quota 403 remains a rate-limit diagnostic after bounded read retries", async () => {
-  let calls = 0, now = 0;
-  const client = new GoogleClient({ getAccessToken: async () => "fixture", retry: { now: () => now, sleep: async (ms) => { now += ms; }, random: () => 0.5 }, fetch: async () => { calls++; return Response.json({ error: { message: "quota", errors: [{ reason: "rateLimitExceeded" }] } }, { status: 403 }); } });
+  let calls = 0,
+    now = 0;
+  const client = new GoogleClient({
+    getAccessToken: async () => "fixture",
+    retry: {
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      random: () => 0.5,
+    },
+    fetch: async () => {
+      calls++;
+      return Response.json(
+        { error: { message: "quota", errors: [{ reason: "rateLimitExceeded" }] } },
+        { status: 403 },
+      );
+    },
+  });
   await assert.rejects(client.listCalendars(), { status: 403, code: "GOOGLE_RATE_LIMITED" });
   assert.equal(calls, 3);
 });

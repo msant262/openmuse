@@ -56,6 +56,8 @@ export function tanstackAgent(options: {
   maxSteps: number;
   tools: ToolDefinition[];
   prompt: string;
+  /** Re-read trusted profile/steering at each model safe point without restarting work. */
+  promptContext?: () => Promise<string>;
   /** The process owner joins tool receipts after an observable is canceled. */
   trackTool?: (execute: () => Promise<unknown>) => Promise<unknown>;
   loadBrowserImage?: BrowserImageLoader;
@@ -106,6 +108,16 @@ export function tanstackAgent(options: {
         ),
         messages: converted.messages,
         systemPrompts: system ? [system] : [],
+        middleware: options.promptContext
+          ? [
+              {
+                name: "openmuse-profile",
+                onConfig: async () => ({
+                  systemPrompts: [(await options.promptContext!()) + system],
+                }),
+              },
+            ]
+          : [],
         tools: [
           ...converted.tools,
           ...[...options.tools, ...stateTools].map((tool) =>

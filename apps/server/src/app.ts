@@ -11,7 +11,7 @@ import { GoogleApiError } from "../../../packages/integrations/src/google.ts";
 import { ActionLog } from "./action-log.ts";
 import { approvalPolicy } from "./action-policy.ts";
 import { ActionService } from "./actions.ts";
-import { agentConfigured, makeRuntime } from "./agent.ts";
+import { agentConfigured, conversationAgentFactory, makeRuntime } from "./agent.ts";
 import { auditedComputer } from "./audited-computer.ts";
 import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
@@ -19,6 +19,7 @@ import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
 import { RpcComputerService } from "./computer-rpc.ts";
 import type { Config } from "./config.ts";
+import { ConversationInbox } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
 import { agentRoutes } from "./engine/routes.ts";
 import { AgentService } from "./engine/service.ts";
@@ -55,11 +56,16 @@ export async function createApp(
     config.computerBackend ?? "docker",
   );
   const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
+  const inbox = new ConversationInbox(db, (owner, id) => files.get(owner, id));
   const threads = config.intelligenceApiKey?.trim()
     ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey.trim() })
     : new LocalThreads(db);
-  if (threads instanceof LocalThreads) agent.configureThreads(threads);
+  if (threads instanceof LocalThreads) {
+    agent.configureThreads(threads);
+    threads.configureInbox(inbox, conversationAgentFactory(config, agent));
+  }
   await agent.initialize();
+  if (threads instanceof LocalThreads) await threads.initializeInbox();
   const runtime = makeRuntime(config, agent, auth, threads);
   const app = new Hono<{ Variables: { owner: string } }>();
   const origins = new Set([...config.allowedOrigins, new URL(config.publicUrl).origin]);
@@ -245,6 +251,37 @@ export async function createApp(
     return c.json(snapshot);
   });
   app.route("/api/agent", agentRoutes(agent));
+  app.post("/api/conversations/:threadId/messages", async (c) => {
+    if (!(threads instanceof LocalThreads))
+      throw new AppError("Durable admission requires local thread storage", 409);
+    const body = z
+      .object({ threadId: z.string().optional() })
+      .passthrough()
+      .parse(await c.req.json());
+    if (body.threadId && body.threadId !== c.req.param("threadId"))
+      throw new AppError("Conversation ID does not match", 422);
+    await threads.ensure(c.get("owner"), c.req.param("threadId"));
+    return c.json(
+      await inbox.acceptMessage(c.get("owner"), { ...body, threadId: c.req.param("threadId") }),
+      202,
+    );
+  });
+  app.get("/api/conversations/:threadId/events", async (c) =>
+    c.json(
+      await inbox.eventsAfter(
+        c.get("owner"),
+        c.req.param("threadId"),
+        z.coerce
+          .number()
+          .int()
+          .min(0)
+          .parse(c.req.query("cursor") ?? 0),
+      ),
+    ),
+  );
+  app.get("/api/conversations/:threadId/interactions", async (c) =>
+    c.json({ requests: await agent.interactions.list(c.get("owner"), c.req.param("threadId")) }),
+  );
   app.route("/api/computer", computerRoutes(computer, files));
   app.get("/api/calendars", async (c) => c.json(await workspace.calendars(c.get("owner"))));
   app.get("/api/calendar/events", async (c) => {
@@ -509,5 +546,5 @@ export async function createApp(
   app.get("/", (c) =>
     c.json({ name: "OpenMuse", app: "http://localhost:8081", health: "/api/health" }),
   );
-  return { app, auth, files, actions, workspace, agent, computer, threads };
+  return { app, auth, files, actions, workspace, agent, computer, threads, inbox };
 }

@@ -34,10 +34,14 @@ import type {
   RunEvent,
 } from "../../../packages/domain/src/agent";
 import { attachmentLabel } from "../../../packages/domain/src/attachments";
+import type { InteractionRequest } from "../../../packages/domain/src/runtime";
 import { useAgentWorkspace } from "./agent-workspace";
+import { InteractionCard } from "./interaction-card";
 import { NativePushSettings } from "./native-push-settings";
+import { ProfileSettings } from "./profile-settings";
 import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
+import { useMuseThread } from "./threads";
 import {
   Button,
   Card,
@@ -278,6 +282,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
     artifacts: AgentArtifact[];
     files: Artifact[];
     browsers: BrowserSession[];
+    interactions?: InteractionRequest[];
   }>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -295,6 +300,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
         artifacts: AgentArtifact[];
         files: Artifact[];
         browsers: BrowserSession[];
+        interactions?: InteractionRequest[];
       }>(`/api/agent/tasks/${taskId}`)
       .then((result) => {
         if (active) {
@@ -443,66 +449,82 @@ export function TaskDetail({ taskId }: { taskId: string }) {
               </Button>
             </Card>
           )}
-          {task.status === "waiting_input" && (
-            <Card style={{ backgroundColor: colors.sky, gap: 10 }}>
-              <Text style={s.heading}>{task.question || "A detail from you will help"}</Text>
-              {fieldNames.map((name) =>
-                missing.some(
-                  (f) => typeof f === "object" && f && f.name === name && f.type === "checkbox",
-                ) ? (
-                  <CheckRow
-                    key={name}
-                    label={name.replace(/_/g, " ")}
-                    checked={Boolean(fields[name])}
-                    onPress={() => setFields((current) => ({ ...current, [name]: !current[name] }))}
-                  />
-                ) : (
-                  <Field
-                    key={name}
-                    label={name.replace(/_/g, " ")}
-                    value={String(fields[name] ?? "")}
-                    onChangeText={(value) =>
-                      setFields((current) => ({ ...current, [name]: value }))
-                    }
-                  />
-                ),
-              )}
-              {!fieldNames.length && (
-                <Field
-                  label="Your answer"
-                  value={answer}
-                  onChangeText={setAnswer}
-                  multiline
-                  placeholder="Add the missing details…"
+          {task.status === "waiting_input" &&
+            detail?.interactions?.some((request) => request.status === "waiting") &&
+            detail.interactions
+              .filter((request) => request.status === "waiting")
+              .map((request) => (
+                <InteractionCard
+                  key={request.id}
+                  request={request}
+                  onAnswered={() => {
+                    void refreshWorkspace();
+                  }}
                 />
-              )}
-              {task.kind === "document" && !fieldNames.length && (
-                <>
-                  <Button small onPress={() => setShowFieldJson(!showFieldJson)}>
-                    Form field values
-                  </Button>
-                  {showFieldJson && (
-                    <Field
-                      label="Fields (JSON: field name to value)"
-                      value={fieldJson}
-                      onChangeText={setFieldJson}
-                      multiline
-                      autoCapitalize="none"
-                      placeholder={'{"full_name":"Your name","consent":true}'}
+              ))}
+          {task.status === "waiting_input" &&
+            !detail?.interactions?.some((request) => request.status === "waiting") && (
+              <Card style={{ backgroundColor: colors.sky, gap: 10 }}>
+                <Text style={s.heading}>{task.question || "A detail from you will help"}</Text>
+                {fieldNames.map((name) =>
+                  missing.some(
+                    (f) => typeof f === "object" && f && f.name === name && f.type === "checkbox",
+                  ) ? (
+                    <CheckRow
+                      key={name}
+                      label={name.replace(/_/g, " ")}
+                      checked={Boolean(fields[name])}
+                      onPress={() =>
+                        setFields((current) => ({ ...current, [name]: !current[name] }))
+                      }
                     />
-                  )}
-                </>
-              )}
-              <Button
-                primary
-                busy={busy}
-                disabled={!answer.trim() && !Object.keys(fields).length && !fieldJson.trim()}
-                onPress={() => void submitInput()}
-              >
-                Continue task
-              </Button>
-            </Card>
-          )}
+                  ) : (
+                    <Field
+                      key={name}
+                      label={name.replace(/_/g, " ")}
+                      value={String(fields[name] ?? "")}
+                      onChangeText={(value) =>
+                        setFields((current) => ({ ...current, [name]: value }))
+                      }
+                    />
+                  ),
+                )}
+                {!fieldNames.length && (
+                  <Field
+                    label="Your answer"
+                    value={answer}
+                    onChangeText={setAnswer}
+                    multiline
+                    placeholder="Add the missing details…"
+                  />
+                )}
+                {task.kind === "document" && !fieldNames.length && (
+                  <>
+                    <Button small onPress={() => setShowFieldJson(!showFieldJson)}>
+                      Form field values
+                    </Button>
+                    {showFieldJson && (
+                      <Field
+                        label="Fields (JSON: field name to value)"
+                        value={fieldJson}
+                        onChangeText={setFieldJson}
+                        multiline
+                        autoCapitalize="none"
+                        placeholder={'{"full_name":"Your name","consent":true}'}
+                      />
+                    )}
+                  </>
+                )}
+                <Button
+                  primary
+                  busy={busy}
+                  disabled={!answer.trim() && !Object.keys(fields).length && !fieldJson.trim()}
+                  onPress={() => void submitInput()}
+                >
+                  Continue task
+                </Button>
+              </Card>
+            )}
           {!!task.plan.length && (
             <Card style={{ gap: 15 }}>
               <Text style={s.heading}>Plan</Text>
@@ -881,6 +903,7 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
 export function DelegateSheet() {
   const { workspace, close, open } = useWorkspace();
   const { delegate } = useAgentWorkspace();
+  const { selection, enabled } = useMuseThread();
   const [kind, setKind] = useState<AgentTask["kind"]>("plan");
   const [prompt, setPrompt] = useState("");
   const [messageId, setMessageId] = useState("");
@@ -894,6 +917,7 @@ export function DelegateSheet() {
       const task = await delegate({
         prompt: prompt.trim(),
         kind,
+        ...(enabled ? { originThreadId: selection.id } : {}),
         input: kind === "finance" ? { csv } : kind === "document" ? { messageId } : {},
       });
       open({ type: "task", taskId: task.id });
@@ -1681,8 +1705,6 @@ export function AppsScreen() {
   const { data, mutate } = useAgentWorkspace();
   const [query, setQuery] = useState("");
   const [settings, setSettings] = useState(false);
-  const [name, setName] = useState(data?.identity.name || "OpenMuse");
-  const [tone, setTone] = useState(data?.identity.tone || "warm");
   const [avatar, setAvatar] = useState(data?.identity.avatar || "sky");
   const [showChatUpdates, setShowChatUpdates] = useState(data?.identity.showChatUpdates !== false);
   const [memory, setMemory] = useState("");
@@ -1690,17 +1712,10 @@ export function AppsScreen() {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (data?.identity) {
-      setName(data.identity.name);
-      setTone(data.identity.tone);
       setAvatar(data.identity.avatar || "sky");
       setShowChatUpdates(data.identity.showChatUpdates !== false);
     }
-  }, [
-    data?.identity.name,
-    data?.identity.tone,
-    data?.identity.avatar,
-    data?.identity.showChatUpdates,
-  ]);
+  }, [data?.identity.avatar, data?.identity.showChatUpdates]);
   async function save(path: string, body: unknown) {
     setBusy(true);
     setError("");
@@ -1774,6 +1789,7 @@ export function AppsScreen() {
       </Button>
       {settings && (
         <>
+          <ProfileSettings />
           <Card style={{ gap: 10 }}>
             <SectionHeading title="Your agent" />
             <View style={[s.row, { gap: 16, justifyContent: "center", marginBottom: 12 }]}>
@@ -1794,14 +1810,6 @@ export function AppsScreen() {
                 </Pressable>
               ))}
             </View>
-            <Field label="Name" value={name} onChangeText={setName} />
-            <View style={[s.row, { gap: 8 }]}>
-              {(["warm", "concise", "thoughtful"] as const).map((item) => (
-                <Button key={item} small primary={tone === item} onPress={() => setTone(item)}>
-                  {statusLabel(item)}
-                </Button>
-              ))}
-            </View>
             <CheckRow
               label="Show background updates in chat"
               checked={showChatUpdates}
@@ -1811,13 +1819,7 @@ export function AppsScreen() {
               Activity and notifications always keep the full record, including requests for
               approval.
             </Text>
-            <Button
-              busy={busy}
-              disabled={!name.trim()}
-              onPress={() =>
-                void save("/identity", { name: name.trim(), tone, avatar, showChatUpdates })
-              }
-            >
+            <Button busy={busy} onPress={() => void save("/identity", { avatar, showChatUpdates })}>
               Save preferences
             </Button>
           </Card>

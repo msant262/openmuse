@@ -11,6 +11,9 @@ import {
 } from "lucide-react-native";
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { PRODUCT_NAME } from "../../../packages/domain/src/brand";
+import { messageStorage } from "./message-storage";
+import { navigateFromThreadMenu, parseThreadSelection } from "./thread-selection";
 import { Button, colors, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -31,6 +34,7 @@ const ThreadContext = createContext<{
   error: string;
   retry: () => void;
   select: (selection: Selection) => void;
+  markAccepted: (id: string) => void;
   start: () => void;
   claimPrompt: (id: number) => boolean;
 } | null>(null);
@@ -44,19 +48,38 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const selectionVersion = useRef(0);
   useEffect(() => {
     if (!enabled) return;
     let active = true;
     setLoading(true);
     setError("");
-    void api
-      .request<{ threadId: string; existing: boolean }>("/api/main-thread")
+    const version = selectionVersion.current;
+    const restoration = messageStorage
+      .read(`${api.identityKey}\nthread-selection`)
+      .then((raw) => {
+        const saved = parseThreadSelection(raw);
+        if (saved && active && version === selectionVersion.current) {
+          setMainId(saved.mainId);
+          setSelection(saved.selection);
+          setVisited(saved.visited);
+          setLoading(false);
+        }
+      })
+      .catch((cause) => {
+        if (active) setError(`Conversation drafts could not be restored: ${String(cause)}`);
+      });
+    // Restore the device's choice before a fast server response can persist a default.
+    void restoration
+      .then(() => api.request<{ threadId: string; existing: boolean }>("/api/main-thread"))
       .then((main) => {
         if (!active) return;
         const next = { id: main.threadId, existing: main.existing };
         setMainId(next.id);
-        setSelection(next);
-        setVisited([next]);
+        if (version === selectionVersion.current) {
+          setSelection((current) => (current.id === "local" ? next : current));
+          setVisited((current) => (current.length ? current : [next]));
+        }
         setLoading(false);
       })
       .catch((e) => {
@@ -67,10 +90,17 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
     };
   }, [api, enabled, attempt]);
   function select(next: Selection) {
+    selectionVersion.current++;
     setSelection(next);
     setVisited((items) => (items.some((item) => item.id === next.id) ? items : [...items, next]));
     navigate("chat");
   }
+  useEffect(() => {
+    if (!enabled || loading || mainId === "local") return;
+    void messageStorage
+      .write(`${api.identityKey}\nthread-selection`, JSON.stringify({ mainId, selection, visited }))
+      .catch((cause) => setError(`Conversation selection could not be saved: ${String(cause)}`));
+  }, [api, enabled, loading, mainId, selection, visited]);
   return (
     <ThreadContext.Provider
       value={{
@@ -87,6 +117,16 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
         retry: () => setAttempt((n) => n + 1),
         selection,
         select,
+        markAccepted: (id) => {
+          setSelection((current) =>
+            current.id === id && !current.existing ? { ...current, existing: true } : current,
+          );
+          setVisited((current) =>
+            current.map((item) =>
+              item.id === id && !item.existing ? { ...item, existing: true } : item,
+            ),
+          );
+        },
         start: () => select({ id: newThreadId(), existing: false }),
       }}
     >
@@ -127,12 +167,11 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
     }
   }
   function go(section: "calendar" | "files" | "apps") {
-    onClose();
-    navigate(section);
+    navigateFromThreadMenu(onClose, () => navigate(section));
   }
   return (
     <Sheet
-      title="OpenMuse"
+      title={PRODUCT_NAME}
       subtitle={workspace.mode === "sample" ? "Your workspace" : workspace.profile.name}
       onClose={onClose}
     >
@@ -153,16 +192,14 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
               title="Main chat"
               detail="Your ongoing conversation"
               onPress={() => {
-                select({ id: mainId, existing: true });
-                onClose();
+                navigateFromThreadMenu(onClose, () => select({ id: mainId, existing: true }));
               }}
             />
             <Button
               primary
               icon={Plus}
               onPress={() => {
-                start();
-                onClose();
+                navigateFromThreadMenu(onClose, start);
               }}
             >
               New side chat
@@ -193,8 +230,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                     title={`Side chat ${index + 1}`}
                     detail="Open in this app"
                     onPress={() => {
-                      select(item);
-                      onClose();
+                      navigateFromThreadMenu(onClose, () => select(item));
                     }}
                   />
                 ))}
@@ -215,8 +251,9 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                     accessibilityLabel={`Open conversation: ${thread.name || "Untitled conversation"}`}
                     accessibilityState={{ selected: selection.id === thread.id }}
                     onPress={() => {
-                      select({ id: thread.id, existing: true });
-                      onClose();
+                      navigateFromThreadMenu(onClose, () =>
+                        select({ id: thread.id, existing: true }),
+                      );
                     }}
                     style={[s.row, { gap: 10 }]}
                   >

@@ -4,6 +4,7 @@
     "ignoreUnknown": true,
     "includes": [
       "**",
+      "!!**/.worktrees",
       "!**/node_modules",
       "!**/.expo",
       "!**/dist",

@@ -5,6 +5,10 @@ import type {
   AgentMemory,
   AgentNotification,
 } from "../../../../packages/domain/src/agent.ts";
+import {
+  agentProfilePatchSchema,
+  profileScopeSchema,
+} from "../../../../packages/domain/src/agent.ts";
 import { AppError } from "../errors.ts";
 import { routineInput } from "../routines.ts";
 import type { AgentService } from "./service.ts";
@@ -28,6 +32,41 @@ const goalPatchSchema = z.object({
 export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: string } }> {
   const app = new Hono<{ Variables: { owner: string } }>();
   app.get("/", async (c) => c.json(await service.snapshot(c.get("owner"))));
+  app.get("/profile", async (c) =>
+    c.json(await service.profiles.get(c.get("owner"), c.req.query("threadId"))),
+  );
+  const profileChange = z
+    .object({
+      scope: profileScopeSchema,
+      expectedRevision: z.number().int().min(0),
+      requestId: z.string().min(1).max(256),
+      patch: agentProfilePatchSchema,
+    })
+    .strict();
+  app.post("/profile", async (c) =>
+    c.json(
+      await service.profiles.update(c.get("owner"), {
+        ...profileChange.parse(await c.req.json()),
+        origin: { kind: "settings" },
+      }),
+    ),
+  );
+  app.post("/profile/reset", async (c) =>
+    c.json(
+      await service.profiles.reset(c.get("owner"), {
+        ...profileChange.omit({ patch: true }).parse(await c.req.json()),
+        origin: { kind: "settings" },
+      }),
+    ),
+  );
+  app.get("/interactions/:id", async (c) =>
+    c.json(await service.interactions.status(c.get("owner"), c.req.param("id"))),
+  );
+  app.post("/interactions/:id/answer", async (c) =>
+    c.json(
+      await service.interactions.answer(c.get("owner"), c.req.param("id"), await c.req.json()),
+    ),
+  );
   app.post("/tasks", async (c) =>
     c.json(await service.createTask(c.get("owner"), await c.req.json()), 201),
   );
@@ -131,20 +170,38 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
   app.post("/identity", async (c) => {
     const body = z
       .object({
-        name: z.string().trim().min(1).max(80),
-        tone: z.enum(["warm", "concise", "thoughtful"]),
+        name: z.string().trim().min(1).max(80).optional(),
+        tone: z.enum(["warm", "concise", "thoughtful"]).optional(),
         avatar: z.enum(["sky", "sand", "lilac"]).optional(),
         showChatUpdates: z.boolean().optional(),
+        expectedRevision: z.number().int().min(0).optional(),
+        requestId: z.string().min(1).max(256).optional(),
       })
+      .strict()
       .parse(await c.req.json());
     const owner = c.get("owner");
     await service.ensure(owner);
+    if (body.name || body.tone) {
+      if (body.expectedRevision === undefined || !body.requestId)
+        throw new AppError("Personality edits require expectedRevision and requestId", 422);
+      await service.profiles.update(owner, {
+        scope: { kind: "global" },
+        patch: {
+          ...(body.name ? { assistantName: body.name } : {}),
+          ...(body.tone ? { tone: body.tone } : {}),
+        },
+        expectedRevision: body.expectedRevision,
+        requestId: body.requestId,
+        origin: { kind: "settings" },
+      });
+    }
+    const { expectedRevision, requestId, ...appearance } = body;
     const identity = await service.db.compareAndSwap<AgentIdentity>(
       owner,
       "agent-settings",
       "identity",
       {},
-      body,
+      appearance,
     );
     if (!identity) throw new AppError("Agent identity changed; refresh and try again", 409);
     return c.json(identity);

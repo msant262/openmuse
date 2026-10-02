@@ -36,7 +36,7 @@ test("stop pauses queued work and a failed reply never silently retries", async 
   assert.equal(queue.getSnapshot().paused, true);
   assert.deepEqual(
     queue.getSnapshot().pending.map((m) => m.id),
-    ["2"],
+    ["1", "2"],
   );
   const received: string[] = [];
   await queue.flush(async ({ id }) => {
@@ -47,7 +47,7 @@ test("stop pauses queued work and a failed reply never silently retries", async 
   await queue.flush(async ({ id }) => {
     received.push(id);
   });
-  assert.deepEqual(received, ["2"]);
+  assert.deepEqual(received, ["1", "2"]);
 });
 
 test("a stop while a reply is running leaves later messages available to resume", async () => {

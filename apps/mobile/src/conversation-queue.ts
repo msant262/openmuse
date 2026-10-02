@@ -32,11 +32,11 @@ export class ConversationQueue {
     try {
       while (this.state.pending.length && !this.state.paused) {
         const [message, ...pending] = this.state.pending;
-        this.update({ pending });
         await send(message);
+        this.update({ pending: this.state.pending.filter((item) => item.id !== message.id) });
       }
     } catch (error) {
-      // The failed message is already in the transcript. Never resend it implicitly.
+      // Keep failed admission and all later messages; explicit resume retains their IDs.
       this.update({ paused: true });
       throw error;
     } finally {

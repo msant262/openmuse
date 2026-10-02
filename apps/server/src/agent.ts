@@ -79,3 +79,17 @@ export function makeRuntime(
   runtime.telemetry.capture = async () => {};
   return createCopilotHonoHandler({ runtime, basePath: "/api/copilotkit" });
 }
+
+/** The durable inbox reconstructs the same server agent after restart, without an HTTP session. */
+export function conversationAgentFactory(config: Config, service: AgentService) {
+  let adapter: JevAdapter | undefined;
+  return (owner: string) => {
+    if (config.agentBackend === "agui")
+      return new HttpAgent({
+        url: config.agentUrl ?? "http://127.0.0.1:1/unconfigured",
+        headers: config.agentToken ? { Authorization: `Bearer ${config.agentToken}` } : {},
+      });
+    adapter ??= createJevAdapter(config);
+    return new ConversationAgent(config, service, owner, adapter);
+  };
+}

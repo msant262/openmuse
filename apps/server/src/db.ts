@@ -4,6 +4,8 @@ import { PGlite } from "@electric-sql/pglite";
 import pg from "pg";
 import type { AgentMemory, AgentNotification } from "../../../packages/domain/src/agent.ts";
 import type { ActionLogEntry } from "../../../packages/domain/src/index.ts";
+import type { ConversationEvent } from "../../../packages/domain/src/runtime.ts";
+import { initializeDurableConversations } from "./durable-schema.ts";
 import { backgroundFailure } from "./log.ts";
 
 type Row = { data: Record<string, unknown> };
@@ -13,6 +15,74 @@ interface Database {
 }
 
 export class Store {
+  /** A run row is the dispatch boundary: no row permits retry, any row forbids uncertain repetition. */
+  async recordInboxFailure(owner: string, messageId: string, runToken: string): Promise<boolean> {
+    const result = await this.write("SELECT openmuse_inbox_failure($1,$2,$3) AS data", [
+      owner,
+      messageId,
+      runToken,
+    ]);
+    return (result.rows[0]?.data as unknown) === true;
+  }
+  /** Inbox dispatch and the chat lease are claimed in one statement across runner instances. */
+  async claimInboxMessage(
+    owner: string,
+    id: string,
+    threadId: string,
+    token: string,
+    leaseMs: number,
+  ) {
+    const result = await this.write(
+      `WITH claimed AS (
+      UPDATE records thread SET data=data || jsonb_build_object('runToken',$4::text,'stopRunToken',NULL,'leaseUntil',clock_timestamp() + ($5::text || ' milliseconds')::interval),updated_at=now()
+      WHERE owner=$1 AND kind='threads' AND id=$3 AND (data->>'runToken' IS NULL OR (data->>'leaseUntil')::timestamptz<=clock_timestamp())
+      AND EXISTS (SELECT 1 FROM records message WHERE message.owner=thread.owner AND message.kind='conversation-inbox' AND message.id=$2 AND message.data->>'status'='accepted') RETURNING data
+    ) UPDATE records SET data=data || '{"status":"dispatching"}'::jsonb,updated_at=now()
+      WHERE owner=$1 AND kind='conversation-inbox' AND id=$2 AND data->>'status'='accepted' AND EXISTS(SELECT 1 FROM claimed) RETURNING data`,
+      [owner, id, threadId, token, leaseMs],
+    );
+    return result.rows.length === 1;
+  }
+  async durableMutation<T>(
+    owner: string,
+    receiptId: string,
+    bindingHash: string,
+    mutations: {
+      kind: string;
+      id: string;
+      expected?: Record<string, unknown>;
+      value: Record<string, unknown>;
+      mode: "insert" | "merge" | "replace";
+    }[],
+    events: Omit<ConversationEvent, "seq">[] = [],
+  ) {
+    const result = await this.write(
+      "SELECT openmuse_durable_mutation($1,$2,$3,$4::jsonb,$5::jsonb) AS data",
+      [owner, receiptId, bindingHash, JSON.stringify(mutations), JSON.stringify(events)],
+    );
+    return result.rows[0].data as unknown as {
+      status: "applied" | "duplicate" | "binding_conflict" | "revision_conflict";
+      values: T[];
+      events: ConversationEvent[];
+    };
+  }
+  async conversationEvents(owner: string, threadId: string, cursor: number, limit = 500) {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object(
+      'events',COALESCE((SELECT jsonb_agg(data ORDER BY seq) FROM (SELECT seq,data FROM conversation_events WHERE owner=$1 AND thread_id=$2 AND seq>$3 ORDER BY seq LIMIT $4) tail),'[]'::jsonb),
+      'head',COALESCE((SELECT max(seq) FROM conversation_events WHERE owner=$1 AND thread_id=$2),0)
+    ) AS data`,
+      [owner, threadId, cursor, limit],
+    );
+    return result.rows[0].data as unknown as { events: ConversationEvent[]; head: number };
+  }
+  async appendConversationEvent(owner: string, event: Omit<ConversationEvent, "seq">) {
+    const result = await this.write(
+      "SELECT openmuse_conversation_event($1,$2,$3,$4::jsonb) AS data",
+      [owner, event.threadId, event.id, JSON.stringify(event)],
+    );
+    return result.rows[0].data as unknown as ConversationEvent;
+  }
   private failedWrite = false;
   /** A caught SQL write error still invalidates an exit-zero stopped-writer snapshot. */
   get persistenceFailed() {
@@ -194,15 +264,11 @@ export class Store {
   }
   /** Atomic append avoids losing streamed events to another database connection. */
   async appendRecordEvent(owner: string, id: string, event: unknown): Promise<void> {
-    const result = await this.write(
-      `UPDATE records AS run SET data=jsonb_set(data,'{events}',COALESCE(data->'events','[]'::jsonb) || $3::jsonb),updated_at=now()
-       WHERE owner=$1 AND kind='thread-runs' AND id=$2 AND data->>'status'='running' AND EXISTS (
-         SELECT 1 FROM records thread WHERE thread.owner=run.owner AND thread.kind='threads' AND thread.id=run.data->>'threadId'
-         AND thread.data->>'runToken'=run.id AND (thread.data->>'leaseUntil')::timestamptz>clock_timestamp()
-       ) RETURNING data`,
-      [owner, id, JSON.stringify([event])],
-    );
-    if (!result.rows.length) throw new Error("Conversation run lease expired");
+    await this.write("SELECT openmuse_thread_event($1,$2,$3::jsonb) AS data", [
+      owner,
+      id,
+      JSON.stringify(event),
+    ]);
   }
   /** Database-clock lease shared by every API process using Postgres. */
   async claimThread(
@@ -277,20 +343,10 @@ export class Store {
     patch: Record<string, unknown>,
   ): Promise<boolean> {
     const result = await this.write(
-      `WITH recovered AS (
-         UPDATE records AS run SET data=data || $5::jsonb,updated_at=now()
-         WHERE owner=$1 AND kind='thread-runs' AND id=$3 AND data->>'threadId'=$2
-         AND data->>'status'='running' AND data->'events'=$4::jsonb AND NOT EXISTS (
-           SELECT 1 FROM records thread WHERE thread.owner=run.owner AND thread.kind='threads' AND thread.id=$2
-           AND thread.data->>'runToken'=run.id AND (thread.data->>'leaseUntil')::timestamptz>clock_timestamp()
-         ) RETURNING data
-       ), released AS (
-         UPDATE records SET data=data || '{"runToken":null,"leaseUntil":null}'::jsonb,updated_at=now()
-         WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'runToken'=$3 AND EXISTS (SELECT 1 FROM recovered) RETURNING data
-       ) SELECT data FROM recovered`,
+      "SELECT openmuse_thread_recovery($1,$2,$3,$4::jsonb,$5::jsonb) AS data",
       [owner, threadId, token, JSON.stringify(expectedEvents), JSON.stringify(patch)],
     );
-    return result.rows.length === 1;
+    return (result.rows[0]?.data as unknown) === true;
   }
   async expireThreadLease(owner: string, id: string, token: string): Promise<boolean> {
     const result = await this.write(
@@ -340,18 +396,10 @@ export class Store {
     run: { id: string } & Record<string, unknown>,
   ) {
     const result = await this.write(
-      `WITH saved AS (
-      INSERT INTO records(owner,kind,id,data) SELECT $1,'thread-runs',$4,$5::jsonb
-      WHERE EXISTS(SELECT 1 FROM records WHERE owner=$1 AND kind='threads' AND id=$2
-        AND data->>'runToken'=$3 AND (data->>'leaseUntil')::timestamptz>clock_timestamp())
-      ON CONFLICT DO NOTHING RETURNING data
-    ), released AS (
-      UPDATE records SET data=data || '{"runToken":null,"leaseUntil":null}'::jsonb,updated_at=now()
-      WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'runToken'=$3 AND EXISTS(SELECT 1 FROM saved) RETURNING data
-    ) SELECT data FROM saved`,
-      [owner, threadId, token, run.id, JSON.stringify(run)],
+      "SELECT openmuse_thread_publication($1,$2,$3,$4::jsonb) AS data",
+      [owner, threadId, token, JSON.stringify(run)],
     );
-    return result.rows.length === 1;
+    return (result.rows[0]?.data as unknown) === true;
   }
   async scan<T>(kind: string): Promise<{ owner: string; value: T }[]> {
     const result = await this.db.query(
@@ -428,6 +476,7 @@ export async function createStore(
   await database.query(
     "CREATE TABLE IF NOT EXISTS records(owner text NOT NULL,kind text NOT NULL,id text NOT NULL,data jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,kind,id))",
   );
+  await initializeDurableConversations((sql) => database.query(sql));
   // A transaction-scoped owner lock serializes concurrent saves. Locking the
   // matching row also makes a concurrent edit/forget observe a consistent fact.
   await database.query(

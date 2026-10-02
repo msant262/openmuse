@@ -75,7 +75,7 @@ test("agent API requires a session and reports the actual worker state", async (
   );
   const workspace = await read<AgentWorkspace>("");
   assert.equal(workspace.worker.running, false);
-  assert.equal(workspace.identity.name, "OpenMuse");
+  assert.equal(workspace.identity.name, "OkamiBot");
   assert.equal(workspace.identity.tone, "warm");
 });
 
@@ -209,6 +209,8 @@ test("memories can be edited and forgotten while identity changes persist", asyn
     tone: "concise",
     avatar: "lilac",
     showChatUpdates: false,
+    expectedRevision: (await server.agent.profiles.get("local-user")).revisions.global,
+    requestId: "identity-regression",
   });
   const snapshot = await read<AgentWorkspace>("");
   assert.equal(snapshot.identity.name, "Nova");

@@ -8,8 +8,16 @@ import {
   useRenderToolCall,
 } from "@copilotkit/react-native/headless";
 import { ArrowDown, ArrowUp, FileText, RotateCcw, Square, X } from "lucide-react-native";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import {
+  AppState,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -21,6 +29,11 @@ import {
   View,
 } from "react-native";
 import { z } from "zod";
+import type {
+  ConversationAcceptance,
+  ConversationReplay,
+  InteractionRequest,
+} from "../../../packages/domain/src/runtime";
 import { ArtifactCard } from "./agent-ui";
 import { useAgentWorkspace } from "./agent-workspace";
 import { AssistantResponse } from "./assistant-response";
@@ -30,9 +43,18 @@ import { BrowserThreadCard } from "./computer";
 import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
 import { runConversationTurn } from "./conversation-run";
 import { FileToolCard } from "./file-tool-card";
+import { InteractionCard } from "./interaction-card";
 import { confirmedJevSelection, displayJevUserMessage, latestJevPanelId } from "./jev-actions";
 import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
 import { MailToolCard } from "./mail-tool-card";
+import {
+  ComposerSubmission,
+  composerKeyIsSubmit,
+  conversationDeliveryError,
+  MessageOutbox,
+  type OutboxMessage,
+} from "./message-outbox";
+import { messageStorage } from "./message-storage";
 import { modelUsageUrl } from "./model-errors";
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
 import { type Selection, useMuseThread } from "./threads";
@@ -51,7 +73,9 @@ function useComputerToolCard(name: string) {
     description: "Show computer jobs and downloadable files",
     parameters: displayParameters,
     render: ({ result, status }) => (
-      <FileToolCard result={result} loading={status !== "complete"} />
+      <DurableToolResult result={result}>
+        <FileToolCard result={result} loading={status !== "complete"} />
+      </DurableToolResult>
     ),
   });
 }
@@ -92,7 +116,9 @@ export function WorkspaceTools() {
     description: "Follow the agent as it reads a webpage",
     parameters: displayParameters,
     render: ({ args, result, status }) => (
-      <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+      <DurableToolResult result={result}>
+        <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+      </DurableToolResult>
     ),
   });
   useRenderTool({
@@ -100,7 +126,9 @@ export function WorkspaceTools() {
     description: "Follow the agent browser and take control at any time",
     parameters: displayParameters,
     render: ({ args, result, status }) => (
-      <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+      <DurableToolResult result={result}>
+        <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+      </DurableToolResult>
     ),
   });
   useRenderTool({
@@ -108,7 +136,9 @@ export function WorkspaceTools() {
     description: "Follow the agent browser and take control at any time",
     parameters: displayParameters,
     render: ({ args, result, status }) => (
-      <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+      <DurableToolResult result={result}>
+        <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+      </DurableToolResult>
     ),
   });
   useRenderTool({
@@ -116,7 +146,9 @@ export function WorkspaceTools() {
     description: "Follow the agent browser and take control at any time",
     parameters: displayParameters,
     render: ({ args, result, status }) => (
-      <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+      <DurableToolResult result={result}>
+        <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+      </DurableToolResult>
     ),
   });
   useRenderTool({
@@ -124,7 +156,9 @@ export function WorkspaceTools() {
     description: "Follow the agent browser and take control at any time",
     parameters: displayParameters,
     render: ({ args, result, status }) => (
-      <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+      <DurableToolResult result={result}>
+        <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+      </DurableToolResult>
     ),
   });
   useRenderTool({
@@ -175,6 +209,22 @@ export function WorkspaceTools() {
   });
   return null;
 }
+function DurableToolResult({ result, children }: { result: unknown; children: ReactNode }) {
+  let value = result;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      value = null;
+    }
+  }
+  return z.object({ delegated: z.literal(true), taskId: z.string().min(1) }).safeParse(value)
+    .success ? (
+    <ServerToolCard name="Task" result={value} loading={false} />
+  ) : (
+    children
+  );
+}
 function ServerToolCard({
   name,
   result,
@@ -185,7 +235,7 @@ function ServerToolCard({
   loading: boolean;
 }) {
   const { data } = useAgentWorkspace();
-  const { navigate } = useWorkspace();
+  const { navigate, open } = useWorkspace();
   let value = result;
   if (typeof value === "string") {
     try {
@@ -205,6 +255,8 @@ function ServerToolCard({
     ? data?.tasks.find((item) => item.id === parsed.data.id || item.id === parsed.data.taskId)
     : undefined;
   if (task) return <TaskThreadCard task={task} />;
+  const taskId =
+    name === "Task" && parsed.success ? (parsed.data.taskId ?? parsed.data.id) : undefined;
   return (
     <Card style={{ padding: 16, gap: 10 }}>
       <Text style={s.heading}>{loading ? `Saving ${name.toLowerCase()}…` : name}</Text>
@@ -212,19 +264,25 @@ function ServerToolCard({
         <ErrorNotice error={parsed.data.error} />
       ) : (
         <Text style={s.muted}>
-          {loading ? "Waiting for the server." : "Open the workspace to see the saved result."}
+          {loading
+            ? "Waiting for the server."
+            : taskId
+              ? `Task ${taskId} is saved and will continue on the server.`
+              : "Open the workspace to see the saved result."}
         </Text>
       )}
       <Button
         small
         onPress={() =>
-          navigate(
-            name === "Goal" || name === "Tracking"
-              ? "goals"
-              : name === "Memory"
-                ? "apps"
-                : "activity",
-          )
+          taskId
+            ? open({ type: "task", taskId })
+            : navigate(
+                name === "Goal" || name === "Tracking"
+                  ? "goals"
+                  : name === "Memory"
+                    ? "apps"
+                    : "activity",
+              )
         }
       >
         View {name.toLowerCase()}
@@ -243,9 +301,10 @@ export function ChatScreen({
 }) {
   const { api, workspace: w, refresh, navigate } = useWorkspace();
   const { data: agentWorkspace, refresh: refreshAgent } = useAgentWorkspace();
-  const { enabled: richThreads, mainId, claimPrompt } = useMuseThread();
+  const { enabled: richThreads, mainId, claimPrompt, markAccepted } = useMuseThread();
   const selection = thread || { id: "local", existing: false };
   const threadId = richThreads ? selection.id : "local-main";
+  const durableChat = w.runtime.threadStorage === "local";
   const agentId = `openmuse-${threadId}`;
   const { agent, isReady } = useAgent({ agentId, runtimeAgentId: "default", threadId });
   const { copilotkit } = useCopilotKit();
@@ -260,11 +319,22 @@ export function ChatScreen({
   const [picking, setPicking] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
   const list = useRef<ScrollView>(null);
-  const [queue] = useState(() => new ConversationQueue());
+  const [queue] = useState(() =>
+    durableChat
+      ? new MessageOutbox(messageStorage, `${api.identityKey}\n${threadId}`, threadId)
+      : new ConversationQueue(),
+  );
+  const [questions, setQuestions] = useState<InteractionRequest[]>([]);
+  const draftRevision = useRef(0);
+  const [composerSubmission] = useState(() => new ComposerSubmission());
   const choiceCompletions = useRef(
     new Map<string, { resolve: () => void; reject: (error: unknown) => void }>(),
   );
-  const outbox = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
+  const outbox = useSyncExternalStore<{
+    pending: readonly QueuedMessage[];
+    running: boolean;
+    paused: boolean;
+  }>(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
   const followLatest = useRef(true);
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const runLock = useRef(false);
@@ -272,10 +342,45 @@ export function ChatScreen({
   const [historyError, setHistoryError] = useState("");
   const [historyAttempt, setHistoryAttempt] = useState(0);
   useEffect(() => {
+    if (!(queue instanceof MessageOutbox)) return;
+    let current = true;
+    void queue
+      .open()
+      .then(() => {
+        if (!current) return;
+        const saved = queue.getSnapshot();
+        if (draftRevision.current === 0) {
+          setDraft(saved.draft.text);
+          setAttachments(saved.draft.attachmentIds);
+        }
+        if (!agent.messages.length && saved.messages.length)
+          agent.setMessages(saved.messages as Message[]);
+        const cards = new Map<string, InteractionRequest>();
+        for (const event of saved.events)
+          if (
+            event.kind === "interaction" &&
+            event.payload &&
+            typeof event.payload === "object" &&
+            "id" in event.payload
+          ) {
+            const request = event.payload as InteractionRequest;
+            if (request.kind === "question") cards.set(request.id, request);
+          }
+        setQuestions([...cards.values()]);
+        setLoaded(true);
+      })
+      .catch((cause) => {
+        if (current) setSaveError(String(cause));
+      });
+    return () => {
+      current = false;
+    };
+  }, [agent, queue]);
+  useEffect(() => {
     if (!isReady) return;
     let active = true;
     setHistoryError("");
-    setLoaded(false);
+    setLoaded(queue instanceof MessageOutbox && queue.getSnapshot().loaded);
     const replay = agent.subscribe({
       onMessagesChanged: ({ messages }) => {
         if (active && richThreads && messages.length) setLoaded(true);
@@ -283,13 +388,34 @@ export function ChatScreen({
     });
     async function hydrate() {
       try {
+        if (queue instanceof MessageOutbox) {
+          await queue.open();
+          const saved = queue.getSnapshot();
+          if (active && draftRevision.current === 0) {
+            setDraft(saved.draft.text);
+            setAttachments(saved.draft.attachmentIds);
+          }
+          if (active && !agent.messages.length && saved.messages.length)
+            agent.setMessages(saved.messages as Message[]);
+        }
         if (richThreads) {
-          if (selection.existing)
-            await runConversationTurn(
-              agentId,
-              () => copilotkit.connectAgent({ agent }),
-              (onError) => copilotkit.subscribe({ onError }),
-            );
+          if (
+            selection.existing ||
+            (queue instanceof MessageOutbox &&
+              (queue.getSnapshot().events.length ||
+                queue.getSnapshot().pending.some((message) => message.attempts > 0)))
+          ) {
+            runLock.current = true;
+            try {
+              await runConversationTurn(
+                agentId,
+                () => copilotkit.connectAgent({ agent }),
+                (onError) => copilotkit.subscribe({ onError }),
+              );
+            } finally {
+              runLock.current = false;
+            }
+          }
         } else {
           const { messages } = await api.request<{ messages: Message[] }>("/api/conversation");
           if (active) agent.setMessages(messages);
@@ -297,7 +423,7 @@ export function ChatScreen({
         if (active) setLoaded(true);
       } catch (e) {
         if (active) {
-          setLoaded(false);
+          setLoaded(queue instanceof MessageOutbox && queue.getSnapshot().loaded);
           setHistoryError(
             `Could not load conversation. Your saved messages have not been changed. ${e instanceof Error ? e.message : String(e)}`,
           );
@@ -310,7 +436,90 @@ export function ChatScreen({
       replay.unsubscribe();
       if (richThreads) void agent.detachActiveRun().catch(() => {});
     };
-  }, [agent, agentId, api, copilotkit, isReady, historyAttempt, richThreads, selection.existing]);
+  }, [
+    agent,
+    agentId,
+    api,
+    copilotkit,
+    isReady,
+    historyAttempt,
+    richThreads,
+    selection.existing,
+    queue,
+  ]);
+  useEffect(() => {
+    if (!(queue instanceof MessageOutbox) || !queue.getSnapshot().loaded) return;
+    void queue.saveDraft(draft, attachments).catch((cause) => setSaveError(String(cause)));
+  }, [draft, attachments, queue, loaded]);
+  useEffect(() => {
+    if (!(queue instanceof MessageOutbox)) return;
+    const subscription = agent.subscribe({
+      onMessagesChanged: ({ messages }) => {
+        if (queue.getSnapshot().loaded)
+          void queue.saveMessages(messages).catch((cause) => setSaveError(String(cause)));
+      },
+    });
+    return () => subscription.unsubscribe();
+  }, [agent, queue]);
+  const replayLock = useRef(false);
+  const syncReplay = useCallback(async () => {
+    if (!(queue instanceof MessageOutbox) || replayLock.current || !loaded || !isReady) return;
+    replayLock.current = true;
+    try {
+      let replay = await api.request<ConversationReplay>(
+        `/api/conversations/${threadId}/events?cursor=${queue.getSnapshot().cursor}`,
+      );
+      if (replay.snapshotRequired) {
+        await queue.applyReplay(replay);
+        replay = await api.request<ConversationReplay>(
+          `/api/conversations/${threadId}/events?cursor=0`,
+        );
+      }
+      await queue.applyReplay(replay);
+      queue.resume();
+      setHistoryError("");
+      const cards = await api.request<{ requests: InteractionRequest[] }>(
+        `/api/conversations/${threadId}/interactions`,
+      );
+      setQuestions(cards.requests);
+      if (replay.events.length && !runLock.current && !agent.isRunning) {
+        runLock.current = true;
+        // Response streaming may wait for a stored message to retry. Keep journal
+        // synchronization available so its durable failure disposition is visible meanwhile.
+        void copilotkit
+          .connectAgent({ agent })
+          .catch((cause) => setHistoryError(cause instanceof Error ? cause.message : String(cause)))
+          .finally(() => {
+            runLock.current = false;
+          });
+      }
+    } finally {
+      replayLock.current = false;
+    }
+  }, [agent, api, copilotkit, isReady, loaded, queue, threadId]);
+  useEffect(() => {
+    if (!durableChat || !active) return;
+    const poll = () => {
+      if (AppState.currentState !== "background" && AppState.currentState !== "inactive")
+        void syncReplay().catch((cause) => setHistoryError(String(cause)));
+    };
+    poll();
+    const timer = setInterval(poll, 1000);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        queue.resume();
+        poll();
+      }
+    });
+    if (Platform.OS === "web" && typeof window !== "undefined")
+      window.addEventListener("online", poll);
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+      if (Platform.OS === "web" && typeof window !== "undefined")
+        window.removeEventListener("online", poll);
+    };
+  }, [active, durableChat, queue, syncReplay]);
   const seenRoutinePost = useRef("");
   const routinePost = agentWorkspace?.notifications.find((notice) =>
     agentWorkspace.tasks.some(
@@ -401,7 +610,16 @@ export function ChatScreen({
   const runQueued = useCallback(
     async (message: QueuedMessage) => {
       try {
-        await run(message);
+        if (queue instanceof MessageOutbox) {
+          const value = message as OutboxMessage;
+          const { id, attempts, ...envelope } = value;
+          await api.request<ConversationAcceptance>(`/api/conversations/${threadId}/messages`, {
+            ...envelope,
+            clientMessageId: id,
+          });
+          markAccepted(threadId);
+          void syncReplay().catch((cause) => setError(String(cause)));
+        } else await run(message);
         choiceCompletions.current.get(message.id)?.resolve();
       } catch (error) {
         choiceCompletions.current.get(message.id)?.reject(error);
@@ -410,15 +628,26 @@ export function ChatScreen({
         choiceCompletions.current.delete(message.id);
       }
     },
-    [run],
+    [api, queue, run, syncReplay, threadId, markAccepted],
   );
   const flush = useCallback(() => {
-    if (!loaded || !isReady || runLock.current || agent.isRunning) return;
+    if (
+      !loaded ||
+      !isReady ||
+      (!(queue instanceof MessageOutbox) && (runLock.current || agent.isRunning))
+    )
+      return;
     void queue.flush(runQueued).catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [agent, isReady, loaded, queue, runQueued]);
   const enqueue = useCallback(
-    (text: string) => {
-      queue.enqueue({ id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text });
+    async (text: string, attachmentIds: string[] = [], clearDraft = false) => {
+      const message = {
+        id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        text,
+        attachmentIds,
+        clearDraft,
+      };
+      await queue.enqueue(message);
       followLatest.current = true;
       setAwayFromLatest(false);
       flush();
@@ -439,7 +668,12 @@ export function ChatScreen({
       const completion = new Promise<void>((resolve, reject) => {
         choiceCompletions.current.set(id, { resolve, reject });
       });
-      queue.enqueue({ id, text });
+      void Promise.resolve(queue.enqueue({ id, text }))
+        .then(flush)
+        .catch((cause) => {
+          choiceCompletions.current.get(id)?.reject(cause);
+          choiceCompletions.current.delete(id);
+        });
       followLatest.current = true;
       setAwayFromLatest(false);
       flush();
@@ -448,11 +682,12 @@ export function ChatScreen({
     [agent.isRunning, flush, isReady, loaded, queue, saveError],
   );
   useEffect(() => {
-    if (!busy && !agent.isRunning && outbox.pending.length) flush();
-  }, [busy, agent.isRunning, outbox.pending.length, flush]);
+    if ((queue instanceof MessageOutbox || (!busy && !agent.isRunning)) && outbox.pending.length)
+      flush();
+  }, [busy, agent.isRunning, outbox.pending.length, outbox.paused, flush, queue]);
   useEffect(() => {
     if (active && prompt && isReady && loaded && claimPrompt(prompt.id) && prompt.text.trim())
-      enqueue(prompt.text);
+      void enqueue(prompt.text).catch((cause) => setSaveError(String(cause)));
   }, [active, prompt, isReady, loaded, enqueue, claimPrompt]);
   useEffect(() => {
     const subscription = copilotkit.subscribe({
@@ -473,23 +708,45 @@ export function ChatScreen({
     }
   }
   function send() {
+    return composerSubmission.submit(sendDraft);
+  }
+  async function sendDraft() {
     const text = draft.trim();
-    if (!text || !isReady || !loaded) return;
+    const submittedRevision = draftRevision.current;
+    if (
+      !text ||
+      (queue instanceof MessageOutbox ? !queue.getSnapshot().loaded : !isReady || !loaded)
+    )
+      return;
     // A new submission can continue after Stop; held follow-ups still need explicit resume.
-    if (!busy && !agent.isRunning && !saveError && !queue.getSnapshot().pending.length)
+    if (
+      queue instanceof MessageOutbox ||
+      (!busy && !agent.isRunning && !saveError && !queue.getSnapshot().pending.length)
+    )
       queue.resume();
     setShowResults(false);
     const files = w.files.filter((f) => attachments.includes(f.id));
-    enqueue(
-      text +
-        (files.length
-          ? `\n\nAttached documents: ${files.map((f) => `${f.name} (artifact ID: ${f.id})`).join(", ")}`
-          : ""),
-    );
-    setDraft("");
-    setInputHeight(44);
-    setAttachments([]);
-    setPicking(false);
+    try {
+      await enqueue(
+        text +
+          (files.length && !(queue instanceof MessageOutbox)
+            ? `\n\nAttached documents: ${files.map((f) => `${f.name} (artifact ID: ${f.id})`).join(", ")}`
+            : ""),
+        queue instanceof MessageOutbox ? attachments : [],
+        true,
+      );
+    } catch (cause) {
+      setSaveError(String(cause));
+      return;
+    }
+    if (draftRevision.current === submittedRevision) {
+      setDraft("");
+      setInputHeight(44);
+      setAttachments([]);
+      setPicking(false);
+      draftRevision.current++;
+    }
+    setSaveError("");
   }
   const messages = agent.messages || [];
   const latestPanelId = latestJevPanelId(messages, threadId);
@@ -521,6 +778,9 @@ export function ChatScreen({
         }}
         keyboardShouldPersistTaps="handled"
       >
+        {queue instanceof MessageOutbox && (
+          <ErrorNotice error={conversationDeliveryError(queue.getSnapshot().events)} />
+        )}
         {!!historyError && (
           <>
             <ErrorNotice error={historyError} />
@@ -709,6 +969,16 @@ export function ChatScreen({
           </>
         )}
         {(!richThreads || selection.id === mainId) && <BackgroundUpdates />}
+        {questions.map((request) => (
+          <InteractionCard
+            key={request.id}
+            request={request}
+            onAnswered={() => {
+              void refreshAgent();
+              void syncReplay();
+            }}
+          />
+        ))}
         {(busy || agent.isRunning) && (
           <View
             accessibilityLabel="Agent is working"
@@ -758,7 +1028,11 @@ export function ChatScreen({
             icon={RotateCcw}
             disabled={busy || agent.isRunning || !loaded || !isReady}
             onPress={() => {
-              void run()
+              void (
+                queue instanceof MessageOutbox
+                  ? enqueue("Continue the previous reply using its saved task receipts.")
+                  : run()
+              )
                 .then(() => {
                   if (!queue.getSnapshot().paused) flush();
                 })
@@ -799,7 +1073,10 @@ export function ChatScreen({
         {!!outbox.pending.length && (
           <View style={{ padding: 12, gap: 6 }}>
             <Text style={s.small}>
-              {outbox.paused ? "Messages on hold" : "Up next"} · Keep the app open until sent
+              {outbox.paused ? "Messages waiting to retry" : "Sending"} ·{" "}
+              {queue instanceof MessageOutbox
+                ? "Saved on this device"
+                : "Keep the app open until sent"}
             </Text>
             {outbox.pending.map((message) => (
               <View key={message.id} style={[s.row, { gap: 8 }]}>
@@ -811,7 +1088,9 @@ export function ChatScreen({
                   accessibilityLabel={`Remove queued message: ${displayJevUserMessage(message.text, messages)}`}
                   hitSlop={10}
                   onPress={() => {
-                    queue.remove(message.id);
+                    void Promise.resolve(queue.remove(message.id)).catch((cause) =>
+                      setSaveError(String(cause)),
+                    );
                     choiceCompletions.current
                       .get(message.id)
                       ?.reject(new Error("Choice removed from queue."));
@@ -847,13 +1126,14 @@ export function ChatScreen({
                     key={f.id}
                     checked={attachments.includes(f.id)}
                     label={f.name}
-                    onPress={() =>
+                    onPress={() => {
+                      draftRevision.current++;
                       setAttachments(
                         attachments.includes(f.id)
                           ? attachments.filter((id) => id !== f.id)
                           : [...attachments, f.id],
-                      )
-                    }
+                      );
+                    }}
                   />
                 ))
               ) : (
@@ -892,7 +1172,10 @@ export function ChatScreen({
                     key={f.id}
                     accessibilityRole="button"
                     accessibilityLabel={`Remove attachment: ${f.name}`}
-                    onPress={() => setAttachments((ids) => ids.filter((id) => id !== f.id))}
+                    onPress={() => {
+                      draftRevision.current++;
+                      setAttachments((ids) => ids.filter((id) => id !== f.id));
+                    }}
                     style={[
                       s.row,
                       {
@@ -937,9 +1220,12 @@ export function ChatScreen({
               </Text>
             </Pressable>
             <TextInput
-              accessibilityLabel="Message OpenMuse"
+              accessibilityLabel="Message OkamiBot"
               value={draft}
-              onChangeText={setDraft}
+              onChangeText={(value) => {
+                draftRevision.current++;
+                setDraft(value);
+              }}
               onContentSizeChange={(event) =>
                 setInputHeight(Math.max(44, Math.min(140, event.nativeEvent.contentSize.height)))
               }
@@ -974,22 +1260,32 @@ export function ChatScreen({
               onKeyPress={
                 Platform.OS === "web"
                   ? (event) => {
-                      if (
-                        event.nativeEvent.key === "Enter" &&
-                        !("shiftKey" in event.nativeEvent && event.nativeEvent.shiftKey)
-                      ) {
+                      if (composerKeyIsSubmit(event.nativeEvent)) {
                         event.preventDefault();
-                        send();
+                        void send();
                       }
                     }
                   : undefined
               }
             />
+            {replying && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Stop reply"
+                onPress={() => void stop()}
+                style={{ width: 40, height: 44, alignItems: "center", justifyContent: "center" }}
+              >
+                <Square size={18} fill={colors.text} strokeWidth={0} />
+              </Pressable>
+            )}
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={replying ? "Stop reply" : "Send message"}
-              disabled={!replying && (!draft.trim() || !loaded || !isReady)}
-              onPress={replying ? () => void stop() : send}
+              accessibilityLabel="Send message"
+              disabled={
+                !draft.trim() ||
+                (queue instanceof MessageOutbox ? !queue.getSnapshot().loaded : !loaded || !isReady)
+              }
+              onPress={() => void send()}
               style={({ pressed }) => ({
                 width: 44,
                 height: 44,
@@ -1000,15 +1296,13 @@ export function ChatScreen({
                 transform: [{ scale: pressed ? 0.94 : 1 }],
               })}
             >
-              {replying ? (
-                <Square size={18} fill={colors.text} strokeWidth={0} />
-              ) : (
+              {
                 <ArrowUp
                   size={25}
                   strokeWidth={1.8}
                   color={draft.trim() ? colors.text : "#9CB5C5"}
                 />
-              )}
+              }
             </Pressable>
           </View>
         </View>

@@ -16,6 +16,7 @@ import {
   monitorInputSchema,
   type RunEvent,
 } from "../../../../packages/domain/src/agent.ts";
+import { PRODUCT_NAME } from "../../../../packages/domain/src/brand.ts";
 import type {
   ActionProposal,
   Artifact,
@@ -25,6 +26,7 @@ import type {
 } from "../../../../packages/domain/src/index.ts";
 import { ActionLog } from "../action-log.ts";
 import type { ActionService } from "../actions.ts";
+import { AgentProfile } from "../agent-profile.ts";
 import { reconcileComputerAudit } from "../audited-computer.ts";
 import type { BrowserService } from "../browser.ts";
 import { ComputerService } from "../computer.ts";
@@ -33,6 +35,7 @@ import type { Config } from "../config.ts";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
+import { InteractionRequests } from "../interaction-requests.ts";
 import { backgroundFailure } from "../log.ts";
 import { McpService } from "../mcp.ts";
 import { MediaService } from "../media-tools.ts";
@@ -50,6 +53,8 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const date = () => new Date().toISOString();
 const terminal = new Set(["succeeded", "failed", "cancelled"]);
 export class AgentService {
+  readonly profiles: AgentProfile;
+  readonly interactions: InteractionRequests;
   readonly worker: TaskWorker;
   readonly routines: RoutinesService;
   readonly memory: MemoryService;
@@ -134,6 +139,8 @@ export class AgentService {
     readonly computer: ComputerBackend = new ComputerService(db, config),
     readonly media: MediaService = new MediaService(db, files, config),
   ) {
+    this.profiles = new AgentProfile(db);
+    this.interactions = new InteractionRequests(db);
     this.routines = new RoutinesService(
       db,
       (owner, input, key) => this.createTask(owner, input, key),
@@ -227,7 +234,7 @@ export class AgentService {
   async ensure(owner: string) {
     await this.db.insertIfAbsent(owner, "agent-settings", {
       id: "identity",
-      name: "OpenMuse",
+      name: PRODUCT_NAME,
       tone: "warm",
     });
   }
@@ -245,6 +252,7 @@ export class AgentService {
         this.db.get<AgentIdentity>(owner, "agent-settings", "identity"),
       ]);
     const heartbeat = await this.db.get<{ lastTickAt: string }>("system", "worker-status", "tasks");
+    const profile = await this.profiles.get(owner);
     return {
       tasks,
       goals,
@@ -253,7 +261,12 @@ export class AgentService {
       memories,
       artifacts,
       notifications,
-      identity: identity ?? { name: "OpenMuse", tone: "warm" },
+      identity: {
+        ...(identity ?? { name: PRODUCT_NAME, tone: "warm" }),
+        name: profile.fields.assistantName,
+        tone: profile.fields.tone,
+        profile,
+      },
       worker: {
         running:
           this.worker.running ||
@@ -277,6 +290,15 @@ export class AgentService {
     );
     return {
       task,
+      interactions: await Promise.all(
+        (
+          await this.db.list<
+            import("../../../../packages/domain/src/runtime.ts").InteractionRequest
+          >(owner, "interaction-requests")
+        )
+          .filter((request) => request.taskId === id)
+          .map((request) => this.interactions.status(owner, request.id)),
+      ),
       files: files.map((file) => this.files.signed(owner, file)),
       browsers: browsers.map((browser) => this.browser.decorate(owner, browser)),
       events: (await this.db.list<RunEvent>(owner, "run-events"))
@@ -319,6 +341,8 @@ export class AgentService {
       prompt: input.prompt,
       kind: input.kind,
       goalId: input.goalId,
+      originThreadId: input.originThreadId,
+      originMessageId: input.originMessageId,
       status: held ? "paused" : "queued",
       plan: titles.map((title, i) => ({ id: String(i), title, status: "pending" })),
       evidence: [],
@@ -424,21 +448,33 @@ export class AgentService {
     const task = await this.getTask(owner, id);
     if (task.status !== "waiting_input")
       throw new AppError("This task is not waiting for input", 409);
-    const next = await this.db.compareAndSwap<AgentTask>(
+    const request = await this.interactions.forTask(owner, task);
+    let typedAnswer: Record<string, string>;
+    if (request.fieldBindings) {
+      const names = Object.values(request.fieldBindings).map((binding) => binding.name);
+      if (Object.keys(fields ?? {}).some((key) => !names.includes(key)))
+        throw new AppError("Unknown document field", 422);
+      typedAnswer = Object.fromEntries(
+        Object.entries(request.fieldBindings).flatMap(([key, binding]) =>
+          fields?.[binding.name] === undefined ? [] : [[key, String(fields[binding.name])]],
+        ),
+      );
+    } else {
+      if (request.schema.fields.length !== 1 || request.schema.fields[0].type !== "text")
+        throw new AppError("Answer this task's typed question card", 409);
+      typedAnswer = { [request.schema.fields[0].id]: answer };
+    }
+    await this.interactions.answer(
       owner,
-      "tasks",
-      id,
-      { status: "waiting_input" },
+      request.id,
       {
-        status: "queued",
-        question: null,
-        input: { ...task.input, ...(fields ? { fields } : {}) },
-        state: { ...task.state, answer },
-        updatedAt: date(),
+        clientResponseId: `legacy:${hash(`${id}:${task.attempts}:${answer}:${JSON.stringify(fields ?? {})}`)}`,
+        revision: request.revision,
+        answer: typedAnswer,
       },
+      { fields, text: answer },
     );
-    if (!next) throw new AppError("Task changed; refresh and try again", 409);
-    return next;
+    return this.getTask(owner, id);
   }
   async createGoal(owner: string, raw: unknown, id?: string) {
     const input = goalInputSchema.parse(raw);
@@ -946,6 +982,17 @@ export class AgentService {
   private async publishOutcome(owner: string, saved: AgentTask) {
     const task = await this.getTask(owner, saved.id);
     if (task.status === "succeeded") {
+      if (task.originThreadId && typeof task.input.routineId !== "string") {
+        await this.db.insertIfAbsent(owner, "thread-publications", {
+          id: `task:${task.id}`,
+          threadId: task.originThreadId,
+          taskId: task.id,
+          title: task.title,
+          text: task.result ?? "Task completed",
+          status: this.localThreads ? "pending" : "unsupported_cloud_mode",
+        });
+        await this.flushPublications();
+      }
       if (typeof task.input.routineId === "string") {
         await this.db.insertIfAbsent(owner, "conversation-settings", {
           id: "main",
@@ -1003,6 +1050,7 @@ export class AgentService {
         `task-error:${task.id}:${task.attempts}`,
       );
     } else if (task.status === "waiting_input") {
+      await this.interactions.forTask(owner, task);
       await this.notify(
         owner,
         "Your details are needed",

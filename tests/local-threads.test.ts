@@ -10,9 +10,12 @@ import { lastValueFrom, Observable, of, toArray } from "rxjs";
 import { createApp } from "../apps/server/src/app.ts";
 import { BrowserAssets } from "../apps/server/src/browser-assets.ts";
 import type { Config } from "../apps/server/src/config.ts";
+import { ConversationInbox, messageContentHash } from "../apps/server/src/conversation-inbox.ts";
 import { createStore, type Store } from "../apps/server/src/db.ts";
+import { TaskWorker } from "../apps/server/src/engine/worker.ts";
 import { browserImageMessages } from "../apps/server/src/providers/browser-images.ts";
 import { LocalThreads } from "../apps/server/src/threads.ts";
+import type { AgentTask } from "../packages/domain/src/agent.ts";
 
 const input = (threadId = "rich-thread", runId = "run-1"): RunAgentInput => ({
   threadId,
@@ -24,6 +27,409 @@ const input = (threadId = "rich-thread", runId = "run-1"): RunAgentInput => ({
   forwardedProps: {},
 });
 const collect = (events: Observable<BaseEvent>) => lastValueFrom(events.pipe(toArray()));
+async function eventually(check: () => Promise<boolean>) {
+  const until = Date.now() + 5000;
+  while (!(await check())) {
+    if (Date.now() > until) throw new Error("Condition was not reached");
+    await new Promise((resolve) => setTimeout(resolve, 15));
+  }
+}
+
+test("failed initial run write retains accepted identity and durable failure, then healthy restart dispatches once", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "inbox-pre-run-fault-"));
+  let db = await createStore({ dataDir: join(directory, "db") });
+  let threads = new LocalThreads(db),
+    inbox = new ConversationInbox(db);
+  let modelRuns = 0;
+  class EffectAgent extends AbstractAgent {
+    run(request: RunAgentInput) {
+      modelRuns++;
+      return new Observable<BaseEvent>((subscriber) => {
+        void db
+          .insertIfAbsent("owner", "tasks", {
+            id: `task:${request.runId}`,
+            prompt: "Requested work",
+          })
+          .then(() => {
+            subscriber.next({
+              type: EventType.RUN_STARTED,
+              threadId: request.threadId,
+              runId: request.runId,
+            });
+            subscriber.next({
+              type: EventType.RUN_FINISHED,
+              threadId: request.threadId,
+              runId: request.runId,
+            });
+            subscriber.complete();
+          })
+          .catch((error) => subscriber.error(error));
+      });
+    }
+  }
+  try {
+    const put = db.put.bind(db);
+    let rejectFirstRun = true;
+    db.put = (async (owner, kind, value) => {
+      if (kind === "thread-runs" && rejectFirstRun) {
+        rejectFirstRun = false;
+        throw new Error("Confirmed initial write failure");
+      }
+      return put(owner, kind, value);
+    }) as Store["put"];
+    threads.configureInbox(inbox, () => new EffectAgent());
+    const body = {
+      threadId: "chat",
+      clientMessageId: "original",
+      text: "Start my requested work",
+      attachmentIds: [],
+    };
+    const envelope = { ...body, contentHash: messageContentHash(body) };
+    const accepted = await inbox.acceptMessage("owner", envelope);
+    await eventually(
+      async () =>
+        !rejectFirstRun && (await inbox.get("owner", "chat", "original"))?.status !== "dispatching",
+    );
+    assert.equal((await inbox.get("owner", "chat", "original"))?.status, "accepted");
+    assert.equal(modelRuns, 0);
+    assert.equal(
+      (await db.get<{ runToken: string | null }>("owner", "threads", "chat"))?.runToken,
+      null,
+    );
+    assert.equal((await db.list("owner", "thread-runs")).length, 0);
+    const failure = (await inbox.eventsAfter("owner", "chat", 0)).events.find(
+      (event) =>
+        event.kind === "agui" &&
+        (event.payload as { name?: string }).name === "conversation_delivery_error",
+    );
+    assert.ok(failure, "accepted messages expose a durable visible pre-run failure");
+    assert.equal(failure.runId, accepted.runId);
+    assert.equal((failure.payload as { value: { retryable: boolean } }).value.retryable, true);
+    await threads.close();
+    await db.close();
+    db = await createStore({ dataDir: join(directory, "db") });
+    inbox = new ConversationInbox(db);
+    threads = new LocalThreads(db);
+    threads.configureInbox(inbox, () => new EffectAgent());
+    assert.deepEqual(await inbox.acceptMessage("owner", envelope), {
+      ...accepted,
+      duplicate: true,
+    });
+    await threads.initializeInbox();
+    await eventually(
+      async () => (await inbox.get("owner", "chat", "original"))?.status === "finished",
+    );
+    assert.equal(modelRuns, 1);
+    assert.equal((await db.list("owner", "tasks")).length, 1);
+    const runs = await db.list<{ runId: string }>("owner", "thread-runs");
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].runId, accepted.runId);
+    await inbox.acceptMessage("owner", envelope);
+    await threads.drainInbox();
+    assert.equal(modelRuns, 1);
+  } finally {
+    await threads.close().catch(() => {});
+    await db.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an uncertain initial run write with a persisted run is never automatically dispatched again", async () => {
+  const db = await createStore();
+  const inbox = new ConversationInbox(db),
+    threads = new LocalThreads(db, 60);
+  let modelRuns = 0;
+  try {
+    const put = db.put.bind(db);
+    let rejectFirstRun = true;
+    db.put = (async (owner, kind, value) => {
+      const saved = await put(owner, kind, value);
+      if (kind === "thread-runs" && rejectFirstRun) {
+        rejectFirstRun = false;
+        throw new Error("Run write committed but acknowledgement was lost");
+      }
+      return saved;
+    }) as Store["put"];
+    threads.configureInbox(
+      inbox,
+      () =>
+        new (class extends AbstractAgent {
+          run(request: RunAgentInput) {
+            modelRuns++;
+            return of({
+              type: EventType.RUN_FINISHED,
+              threadId: request.threadId,
+              runId: request.runId,
+            });
+          }
+        })(),
+    );
+    const body = {
+      threadId: "chat",
+      clientMessageId: "uncertain",
+      text: "Requested work",
+      attachmentIds: [],
+    };
+    const envelope = { ...body, contentHash: messageContentHash(body) };
+    const accepted = await inbox.acceptMessage("owner", envelope);
+    await eventually(
+      async () => (await inbox.get("owner", "chat", "uncertain"))?.status === "interrupted",
+    );
+    const failure = (await inbox.eventsAfter("owner", "chat", 0)).events.find(
+      (event) =>
+        event.kind === "agui" &&
+        (event.payload as { name?: string }).name === "conversation_delivery_error",
+    );
+    assert.equal((failure?.payload as { value?: { retryable: boolean } })?.value?.retryable, false);
+    assert.deepEqual(await inbox.acceptMessage("owner", envelope), {
+      ...accepted,
+      duplicate: true,
+    });
+    await threads.drainInbox();
+    assert.equal(modelRuns, 0);
+    assert.equal((await db.list("owner", "thread-runs")).length, 1);
+  } finally {
+    await threads.close().catch(() => {});
+    await db.close();
+  }
+});
+
+test("durable inbox admits a second turn during a long reply and stopping/disconnecting chat leaves task actor running", async () => {
+  const db = await createStore();
+  const inbox = new ConversationInbox(db);
+  const threads = new LocalThreads(db);
+  let release!: () => void, taskEntered!: () => void;
+  const taskGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    taskEntered = resolve;
+  });
+  let aborted = false;
+  const worker = new TaskWorker(db, async (_owner, _task, ctx) => {
+    ctx.signal.addEventListener("abort", () => {
+      aborted = true;
+    });
+    taskEntered();
+    await taskGate;
+    await ctx.guard();
+    return { status: "succeeded", result: "Evidence verified" };
+  });
+  const fixture: AgentTask = {
+    id: "actor",
+    title: "Long job",
+    prompt: "Complete independently",
+    kind: "agent",
+    status: "queued",
+    plan: [],
+    evidence: [],
+    input: {},
+    state: {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    attempts: 0,
+    artifactIds: [],
+    leaseId: null,
+    leaseUntil: null,
+  };
+  await db.put("owner", "tasks", fixture);
+  const taskRun = worker.tick();
+  await entered;
+  const executions: string[] = [];
+  class ChatAgent extends AbstractAgent {
+    run(request: RunAgentInput) {
+      const message = request.messages.filter((item) => item.role === "user").at(-1)!;
+      executions.push(message.id);
+      return new Observable<BaseEvent>((subscriber) => {
+        subscriber.next({
+          type: EventType.RUN_STARTED,
+          threadId: request.threadId,
+          runId: request.runId,
+        });
+        if (message.id === "first") {
+          const timer = setTimeout(() => subscriber.complete(), 5000);
+          return () => clearTimeout(timer);
+        }
+        subscriber.next({
+          type: EventType.RUN_FINISHED,
+          threadId: request.threadId,
+          runId: request.runId,
+        });
+        subscriber.complete();
+      });
+    }
+  }
+  threads.configureInbox(inbox, () => new ChatAgent());
+  await threads.initializeInbox();
+  try {
+    await threads.ensure("owner", "chat");
+    const first = {
+      threadId: "chat",
+      clientMessageId: "first",
+      text: "Long reply",
+      attachmentIds: [],
+    };
+    await inbox.acceptMessage("owner", { ...first, contentHash: messageContentHash(first) });
+    await eventually(async () => executions.length === 1);
+    const viewer = threads
+      .withOwner("owner", () => threads.connect({ threadId: "chat" }))
+      .subscribe();
+    const second = {
+      threadId: "chat",
+      clientMessageId: "second",
+      text: "New question",
+      attachmentIds: [],
+    };
+    const accepted = await inbox.acceptMessage("owner", {
+      ...second,
+      contentHash: messageContentHash(second),
+    });
+    assert.ok(accepted.runId);
+    assert.equal((await inbox.pending()).length, 2);
+    viewer.unsubscribe();
+    assert.equal(await threads.withOwner("owner", () => threads.stop({ threadId: "chat" })), true);
+    await eventually(
+      async () => (await inbox.get("owner", "chat", "second"))?.status === "finished",
+    );
+    assert.equal(aborted, false);
+    assert.equal((await db.get<AgentTask>("owner", "tasks", "actor"))?.status, "running");
+    release();
+    await taskRun;
+    assert.equal((await db.get<AgentTask>("owner", "tasks", "actor"))?.status, "succeeded");
+    assert.deepEqual(executions, ["first", "second"]);
+  } finally {
+    release();
+    await taskRun;
+    await threads.close();
+    await worker.stop();
+    await db.close();
+  }
+});
+
+test("server startup drains accepted messages without a phone and historical errors cannot poison the next turn", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "inbox-runtime-restart-"));
+  let db = await createStore({ dataDir: join(dir, "db") });
+  let threads: LocalThreads | undefined;
+  try {
+    const body = {
+      threadId: "chat",
+      clientMessageId: "queued",
+      text: "Offline message",
+      attachmentIds: [],
+    };
+    await new ConversationInbox(db).acceptMessage("owner", {
+      ...body,
+      contentHash: messageContentHash(body),
+    });
+    await db.close();
+    db = await createStore({ dataDir: join(dir, "db") });
+    const inbox = new ConversationInbox(db);
+    threads = new LocalThreads(db);
+    let executions = 0;
+    threads.configureInbox(inbox, () => {
+      executions++;
+      return new (class extends AbstractAgent {
+        run(request: RunAgentInput) {
+          return of(
+            ...([
+              { type: EventType.RUN_STARTED, threadId: request.threadId, runId: request.runId },
+              { type: EventType.RUN_ERROR, message: "Historical failure" },
+            ] as BaseEvent[]),
+          );
+        }
+      })();
+    });
+    await threads.initializeInbox();
+    await eventually(
+      async () => (await inbox.get("owner", "chat", "queued"))?.status === "interrupted",
+    );
+    await inbox.acceptMessage("owner", { ...body, contentHash: messageContentHash(body) });
+    assert.equal(executions, 1);
+    const replay = await collect(
+      threads.withOwner("owner", () => threads!.connect({ threadId: "chat" })),
+    );
+    assert.equal(
+      replay.some((event) => event.type === EventType.RUN_ERROR),
+      false,
+    );
+    assert.ok(
+      replay.some(
+        (event) =>
+          event.type === EventType.CUSTOM &&
+          "name" in event &&
+          event.name === "historical_run_error",
+      ),
+    );
+    const journal = await inbox.eventsAfter("owner", "chat", 0);
+    assert.ok(
+      journal.events.some(
+        (event) =>
+          event.kind === "agui" && (event.payload as BaseEvent).type === EventType.RUN_ERROR,
+      ),
+    );
+  } finally {
+    await threads?.close();
+    await db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("private reasoning is excluded from durable events and transcript checkpoints", async () => {
+  const db = await createStore();
+  const threads = new LocalThreads(db);
+  try {
+    const agent = new (class extends AbstractAgent {
+      run(request: RunAgentInput) {
+        return of(
+          ...([
+            { type: EventType.RUN_STARTED, threadId: request.threadId, runId: request.runId },
+            { type: EventType.REASONING_START, messageId: "private" },
+            { type: EventType.REASONING_MESSAGE_START, messageId: "private", role: "reasoning" },
+            {
+              type: EventType.REASONING_MESSAGE_CONTENT,
+              messageId: "private",
+              delta: "PRIVATE_REASONING_SENTINEL",
+            },
+            { type: EventType.REASONING_MESSAGE_END, messageId: "private" },
+            { type: EventType.REASONING_END, messageId: "private" },
+            { type: EventType.TEXT_MESSAGE_START, messageId: "public", role: "assistant" },
+            {
+              type: EventType.TEXT_MESSAGE_CONTENT,
+              messageId: "public",
+              delta: "Your result is ready",
+            },
+            { type: EventType.TEXT_MESSAGE_END, messageId: "public" },
+            { type: EventType.RUN_FINISHED, threadId: request.threadId, runId: request.runId },
+          ] as BaseEvent[]),
+        );
+      }
+    })();
+    await collect(
+      threads.withOwner("owner", () =>
+        threads.run({ threadId: "chat", input: input("chat"), agent }),
+      ),
+    );
+    assert.equal(
+      JSON.stringify(await threads.history("owner", "chat")).includes("PRIVATE_REASONING_SENTINEL"),
+      false,
+    );
+    assert.equal(
+      JSON.stringify(await db.threadSnapshot("owner", "chat")).includes(
+        "PRIVATE_REASONING_SENTINEL",
+      ),
+      false,
+    );
+    assert.equal(
+      JSON.stringify(await new ConversationInbox(db).eventsAfter("owner", "chat", 0)).includes(
+        "PRIVATE_REASONING_SENTINEL",
+      ),
+      false,
+    );
+  } finally {
+    await threads.close();
+    await db.close();
+  }
+});
 class RichAgent extends AbstractAgent {
   run(request: RunAgentInput) {
     return of<BaseEvent[]>(
@@ -1010,6 +1416,17 @@ test("background post queues behind active lease then atomically publishes once 
       true,
     );
     assert.equal((await threads.history("wife", "main")).messages.length, 1);
+    const journal = await new ConversationInbox(db).eventsAfter("wife", "main", 0);
+    assert.ok(journal.events.length > 0);
+    assert.ok(journal.events.every((event) => event.origin === "task"));
+    assert.equal(
+      journal.events.filter(
+        (event) =>
+          event.kind === "agui" &&
+          (event.payload as { type: string }).type === EventType.RUN_FINISHED,
+      ).length,
+      1,
+    );
     assert.equal((await db.searchThreads("wife", "agenda", 20, false)).length, 1);
     assert.deepEqual(await db.searchThreads("other", "agenda", 20, false), []);
   } finally {

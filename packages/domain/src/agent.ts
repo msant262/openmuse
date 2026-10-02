@@ -30,6 +30,8 @@ export interface AgentTask {
   kind: "agent" | "document" | "monitor" | "finance" | "plan";
   status: TaskStatus;
   goalId?: string;
+  originThreadId?: string;
+  originMessageId?: string;
   plan: TaskStep[];
   evidence: Evidence[];
   input: Record<string, unknown>;
@@ -120,7 +122,56 @@ export interface AgentIdentity {
   tone: "warm" | "concise" | "thoughtful";
   avatar?: "sky" | "sand" | "lilac";
   showChatUpdates?: boolean;
+  profile?: EffectiveAgentProfile;
 }
+export const agentProfilePatchSchema = z
+  .object({
+    assistantName: z.string().trim().min(1).max(80).optional(),
+    preferredUserName: z.string().trim().max(80).optional(),
+    language: z
+      .string()
+      .min(2)
+      .max(35)
+      .refine((value) => {
+        try {
+          return Intl.getCanonicalLocales(value).length === 1;
+        } catch {
+          return false;
+        }
+      }, "Choose a valid language/locale")
+      .optional(),
+    tone: z.enum(["warm", "concise", "thoughtful"]).optional(),
+    formality: z.enum(["casual", "neutral", "formal"]).optional(),
+    responseLength: z.enum(["concise", "balanced", "detailed"]).optional(),
+    humor: z.enum(["none", "light"]).optional(),
+    emojis: z.boolean().optional(),
+    textStyle: z.enum(["plain", "structured"]).optional(),
+  })
+  .strict();
+export type AgentProfilePatch = z.infer<typeof agentProfilePatchSchema>;
+export type AgentProfileFields = Required<AgentProfilePatch>;
+export const profileScopeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("global") }).strict(),
+  z
+    .object({
+      kind: z.literal("conversation"),
+      threadId: z
+        .string()
+        .min(1)
+        .max(256)
+        .regex(/^[\w.-]+$/),
+    })
+    .strict(),
+]);
+export type ProfileScope = z.infer<typeof profileScopeSchema>;
+export type ProfileOrigin = { kind: "chat"; messageId: string } | { kind: "settings" };
+export type EffectiveAgentProfile = {
+  fields: AgentProfileFields;
+  revisions: { global: number; conversation: number };
+  global: AgentProfilePatch;
+  conversation: AgentProfilePatch;
+  origin?: ProfileOrigin;
+};
 export interface AgentWorkspace {
   tasks: AgentTask[];
   goals: Goal[];
@@ -137,6 +188,13 @@ export const createTaskSchema = z.object({
   prompt: z.string().trim().min(1).max(12000),
   kind: z.enum(["agent", "document", "monitor", "finance", "plan"]).default("agent"),
   goalId: z.string().optional(),
+  originThreadId: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[\w.-]+$/)
+    .optional(),
+  originMessageId: z.string().min(1).max(256).optional(),
   input: z.record(z.string(), z.unknown()).default({}),
 });
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;

@@ -33,6 +33,6 @@ test("an emitted CopilotKit run error stops the queue even when runAgent resolve
   assert.equal(queue.getSnapshot().paused, true);
   assert.deepEqual(
     queue.getSnapshot().pending.map((message) => message.id),
-    ["second"],
+    ["first", "second"],
   );
 });

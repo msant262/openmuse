@@ -18,6 +18,7 @@ import {
 } from "@copilotkit/runtime/v2";
 import { Observable, of, ReplaySubject } from "rxjs";
 import { z } from "zod";
+import { type ConversationInbox, messageContentHash } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
 
@@ -51,6 +52,123 @@ const mutation = z.object({
 
 /** Store-backed AG-UI runner. Request identity never comes from client thread/user arguments. */
 export class LocalThreads extends AgentRunner {
+  private inbox?: ConversationInbox;
+  private createAgent?: (owner: string) => AbstractAgent;
+  private inboxTimer?: ReturnType<typeof setInterval>;
+  private pumping = false;
+  configureInbox(inbox: ConversationInbox, createAgent: (owner: string) => AbstractAgent) {
+    this.inbox = inbox;
+    this.createAgent = createAgent;
+    inbox.onAccepted = () => {
+      void this.drainInbox().catch(() => {});
+    };
+  }
+  /** Restart recovery runs without waiting for the phone to reconnect. */
+  async initializeInbox() {
+    await this.drainInbox();
+    this.inboxTimer = setInterval(() => {
+      void this.drainInbox().catch(() => {});
+    }, 250);
+    this.inboxTimer.unref();
+  }
+  async drainInbox() {
+    if (!this.inbox || !this.createAgent || this.closing || this.pumping) return;
+    this.pumping = true;
+    try {
+      const claimedThreads = new Set<string>();
+      for (const { owner, value } of await this.inbox.pending()) {
+        const key = this.key(owner, value.threadId);
+        if (claimedThreads.has(key) || this.active.has(key)) continue;
+        claimedThreads.add(key);
+        await this.ensure(owner, value.threadId);
+        await this.recover(owner, value.threadId);
+        if (await this.db.threadLeaseActive(owner, value.threadId)) continue;
+        if (value.status === "dispatching") {
+          const previous = (await this.runs(owner, value.threadId)).find(
+            (run) => run.runId === value.runId,
+          );
+          if (previous) {
+            await this.inbox.mark(
+              owner,
+              value.id,
+              "dispatching",
+              previous.status === "finished" ? "finished" : "interrupted",
+            );
+            continue;
+          }
+          // No run was created before the crash, so no external tool was dispatched.
+          await this.inbox.mark(owner, value.id, "dispatching", "accepted");
+        }
+        if (
+          !(await this.db.claimInboxMessage(
+            owner,
+            value.id,
+            value.threadId,
+            value.runId,
+            this.leaseMs,
+          ))
+        )
+          continue;
+        const input = {
+          threadId: value.threadId,
+          runId: value.runId,
+          messages: [
+            {
+              id: value.messageId,
+              role: "user" as const,
+              content:
+                value.text +
+                (value.attachmentIds.length
+                  ? `\n\nAttached artifact IDs: ${value.attachmentIds.join(", ")}`
+                  : ""),
+            },
+          ],
+          state: {},
+          tools: [],
+          context: [],
+          forwardedProps: {},
+        };
+        const subject = new ReplaySubject<BaseEvent>();
+        const pending = this.execute(
+          owner,
+          { threadId: value.threadId, input, agent: this.createAgent(owner) },
+          subject,
+          value.runId,
+        )
+          .then(async () => {
+            const run = (await this.runs(owner, value.threadId)).find(
+              (run) => run.runId === value.runId,
+            );
+            await this.inbox!.mark(
+              owner,
+              value.id,
+              "dispatching",
+              run?.status === "finished" ? "finished" : "interrupted",
+            );
+          })
+          .catch(async () => {
+            try {
+              // A single transaction checks the durable run boundary, saves the visible
+              // disposition, and releases only confirmed pre-run work for bounded-backoff retry.
+              await this.db.recordInboxFailure(owner, value.id, value.runId);
+            } catch {
+              // Leave dispatching intact when persistence is unavailable: startup recovery
+              // can still distinguish an absent run from possibly-started effects.
+              this.drainFailed = true;
+            } finally {
+              subject.complete();
+            }
+          });
+        this.pendingRuns.add(pending);
+        void pending.finally(() => {
+          this.pendingRuns.delete(pending);
+          void this.drainInbox().catch(() => {});
+        });
+      }
+    } finally {
+      this.pumping = false;
+    }
+  }
   private readonly context = new AsyncLocalStorage<string>();
   private readonly active = new Map<string, { runId: string; token: string; stop: () => void }>();
   private readonly pendingRuns = new Set<Promise<void>>();
@@ -59,6 +177,7 @@ export class LocalThreads extends AgentRunner {
   /** Abort replies and join their durable checkpoints before closing the database. */
   async close() {
     this.closing = true;
+    if (this.inboxTimer) clearInterval(this.inboxTimer);
     for (const run of this.active.values()) run.stop();
     await Promise.all([...this.pendingRuns]);
     if (this.drainFailed) throw new Error("Conversation shutdown could not confirm persistence");
@@ -230,6 +349,60 @@ export class LocalThreads extends AgentRunner {
   }
   run(request: AgentRunnerRunRequest): Observable<BaseEvent> {
     const owner = this.owner();
+    const latest = request.input.messages.filter((message) => message.role === "user").at(-1);
+    if (this.inbox && latest && typeof latest.content === "string")
+      return new Observable((subscriber) => {
+        let subscription: { unsubscribe(): void } | undefined;
+        let cancelled = false;
+        void (async () => {
+          if (this.closing) throw new AppError("Server is shutting down", 503);
+          await this.ensure(owner, request.threadId);
+          const previous = await this.inbox!.get(owner, request.threadId, latest.id);
+          const envelope = previous
+            ? {
+                threadId: previous.threadId,
+                clientMessageId: previous.clientMessageId,
+                contentHash: previous.contentHash,
+                text: previous.text,
+                attachmentIds: previous.attachmentIds,
+                targetTaskId: previous.targetTaskId,
+                annotations: previous.annotations,
+              }
+            : {
+                threadId: request.threadId,
+                clientMessageId: latest.id,
+                text: latest.content as string,
+                attachmentIds: [],
+                contentHash: messageContentHash({ text: latest.content as string }),
+              };
+          const content = latest.content as string;
+          if (
+            previous &&
+            content !== previous.text &&
+            !content.startsWith(`${previous.text}\n\nAttached artifact IDs:`)
+          )
+            throw new AppError("This message was already accepted with different content", 409);
+          const accepted = await this.inbox!.acceptMessage(owner, envelope);
+          await this.drainInbox();
+          if (!cancelled)
+            subscription = this.withOwner(owner, () =>
+              this.connectRun({ threadId: request.threadId }, accepted.runId),
+            ).subscribe(subscriber);
+        })().catch((error) => {
+          if (!cancelled) {
+            subscriber.next({
+              type: EventType.RUN_ERROR,
+              message: error instanceof Error ? error.message : "Could not accept your message",
+            });
+            subscriber.complete();
+          }
+        });
+        // Disconnecting the SSE subscriber never aborts accepted durable work.
+        return () => {
+          cancelled = true;
+          subscription?.unsubscribe();
+        };
+      });
     const subject = new ReplaySubject<BaseEvent>();
     if (this.closing) {
       subject.error(new AppError("Server is shutting down", 503));
@@ -251,12 +424,13 @@ export class LocalThreads extends AgentRunner {
     owner: string,
     request: AgentRunnerRunRequest,
     subject: ReplaySubject<BaseEvent>,
+    claimedToken?: string,
   ) {
     const { threadId, input, agent } = request;
     const thread = await this.ensure(owner, threadId);
     await this.recover(owner, thread.id);
-    const token = randomUUID();
-    if (!(await this.db.claimThread(owner, threadId, token, this.leaseMs))) {
+    const token = claimedToken ?? randomUUID();
+    if (!claimedToken && !(await this.db.claimThread(owner, threadId, token, this.leaseMs))) {
       subject.next({
         type: EventType.RUN_ERROR,
         code: "THREAD_BUSY",
@@ -363,6 +537,8 @@ export class LocalThreads extends AgentRunner {
       else
         await agent.runAgent(authoritative, {
           onEvent: ({ event }) => {
+            if (event.type.startsWith("REASONING_") || event.type.startsWith("THINKING_"))
+              return { stopPropagation: true };
             if (event.type === EventType.RUN_STARTED) {
               const started = event as BaseEvent & { input?: typeof input };
               event = { ...started, input: authoritative };
@@ -435,6 +611,12 @@ export class LocalThreads extends AgentRunner {
     }
   }
   connect(request: AgentRunnerConnectRequest): Observable<BaseEvent> {
+    return this.connectRun(request);
+  }
+  private connectRun(
+    request: AgentRunnerConnectRequest,
+    expectedRunId?: string,
+  ): Observable<BaseEvent> {
     const owner = this.owner();
     return new Observable((subscriber) => {
       let cancelled = false;
@@ -455,7 +637,23 @@ export class LocalThreads extends AgentRunner {
                 ? await this.replaySnapshot(last)
                 : { messages: last?.messages ?? [], state: last?.state ?? {} };
             for (const event of this.canonicalEvents(
-              compactEvents(runs.flatMap((run) => run.events)),
+              compactEvents(
+                runs.flatMap((run) =>
+                  run.events.map((event) =>
+                    event.type === EventType.RUN_ERROR && run.runId !== expectedRunId
+                      ? {
+                          type: EventType.CUSTOM,
+                          name: "historical_run_error",
+                          value: {
+                            runId: run.runId,
+                            origin: "history",
+                            message: (event as BaseEvent & { message: string }).message,
+                          },
+                        }
+                      : event,
+                  ),
+                ),
+              ),
               canonical,
             ))
               subscriber.next(event);
@@ -466,7 +664,24 @@ export class LocalThreads extends AgentRunner {
               for (const event of run.events.slice(seen.get(run.id) ?? 0)) subscriber.next(event);
               seen.set(run.id, run.events.length);
             }
-          if (snapshot.activeRunToken || runs.some((run) => run.status === "running"))
+          const pendingMessage =
+            this.inbox &&
+            (
+              await this.db.list<import("./conversation-inbox.ts").InboxMessage>(
+                owner,
+                "conversation-inbox",
+              )
+            ).some(
+              (item) =>
+                (item.status === "accepted" || item.status === "dispatching") &&
+                item.threadId === request.threadId &&
+                (!expectedRunId || item.runId === expectedRunId),
+            );
+          if (
+            snapshot.activeRunToken ||
+            runs.some((run) => run.status === "running") ||
+            pendingMessage
+          )
             timer = setTimeout(() => void poll(), 150);
           else subscriber.complete();
         } catch (cause) {
