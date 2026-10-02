@@ -11,6 +11,7 @@ import { ArrowDown, ArrowUp, FileText, RotateCcw, Square, X } from "lucide-react
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -31,6 +32,7 @@ import { runConversationTurn } from "./conversation-run";
 import { confirmedJevSelection, displayJevUserMessage, latestJevPanelId } from "./jev-actions";
 import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
 import { MailToolCard } from "./mail-tool-card";
+import { modelUsageUrl } from "./model-errors";
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
 import { type Selection, useMuseThread } from "./threads";
 import { Button, Card, CheckRow, colors, ErrorNotice, s } from "./ui";
@@ -633,6 +635,19 @@ export function ChatScreen({
           </View>
         )}
         <ErrorNotice error={error} />
+        {modelUsageUrl(error) && (
+          <Button
+            onPress={() => {
+              const url = modelUsageUrl(error);
+              if (!url) return;
+              void Linking.openURL(url).catch(() =>
+                setError("Could not open ChatGPT Usage settings."),
+              );
+            }}
+          >
+            Manage ChatGPT usage
+          </Button>
+        )}
         {!!error && (
           <Button
             style={{ alignSelf: "flex-start" }}

@@ -35,9 +35,9 @@ Test durable replay after restart, ownership and simultaneous runs; fallback wit
 
 ### Task 2: Subscription and compatible models
 
-- [ ] Add provider adapters for OpenAI-compatible Chat Completions/Responses, MiMo/local, official SIWC credential login/copy/hourly refresh, and researched Hermes Grok device flow (or explicit unsupported stub if clean integration is unavailable).
-- [ ] Support `MODEL=provider/id` and ordered fallback, safe pre-dispatch fallback, `store:false`, tool mapping, usage-limit messages and no SIWC audio input; document official protocol sources.
-- [ ] Contract-test provider/auth/fallback behavior, run `pnpm test` and typechecks; commit milestone 2.
+- [x] Add provider adapters for OpenAI-compatible Chat Completions/Responses, MiMo/local, official SIWC credential login/copy/hourly refresh, and researched Hermes Grok device flow (or explicit unsupported stub if clean integration is unavailable).
+- [x] Support `MODEL=provider/id` and ordered fallback, safe pre-dispatch fallback, `store:false`, tool mapping, usage-limit messages and no SIWC audio input; document official protocol sources.
+- [x] Contract-test provider/auth/fallback behavior, run `pnpm test` and typechecks; commit milestone 2.
 
 ### Task 3: Browser operation and takeover
 

@@ -1,6 +1,7 @@
 import { createApp } from "./app.ts";
 import { readConfig } from "./config.ts";
 import { createStore } from "./db.ts";
+import { startModelTokenMaintenance } from "./providers/maintenance.ts";
 
 const config = readConfig();
 if (!config.databaseUrl)
@@ -9,6 +10,7 @@ if (!config.databaseUrl)
   );
 const db = await createStore({ databaseUrl: config.databaseUrl });
 const { agent } = await createApp(db, config);
+const stopTokenMaintenance = startModelTokenMaintenance(config);
 agent.start();
 console.log("OpenMuse task worker running");
 let stopping = false;
@@ -16,6 +18,7 @@ const stop = async () => {
   if (stopping) return;
   stopping = true;
   await agent.stop();
+  await stopTokenMaintenance();
   await db.close();
   process.exit(0);
 };

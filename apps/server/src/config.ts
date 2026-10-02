@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseEnv } from "node:util";
+import {
+  type ModelProviderConfig,
+  modelProviderConfig,
+  orderedModels,
+} from "./providers/config.ts";
 
 /** .env keys whose file value loses to a different value already set in the environment. */
 export function shadowedEnvKeys(
@@ -37,6 +42,8 @@ export interface Config {
   accessKey?: string;
   encryptionKey?: string;
   model?: string;
+  modelFallbacks?: string[];
+  modelProviders?: ModelProviderConfig;
   jevMode?: "off" | "sample" | "live";
   typesafeApiKey?: string;
   jevModel?: string;
@@ -106,6 +113,10 @@ export function readConfig(): Config {
     accessKey: process.env.OPENMUSE_ACCESS_KEY,
     encryptionKey: process.env.TOKEN_ENCRYPTION_KEY,
     model: process.env.MODEL,
+    modelFallbacks: process.env.MODEL_FALLBACKS?.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    modelProviders: modelProviderConfig(resolve(process.env.DATA_DIR ?? ".openmuse")),
     jevMode,
     typesafeApiKey,
     jevModel: process.env.JEV_MODEL?.trim() || defaultJevModel,
@@ -126,6 +137,7 @@ export function readConfig(): Config {
       process.env.ALLOWED_ORIGINS ?? "http://localhost:8081,http://127.0.0.1:8081"
     ).split(","),
   };
+  if (config.model) orderedModels(config.model, config.modelFallbacks);
   if (
     mode === "live" &&
     (!config.accessKey || config.accessKey.length < 24 || !config.encryptionKey)

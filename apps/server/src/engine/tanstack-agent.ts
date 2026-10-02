@@ -7,63 +7,12 @@ import {
   type ToolDefinition,
 } from "@copilotkit/runtime/v2";
 import { chat, maxIterations, type SchemaInput, toolDefinition } from "@tanstack/ai";
-import { type AnthropicChatModel, anthropicText } from "@tanstack/ai-anthropic";
-import { type GeminiTextModel, geminiText } from "@tanstack/ai-gemini";
-import { type OpenAIChatModel, openaiText } from "@tanstack/ai-openai";
-import { map, mergeMap, type Observable } from "rxjs";
+import { finalize, map, mergeMap, type Observable } from "rxjs";
 import { z } from "zod";
-import { MODEL_MAX_RETRIES } from "../config.ts";
+import type { ModelProviderConfig } from "../providers/config.ts";
+import { modelAdapter } from "../providers/models.ts";
 
-// Same "provider/model" strings, env vars and base URL formats as the AI SDK resolver in
-// @copilotkit/runtime. Each provider SDK retries transient failures up to MODEL_MAX_RETRIES times.
-function adapter(spec: string) {
-  const [, provider = "", model = ""] = spec.trim().match(/^([^/:]*)[/:](.*)$/) ?? [];
-  if (!provider || !model.trim())
-    throw new Error(
-      `Invalid model string "${spec}". Use "openai/gpt-5", "anthropic/claude-sonnet-4.5", or "google/gemini-2.5-pro".`,
-    );
-  const id = model.trim();
-  switch (provider.toLowerCase()) {
-    case "openai":
-      return openaiText(id as OpenAIChatModel, {
-        baseURL: process.env.OPENAI_BASE_URL,
-        maxRetries: MODEL_MAX_RETRIES,
-      });
-    case "anthropic":
-      // The AI SDK base URL ends in /v1; the Anthropic SDK adds /v1 itself.
-      return anthropicText(id as AnthropicChatModel, {
-        baseURL: process.env.ANTHROPIC_BASE_URL?.replace(/\/v1\/?$/, ""),
-        maxRetries: MODEL_MAX_RETRIES,
-      });
-    case "google":
-    case "gemini":
-    case "google-gemini":
-      // The AI SDK base URL ends in /v1beta; @google/genai adds the API version itself.
-      return geminiText(id as GeminiTextModel, {
-        httpOptions: {
-          baseUrl: process.env.GOOGLE_GENERATIVE_AI_BASE_URL?.replace(/\/v1beta\/?$/, ""),
-          // @google/genai counts the first call in `attempts`.
-          retryOptions: { attempts: MODEL_MAX_RETRIES + 1 },
-        },
-      });
-    default:
-      throw unknownProvider(provider, spec);
-  }
-}
-
-/** With OPENAI_BASE_URL set, a gateway model ID most likely needs the openai/ prefix. */
-export function unknownProvider(
-  provider: string,
-  spec: string,
-  baseUrl = process.env.OPENAI_BASE_URL,
-) {
-  const hint = baseUrl?.trim()
-    ? ` For a model on your OPENAI_BASE_URL gateway, use "openai/${spec.trim()}".`
-    : "";
-  return new Error(
-    `Unknown provider "${provider}" in "${spec}". Supported: openai, anthropic, google (gemini).${hint}`,
-  );
-}
+export { unknownProvider } from "../providers/models.ts";
 
 // The classic BuiltInAgent always offers these two state tools. The converter turns their
 // results into STATE_SNAPSHOT / STATE_DELTA events.
@@ -100,12 +49,16 @@ const stateTools = [
 /** A BuiltInAgent in TanStack factory mode with the options of the classic AI SDK mode. */
 export function tanstackAgent(options: {
   model: string;
+  fallbacks?: readonly string[];
+  providers?: ModelProviderConfig;
   maxSteps: number;
   tools: ToolDefinition[];
   prompt: string;
   /** Said when the step limit, not the model, ends a run; otherwise the reply just stops. */
   stepLimitNote?: string;
 }) {
+  // Runtime 1.70's TanStack converter drops CUSTOM chunks; relay provider attribution here.
+  const modelNotices = new Map<string, BaseEvent[]>();
   const agent = new BuiltInAgent({
     type: "tanstack",
     factory: ({ input, abortController }) => {
@@ -123,7 +76,19 @@ export function tanstackAgent(options: {
       )
         system += `\n## Application State\nThis is state from the application that you can edit by calling AGUISendStateSnapshot or AGUISendStateDelta.\n\`\`\`json\n${JSON.stringify(input.state, null, 2)}\n\`\`\`\n`;
       return chat({
-        adapter: adapter(options.model),
+        // Errors surface through AG-UI; SDK debug logging can include raw provider payloads.
+        debug: false,
+        adapter: modelAdapter(options.model, options.fallbacks, options.providers, (model) => {
+          if (model.fallback)
+            modelNotices.set(input.runId, [
+              ...(modelNotices.get(input.runId) ?? []),
+              {
+                type: EventType.CUSTOM,
+                name: "openmuse.model",
+                value: model,
+              },
+            ]);
+        }),
         messages: converted.messages,
         systemPrompts: system ? [system] : [],
         tools: [
@@ -143,7 +108,15 @@ export function tanstackAgent(options: {
   });
   const run = agent.run.bind(agent);
   agent.run = (input: RunAgentInput) => {
-    const events = splitTextAtToolCalls(run(input));
+    const attributed = run(input).pipe(
+      mergeMap((event): BaseEvent[] => {
+        const notices = modelNotices.get(input.runId) ?? [];
+        modelNotices.delete(input.runId);
+        return [...notices, event];
+      }),
+      finalize(() => modelNotices.delete(input.runId)),
+    );
+    const events = splitTextAtToolCalls(attributed);
     return options.stepLimitNote
       ? reportStepLimit(events, options.maxSteps, options.stepLimitNote)
       : events;

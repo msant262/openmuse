@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
 import { readConfig } from "./config.ts";
 import { createStore } from "./db.ts";
+import { startModelTokenMaintenance } from "./providers/maintenance.ts";
 
 const config = readConfig();
 const db = await createStore({
@@ -10,6 +11,7 @@ const db = await createStore({
 });
 await db.recoverInterruptedActions();
 const { app, agent } = await createApp(db, config);
+const stopTokenMaintenance = startModelTokenMaintenance(config);
 if (config.taskWorkerEnabled) agent.start();
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, () =>
   console.log(`OpenMuse ${config.mode} API ready at ${config.publicUrl}`),
@@ -18,6 +20,7 @@ const shutdown = () => {
   server.close(() => {
     void agent
       .stop()
+      .then(stopTokenMaintenance)
       .then(() => db.close())
       .then(() => process.exit(0));
   });

@@ -11,6 +11,8 @@ import type { Config } from "./config.ts";
 import { ConversationAgent } from "./engine/conversation.ts";
 import type { AgentService } from "./engine/service.ts";
 import { createJevAdapter, type JevAdapter } from "./jev/adapter.ts";
+import { modelProviderConfig } from "./providers/config.ts";
+import { providerConfigured } from "./providers/models.ts";
 import type { LocalThreads } from "./threads.ts";
 
 export function agentConfigured(config: Config) {
@@ -20,9 +22,12 @@ export function agentConfigured(config: Config) {
       ? Boolean(config.agentUrl)
       : Boolean(
           config.model &&
-            (process.env.OPENAI_API_KEY ||
-              process.env.ANTHROPIC_API_KEY ||
-              process.env.GOOGLE_API_KEY),
+            [config.model, ...(config.modelFallbacks ?? [])].some((model) =>
+              providerConfigured(
+                model,
+                config.modelProviders ?? modelProviderConfig(config.dataDir),
+              ),
+            ),
         ))
   );
 }

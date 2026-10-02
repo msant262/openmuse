@@ -16,6 +16,7 @@ import type { Config } from "../config.ts";
 import { createJevAdapter, type JevAdapter } from "../jev/adapter.ts";
 import { JevService } from "../jev/service.ts";
 import { presentChoicesTool } from "../jev/tools.ts";
+import { modelProviderConfig } from "../providers/config.ts";
 import type { AgentService } from "./service.ts";
 import { tanstackAgent } from "./tanstack-agent.ts";
 
@@ -296,6 +297,8 @@ export class ConversationAgent extends AbstractAgent {
     ];
     const agent = tanstackAgent({
       model: this.config.model ?? "openai/unconfigured",
+      fallbacks: this.config.modelFallbacks,
+      providers: this.config.modelProviders ?? modelProviderConfig(this.config.dataDir),
       maxSteps: 6,
       stepLimitNote:
         "I reached my step limit for this reply before finishing. Say “continue” and I’ll pick up where I left off.",
