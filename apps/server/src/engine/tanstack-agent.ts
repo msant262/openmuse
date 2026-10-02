@@ -9,6 +9,7 @@ import {
 import { chat, maxIterations, type SchemaInput, toolDefinition } from "@tanstack/ai";
 import { finalize, map, mergeMap, type Observable } from "rxjs";
 import { z } from "zod";
+import type { BrowserImageLoader } from "../providers/browser-images.ts";
 import type { ModelProviderConfig } from "../providers/config.ts";
 import { modelAdapter } from "../providers/models.ts";
 
@@ -54,6 +55,7 @@ export function tanstackAgent(options: {
   maxSteps: number;
   tools: ToolDefinition[];
   prompt: string;
+  loadBrowserImage?: BrowserImageLoader;
   /** Said when the step limit, not the model, ends a run; otherwise the reply just stops. */
   stepLimitNote?: string;
 }) {
@@ -78,17 +80,23 @@ export function tanstackAgent(options: {
       return chat({
         // Errors surface through AG-UI; SDK debug logging can include raw provider payloads.
         debug: false,
-        adapter: modelAdapter(options.model, options.fallbacks, options.providers, (model) => {
-          if (model.fallback)
-            modelNotices.set(input.runId, [
-              ...(modelNotices.get(input.runId) ?? []),
-              {
-                type: EventType.CUSTOM,
-                name: "openmuse.model",
-                value: model,
-              },
-            ]);
-        }),
+        adapter: modelAdapter(
+          options.model,
+          options.fallbacks,
+          options.providers,
+          (model) => {
+            if (model.fallback)
+              modelNotices.set(input.runId, [
+                ...(modelNotices.get(input.runId) ?? []),
+                {
+                  type: EventType.CUSTOM,
+                  name: "openmuse.model",
+                  value: model,
+                },
+              ]);
+          },
+          options.loadBrowserImage,
+        ),
         messages: converted.messages,
         systemPrompts: system ? [system] : [],
         tools: [

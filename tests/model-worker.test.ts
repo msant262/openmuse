@@ -291,3 +291,85 @@ test("browser reads keep observation identity distinct while reusing one session
   assert.equal(sessionIds.size, 1, "both reads should reuse the same browser session");
   assert.equal(new Set(webEvidence.map((item) => item.id)).size, 2);
 });
+
+test("model browser takeover pauses without later tools and handback resumes the saved profile", async (t) => {
+  let human = true;
+  let sessionId = "";
+  let navigations = 0;
+  const browser = await browserFixture(t, (path, body) => {
+    if (path === "/sessions") {
+      sessionId = String(body.id);
+      if (human)
+        return {
+          status: 409,
+          data: {
+            error: {
+              code: "BROWSER_CONTROLLED",
+              message: "Hand the browser back",
+              details: { sessionId },
+            },
+          },
+        };
+      navigations++;
+    }
+    if (path.endsWith("/snapshot"))
+      return {
+        data: {
+          sessionId,
+          snapshotId: crypto.randomUUID(),
+          url: "https://example.com/",
+          title: "Observed",
+          text: "Page ready",
+          truncated: false,
+          truncatedElements: false,
+          control: "agent",
+          elements: [],
+        },
+      };
+    return {
+      data: {
+        id: sessionId,
+        url: "https://example.com/",
+        title: "Observed",
+        status: "active",
+        control: human ? "human" : "agent",
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  });
+  let calls: { name: string; arguments: object }[] = [
+    { name: "browser_navigate", arguments: { url: "https://example.com/" } },
+    { name: "finish_task", arguments: { summary: "Should never finish while controlled" } },
+  ];
+  let offset = 0;
+  const model = await modelFixture(t, (index) => calls[index - offset]);
+  const server = await createApp(browser.db, {
+    ...browser.config,
+    agentBackend: "model",
+    model: "openai/fixture",
+  });
+  t.after(() => server.agent.stop());
+  const task = await server.agent.createTask("owner", {
+    prompt: "Use the browser and complete the requested task.",
+  });
+  await server.agent.worker.tick();
+  const paused = await server.agent.getTask("owner", task.id);
+  assert.equal(paused.status, "paused", paused.error ?? paused.question);
+  assert.equal(paused.state.awaitingBrowserSessionId, sessionId);
+  assert.equal(navigations, 0);
+  assert.equal(paused.artifactIds.length, 0, "finish_task after takeover has no effects");
+  await server.agent.worker.tick();
+  assert.equal((await server.agent.getTask("owner", task.id)).attempts, 1);
+  human = false;
+  offset = model.requests.length;
+  calls = [
+    { name: "browser_navigate", arguments: { url: "https://example.com/" } },
+    { name: "finish_task", arguments: { summary: "Completed after handback" } },
+  ];
+  await server.agent.worker.tick();
+  const resumed = await server.agent.getTask("owner", task.id);
+  assert.equal(resumed.status, "succeeded", resumed.error ?? resumed.question);
+  assert.equal(resumed.state.browserId, sessionId);
+  assert.equal(navigations, 1);
+  assert.equal(resumed.attempts, 2);
+});

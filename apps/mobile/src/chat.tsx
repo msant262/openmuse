@@ -76,6 +76,38 @@ export function WorkspaceTools() {
     ),
   });
   useRenderTool({
+    name: "browser_snapshot",
+    description: "Follow the agent browser and take control at any time",
+    parameters: displayParameters,
+    render: ({ args, result, status }) => (
+      <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+    ),
+  });
+  useRenderTool({
+    name: "browser_navigate",
+    description: "Follow the agent browser and take control at any time",
+    parameters: displayParameters,
+    render: ({ args, result, status }) => (
+      <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+    ),
+  });
+  useRenderTool({
+    name: "browser_act",
+    description: "Follow the agent browser and take control at any time",
+    parameters: displayParameters,
+    render: ({ args, result, status }) => (
+      <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+    ),
+  });
+  useRenderTool({
+    name: "browser_screenshot",
+    description: "Follow the agent browser and take control at any time",
+    parameters: displayParameters,
+    render: ({ args, result, status }) => (
+      <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+    ),
+  });
+  useRenderTool({
     name: "present_choices",
     description: "Show prepared choices for the conversation",
     parameters: displayParameters,

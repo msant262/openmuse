@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserContext, Page } from "playwright";
+import { AgentPage, browserAction } from "./agent-page.ts";
 import {
   capturePdfDownload,
   MAX_DOWNLOAD_BYTES,
@@ -17,6 +18,7 @@ export interface Session {
   url: string;
   status: "active" | "closed" | "error";
   updatedAt: string;
+  control?: "agent" | "human";
 }
 type Running = {
   context: BrowserContext;
@@ -24,6 +26,7 @@ type Running = {
   touched: number;
   pending: Set<Promise<void>>;
   downloadError?: boolean;
+  agent: AgentPage;
 };
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -43,6 +46,9 @@ export async function createBrowserManager(options: {
   const sessions = new Map<string, Session>();
   const running = new Map<string, Running>();
   const queues = new Map<string, Promise<unknown>>();
+  const closeFailures = new Map<string, Error>();
+  let closing = false;
+  let closePromise: Promise<void> | undefined;
   const proxy = await startEgressProxy();
   for (const id of await readdir(dataDir)) {
     if (!SESSION_ID.test(id)) continue;
@@ -50,7 +56,7 @@ export async function createBrowserManager(options: {
       const stored = JSON.parse(
         await readFile(join(dataDir, id, "session.json"), "utf8"),
       ) as Session;
-      sessions.set(id, { ...stored, id, status: "closed" });
+      sessions.set(id, { ...stored, id, control: stored.control ?? "agent", status: "closed" });
     } catch {
       /* An incomplete first launch has no session metadata to restore. */
     }
@@ -63,6 +69,8 @@ export async function createBrowserManager(options: {
     await rename(`${path}.tmp`, path);
   }
   async function serial<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    if (closing)
+      throw new WorkerError("WORKER_STOPPING", "The browser worker is shutting down.", 503);
     const previous = queues.get(id) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(fn);
     queues.set(id, next);
@@ -85,13 +93,14 @@ export async function createBrowserManager(options: {
   }
   async function refresh(id: string) {
     const instance = active(id);
-    if (instance.page.url() !== "about:blank") await validatePublicUrl(instance.page.url());
+    if (instance.page.url() !== "about:blank") await validatePage(instance);
     const session: Session = {
       id,
       title: (await instance.page.title()).slice(0, 300),
       url: instance.page.url(),
       status: "active",
       updatedAt: new Date().toISOString(),
+      control: sessions.get(id)?.control ?? "agent",
     };
     sessions.set(id, session);
     await persist(session);
@@ -110,9 +119,21 @@ export async function createBrowserManager(options: {
     }
     return list;
   }
-  async function navigate(id: string, url: string) {
+  function guardAgent(id: string) {
+    if (sessions.get(id)?.control === "human")
+      throw new WorkerError(
+        "BROWSER_CONTROLLED",
+        "The browser is under your control. Hand it back to resume the agent.",
+        409,
+        { sessionId: id },
+      );
+  }
+  async function navigate(id: string, url: string, agent = true) {
+    if (agent) guardAgent(id);
+    await running.get(id)?.agent.invalidate();
     const target = await validatePublicUrl(url);
     const { page } = active(id);
+    if (agent) guardAgent(id);
     try {
       await page.goto(target.url.href, { waitUntil: "domcontentloaded", timeout: 20_000 });
       // Chromium can follow redirects outside Playwright's initial route hook.
@@ -134,24 +155,67 @@ export async function createBrowserManager(options: {
     }
     return refresh(id);
   }
+  async function validatePage(instance: Running) {
+    for (const frame of instance.page.frames()) {
+      if (["about:blank", "about:srcdoc"].includes(frame.url())) continue;
+      await validatePublicUrl(frame.url());
+    }
+  }
   async function closeSession(id: string) {
     const instance = running.get(id);
     const stored = sessions.get(id);
     if (!stored) throw new WorkerError("SESSION_NOT_FOUND", "Browser session not found.", 404);
+    let failed = !instance && closeFailures.has(id);
     if (instance) {
-      await instance.context.storageState({ path: join(directory(id), "storage.json") });
-      await instance.context.close();
-      await Promise.allSettled(instance.pending);
-      running.delete(id);
+      const statePath = join(directory(id), "storage.json");
+      try {
+        await instance.agent.invalidate();
+        await instance.context.storageState({ path: `${statePath}.tmp` });
+        await rename(`${statePath}.tmp`, statePath);
+      } catch {
+        failed = true;
+      } finally {
+        // A failed state save must still release Chromium and the profile lock.
+        try {
+          await instance.context.close();
+        } catch {
+          failed = true;
+        }
+        await Promise.allSettled(instance.pending);
+        running.delete(id);
+        await rm(`${statePath}.tmp`, { force: true }).catch(() => {});
+      }
     }
-    const result: Session = { ...stored, status: "closed", updatedAt: new Date().toISOString() };
+    const result: Session = {
+      ...stored,
+      status: failed ? "error" : "closed",
+      updatedAt: new Date().toISOString(),
+    };
     sessions.set(id, result);
-    await persist(result);
+    const failure = new WorkerError(
+      "SESSION_CLOSE_FAILED",
+      "The browser profile could not be fully saved while closing.",
+      500,
+      { sessionId: id },
+    );
+    try {
+      await persist(result);
+    } catch {
+      closeFailures.set(id, failure);
+      throw failure;
+    }
+    if (failed) {
+      closeFailures.set(id, failure);
+      throw failure;
+    }
+    // A failed earlier close is repaired only by saving an opened profile again.
+    if (instance) closeFailures.delete(id);
     return result;
   }
-  async function createSession(id: string, url: string) {
+  async function createSession(id: string, url: string, agent = true) {
+    if (agent) guardAgent(id);
     await validatePublicUrl(url);
-    if (running.has(id)) return navigate(id, url);
+    if (running.has(id)) return navigate(id, url, agent);
     if (running.size >= maxSessions)
       throw new WorkerError(
         "SESSION_LIMIT",
@@ -180,6 +244,10 @@ export async function createBrowserManager(options: {
           LANG: "C.UTF-8",
         },
         headless: true,
+        // The worker flushes profile state before it closes Chromium on signals.
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
         viewport: { width: 1280, height: 800 },
         proxy: { server: proxy.url, bypass: "<-loopback>" },
         serviceWorkers: "block",
@@ -224,7 +292,13 @@ export async function createBrowserManager(options: {
       for (const old of context.pages()) await old.close();
       const page = await context.newPage();
       page.setDefaultTimeout(10_000);
-      const instance: Running = { context, page, touched: Date.now(), pending: new Set() };
+      const instance: Running = {
+        context,
+        page,
+        touched: Date.now(),
+        pending: new Set(),
+        agent: new AgentPage(page),
+      };
       running.set(id, instance);
       context.on("page", (popup) => {
         void popup.close();
@@ -253,13 +327,14 @@ export async function createBrowserManager(options: {
       const initial: Session = {
         id,
         title: previous?.title ?? "New session",
+        control: previous?.control ?? (agent ? "agent" : "human"),
         url,
         status: "active",
         updatedAt: new Date().toISOString(),
       };
       sessions.set(id, initial);
       await persist(initial);
-      return await navigate(id, url);
+      return await navigate(id, url, agent);
     } catch (error) {
       await context.close().catch(() => {});
       await Promise.allSettled(running.get(id)?.pending ?? []);
@@ -290,9 +365,92 @@ export async function createBrowserManager(options: {
   sweeper.unref();
   return {
     list: () => [...sessions.values()],
-    create: (id: string, url: string) =>
-      serial("create", () => serial(id, () => createSession(id, url))),
-    navigate: (id: string, url: string) => serial(id, () => navigate(id, url)),
+    create: (id: string, url: string, agent = true) => {
+      const session = sessions.get(id);
+      if (!agent && session) {
+        sessions.set(id, { ...session, control: "human" });
+        void running.get(id)?.agent.invalidate();
+      }
+      return serial("create", () => serial(id, () => createSession(id, url, agent)));
+    },
+    navigate: (id: string, url: string, agent = true) => {
+      const session = sessions.get(id);
+      if (!agent && session) {
+        sessions.set(id, { ...session, control: "human" });
+        void running.get(id)?.agent.invalidate();
+      }
+      return serial(id, () => navigate(id, url, agent));
+    },
+    control: (id: string) =>
+      serial(id, async () => {
+        const session = sessions.get(id);
+        if (!session) throw new WorkerError("SESSION_NOT_FOUND", "Browser session not found.", 404);
+        return session;
+      }),
+    setControl: (id: string, control: "agent" | "human") => {
+      const session = sessions.get(id);
+      if (!session) throw new WorkerError("SESSION_NOT_FOUND", "Browser session not found.", 404);
+      // Close the gate immediately; actions queued before this request re-check on dispatch.
+      sessions.set(id, { ...session, control, updatedAt: new Date().toISOString() });
+      const invalidated = running.get(id)?.agent.invalidate();
+      return serial(id, async () => {
+        await invalidated;
+        const latest = sessions.get(id);
+        if (!latest) throw new WorkerError("SESSION_NOT_FOUND", "Browser session not found.", 404);
+        await persist(latest);
+        return latest;
+      });
+    },
+    snapshot: (id: string) =>
+      serial(id, async () => {
+        const instance = active(id);
+        await validatePage(instance);
+        const result = await instance.agent.snapshot();
+        await refresh(id);
+        return { sessionId: id, control: sessions.get(id)?.control ?? "agent", ...result };
+      }),
+    act: (id: string, value: Record<string, unknown>) => {
+      const action = browserAction(value);
+      return serial(id, async () => {
+        guardAgent(id);
+        const instance = active(id);
+        await validatePage(instance);
+        await instance.agent.act(action, () => guardAgent(id));
+        try {
+          await validatePage(instance);
+        } catch (error) {
+          await instance.page.goto("about:blank", { timeout: 5000 });
+          throw error;
+        }
+        guardAgent(id);
+        await refresh(id);
+        return {
+          sessionId: id,
+          control: sessions.get(id)?.control ?? "agent",
+          ...(await instance.agent.snapshot()),
+        };
+      });
+    },
+    agentScreenshot: (id: string) =>
+      serial(id, async () => {
+        const instance = active(id);
+        await validatePage(instance);
+        const bytes = await instance.page.screenshot({
+          type: "jpeg",
+          quality: 60,
+          timeout: 10_000,
+        });
+        if (bytes.length > 1024 * 1024)
+          throw new WorkerError("SCREENSHOT_TOO_LARGE", "The screenshot exceeds 1 MiB.", 413);
+        return {
+          sessionId: id,
+          ...(await refresh(id)),
+          mimeType: "image/jpeg",
+          image: bytes.toString("base64"),
+          width: 1280,
+          height: 800,
+        };
+      }),
     closeSession: (id: string) => serial(id, () => closeSession(id)),
     screenshot: (id: string) =>
       serial(id, () => active(id).page.screenshot({ type: "png", timeout: 10_000 })),
@@ -315,6 +473,7 @@ export async function createBrowserManager(options: {
           id,
           url: result.url,
           title: result.title,
+          control: sessions.get(id)?.control ?? "agent",
           status: "active",
           updatedAt: new Date().toISOString(),
         };
@@ -324,7 +483,15 @@ export async function createBrowserManager(options: {
       }),
     input: (id: string, input: Record<string, unknown>) =>
       serial(id, async () => {
-        const { page } = active(id);
+        if (sessions.get(id)?.control !== "human")
+          throw new WorkerError(
+            "CONTROL_REQUIRED",
+            "Take control before sending browser input.",
+            409,
+          );
+        const instance = active(id);
+        await instance.agent.invalidate();
+        const { page } = instance;
         const { type, x, y, key, text, deltaY } = input;
         if (
           type === "click" &&
@@ -378,11 +545,30 @@ export async function createBrowserManager(options: {
         throw new WorkerError("DOWNLOAD_TOO_LARGE", "The PDF exceeds 10 MiB.", 413);
       return { metadata, bytes: await readFile(path) };
     },
-    close: async () => {
-      clearInterval(sweeper);
-      await Promise.allSettled([...queues.values()]);
-      await Promise.allSettled([...running.keys()].map(closeSession));
-      await proxy.close();
+    close: () => {
+      closing = true;
+      closePromise ??= (async () => {
+        clearInterval(sweeper);
+        // Existing queued operations finish; newly requested work is rejected.
+        await Promise.allSettled([...queues.values()]);
+        const outcomes = await Promise.allSettled([...running.keys()].map(closeSession));
+        const failures = outcomes
+          .filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected")
+          .map((outcome) => outcome.reason);
+        for (const failure of closeFailures.values())
+          if (!failures.includes(failure)) failures.push(failure);
+        try {
+          await proxy.close();
+        } catch (error) {
+          failures.push(error);
+        }
+        if (failures.length)
+          throw new AggregateError(
+            failures,
+            "Browser worker shutdown failed to save all profiles.",
+          );
+      })();
+      return closePromise;
     },
   };
 }

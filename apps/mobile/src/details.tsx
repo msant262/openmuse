@@ -919,7 +919,7 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
   return (
     <Sheet
       title={browserSite(browser.url)}
-      subtitle={`${browser.status} · updated ${timeLabel(browser.updatedAt)}`}
+      subtitle={`${browser.control === "human" ? "You are in control" : "Watching agent"} · ${browser.status} · updated ${timeLabel(browser.updatedAt)}`}
       onClose={close}
       wide
     >

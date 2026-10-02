@@ -58,6 +58,7 @@ export interface BrowserSession {
   updatedAt: string;
   previewUrl?: string;
   consoleUrl?: string;
+  control?: "agent" | "human";
 }
 export const emailDraftSchema = z.object({
   to: z.array(z.email()).min(1).max(50),

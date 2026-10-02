@@ -54,6 +54,8 @@ export class AgentService {
   ) {
     this.worker = new TaskWorker(db, (owner, task, context) => this.execute(owner, task, context), {
       settled: (owner, task) => this.publishOutcome(owner, task),
+      browserReleased: async (owner, id) =>
+        (await this.browser.control(owner, id)).control === "agent",
     });
   }
   start() {

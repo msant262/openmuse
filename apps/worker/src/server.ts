@@ -62,13 +62,20 @@ export async function createWorkerServer(options: {
         json(200, browser.list());
         return;
       }
-      if (pathname === "/sessions" && request.method === "POST") {
+      if (["/sessions", "/sessions/human"].includes(pathname) && request.method === "POST") {
         const body = await readBody(request);
-        json(201, await browser.create(validateSessionId(body.id), requiredUrl(body)));
+        json(
+          201,
+          await browser.create(
+            validateSessionId(body.id),
+            requiredUrl(body),
+            pathname !== "/sessions/human",
+          ),
+        );
         return;
       }
       const match =
-        /^\/sessions\/([^/]+)\/(navigate|close|screenshot|read|input|downloads)(?:\/([^/]+))?$/.exec(
+        /^\/sessions\/([^/]+)\/(navigate|agent-navigate|close|screenshot|agent-screenshot|snapshot|act|control|read|input|downloads)(?:\/([^/]+))?$/.exec(
           pathname,
         );
       if (!match) throw new WorkerError("NOT_FOUND", "Worker endpoint not found.", 404);
@@ -76,8 +83,23 @@ export async function createWorkerServer(options: {
       const action = match[2];
       const downloadId = match[3];
       if (action === "navigate" && !downloadId && request.method === "POST")
+        json(200, await browser.navigate(id, requiredUrl(await readBody(request)), false));
+      else if (action === "agent-navigate" && !downloadId && request.method === "POST")
         json(200, await browser.navigate(id, requiredUrl(await readBody(request))));
-      else if (action === "close" && !downloadId && request.method === "POST")
+      else if (action === "snapshot" && !downloadId && request.method === "GET")
+        json(200, await browser.snapshot(id));
+      else if (action === "agent-screenshot" && !downloadId && request.method === "GET")
+        json(200, await browser.agentScreenshot(id));
+      else if (action === "act" && !downloadId && request.method === "POST")
+        json(200, await browser.act(id, await readBody(request)));
+      else if (action === "control" && !downloadId && request.method === "GET")
+        json(200, await browser.control(id));
+      else if (action === "control" && !downloadId && request.method === "POST") {
+        const body = await readBody(request);
+        if (body.control !== "agent" && body.control !== "human")
+          throw new WorkerError("INVALID_CONTROL", "Control must be agent or human.");
+        json(200, await browser.setControl(id, body.control));
+      } else if (action === "close" && !downloadId && request.method === "POST")
         json(200, await browser.closeSession(id));
       else if (action === "input" && !downloadId && request.method === "POST")
         json(200, await browser.input(id, await readBody(request)));
@@ -109,7 +131,9 @@ export async function createWorkerServer(options: {
               500,
             );
       if (!response.headersSent && !response.destroyed)
-        json(safe.status, { error: { code: safe.code, message: safe.message } });
+        json(safe.status, {
+          error: { code: safe.code, message: safe.message, details: safe.details },
+        });
       else response.end();
     }
   });

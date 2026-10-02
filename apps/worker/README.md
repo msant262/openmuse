@@ -91,3 +91,5 @@ pnpm dev:browser
 ```
 
 The local worker binds to `127.0.0.1:8790` and stores profiles in `.openmuse/browser-profiles` by default. Docker sets `WORKER_HOST=0.0.0.0` inside its container; Compose publishes only the loopback host port. `WORKER_DATA_DIR` selects another private profile directory.
+
+Agent snapshot/action endpoints and persistent human takeover are described in [BROWSER-TOOLS.md](../../docs/BROWSER-TOOLS.md). The worker token is private; only the API may reach these endpoints. Profile data stays in the existing `/data` volume.

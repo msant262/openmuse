@@ -46,7 +46,7 @@ test("browser API reopens an owned profile at the edited address and renews cons
   assert.equal(opened.status, 200);
   assert.equal((await opened.json()).url, "https://example.org/");
   assert.deepEqual(calls[0], {
-    path: "/sessions",
+    path: "/sessions/human",
     body: { id: sessionId, url: "https://example.org/" },
   });
   assert.equal((await app.request(`${path}/reopen`, { method: "POST", headers })).status, 200);
@@ -91,7 +91,7 @@ test("server reopens the same worker UUID regardless of stale local session stat
     const opened = await service.navigate("owner", sessionId, "https://example.org/");
     assert.equal(opened.id, sessionId);
     assert.deepEqual(calls.at(-1), {
-      path: "/sessions",
+      path: "/sessions/human",
       body: { id: sessionId, url: "https://example.org/" },
     });
     assert.equal((await service.get("owner", sessionId)).url, "https://example.org/");

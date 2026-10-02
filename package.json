@@ -15,7 +15,7 @@
     "dev:mobile": "pnpm --dir apps/mobile start",
     "dev:web": "pnpm --dir apps/mobile web",
     "test": "tsx --test tests/*.test.ts apps/mobile/test/*.test.ts",
-    "test:browser": "node --experimental-strip-types --test apps/worker/tests/lifecycle.test.ts",
+    "test:browser": "node --experimental-strip-types --test apps/worker/tests/lifecycle.test.ts apps/worker/tests/agent-page.test.ts",
     "typecheck": "tsc --noEmit && pnpm --dir apps/mobile typecheck",
     "lint": "biome check .",
     "format": "biome check --write .",
@@ -26,7 +26,7 @@
     "build:android": "pnpm --dir apps/mobile build:android",
     "dev:worker": "tsx apps/server/src/worker-entry.ts",
     "start:worker": "node dist/apps/server/src/worker-entry.js",
-    "dev:browser": "node --env-file=.env --import tsx apps/worker/src/index.ts",
+    "dev:browser": "node --env-file=.env --experimental-strip-types apps/worker/src/index.ts",
     "test:computer": "tsx --test apps/computer/smoke.test.ts"
   },
   "dependencies": {

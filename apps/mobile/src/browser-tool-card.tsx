@@ -15,9 +15,11 @@ const observationSchema = z.object({
 });
 
 function resultValue(result: unknown) {
+  if (Array.isArray(result))
+    return resultValue(result.find((part) => part?.type === "text")?.content);
   if (typeof result !== "string") return result;
   try {
-    return JSON.parse(result);
+    return resultValue(JSON.parse(result));
   } catch {
     return undefined;
   }
@@ -43,7 +45,7 @@ export function BrowserToolCard({
   loading: boolean;
 }) {
   const { api, workspace, open } = useWorkspace();
-  const { running, active } = useContext(BrowserRunContext);
+  const { active } = useContext(BrowserRunContext);
   const working = loading && active;
   const value = resultValue(result);
   const observation = observationSchema.safeParse(value);
@@ -155,14 +157,14 @@ export function BrowserToolCard({
         </View>
       )}
       <ErrorNotice error={failure || error} />
-      {!loading && visited && (
+      {visited && (
         <Button
           icon={Hand}
-          disabled={!browser || running}
+          disabled={!browser}
           onPress={() => browser && open({ type: "browser", browser })}
           style={{ backgroundColor: "#F9F9FA", minHeight: 38, paddingVertical: 8 }}
         >
-          Take control
+          Watch / take control
         </Button>
       )}
       {!!error && (

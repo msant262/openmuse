@@ -41,9 +41,9 @@ Test durable replay after restart, ownership and simultaneous runs; fallback wit
 
 ### Task 3: Browser operation and takeover
 
-- [ ] Add numbered snapshots, guarded click/fill/select/press/scroll, navigation and screenshot endpoints/tools to the existing worker/service, conversation and task loop.
-- [ ] Reject stale references, serialize actions and persist takeover state; mobile browser cards/console let the person watch, take control, and hand back without losing profiles.
-- [ ] Test public destination guards, actions and takeover; run suite and worker/mobile typechecks; commit milestone 3.
+- [x] Add numbered snapshots, guarded click/fill/select/press/scroll, navigation and screenshot endpoints/tools to the existing worker/service, conversation and task loop.
+- [x] Reject stale references, serialize actions and persist takeover state; mobile browser cards/console let the person watch, take control, and hand back without losing profiles.
+- [x] Test public destination guards, actions and takeover; run suite and worker/mobile typechecks; commit milestone 3.
 
 ### Task 4: Open computer, files and media
 

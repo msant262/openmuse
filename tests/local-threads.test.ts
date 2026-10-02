@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,8 +8,10 @@ import { AbstractAgent, type BaseEvent, EventType, type RunAgentInput } from "@a
 import { CopilotKitCore } from "@copilotkit/core";
 import { lastValueFrom, Observable, of, toArray } from "rxjs";
 import { createApp } from "../apps/server/src/app.ts";
+import { BrowserAssets } from "../apps/server/src/browser-assets.ts";
 import type { Config } from "../apps/server/src/config.ts";
 import { createStore, type Store } from "../apps/server/src/db.ts";
+import { browserImageMessages } from "../apps/server/src/providers/browser-images.ts";
 import { LocalThreads } from "../apps/server/src/threads.ts";
 
 const input = (threadId = "rich-thread", runId = "run-1"): RunAgentInput => ({
@@ -793,6 +795,128 @@ test("unkeyed real runtime uses only local storage, authenticated thread APIs an
     }
     errorSubscription.unsubscribe();
     assert.deepEqual(errors, [], "Sequential mobile sends must not race the durable thread lease");
+  } finally {
+    await db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("substantial screenshot assets remain references across 30 cumulative turns, reconnect and restart", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "openmuse-screenshot-scaling-"));
+  let db = await createStore({ dataDir: join(dir, "postgres") });
+  try {
+    let threads = new LocalThreads(db);
+    let assets = new BrowserAssets(db, dir);
+    const bytes = Buffer.alloc(768 * 1024, 0x5a);
+    bytes[0] = 0xff;
+    bytes[1] = 0xd8;
+    bytes[2] = 0xff;
+    let latest = "";
+    let at20 = 0;
+    for (let turn = 0; turn < 30; turn++) {
+      bytes[100] = turn;
+      const asset = await assets.save("wife", bytes);
+      latest = asset.id;
+      const receipt = {
+        browserScreenshot: true,
+        screenshotId: asset.id,
+        sessionId: "00000000-0000-4000-8000-000000000001",
+        title: "Browser",
+        url: "https://example.com/",
+        mimeType: "image/jpeg",
+        width: 1280,
+        height: 800,
+      };
+      const agent = new (class extends AbstractAgent {
+        run(request: RunAgentInput) {
+          return of(
+            ...([
+              { type: EventType.RUN_STARTED, threadId: request.threadId, runId: request.runId },
+              {
+                type: EventType.TOOL_CALL_START,
+                toolCallId: `call-${turn}`,
+                toolCallName: "browser_screenshot",
+                parentMessageId: `assistant-${turn}`,
+              },
+              { type: EventType.TOOL_CALL_ARGS, toolCallId: `call-${turn}`, delta: "{}" },
+              { type: EventType.TOOL_CALL_END, toolCallId: `call-${turn}` },
+              {
+                type: EventType.TOOL_CALL_RESULT,
+                toolCallId: `call-${turn}`,
+                messageId: `tool-${turn}`,
+                role: "tool",
+                content: JSON.stringify(receipt),
+              },
+              { type: EventType.RUN_FINISHED, threadId: request.threadId, runId: request.runId },
+            ] as BaseEvent[]),
+          );
+        }
+      })();
+      const request = input("screenshot-thread", `run-${turn}`);
+      request.messages = [{ id: `user-${turn}`, role: "user", content: "Show the browser." }];
+      await collect(
+        threads.withOwner("wife", () =>
+          threads.run({ threadId: request.threadId, input: request, agent }),
+        ),
+      );
+      if (turn === 19)
+        at20 = Buffer.byteLength(
+          JSON.stringify(await db.threadSnapshot("wife", "screenshot-thread")),
+        );
+    }
+    const payload = JSON.stringify(await db.threadSnapshot("wife", "screenshot-thread"));
+    assert.ok(at20 < 1_000_000, String(at20));
+    assert.ok(Buffer.byteLength(payload) < 1_500_000, String(Buffer.byteLength(payload)));
+    assert.ok(
+      !payload.includes(bytes.toString("base64")),
+      "run messages/inputMessages/RUN_STARTED never inline screenshot bytes",
+    );
+    const folder = join(
+      dir,
+      "browser-screenshots",
+      createHash("sha256").update("wife").digest("hex"),
+    );
+    const stored = await readdir(folder);
+    assert.equal(stored.length, 30, "one asset file per distinct screenshot");
+    assert.equal((await stat(join(folder, `${latest}.jpg`))).size, bytes.length);
+    await assets.save("wife", bytes);
+    assert.equal((await readdir(folder)).length, 30, "repeated captures deduplicate bytes");
+    await assert.rejects(assets.image("stranger", latest), { status: 404 });
+    await db.close();
+    db = await createStore({ dataDir: join(dir, "postgres") });
+    threads = new LocalThreads(db);
+    assets = new BrowserAssets(db, dir);
+    const replay = await collect(
+      threads.withOwner("wife", () => threads.connect({ threadId: "screenshot-thread" })),
+    );
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(replay)) < 1_500_000,
+      "reconnect events stay independent of image byte size",
+    );
+    const history = await threads.history("wife", "screenshot-thread");
+    const messages = history.messages
+      .filter((message) => message.role === "tool")
+      .map((message) => ({
+        role: "tool" as const,
+        toolCallId: "toolCallId" in message ? message.toolCallId : undefined,
+        content: String(message.content),
+      }));
+    let reads = 0;
+    const model = await browserImageMessages(messages, async (id) => {
+      reads++;
+      assert.equal(id, latest);
+      return assets.image("wife", id);
+    });
+    assert.equal(reads, 1, "only latest screenshot bytes are hydrated at model dispatch");
+    const visual = model.find((message) => message.role === "user");
+    assert.ok(visual && Array.isArray(visual.content));
+    const image = visual.content.find((part) => part.type === "image");
+    assert.ok(image && image.type === "image" && image.source.type === "data");
+    assert.equal(Buffer.from(image.source.value, "base64").length, bytes.length);
+    await assert.rejects(assets.image("stranger", latest), { status: 404 });
+    t.diagnostic(
+      `20-turn snapshot ${at20} bytes; 30-turn snapshot ${Buffer.byteLength(payload)} bytes; reconnect ${Buffer.byteLength(JSON.stringify(replay))} bytes; each source image ${bytes.length} bytes`,
+    );
   } finally {
     await db.close();
     await rm(dir, { recursive: true, force: true });

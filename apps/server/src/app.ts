@@ -299,6 +299,13 @@ export async function createApp(
     const body = z.object({ url: z.url().max(4096) }).parse(await c.req.json());
     return c.json(await browser.navigate(c.get("owner"), c.req.param("id"), body.url));
   });
+  app.post("/api/browsers/:id/control", async (c) => {
+    const body = z
+      .object({ control: z.enum(["agent", "human"]) })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(await browser.control(c.get("owner"), c.req.param("id"), body.control));
+  });
   app.post("/api/browsers/:id/close", async (c) =>
     c.json(await browser.close(c.get("owner"), c.req.param("id"))),
   );
@@ -327,7 +334,12 @@ export async function createApp(
     return c.html(browser.console(c.get("owner"), c.req.param("id")));
   });
   app.post("/api/browsers/:id/console", async (c) => {
-    await browser.input(c.get("owner"), c.req.param("id"), await c.req.json());
+    const body = await c.req.json();
+    if (body.operation === "status")
+      return c.json(await browser.control(c.get("owner"), c.req.param("id")));
+    if (body.control === "agent" || body.control === "human")
+      return c.json(await browser.control(c.get("owner"), c.req.param("id"), body.control));
+    await browser.input(c.get("owner"), c.req.param("id"), body);
     return c.json({ ok: true });
   });
   app.all("/api/copilotkit/*", async (c) => {

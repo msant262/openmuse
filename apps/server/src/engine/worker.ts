@@ -34,6 +34,7 @@ export class TaskWorker {
       leaseMs?: number;
       pollMs?: number;
       settled?: (owner: string, task: AgentTask) => Promise<void>;
+      browserReleased?: (owner: string, sessionId: string) => Promise<boolean>;
     } = {},
   ) {}
   private now() {
@@ -79,10 +80,20 @@ export class TaskWorker {
           (t.status === "queued" ||
             (t.status === "scheduled" && Date.parse(t.nextRunAt ?? "") <= this.now()) ||
             (t.status === "running" && Date.parse(t.leaseUntil ?? "") <= this.now()) ||
-            t.status === "waiting_approval"),
+            t.status === "waiting_approval" ||
+            (t.status === "paused" && typeof t.state.awaitingBrowserSessionId === "string")),
       );
       const eligible = [];
       for (const record of due) {
+        if (record.value.status === "paused") {
+          if (
+            !this.options.browserReleased ||
+            !(await this.options
+              .browserReleased(record.owner, String(record.value.state.awaitingBrowserSessionId))
+              .catch(() => false))
+          )
+            continue;
+        }
         if (record.value.status === "waiting_approval") {
           const action = record.value.actionId
             ? await this.db.get<{ status: string; expiresAt?: string }>(
@@ -128,6 +139,9 @@ export class TaskWorker {
       leaseUntil: new Date(this.now() + leaseMs).toISOString(),
       updatedAt: new Date(this.now()).toISOString(),
       attempts: previous.attempts + 1,
+      state: previous.state.awaitingBrowserSessionId
+        ? { ...previous.state, awaitingBrowserSessionId: null }
+        : previous.state,
     });
     if (!task) return;
     const controller = new AbortController();

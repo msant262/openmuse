@@ -5,6 +5,7 @@ import { type GeminiTextModel, geminiText } from "@tanstack/ai-gemini";
 import { type OpenAIChatModel, openaiText } from "@tanstack/ai-openai";
 import { openaiCompatibleText } from "@tanstack/ai-openai/compatible";
 import { MODEL_MAX_RETRIES } from "../config.ts";
+import { type BrowserImageLoader, browserImageMessages } from "./browser-images.ts";
 import {
   type ModelProviderConfig,
   modelProviderConfig,
@@ -179,6 +180,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
     private readonly models: string[],
     private readonly config: ModelProviderConfig,
     private readonly onSelected?: (model: ModelSelection) => void,
+    private readonly loadBrowserImage?: BrowserImageLoader,
   ) {
     this.model = modelSpec(models[0]).model;
     for (const spec of models) {
@@ -187,6 +189,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
     }
   }
   async *chatStream(options: TextOptions): AsyncIterable<AdapterYieldChunk> {
+    const messages = await browserImageMessages(options.messages, this.loadBrowserImage);
     for (let index = this.selected; index < this.models.length; index++) {
       options.request?.signal?.throwIfAborted();
       let current: ReturnType<typeof attempt> | undefined;
@@ -196,6 +199,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
         current = attempt(this.models[index], this.config);
         for await (const event of current.adapter.chatStream({
           ...options,
+          messages,
           model: current.adapter.model,
         })) {
           if (event.type === "RUN_STARTED") {
@@ -294,11 +298,13 @@ export function modelAdapter(
   fallbacks: readonly string[] = [],
   config = modelProviderConfig(process.env.DATA_DIR ?? ".openmuse"),
   onSelected?: (model: ModelSelection) => void,
+  loadBrowserImage?: BrowserImageLoader,
 ): AnyTextAdapter {
   return new OrderedModelAdapter(
     orderedModels(model, fallbacks).map(({ spec }) => spec),
     config,
     onSelected,
+    loadBrowserImage,
   );
 }
 

@@ -211,3 +211,42 @@ test("a failed run record does not leave the task stuck in the worker", async ()
     await db.close();
   }
 });
+
+test("browser-paused tasks resume only after authoritative handback; ordinary pauses remain paused", async () => {
+  const db = await createStore();
+  try {
+    const paused = {
+      ...task("browser-pause"),
+      status: "paused" as const,
+      state: { awaitingBrowserSessionId: "browser", browserId: "browser", receipt: "kept" },
+    };
+    await db.put("owner", "tasks", paused);
+    await db.put("owner", "tasks", { ...task("ordinary-pause"), status: "paused" });
+    let released = false,
+      calls = 0;
+    const worker = new TaskWorker(
+      db,
+      async (_owner, value) => {
+        calls++;
+        assert.equal(value.state.receipt, "kept");
+        assert.equal(value.state.awaitingBrowserSessionId, null);
+        return { status: "succeeded", result: "Resumed after handback" };
+      },
+      {
+        browserReleased: async (_owner, id) => {
+          assert.equal(id, "browser");
+          return released;
+        },
+      },
+    );
+    await worker.tick();
+    assert.equal(calls, 0);
+    released = true;
+    await Promise.all([worker.tick(), worker.tick()]);
+    assert.equal(calls, 1);
+    assert.equal((await db.get<AgentTask>("owner", "tasks", "browser-pause"))?.status, "succeeded");
+    assert.equal((await db.get<AgentTask>("owner", "tasks", "ordinary-pause"))?.status, "paused");
+  } finally {
+    await db.close();
+  }
+});
