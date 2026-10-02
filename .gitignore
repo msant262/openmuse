@@ -18,3 +18,4 @@ __pycache__/
 # Native platform push credentials/configuration are local deployment inputs.
 apps/mobile/google-services.json
 *.p8
+.worktrees/
