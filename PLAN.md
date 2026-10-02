@@ -58,9 +58,9 @@ conversion remain unverified. Final Compose/resource/egress acceptance belongs t
 
 ### Task 5: Autonomy and audit
 
-- [ ] Add configurable approval policy defaulting to money only, autonomous Google actions, payment browser detection/review and append-only DB action log with mobile screen.
-- [ ] Preserve idempotency, cancellation, account binding and uncertain-write handling; audit successful and failed external actions without secrets.
-- [ ] Test policy/execution/audit behavior and mobile types; run suite; commit milestone 5.
+- [x] Add configurable approval policy defaulting to money only, autonomous Google actions, payment browser detection/review and append-only DB action log with mobile screen.
+- [x] Preserve idempotency, cancellation, account binding and uncertain-write handling; audit successful and failed external actions without secrets.
+- [x] Test policy/execution/audit behavior and mobile types; run suite; commit milestone 5.
 
 ### Task 6: Routines, MCP and memory
 

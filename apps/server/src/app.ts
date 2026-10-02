@@ -6,8 +6,11 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { z } from "zod";
 import { emailDraftSchema, proposalSchema } from "../../../packages/domain/src/index.ts";
+import { ActionLog } from "./action-log.ts";
+import { approvalPolicy } from "./action-policy.ts";
 import { ActionService } from "./actions.ts";
 import { agentConfigured, makeRuntime } from "./agent.ts";
+import { auditedComputer } from "./audited-computer.ts";
 import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
@@ -33,6 +36,7 @@ export async function createApp(
     google = new GoogleAuth(db, config),
     workspace = new WorkspaceService(db, config, files, google);
   const actions = new ActionService(db, {
+    policy: approvalPolicy(config),
     execute: (owner, input, connectionId, targetVersion) =>
       workspace.execute(owner, input, connectionId, targetVersion),
     prepare: (owner, input, connectionId) => workspace.prepare(owner, input, connectionId),
@@ -40,10 +44,14 @@ export async function createApp(
     connection: (owner) => workspace.connection(owner),
   });
   const browser = new BrowserService(db, config, auth, files);
-  const computer =
+  browser.configureActions(actions);
+  const computer = auditedComputer(
     config.computerBackend === "rpc"
       ? new RpcComputerService(db, config)
-      : new ComputerService(db, config, options.docker);
+      : new ComputerService(db, config, options.docker),
+    new ActionLog(db),
+    config.computerBackend ?? "docker",
+  );
   const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
   const threads = config.intelligenceApiKey?.trim()
     ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey.trim() })
@@ -63,7 +71,7 @@ export async function createApp(
     "*",
     cors({
       origin: (origin) => (origins.has(origin) ? origin : undefined),
-      allowHeaders: ["Content-Type", "Authorization"],
+      allowHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       credentials: true,
     }),
@@ -178,11 +186,44 @@ export async function createApp(
   app.get("/api/mail/threads/:id", async (c) =>
     c.json(await workspace.thread(c.get("owner"), c.req.param("id"))),
   );
+  app.get("/api/action-log", async (c) => {
+    const query = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(200).default(50),
+        cursor: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
+      })
+      .parse(c.req.query());
+    return c.json(await db.actionLog(c.get("owner"), query.limit, query.cursor));
+  });
   app.post("/api/actions", async (c) => {
-    const input = proposalSchema.parse(await c.req.json());
+    const raw = z
+      .object({ idempotencyKey: z.unknown().optional() })
+      .passthrough()
+      .parse(await c.req.json());
+    const requestKey = z
+      .string()
+      .min(16)
+      .max(160)
+      .regex(/^[a-zA-Z0-9:_-]+$/)
+      .optional()
+      .parse(raw.idempotencyKey ?? c.req.header("Idempotency-Key"));
+    if (approvalPolicy(config) === "money" && !requestKey)
+      throw new AppError("An idempotency key is required for automatic actions", 422);
+    const input = proposalSchema.parse(raw);
     if (input.kind === "email.send")
       for (const id of input.data.attachmentIds) await files.get(c.get("owner"), id);
-    return c.json(await actions.propose(c.get("owner"), input), 201);
+    return c.json(
+      await actions.propose(c.get("owner"), input, requestKey ? `native:${requestKey}` : undefined),
+      201,
+    );
+  });
+  app.get("/api/actions/:id", async (c) => {
+    const action = await db.get(c.get("owner"), "actions", c.req.param("id"));
+    if (!action) throw new AppError("Action not found", 404);
+    return c.json(action);
   });
   app.post("/api/actions/:id/decide", async (c) => {
     const body = z

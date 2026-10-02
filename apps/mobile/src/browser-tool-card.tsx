@@ -2,7 +2,7 @@ import { Check, Globe2, Hand, RotateCw } from "lucide-react-native";
 import { createContext, useContext, useEffect, useState } from "react";
 import { ActivityIndicator, AppState, Image, Text, View } from "react-native";
 import { z } from "zod";
-import type { BrowserSession } from "../../../packages/domain/src";
+import type { ActionProposal, BrowserSession } from "../../../packages/domain/src";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -49,6 +49,9 @@ export function BrowserToolCard({
   const working = loading && active;
   const value = resultValue(result);
   const observation = observationSchema.safeParse(value);
+  const approval = z
+    .object({ approvalRequired: z.literal(true), actionId: z.string() })
+    .safeParse(value);
   const toolError = z.object({ error: z.string() }).safeParse(value);
   const sessionId = observation.success ? observation.data.sessionId : undefined;
   const current = workspace.browsers.find((browser) => browser.id === sessionId);
@@ -155,6 +158,21 @@ export function BrowserToolCard({
             </Text>
           ) : null}
         </View>
+      )}
+      {approval.success && (
+        <Button
+          primary
+          onPress={() => {
+            void api
+              .request<ActionProposal>(`/api/actions/${approval.data.actionId}`)
+              .then((action) => open({ type: "review", action }))
+              .catch((failure) =>
+                setError(failure instanceof Error ? failure.message : "Review unavailable"),
+              );
+          }}
+        >
+          Review action
+        </Button>
       )}
       <ErrorNotice error={failure || error} />
       {visited && (

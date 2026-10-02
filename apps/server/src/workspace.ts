@@ -11,6 +11,8 @@ import type {
 } from "../../../packages/domain/src/index.ts";
 import { GoogleClient } from "../../../packages/integrations/src/google.ts";
 import { createSamplePdf } from "../../../packages/integrations/src/pdf.ts";
+import { ActionLog, auditTarget } from "./action-log.ts";
+import { approvalPolicy } from "./action-policy.ts";
 import type { ActionService } from "./actions.ts";
 import { agentConfigured } from "./agent.ts";
 import type { Config } from "./config.ts";
@@ -30,6 +32,19 @@ export class WorkspaceService {
   google(owner: string, connectionId?: string) {
     return new GoogleClient({
       getAccessToken: () => this.googleAuth.accessToken(owner, connectionId),
+      fetch: async (url, options) =>
+        options?.method && options.method !== "GET"
+          ? fetch(url, options)
+          : new ActionLog(this.db).run(
+              owner,
+              {
+                tool: "google.read",
+                target: auditTarget(String(url)),
+                summary: `Google ${options?.method ?? "GET"}`,
+              },
+              () => fetch(url, options),
+              (response) => (response.ok ? "succeeded" : "failed"),
+            ),
     });
   }
   async connection(owner: string) {
@@ -325,6 +340,7 @@ export class WorkspaceService {
         openbotConfigured: false,
         richThreads: true,
         threadStorage: this.config.intelligenceApiKey?.trim() ? "intelligence" : "local",
+        approvalPolicy: approvalPolicy(this.config),
       },
     };
   }
@@ -383,7 +399,7 @@ export class WorkspaceService {
     if (!tokens) throw new AppError("Google is disconnected", 409);
     const capability = input.kind === "email.send" ? "gmail.send" : "calendar.events";
     if (!tokens.scopes.includes(`https://www.googleapis.com/auth/${capability}`))
-      throw new AppError("Enable Google write access in Connections before approving", 403);
+      throw new AppError("Enable Google write access in Connections before executing", 403);
     if (tokens.connectionId !== connectionId)
       throw new AppError("Google account or connection changed. Prepare a new action.", 409);
     const google = this.google(owner, connectionId);

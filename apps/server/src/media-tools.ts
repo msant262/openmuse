@@ -3,6 +3,7 @@ import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import { rasterMime } from "../../../packages/domain/src/attachments.ts";
 import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
+import { ActionLog } from "./action-log.ts";
 import { base64Limit, decodeBase64 } from "./base64.ts";
 import type { ComputerBackend } from "./computer-contract.ts";
 import type { Config } from "./config.ts";
@@ -72,6 +73,13 @@ export class MediaService {
       }))
     )
       return this.generatedImage(owner, model, args, scope, signal);
+    const audit = {
+      operationId: `image:${id}`,
+      tool: "generate_image",
+      target: "Selected image provider",
+      summary: "Generate image",
+    };
+    await new ActionLog(this.db).append(owner, audit, "started");
     try {
       const response = await provider.generate(
         {
@@ -135,8 +143,10 @@ export class MediaService {
         status: "succeeded",
         fileId: file.id,
       });
+      await new ActionLog(this.db).finish(owner, audit, "succeeded");
       return this.files.reference(owner, file.id);
     } catch (error) {
+      await new ActionLog(this.db).finish(owner, audit, "outcome_unknown");
       await this.db.put(owner, "image-generations", { id, binding, status: "uncertain" });
       throw error;
     }

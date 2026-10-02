@@ -10,6 +10,8 @@ export function browserTools(
   owner: string,
   options: {
     signal?: AbortSignal;
+    taskId?: string;
+    approval?: (id: string) => Promise<void>;
     sessionId?: () => string | undefined;
     before?: () => Promise<void>;
     stopped?: () => boolean;
@@ -31,7 +33,12 @@ export function browserTools(
     try {
       id = await service.agentSession(owner, id, url, options.signal);
       await options.observed?.(id);
-      return await operation(id);
+      const result = await operation(id);
+      const review = z
+        .object({ approvalRequired: z.literal(true), actionId: z.string() })
+        .safeParse(result);
+      if (review.success) await options.approval?.(review.data.actionId);
+      return result;
     } catch (error) {
       options.signal?.throwIfAborted();
       if (error instanceof BrowserError) {
@@ -85,7 +92,8 @@ export function browserTools(
       description:
         "Perform click/fill/select/press/scroll on one numbered element from the exact latest snapshot. Returns fresh controls. Human takeover and money approvals cannot be bypassed.",
       parameters: z.object({ sessionId: z.uuid().optional(), act: browserActionSchema }).strict(),
-      execute: (args) => run(args, (id) => service.act(owner, id, args.act, options.signal)),
+      execute: (args) =>
+        run(args, (id) => service.act(owner, id, args.act, options.signal, options.taskId)),
     }),
     defineTool({
       name: "browser_screenshot",

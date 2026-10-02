@@ -75,7 +75,7 @@ export async function createWorkerServer(options: {
         return;
       }
       const match =
-        /^\/sessions\/([^/]+)\/(navigate|agent-navigate|close|screenshot|agent-screenshot|snapshot|act|control|read|input|downloads)(?:\/([^/]+))?$/.exec(
+        /^\/sessions\/([^/]+)\/(navigate|agent-navigate|close|screenshot|agent-screenshot|snapshot|act|inspect|reviewed-act|control|read|input|downloads)(?:\/([^/]+))?$/.exec(
           pathname,
         );
       if (!match) throw new WorkerError("NOT_FOUND", "Worker endpoint not found.", 404);
@@ -90,7 +90,14 @@ export async function createWorkerServer(options: {
         json(200, await browser.snapshot(id));
       else if (action === "agent-screenshot" && !downloadId && request.method === "GET")
         json(200, await browser.agentScreenshot(id));
-      else if (action === "act" && !downloadId && request.method === "POST")
+      else if (action === "inspect" && !downloadId && request.method === "POST")
+        json(200, await browser.inspect(id, await readBody(request)));
+      else if (action === "reviewed-act" && !downloadId && request.method === "POST") {
+        const body = await readBody(request);
+        if (Object.keys(body).some((key) => key !== "authorization"))
+          throw new WorkerError("INVALID_APPROVAL", "Unsupported approval fields.", 403);
+        json(200, await browser.reviewedAct(id, body.authorization));
+      } else if (action === "act" && !downloadId && request.method === "POST")
         json(200, await browser.act(id, await readBody(request)));
       else if (action === "control" && !downloadId && request.method === "GET")
         json(200, await browser.control(id));

@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import pg from "pg";
+import type { ActionLogEntry } from "../../../packages/domain/src/index.ts";
 import { backgroundFailure } from "./log.ts";
 
 type Row = { data: Record<string, unknown> };
@@ -12,6 +13,33 @@ interface Database {
 
 export class Store {
   constructor(private readonly db: Database) {}
+  async appendActionLog(owner: string, entry: ActionLogEntry): Promise<void> {
+    await this.db.query(
+      "INSERT INTO external_action_log(owner,id,time,data) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT(owner,id) DO NOTHING",
+      [owner, entry.id, entry.time, JSON.stringify(entry)],
+    );
+  }
+  async actionLog(
+    owner: string,
+    limit = 50,
+    cursor?: string,
+  ): Promise<{ entries: ActionLogEntry[]; nextCursor?: string }> {
+    limit = Math.min(200, Math.max(1, limit));
+    const result = await this.db.query(
+      "SELECT data FROM external_action_log WHERE owner=$1 AND ($2::text IS NULL OR (time,id)<(SELECT time,id FROM external_action_log WHERE owner=$1 AND id=$2)) ORDER BY time DESC,id DESC LIMIT $3",
+      [owner, cursor ?? null, Math.min(200, Math.max(1, limit)) + 1],
+    );
+    const entries = result.rows.slice(0, limit).map((row) => row.data as unknown as ActionLogEntry);
+    return { entries, ...(result.rows.length > limit && { nextCursor: entries.at(-1)?.id }) };
+  }
+  async unfinishedActionLog(): Promise<{ owner: string; value: ActionLogEntry }[]> {
+    const result = await this.db.query(
+      "SELECT jsonb_build_object('owner',start.owner,'value',start.data) AS data FROM external_action_log start WHERE start.data->>'result'='started' AND NOT EXISTS (SELECT 1 FROM external_action_log done WHERE done.owner=start.owner AND done.data->>'operationId'=start.data->>'operationId' AND done.data->>'result'<>'started') ORDER BY start.time LIMIT 200",
+    );
+    return result.rows.map(
+      (row) => row.data as unknown as { owner: string; value: ActionLogEntry },
+    );
+  }
   async get<T = Record<string, unknown>>(
     owner: string,
     kind: string,
@@ -235,6 +263,18 @@ export async function createStore(
   }
   await database.query(
     "CREATE TABLE IF NOT EXISTS records(owner text NOT NULL,kind text NOT NULL,id text NOT NULL,data jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,kind,id))",
+  );
+  await database.query(
+    "CREATE TABLE IF NOT EXISTS external_action_log(owner text NOT NULL,id text NOT NULL,time timestamptz NOT NULL,data jsonb NOT NULL,PRIMARY KEY(owner,id))",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS external_action_log_owner_time ON external_action_log(owner,time DESC,id DESC)",
+  );
+  await database.query(
+    `CREATE OR REPLACE FUNCTION reject_action_log_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'External action log is append-only'; END $$`,
+  );
+  await database.query(
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='external_action_log_immutable' AND tgrelid='external_action_log'::regclass) THEN CREATE TRIGGER external_action_log_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON external_action_log FOR EACH STATEMENT EXECUTE FUNCTION reject_action_log_mutation(); END IF; END $$",
   );
   return new Store(database);
 }

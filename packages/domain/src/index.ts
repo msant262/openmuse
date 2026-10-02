@@ -131,6 +131,7 @@ export type EmailDraft = z.infer<typeof emailDraftSchema>;
 export type EventDraft = z.infer<typeof eventDraftSchema>;
 export type ProposalInput = z.infer<typeof proposalSchema>;
 export interface ActionProposal {
+  requestHash?: string;
   target?: CalendarEvent;
   targetVersion?: string;
   taskId?: string;
@@ -138,7 +139,7 @@ export interface ActionProposal {
   connectionId?: string;
   id: string;
   title: string;
-  kind: ProposalInput["kind"];
+  kind: ProposalInput["kind"] | "external.action";
   data: Record<string, unknown>;
   status:
     | "awaiting_review"
@@ -154,6 +155,23 @@ export interface ActionProposal {
   expiresAt: string;
   result?: string;
   error?: string;
+}
+export interface ActionLogEntry {
+  id: string;
+  operationId: string;
+  time: string;
+  actor: "agent" | "human" | "policy";
+  tool: string;
+  target: string;
+  summary: string;
+  result:
+    | "started"
+    | "succeeded"
+    | "failed"
+    | "outcome_unknown"
+    | "denied"
+    | "expired"
+    | "cancelled";
 }
 export interface ActivityEntry {
   id: string;
@@ -186,6 +204,7 @@ export interface Workspace {
     openbotConfigured: boolean;
     richThreads?: boolean;
     threadStorage?: "local" | "intelligence";
+    approvalPolicy?: "money" | "all";
   };
 }
 

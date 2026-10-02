@@ -1,6 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import {
+  type BrowserPaymentBinding,
+  signBrowserAuthorization,
+} from "../../../packages/domain/src/browser-payment.ts";
 import type { BrowserSession } from "../../../packages/domain/src/index.ts";
+import { ActionLog, auditTarget } from "./action-log.ts";
+import { approvalPolicy } from "./action-policy.ts";
+import type { ActionService } from "./actions.ts";
 import type { Auth } from "./auth.ts";
 import { BrowserAssets } from "./browser-assets.ts";
 import { browserConsole } from "./browser-console.ts";
@@ -34,6 +41,8 @@ const failureSchema = z.object({
 type ChatBrowser = { id: string; sessionId: string };
 
 export class BrowserService {
+  private actions?: ActionService;
+  private readonly log: ActionLog;
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly assets: BrowserAssets;
   private health?: { checkedAt: number; reachable: Promise<boolean> };
@@ -45,6 +54,75 @@ export class BrowserService {
     private readonly now: () => number = Date.now,
   ) {
     this.assets = new BrowserAssets(db, config.dataDir);
+    this.log = new ActionLog(db);
+  }
+  configureActions(actions: ActionService) {
+    this.actions = actions;
+    actions.registerExternal("browser.act", async (owner, raw, proposal) => {
+      const { sessionId, binding } = raw as { sessionId: string; binding: BrowserPaymentBinding };
+      return this.serial(sessionId, async () => {
+        await this.get(owner, sessionId);
+        if (proposal.taskId) {
+          const task = await this.db.get<{ status: string }>(owner, "tasks", proposal.taskId);
+          if (!task || !["running", "waiting_approval"].includes(task.status))
+            throw new AppError("Task was cancelled or paused before browser dispatch", 409);
+        }
+        if (!this.config.workerToken) throw new AppError("Browser worker is unavailable", 503);
+        const authorization = signBrowserAuthorization(this.config.workerToken, {
+          id: proposal.id,
+          sessionId,
+          binding,
+          expiresAt: Date.parse(proposal.expiresAt),
+        });
+        try {
+          const receipt = z
+            .object({ id: z.string(), status: z.literal("succeeded") })
+            .parse(
+              await (
+                await this.request(`/sessions/${sessionId}/reviewed-act`, { authorization })
+              ).json(),
+            );
+          if (receipt.id !== proposal.id) throw new Error("Mismatched browser receipt");
+          return `Browser action completed · ${receipt.id}`;
+        } catch (error) {
+          if (
+            error instanceof BrowserError &&
+            [
+              "STALE_SNAPSHOT",
+              "BROWSER_CONTROLLED",
+              "SESSION_CLOSED",
+              "SESSION_NOT_FOUND",
+              "INVALID_APPROVAL",
+              "APPROVAL_FAILED",
+              "INVALID_ACTION",
+            ].includes(error.code)
+          )
+            throw error;
+          throw new BrowserError(
+            "OUTCOME_UNKNOWN",
+            "The browser could not confirm the reviewed action. Check the site before preparing another action.",
+            409,
+          );
+        }
+      });
+    });
+  }
+  private ownedRequest(owner: string, path: string, body?: unknown, signal?: AbortSignal) {
+    const endpoint = path.split("/")[3] ?? "open";
+    const human =
+      path === "/sessions/human" ||
+      ["input", "navigate", "close"].includes(endpoint) ||
+      (endpoint === "control" && body !== undefined);
+    return this.log.run(
+      owner,
+      {
+        tool: `browser.${endpoint}`,
+        target: "Personal browser",
+        summary: `Browser ${endpoint}`,
+        actor: human ? "human" : "agent",
+      },
+      () => this.request(path, body, signal),
+    );
   }
   /** Whether the configured worker answers its health check, cached briefly for snapshots. */
   reachable(): Promise<boolean> {
@@ -88,6 +166,12 @@ export class BrowserService {
       });
     } catch {
       signal?.throwIfAborted();
+      if (path.endsWith("/reviewed-act"))
+        throw new BrowserError(
+          "OUTCOME_UNKNOWN",
+          "The reviewed browser response was lost. Check the site before preparing another action.",
+          409,
+        );
       throw new AppError(
         "Browser worker is unavailable. Check that its container is running.",
         503,
@@ -150,7 +234,8 @@ export class BrowserService {
     const value = await this.get(owner, id);
     const target = url ?? value.url;
     try {
-      const response = await this.request(
+      const response = await this.ownedRequest(
+        owner,
         human ? "/sessions/human" : "/sessions",
         { id, url: target },
         signal,
@@ -175,7 +260,7 @@ export class BrowserService {
   private async readOwned(owner: string, id: string, signal?: AbortSignal) {
     const session = await this.get(owner, id);
     const result = readSchema.parse(
-      await (await this.request(`/sessions/${id}/read`, undefined, signal)).json(),
+      await (await this.ownedRequest(owner, `/sessions/${id}/read`, undefined, signal)).json(),
     );
     await this.save(
       owner,
@@ -265,7 +350,9 @@ export class BrowserService {
     return this.serial(id, async () => {
       await this.get(owner, id);
       const value = snapshotSchema.parse(
-        await (await this.request(`/sessions/${id}/snapshot`, undefined, signal)).json(),
+        await (
+          await this.ownedRequest(owner, `/sessions/${id}/snapshot`, undefined, signal)
+        ).json(),
       );
       if (value.sessionId !== id)
         throw new BrowserError("INVALID_SESSION", "The browser returned a different session.");
@@ -289,14 +376,97 @@ export class BrowserService {
     id: string,
     action: z.infer<typeof browserActionSchema>,
     signal?: AbortSignal,
+    taskId?: string,
   ) {
     return this.serial(id, async () => {
       await this.get(owner, id);
-      const value = snapshotSchema.parse(
-        await (
-          await this.request(`/sessions/${id}/act`, browserActionSchema.parse(action), signal)
-        ).json(),
-      );
+      const parsed = browserActionSchema.parse(action);
+      const prepareReview = async () => {
+        if (!this.actions)
+          throw new BrowserError(
+            "PAYMENT_APPROVAL_REQUIRED",
+            "Native action review is not configured",
+            409,
+            id,
+          );
+        const inspected = z
+          .object({
+            binding: z.object({
+              snapshotId: z.uuid(),
+              element: z.number().int(),
+              action: z.record(z.string(), z.unknown()),
+              url: z.url(),
+              frameUrl: z.string(),
+              fingerprint: z.string(),
+              formDigest: z.string(),
+              pageDigest: z.string(),
+            }),
+            label: z.string(),
+            requiresApproval: z.boolean(),
+          })
+          .parse(
+            await (
+              await this.ownedRequest(owner, `/sessions/${id}/inspect`, parsed, signal)
+            ).json(),
+          );
+        signal?.throwIfAborted();
+        if (approvalPolicy(this.config) === "money" && !inspected.requiresApproval)
+          throw new BrowserError(
+            "STALE_SNAPSHOT",
+            "Payment context changed before review. Take a fresh snapshot.",
+            409,
+            id,
+          );
+        const key = createHash("sha256")
+          .update(JSON.stringify({ id, binding: inspected.binding }))
+          .digest("hex");
+        const review = await this.actions.proposeExternal(
+          owner,
+          {
+            tool: "browser.act",
+            target: auditTarget(inspected.binding.url),
+            summary: inspected.requiresApproval
+              ? "Approve payment or purchase control"
+              : "Approve browser action",
+            money: inspected.requiresApproval,
+            binding: { sessionId: id, binding: inspected.binding },
+            display: {
+              sessionId: id,
+              element: parsed.element,
+              action: parsed.action,
+              page: auditTarget(inspected.binding.url),
+              label: inspected.label.slice(0, 500),
+            },
+          },
+          key,
+          taskId,
+        );
+        const session = await this.get(owner, id);
+        return {
+          approvalRequired: review.status === "awaiting_review",
+          actionId: review.id,
+          status: review.status,
+          sessionId: id,
+          title: session.title,
+          url: session.url,
+        };
+      };
+      if (this.actions && approvalPolicy(this.config) === "all") return prepareReview();
+      let payload: unknown;
+      try {
+        payload = await (
+          await this.ownedRequest(owner, `/sessions/${id}/act`, parsed, signal)
+        ).json();
+      } catch (error) {
+        if (
+          this.actions &&
+          error instanceof BrowserError &&
+          error.code === "PAYMENT_APPROVAL_REQUIRED"
+        )
+          return prepareReview();
+        throw error;
+      }
+      const value = snapshotSchema.parse(payload);
       if (value.sessionId !== id)
         throw new BrowserError("INVALID_SESSION", "The browser returned a different session.");
       await this.save(
@@ -319,7 +489,11 @@ export class BrowserService {
     return this.save(
       owner,
       await (
-        await this.request(`/sessions/${id}/control`, mode ? { control: mode } : undefined)
+        await this.ownedRequest(
+          owner,
+          `/sessions/${id}/control`,
+          mode ? { control: mode } : undefined,
+        )
       ).json(),
       id,
     );
@@ -337,7 +511,9 @@ export class BrowserService {
         height: z.literal(800),
       })
       .parse(
-        await (await this.request(`/sessions/${id}/agent-screenshot`, undefined, signal)).json(),
+        await (
+          await this.ownedRequest(owner, `/sessions/${id}/agent-screenshot`, undefined, signal)
+        ).json(),
       );
     if (value.sessionId !== id || !/^[A-Za-z0-9+/]*={0,2}$/.test(value.image))
       throw new BrowserError("INVALID_SCREENSHOT", "The browser returned an invalid screenshot.");
@@ -356,19 +532,23 @@ export class BrowserService {
   async close(owner: string, id: string) {
     return this.serial(id, async () => {
       await this.get(owner, id);
-      return this.save(owner, await (await this.request(`/sessions/${id}/close`, {})).json(), id);
+      return this.save(
+        owner,
+        await (await this.ownedRequest(owner, `/sessions/${id}/close`, {})).json(),
+        id,
+      );
     });
   }
   async preview(owner: string, id: string) {
     await this.get(owner, id);
-    return this.request(`/sessions/${id}/screenshot`);
+    return this.ownedRequest(owner, `/sessions/${id}/screenshot`);
   }
   async input(owner: string, id: string, value: unknown) {
     return this.serial(id, async () => {
       await this.get(owner, id);
       return this.save(
         owner,
-        await (await this.request(`/sessions/${id}/input`, value)).json(),
+        await (await this.ownedRequest(owner, `/sessions/${id}/input`, value)).json(),
         id,
       );
     });
@@ -382,7 +562,7 @@ export class BrowserService {
         ),
         failures: z.array(failureSchema),
       })
-      .parse(await (await this.request(`/sessions/${id}/downloads`)).json());
+      .parse(await (await this.ownedRequest(owner, `/sessions/${id}/downloads`)).json());
     const saved = [];
     for (const download of downloads) {
       const existing = await this.db.get<{ fileId: string }>(
@@ -394,7 +574,8 @@ export class BrowserService {
         saved.push(this.files.signed(owner, await this.files.get(owner, existing.fileId)));
         continue;
       }
-      const response = await this.request(
+      const response = await this.ownedRequest(
+        owner,
         `/sessions/${id}/downloads/${encodeURIComponent(download.id)}`,
       );
       const file = await this.files.import(

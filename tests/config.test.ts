@@ -62,3 +62,19 @@ test("environment variables that override a different .env value are reported by
   assert.deepEqual(shadowedEnvKeys(file, env), ["OPENAI_API_KEY", "EMPTY"]);
   assert.deepEqual(shadowedEnvKeys(file, {}), []);
 });
+
+test("approval policy defaults to money and accepts only money or all", async () => {
+  const { readConfig } = await import("../apps/server/src/config.ts");
+  const previous = process.env.APPROVAL_POLICY;
+  try {
+    delete process.env.APPROVAL_POLICY;
+    assert.equal(readConfig().approvalPolicy, "money");
+    process.env.APPROVAL_POLICY = "all";
+    assert.equal(readConfig().approvalPolicy, "all");
+    process.env.APPROVAL_POLICY = "none";
+    assert.throws(() => readConfig(), /APPROVAL_POLICY/);
+  } finally {
+    if (previous === undefined) delete process.env.APPROVAL_POLICY;
+    else process.env.APPROVAL_POLICY = previous;
+  }
+});

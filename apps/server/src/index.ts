@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { ActionLog } from "./action-log.ts";
 import { createApp } from "./app.ts";
 import { readConfig } from "./config.ts";
 import { createStore } from "./db.ts";
@@ -10,6 +11,7 @@ const db = await createStore({
   databaseUrl: config.databaseUrl,
 });
 await db.recoverInterruptedActions();
+await new ActionLog(db).reconcile(true);
 const { app, agent } = await createApp(db, config);
 const stopTokenMaintenance = startModelTokenMaintenance(config);
 if (config.taskWorkerEnabled) agent.start();

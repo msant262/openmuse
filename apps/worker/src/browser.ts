@@ -11,6 +11,7 @@ import {
 import { WorkerError } from "./errors.ts";
 import { validatePublicUrl } from "./network.ts";
 import { startEgressProxy } from "./proxy.ts";
+import { ReviewedActions } from "./reviewed-actions.ts";
 
 export interface Session {
   id: string;
@@ -37,6 +38,7 @@ export function validateSessionId(id: unknown): string {
 }
 
 export async function createBrowserManager(options: {
+  token?: string;
   dataDir: string;
   maxSessions?: number;
   idleTimeoutMs?: number;
@@ -408,6 +410,42 @@ export async function createBrowserManager(options: {
         const result = await instance.agent.snapshot();
         await refresh(id);
         return { sessionId: id, control: sessions.get(id)?.control ?? "agent", ...result };
+      }),
+    reviewedAct: (id: string, authorization: unknown) =>
+      serial(id, async () => {
+        if (!options.token)
+          throw new WorkerError("INVALID_APPROVAL", "Review executor is not configured.", 403);
+        const instance = active(id);
+        await validatePage(instance);
+        const receipt = await new ReviewedActions(dataDir, options.token).execute(
+          id,
+          authorization,
+          instance.agent,
+          () => guardAgent(id),
+        );
+        try {
+          await validatePage(instance);
+          await refresh(id);
+        } catch {
+          throw new WorkerError(
+            "OUTCOME_UNKNOWN",
+            "The approved action executed but page verification failed. Check the site.",
+            409,
+          );
+        }
+        return receipt;
+      }),
+    inspect: (id: string, value: Record<string, unknown>) =>
+      serial(id, async () => {
+        guardAgent(id);
+        const instance = active(id);
+        await validatePage(instance);
+        const inspected = await instance.agent.inspect(browserAction(value));
+        return {
+          binding: inspected.binding,
+          label: inspected.live.label,
+          requiresApproval: inspected.requiresApproval,
+        };
       }),
     act: (id: string, value: Record<string, unknown>) => {
       const action = browserAction(value);

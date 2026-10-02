@@ -39,6 +39,7 @@ import type {
   EmailDraft,
 } from "../../../packages/domain/src";
 import { attachmentLabel } from "../../../packages/domain/src/attachments";
+import { ActionLogScreen } from "./action-log-screen";
 import { API_URL } from "./api";
 import { localDateTime, zonedInstant } from "./date-time";
 import {
@@ -1068,8 +1069,12 @@ export function ActivityScreen() {
         <Button small primary={filter === "review"} onPress={() => setFilter("review")}>
           Needs review · {pending.length}
         </Button>
+        <Button small primary={filter === "log"} onPress={() => setFilter("log")}>
+          Action log
+        </Button>
       </View>
-      {actions.length > 0 && (
+      {filter === "log" && <ActionLogScreen />}
+      {filter !== "log" && actions.length > 0 && (
         <Card>
           <SectionHeading title="Your actions" />
           {actions.map((a) => (

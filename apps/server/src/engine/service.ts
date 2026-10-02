@@ -23,7 +23,9 @@ import type {
   Mail,
   ProposalInput,
 } from "../../../../packages/domain/src/index.ts";
+import { ActionLog } from "../action-log.ts";
 import type { ActionService } from "../actions.ts";
+import { reconcileComputerAudit } from "../audited-computer.ts";
 import type { BrowserService } from "../browser.ts";
 import { ComputerService } from "../computer.ts";
 import type { ComputerBackend } from "../computer-contract.ts";
@@ -79,6 +81,9 @@ export class AgentService {
     if (this.refreshing) return;
     this.refreshing = true;
     try {
+      if (this.config.computerEnabled)
+        await reconcileComputerAudit(this.computer, new ActionLog(this.db));
+      await new ActionLog(this.db).reconcile();
       // Recover publications if the process exited after committing an outcome.
       for (const { owner, value } of await this.db.scan<AgentTask>("tasks"))
         await this.publishOutcome(owner, value);
@@ -989,6 +994,10 @@ export class AgentService {
       },
     };
     const proposal = await this.prepare(owner, task, input, "document-reply", ctx);
+    if (proposal.status === "succeeded") {
+      task = await ctx.checkpoint({ actionId: null });
+      return this.finish(task, ctx, proposal.result ?? "Reply completed");
+    }
     return {
       status: "waiting_approval",
       actionId: proposal.id,

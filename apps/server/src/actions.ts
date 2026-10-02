@@ -5,10 +5,26 @@ import {
   type ProposalInput,
   proposalSchema,
 } from "../../../packages/domain/src/index.ts";
+import { ActionLog, unknownOutcome } from "./action-log.ts";
+import { type ApprovalPolicy, requiresApproval } from "./action-policy.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
 
+export interface ExternalAction {
+  tool: string;
+  target: string;
+  summary: string;
+  money: boolean;
+  binding: unknown;
+  display?: Record<string, string | number>;
+}
+type ExternalExecutor = (
+  owner: string,
+  binding: unknown,
+  proposal: ActionProposal,
+) => Promise<string>;
 interface Options {
+  policy?: ApprovalPolicy;
   execute: (
     owner: string,
     input: ProposalInput,
@@ -30,11 +46,60 @@ interface Options {
 }
 export class ActionService {
   private readonly now: () => number;
+  private readonly log: ActionLog;
+  private readonly external = new Map<string, ExternalExecutor>();
+  registerExternal(tool: string, executor: ExternalExecutor) {
+    this.external.set(tool, executor);
+  }
+  async proposeExternal(
+    owner: string,
+    input: ExternalAction,
+    key: string,
+    taskId?: string,
+  ): Promise<ActionProposal> {
+    if (!this.external.has(input.tool)) throw new AppError("External action is unavailable", 409);
+    const id = createHash("sha256").update(`external:${key}`).digest("hex");
+    const hash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    const existing = await this.db.get<ActionProposal>(owner, "actions", id);
+    if (existing) {
+      if (existing.hash !== hash) throw new AppError("Action ID belongs to different details", 409);
+      return existing;
+    }
+    await this.db.insertIfAbsent(owner, "external-action-bindings", {
+      id,
+      tool: input.tool,
+      binding: input.binding,
+      hash,
+    });
+    const proposal: ActionProposal = {
+      id,
+      hash,
+      taskId,
+      kind: "external.action",
+      title: input.summary,
+      data: { tool: input.tool, target: input.target, summary: input.summary, ...input.display },
+      status: "awaiting_review",
+      createdAt: new Date(this.now()).toISOString(),
+      expiresAt: new Date(this.now() + 30 * 60 * 1000).toISOString(),
+    };
+    const saved = await this.db.insertIfAbsent(owner, "actions", proposal);
+    if (!saved) {
+      const current = await this.db.get<ActionProposal>(owner, "actions", id);
+      if (!current || current.hash !== hash)
+        throw new AppError("Action ID belongs to different details", 409);
+      return current;
+    }
+    if (!requiresApproval(this.options.policy ?? "all", input.money))
+      return this.decide(owner, id, hash, "approve", "policy");
+    await this.record(owner, saved, "Ready for your review");
+    return saved;
+  }
   constructor(
     private readonly db: Store,
     private readonly options: Options,
   ) {
     this.now = options.now ?? Date.now;
+    this.log = new ActionLog(db);
   }
   async propose(
     owner: string,
@@ -42,15 +107,23 @@ export class ActionService {
     idempotencyKey?: string,
     taskId?: string,
   ): Promise<ActionProposal> {
+    const parsed = proposalSchema.parse(raw);
+    const requestHash = createHash("sha256").update(JSON.stringify(parsed)).digest("hex");
     const id =
       idempotencyKey === undefined
         ? randomUUID()
         : createHash("sha256").update(idempotencyKey).digest("hex");
     if (idempotencyKey !== undefined) {
       const existing = await this.db.get<ActionProposal>(owner, "actions", id);
-      if (existing) return existing;
+      if (existing) {
+        if (existing.requestHash && existing.requestHash !== requestHash)
+          throw new AppError(
+            "Action request key belongs to different details; check the earlier action",
+            409,
+          );
+        return existing;
+      }
     }
-    const parsed = proposalSchema.parse(raw);
     const connection = await this.options.connection?.(owner);
     if (this.options.connection && !connection)
       throw new AppError("Connect Google before preparing an action", 409);
@@ -65,6 +138,7 @@ export class ActionService {
     const createdAt = new Date(this.now()).toISOString();
     const proposal: ActionProposal = {
       id,
+      requestHash,
       taskId,
       title,
       kind: input.kind,
@@ -94,8 +168,15 @@ export class ActionService {
     if (!saved) {
       const existing = await this.db.get<ActionProposal>(owner, "actions", id);
       if (!existing) throw new AppError("Prepared action could not be loaded", 409);
+      if (existing.requestHash && existing.requestHash !== requestHash)
+        throw new AppError(
+          "Action request key belongs to different details; check the earlier action",
+          409,
+        );
       return existing;
     }
+    if (!requiresApproval(this.options.policy ?? "all", false))
+      return this.decide(owner, saved.id, saved.hash, "approve", "policy");
     await this.record(owner, saved, "Ready for your review");
     return saved;
   }
@@ -104,6 +185,7 @@ export class ActionService {
     id: string,
     hash: string,
     decision: "approve" | "deny",
+    actor: "human" | "policy" = "human",
   ): Promise<ActionProposal> {
     const proposal = await this.db.get<ActionProposal>(owner, "actions", id);
     if (!proposal) throw new AppError("Action not found", 404);
@@ -133,9 +215,13 @@ export class ActionService {
       }
       throw new AppError("This review expired. Create a fresh proposal.", 409);
     }
-    if (decision === "approve" && !(await this.options.connected(owner)))
+    if (
+      proposal.kind !== "external.action" &&
+      decision === "approve" &&
+      !(await this.options.connected(owner))
+    )
       throw new AppError("Google is disconnected. Reconnect before approving this action.", 409);
-    if (decision === "approve" && this.options.connection) {
+    if (proposal.kind !== "external.action" && decision === "approve" && this.options.connection) {
       const connection = await this.options.connection(owner);
       if (
         !connection ||
@@ -147,6 +233,24 @@ export class ActionService {
           409,
         );
     }
+    const audit = {
+      operationId: proposal.id,
+      actor,
+      tool: proposal.kind === "external.action" ? String(proposal.data.tool) : proposal.kind,
+      target:
+        proposal.kind === "external.action"
+          ? String(proposal.data.target)
+          : proposal.kind === "email.send"
+            ? `Gmail · ${(Array.isArray(proposal.data.to) ? proposal.data.to.join(", ") : "recipients").slice(0, 1000)}`
+            : `Calendar · ${String(proposal.data.calendarId)}${proposal.data.eventId ? ` / ${String(proposal.data.eventId)}` : ""}`,
+      summary:
+        proposal.kind === "external.action"
+          ? String(proposal.data.summary)
+          : proposal.kind === "email.send"
+            ? "Send email"
+            : proposal.kind.replace(".", " "),
+    };
+    if (decision === "approve") await this.log.append(owner, audit, "started");
     const claimed = await this.db.claim<ActionProposal>(
       owner,
       id,
@@ -161,24 +265,46 @@ export class ActionService {
     await this.record(
       owner,
       claimed,
-      decision === "deny" ? "Declined; no changes made" : "Approved; execution started",
+      decision === "deny"
+        ? "Declined; no changes made"
+        : actor === "policy"
+          ? "Automatic execution started"
+          : "Approved; execution started",
     );
-    if (decision === "deny") return claimed;
+    if (decision === "deny") {
+      await this.log.finish(owner, audit, "denied");
+      return claimed;
+    }
     let finished: ActionProposal;
     try {
-      const input = proposalSchema.parse({ kind: claimed.kind, data: claimed.data });
-      const result = await this.options.execute(
-        owner,
-        input,
-        claimed.connectionId,
-        claimed.targetVersion,
-      );
+      if (claimed.taskId) {
+        const task = await this.db.get<{ status: string }>(owner, "tasks", claimed.taskId);
+        if (!task || !["running", "waiting_approval"].includes(task.status))
+          throw new AppError("Task was cancelled or paused before dispatch", 409);
+      }
+      let result: string;
+      if (claimed.kind === "external.action") {
+        const bound = await this.db.get<{ tool: string; binding: unknown; hash: string }>(
+          owner,
+          "external-action-bindings",
+          claimed.id,
+        );
+        const executor = bound && this.external.get(bound.tool);
+        if (!bound || bound.hash !== claimed.hash || !executor)
+          throw new AppError("External action binding changed or is unavailable", 409);
+        result = await executor(owner, bound.binding, claimed);
+      } else {
+        const input = proposalSchema.parse({ kind: claimed.kind, data: claimed.data });
+        result = await this.options.execute(
+          owner,
+          input,
+          claimed.connectionId,
+          claimed.targetVersion,
+        );
+      }
       finished = { ...claimed, status: "succeeded", result };
     } catch (error) {
-      const unknown =
-        error instanceof Error &&
-        (("outcomeUnknown" in error && error.outcomeUnknown === true) ||
-          ("code" in error && error.code === "outcome_unknown"));
+      const unknown = unknownOutcome(error);
       finished = {
         ...claimed,
         status: unknown ? "outcome_unknown" : "failed",
@@ -186,6 +312,15 @@ export class ActionService {
       };
     }
     await this.db.put(owner, "actions", finished);
+    await this.log.finish(
+      owner,
+      audit,
+      finished.status === "succeeded"
+        ? "succeeded"
+        : finished.status === "outcome_unknown"
+          ? "outcome_unknown"
+          : "failed",
+    );
     await this.record(owner, finished, finished.result ?? finished.error ?? finished.status);
     return finished;
   }

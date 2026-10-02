@@ -55,7 +55,7 @@ The computer combines **persistent Chromium and an optional Linux workspace**. T
 | **Goals & Tracking** | Goals and milestones; recurring public-page checks for changes, text availability, or USD price thresholds, with deduplicated alerts and failure backoff. |
 | **Documents** | Email attachment → PDF → requested form values → filled copy → reviewed reply → receipt. Native/web PDF viewing, paging, zoom, supported fields, and sharing. |
 | **Finance** | Import transaction CSV to create a spending summary with categories, transactions, and a savings-goal action. |
-| **Gmail & Calendar** | Google OAuth adapters, complete mail threads, drafts/attachments, calendar discovery, and reviewed event creation/update/deletion. Live credentials required. |
+| **Gmail & Calendar** | Google OAuth adapters, complete mail threads, drafts/attachments, calendar discovery, and autonomous event creation/update/deletion under configurable policy. Live credentials required. |
 | **Personal context** | Editable name, tone, avatar, and memories. Background-update preferences and durable in-app notifications. |
 | **Rich Threads** | Self-hosted PGlite/Postgres persistence, stable main conversation, side chats, renaming, archiving, restoring and rich AG-UI replay. Optional legacy Intelligence storage. |
 
@@ -139,7 +139,7 @@ Copy the commented settings in [.env.example](.env.example) into your private `.
 2. Conversations persist in `.openmuse/postgres`, or `DATABASE_URL` when configured. Keep the data volume backed up. No CopilotKit key is needed.
 3. For personal mail/calendar, set `WORKSPACE_MODE=live`, a random `OPENMUSE_ACCESS_KEY` of at least 24 characters, and `TOKEN_ENCRYPTION_KEY` containing 32 random bytes encoded as base64. Restart the API.
 4. Configure a Google OAuth web client with Gmail and Calendar APIs enabled. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; register `${PUBLIC_API_URL}/api/google/callback` as its redirect URI. Configure consent/test-user access in your Google project.
-5. Open **Apps → Gmail** (or **Google Calendar**), connect read access, and grant write access when needed. Every send or calendar change still requires its own stored review. Changing/disconnecting the account invalidates pending connection-bound work.
+5. Open **Apps → Gmail** (or **Google Calendar**), connect read access, and grant write access when needed. Live send/reply and calendar writes run autonomously with `APPROVAL_POLICY=money`; use `all` for stored reviews. Payments/purchases/transfers always require native review. Changing/disconnecting the account invalidates pending connection-bound work.
 
 Google credentials are encrypted at rest. File URLs and browser consoles use short-lived signatures. This deployment uses one owner protected by a shared access key; it is not a multi-tenant authentication system. Use HTTPS and restricted network access for a remote host. Keep the default local-data mode on loopback.
 
@@ -240,3 +240,5 @@ Platform build scripts export JavaScript/Hermes bundles; they do not produce sig
 Issues and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), [ROADMAP.md](ROADMAP.md), and the [security policy](SECURITY.md).
 
 MIT licensed. Built by CopilotKit. Its original interface and fictional assets are included. Website, email, and document content supplies evidence, not permission to act.
+
+Live actions and the append-only action log are described in [Autonomy and approvals](docs/AUTONOMY.md).

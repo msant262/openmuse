@@ -34,6 +34,7 @@ process.env.COPILOTKIT_TELEMETRY_DISABLED = "true";
 
 export interface Config {
   mode: "sample" | "live";
+  approvalPolicy?: "money" | "all";
   port: number;
   host: string;
   publicUrl: string;
@@ -108,7 +109,11 @@ export function readConfig(): Config {
     throw new Error("JEV_MODE=live requires a nonblank TYPESAFE_API_KEY");
   const port = Number(process.env.PORT ?? 8787);
   const publicUrl = process.env.PUBLIC_API_URL ?? `http://localhost:${port}`;
+  const policy = process.env.APPROVAL_POLICY ?? "money";
+  if (policy !== "money" && policy !== "all")
+    throw new Error("APPROVAL_POLICY must be money or all");
   const config: Config = {
+    approvalPolicy: policy,
     mode,
     port,
     host: process.env.HOST ?? "127.0.0.1",

@@ -18,7 +18,7 @@ import {
   Trash2,
   X,
 } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Linking, Platform, Text, View } from "react-native";
 import {
   type ActionProposal,
@@ -212,8 +212,15 @@ function MailDetail({ mail: m }: { mail: Mail }) {
     </Sheet>
   );
 }
+function actionRequestKey() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(24)), (value) =>
+    value.toString(16).padStart(2, "0"),
+  ).join("");
+}
 function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } }) {
   const { workspace: w, api, refresh, open, close, notify } = useWorkspace();
+  const requestKey = useRef<string | undefined>(undefined);
+  requestKey.current ??= actionRequestKey();
   const [to, setTo] = useState(draft?.to?.join(", ") || "");
   const [cc, setCc] = useState(draft?.cc?.join(", ") || "");
   const [bcc, setBcc] = useState(draft?.bcc?.join(", ") || "");
@@ -250,9 +257,13 @@ function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } 
         const action = await api.request<ActionProposal>("/api/actions", {
           kind: "email.send",
           data: parsed.data,
+          idempotencyKey: requestKey.current,
         });
         await refresh();
-        open({ type: "review", action });
+        if (action.status === "succeeded") {
+          notify(action.result || "Action completed.");
+          close();
+        } else open({ type: "review", action });
       } else {
         await api.request("/api/drafts", {
           ...parsed.data,
@@ -344,7 +355,7 @@ function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } 
           disabled={!!busy}
           onPress={() => void save(true)}
         >
-          Review email
+          {w.runtime.approvalPolicy === "money" ? "Send email" : "Review email"}
         </Button>
         <Button
           icon={Save}
@@ -356,7 +367,9 @@ function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } 
         </Button>
       </View>
       <Text style={[s.small, { marginTop: 13 }]}>
-        You’ll review the exact recipients, message, and attachments before anything is sent.
+        {w.runtime.approvalPolicy === "money"
+          ? "Sending uses your connected account and is recorded in the action log."
+          : "You’ll review the exact recipients, message, and attachments before anything is sent."}
       </Text>
     </Sheet>
   );
@@ -371,7 +384,9 @@ function EventEditor({
   neighbors?: CalendarEvent[];
 }) {
   const seed = e || draft;
-  const { workspace: w, api, open, close, refresh } = useWorkspace();
+  const { workspace: w, api, open, close, refresh, notify } = useWorkspace();
+  const requestKey = useRef<string | undefined>(undefined);
+  requestKey.current ??= actionRequestKey();
   const initialStart = new Date();
   initialStart.setMinutes(0, 0, 0);
   initialStart.setHours(initialStart.getHours() + 1);
@@ -428,9 +443,15 @@ function EventEditor({
           ? { kind: "calendar.update", data: { ...parsed.data, eventId: e.id } }
           : { kind: "calendar.create", data: parsed.data };
       }
-      const action = await api.request<ActionProposal>("/api/actions", data);
+      const action = await api.request<ActionProposal>("/api/actions", {
+        ...data,
+        idempotencyKey: requestKey.current,
+      });
       await refresh();
-      open({ type: "review", action });
+      if (action.status === "succeeded") {
+        notify(action.result || "Calendar updated.");
+        close();
+      } else open({ type: "review", action });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -440,9 +461,7 @@ function EventEditor({
   return (
     <Sheet
       title={e ? "Make a little time" : "Something to look forward to"}
-      subtitle={
-        e ? "Edit this event, then review your changes." : "Create an event in your calendar."
-      }
+      subtitle={e ? "Edit this event in your calendar." : "Create an event in your calendar."}
       onClose={close}
     >
       <Field
@@ -524,11 +543,11 @@ function EventEditor({
       <ErrorNotice error={error} />
       <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
         <Button primary icon={ShieldCheck} busy={busy} onPress={() => void propose()}>
-          Review {e ? "changes" : "event"}
+          {w.runtime.approvalPolicy === "money" ? "Save" : "Review"} {e ? "changes" : "event"}
         </Button>
         {e && (
           <Button icon={Trash2} disabled={busy} danger onPress={() => void propose(true)}>
-            Review deletion
+            {w.runtime.approvalPolicy === "money" ? "Delete event" : "Review deletion"}
           </Button>
         )}
       </View>
@@ -589,6 +608,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
     }
   }
   const email = action.kind === "email.send";
+  const external = action.kind === "external.action";
   return (
     <Sheet
       title={pending ? "One last look" : action.title}
@@ -612,8 +632,39 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
         </Chip>
       </View>
       <Card style={{ gap: 13 }}>
-        <ReviewLine label="Account" value={action.account || w.profile.email} />
-        {email ? (
+        {!external && <ReviewLine label="Account" value={action.account || w.profile.email} />}
+        {external ? (
+          <>
+            <ReviewLine label="Tool" value={String(d.tool || "")} />
+            <ReviewLine label="Target" value={String(d.target || "")} />
+            <ReviewLine label="Action" value={String(d.summary || "")} />
+            {!!d.element && (
+              <ReviewLine
+                label="Control"
+                value={`${String(d.element)} · ${String(d.label || "")}`}
+              />
+            )}
+            {!!d.action && <ReviewLine label="Operation" value={String(d.action)} />}
+            <Text style={s.small}>
+              Inspect the page, amount and recipient before approving. Approval applies only to this
+              prepared action; page changes or human takeover require a fresh review.
+            </Text>
+            {typeof d.sessionId === "string" && (
+              <Button
+                onPress={() => {
+                  void api
+                    .request<BrowserSession>(`/api/browsers/${d.sessionId}`)
+                    .then((browser) => open({ type: "browser", browser }))
+                    .catch((failure) =>
+                      setError(failure instanceof Error ? failure.message : "Browser unavailable"),
+                    );
+                }}
+              >
+                Inspect browser page
+              </Button>
+            )}
+          </>
+        ) : email ? (
           <>
             <ReviewLine label="To" value={arrayText(d.to)} />
             <ReviewLine label="Cc" value={arrayText(d.cc) || "None"} />
@@ -641,7 +692,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
         ) : (
           <>
             <ReviewLine label="Event" value={String(d.title || "")} />
-            {action.kind !== "calendar.delete" && (
+            {!external && action.kind !== "calendar.delete" && (
               <>
                 <ReviewLine
                   label="Starts"

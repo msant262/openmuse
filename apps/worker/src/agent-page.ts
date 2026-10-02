@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ElementHandle, Frame, Page } from "playwright";
+import type { BrowserPaymentBinding } from "../../../packages/domain/src/browser-payment.ts";
 import { WorkerError } from "./errors.ts";
 
 export type BrowserAction =
@@ -100,6 +101,16 @@ function details(node: Element) {
   }
   const label = accessibleName(node);
   const form = input.form;
+  // HTML implicit submission activates the first associated submit button in
+  // document order, including a button outside the form with a matching owner.
+  const implicitSubmitter = form
+    ? Array.from(form.elements).find(
+        (element) =>
+          (element.tagName === "BUTTON" && (element as HTMLButtonElement).type === "submit") ||
+          (element.tagName === "INPUT" &&
+            ["submit", "image"].includes((element as HTMLInputElement).type)),
+      )
+    : undefined;
   return {
     tag,
     role: node.getAttribute("role") || tag,
@@ -108,7 +119,15 @@ function details(node: Element) {
     href: node.getAttribute("href") || undefined,
     disabled: input.disabled === true || node.getAttribute("aria-disabled") === "true",
     form: form
-      ? `${form.id}|${form.getAttribute("action")}|${form.getAttribute("method")}`
+      ? JSON.stringify([
+          form.id,
+          form.action,
+          form.method,
+          form.target,
+          (input as HTMLInputElement).formAction,
+          (input as HTMLInputElement).formMethod,
+          (input as HTMLInputElement).formTarget,
+        ])
       : undefined,
     value:
       tag === "input" && input.type === "password"
@@ -124,11 +143,30 @@ function details(node: Element) {
         : undefined,
     connected: node.isConnected,
     submitterLabels: form
-      ? Array.from(form.querySelectorAll('button,input[type="submit"]'))
+      ? Array.from(form.elements)
+          .filter(
+            (element) =>
+              element.tagName === "BUTTON" || (element as HTMLInputElement).type === "submit",
+          )
           .map(accessibleName)
           .join(" ")
           .slice(0, 10_000)
       : "",
+    implicitSubmitter:
+      implicitSubmitter && form
+        ? JSON.stringify([
+            accessibleName(implicitSubmitter),
+            implicitSubmitter.hasAttribute("formaction")
+              ? (implicitSubmitter as HTMLInputElement).formAction
+              : form.action,
+            implicitSubmitter.hasAttribute("formmethod")
+              ? (implicitSubmitter as HTMLInputElement).formMethod
+              : form.method,
+            implicitSubmitter.hasAttribute("formtarget")
+              ? (implicitSubmitter as HTMLInputElement).formTarget
+              : form.target,
+          ])
+        : undefined,
     formText: form?.innerText.slice(0, 10_000) ?? "",
     submits: Boolean(
       form && (input.type === "submit" || (tag === "button" && input.type !== "button")),
@@ -206,6 +244,7 @@ export class AgentPage {
           connected: _connected,
           form: _form,
           submitterLabels: _submitters,
+          implicitSubmitter: _implicitSubmitter,
           formText: _formText,
           submits: _submits,
           ...safe
@@ -253,28 +292,46 @@ export class AgentPage {
         (action.action === "press" && ["Enter", "Space"].includes(action.key));
       const submits =
         live.submits || (action.action === "press" && action.key === "Enter" && Boolean(live.form));
+      const implicitSubmit =
+        action.action === "press" && action.key === "Enter" && Boolean(live.form) && !live.submits;
       const payment = activates
-        ? `${live.label} ${submits ? live.submitterLabels : ""} ${submits ? live.formText : ""}`
+        ? `${live.label} ${live.href ?? ""} ${submits ? (live.form ?? "") : ""} ${submits ? live.submitterLabels : ""} ${submits ? live.formText : ""} ${implicitSubmit ? (live.implicitSubmitter ?? "") : ""}`
         : "";
       // Bind form values internally to prevent quantity/amount/payee changes after review.
       const formState = await target.handle.evaluate((node) => {
         const form = (node as HTMLInputElement).form;
         return JSON.stringify(
           form
-            ? Array.from(form.elements).map((e) => {
-                const field = e as HTMLInputElement;
-                return [
-                  field.name,
-                  field.type,
-                  field.type === "password" ? "<redacted>" : field.value,
-                  field.checked,
-                ];
-              })
+            ? [
+                form.action,
+                form.method,
+                form.target,
+                (node as HTMLInputElement).formAction,
+                (node as HTMLInputElement).formMethod,
+                (node as HTMLInputElement).formTarget,
+                ...Array.from(form.elements).map((e) => {
+                  const field = e as HTMLInputElement;
+                  return [
+                    field.name,
+                    field.type,
+                    field.value,
+                    field.checked,
+                    field.formAction,
+                    field.formMethod,
+                    field.formTarget,
+                  ];
+                }),
+              ]
             : [],
         );
       });
       const pageDigest = createHash("sha256")
-        .update(await this.page.evaluate(() => (document.body?.innerText ?? "").slice(0, 100_000)))
+        .update(
+          JSON.stringify([
+            await this.page.evaluate(() => (document.body?.innerText ?? "").slice(0, 100_000)),
+            await target.frame.evaluate(() => (document.body?.innerText ?? "").slice(0, 100_000)),
+          ]),
+        )
         .digest("hex");
       const finalIdentity = await target.handle.evaluate(details);
       if (
@@ -314,6 +371,23 @@ export class AgentPage {
         409,
         inspected.binding,
       );
+    return this.dispatch(action, inspected, guard);
+  }
+  async actReviewed(action: BrowserAction, binding: BrowserPaymentBinding, guard: () => void) {
+    const inspected = await this.inspect(action);
+    if (JSON.stringify(inspected.binding) !== JSON.stringify(binding))
+      throw new WorkerError(
+        "STALE_SNAPSHOT",
+        "Reviewed page, form or action changed; prepare a new review.",
+        409,
+      );
+    return this.dispatch(action, inspected, guard);
+  }
+  private async dispatch(
+    action: BrowserAction,
+    inspected: Awaited<ReturnType<AgentPage["inspect"]>>,
+    guard: () => void,
+  ) {
     guard();
     if (
       action.snapshotId !== this.snapshotId ||
