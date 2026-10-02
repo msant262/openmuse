@@ -137,3 +137,82 @@ test("automatic document reply finishes from receipt; application sample still r
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("audit reconciliation traverses more than 200 starts and reaches known receipts behind unresolved work", async () => {
+  const db = await createStore();
+  const log = new ActionLog(db);
+  try {
+    for (let i = 0; i < 230; i++)
+      await log.append(
+        "owner",
+        { operationId: `entry-${i}`, tool: "fixture", target: "fixture", summary: "Safe" },
+        "started",
+      );
+    await db.put("owner", "computer-commands", { id: "entry-229", status: "succeeded" });
+    await log.reconcile(false);
+    const remaining = await db.unfinishedActionLog();
+    assert.equal(remaining.length, 200);
+    assert.equal(
+      (await db.actionLog("owner", 200)).entries.filter(
+        (e) => e.operationId === "entry-229" && e.result === "succeeded",
+      ).length,
+      1,
+    );
+    await log.reconcile(true);
+    assert.deepEqual(await db.unfinishedActionLog(), []);
+    await log.append(
+      "owner",
+      { operationId: "current", tool: "fixture", target: "fixture", summary: "Safe" },
+      "started",
+    );
+    await log.reconcile(false);
+    assert.equal(
+      (await db.unfinishedActionLog()).length,
+      1,
+      "maintenance does not mark current generic work unknown",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("startup audit cutoff excludes starts created after recovery begins", async () => {
+  const db = await createStore();
+  const log = new ActionLog(db);
+  try {
+    await log.append(
+      "owner",
+      { operationId: "old", tool: "fixture", target: "fixture", summary: "Safe" },
+      "started",
+    );
+    const original = db.unfinishedActionLog.bind(db);
+    let inserted = false;
+    db.unfinishedActionLog = async (cutoff, cursor) => {
+      if (!inserted) {
+        inserted = true;
+        await db.appendActionLog("owner", {
+          id: "new-start",
+          operationId: "new",
+          time: new Date(Date.parse(cutoff ?? "") + 1).toISOString(),
+          actor: "agent",
+          tool: "fixture",
+          target: "fixture",
+          summary: "Safe",
+          result: "started",
+        });
+      }
+      return original(cutoff, cursor);
+    };
+    await log.reconcile(true);
+    const entries = (await db.actionLog("owner", 200)).entries;
+    assert.deepEqual(
+      entries.filter((entry) => entry.operationId === "new").map((entry) => entry.result),
+      ["started"],
+    );
+    assert.ok(
+      entries.some((entry) => entry.operationId === "old" && entry.result === "outcome_unknown"),
+    );
+  } finally {
+    await db.close();
+  }
+});

@@ -1,0 +1,218 @@
+# OpenMuse MIT. Personal VPS, one embedded database writer. See DEPLOY.md.
+name: openmuse
+services:
+  server:
+    image: openmuse-server:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1280m
+    memswap_limit: 1280m
+    pids_limit: 192
+    stop_grace_period: 20s
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    ports: ["127.0.0.1:8787:8787"]
+    networks:
+      control:
+        ipv4_address: ${COMPUTER_SERVER_IP:-172.30.88.2}
+    depends_on:
+      browser:
+        condition: service_healthy
+      computer:
+        condition: service_healthy
+      computer-egress:
+        condition: service_healthy
+    environment:
+      WORKSPACE_MODE: live
+      AGENT_BACKEND: model
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATA_DIR: /data/openmuse
+      TASK_WORKER_ENABLED: "true"
+      PUBLIC_API_URL: ${PUBLIC_API_URL:?Set a phone-reachable private or HTTPS URL}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      OPENMUSE_ACCESS_KEY: ${OPENMUSE_ACCESS_KEY:?Set a random access key of at least 24 characters}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set 32 random bytes encoded as base64}
+      MODEL: ${MODEL:?Choose a configured provider/model-id}
+      MODEL_FALLBACKS: ${MODEL_FALLBACKS:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_GENERATIVE_AI_BASE_URL: ${GOOGLE_GENERATIVE_AI_BASE_URL:-}
+      CHATGPT_AUTH_FILE: /data/openmuse/credentials/chatgpt.json
+      GROK_AUTH_FILE: /data/openmuse/credentials/grok.json
+      MIMO_BASE_URL: ${MIMO_BASE_URL:-}
+      MIMO_API_KEY: ${MIMO_API_KEY:-}
+      MIMO_API: ${MIMO_API:-responses}
+      OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}
+      OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
+      OPENAI_COMPATIBLE_API: ${OPENAI_COMPATIBLE_API:-chat-completions}
+      LOCAL_BASE_URL: ${LOCAL_BASE_URL:-http://127.0.0.1:11434/v1}
+      LOCAL_API_KEY: ${LOCAL_API_KEY:-}
+      LOCAL_API: ${LOCAL_API:-chat-completions}
+      OPENAI_IMAGE_MODEL: ${OPENAI_IMAGE_MODEL:-}
+      GROK_IMAGE_MODEL: ${GROK_IMAGE_MODEL:-}
+      OPENAI_COMPATIBLE_IMAGE_MODEL: ${OPENAI_COMPATIBLE_IMAGE_MODEL:-}
+      LOCAL_IMAGE_MODEL: ${LOCAL_IMAGE_MODEL:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      BROWSER_WORKER_URL: http://browser:8790
+      WORKER_TOKEN: ${WORKER_TOKEN:?Set a random worker token of at least 32 characters}
+      COMPUTER_ENABLED: "true"
+      COMPUTER_BACKEND: rpc
+      COMPUTER_PROFILE: open
+      COMPUTER_URL: http://computer-egress:8811
+      COMPUTER_TOKEN: ${COMPUTER_TOKEN:?Set a random computer token of at least 32 characters}
+      COMPUTER_COMMAND_TIMEOUT_MS: ${COMPUTER_COMMAND_TIMEOUT_MS:-1800000}
+      COMPUTER_DEPLOYMENT_ID: ${COMPUTER_DEPLOYMENT_ID:-personal-vps}
+      APPROVAL_POLICY: ${APPROVAL_POLICY:-money}
+      ROUTINE_TIMEZONE: ${ROUTINE_TIMEZONE:-UTC}
+      CPK_INTELLIGENCE_API_KEY: ${CPK_INTELLIGENCE_API_KEY:-}
+      JEV_MODE: ${JEV_MODE:-off}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      JEV_MODEL: ${JEV_MODEL:-jev-1.13.0}
+      MCP_CONFIG_FILE: ${MCP_CONFIG_FILE:-}
+      MCP_SERVERS_JSON: ${MCP_SERVERS_JSON:-}
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+      COMPOSIO_USER_API_KEY: ${COMPOSIO_USER_API_KEY:-}
+      COMPOSIO_ORG_ID: ${COMPOSIO_ORG_ID:-}
+      COMPOSIO_PROJECT_ID: ${COMPOSIO_PROJECT_ID:-}
+      APNS_KEY_FILE: ${APNS_KEY_FILE:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_TOPIC: ${APNS_TOPIC:-}
+      APNS_SANDBOX: ${APNS_SANDBOX:-false}
+      FCM_CREDENTIALS_FILE: ${FCM_CREDENTIALS_FILE:-}
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
+    volumes:
+      - server-data:/data/openmuse
+      - type: bind
+        source: ./deployment-secrets
+        target: /run/secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+  browser:
+    image: openmuse-browser:local
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    memswap_limit: 2g
+    shm_size: 1g
+    pids_limit: 256
+    stop_grace_period: 40s
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    networks: [control]
+    environment:
+      WORKER_HOST: 0.0.0.0
+      WORKER_DATA_DIR: /data
+      WORKER_TOKEN: ${WORKER_TOKEN:?Set WORKER_TOKEN}
+    volumes: ["browser-data:/data"]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8790/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  computer-egress:
+    image: openmuse-computer-egress:local
+    build:
+      context: apps/computer
+      dockerfile: Dockerfile.gateway
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    memswap_limit: 128m
+    pids_limit: 64
+    stop_grace_period: 10s
+    tmpfs: ["/tmp:size=8m,mode=1777", "/run:size=8m"]
+    networks: [control]
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "1"
+      net.ipv6.conf.default.disable_ipv6: "1"
+    environment:
+      COMPUTER_TOKEN: ${COMPUTER_TOKEN:?Set COMPUTER_TOKEN}
+      COMPUTER_SERVER_IP: ${COMPUTER_SERVER_IP:-172.30.88.2}
+      COMPUTER_HOST_PUBLIC_IPS: ${COMPUTER_HOST_PUBLIC_IPS:?List every actual public IPv4 address of the VPS}
+    healthcheck:
+      test: [CMD, python3, -I, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8811/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+  computer:
+    image: openmuse-computer:open
+    build:
+      context: apps/computer
+      dockerfile: Dockerfile.open
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 3g
+    memswap_limit: 3g
+    pids_limit: 256
+    stop_grace_period: 15s
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    network_mode: service:computer-egress
+    depends_on:
+      computer-egress:
+        condition: service_started
+    environment:
+      COMPUTER_MAX_BACKGROUND_JOBS: "1"
+    volumes:
+      - workspace:/workspace
+      - computer-home:/home/node
+      - type: bind
+        source: ./apps/computer/resolv.conf
+        target: /etc/resolv.conf
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD, python3, -I, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8810/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+networks:
+  control:
+    driver: bridge
+    enable_ipv6: false
+    ipam:
+      config:
+        - subnet: ${COMPUTER_CONTROL_SUBNET:-172.30.88.0/24}
+volumes:
+  server-data:
+    name: ${OPENMUSE_SERVER_VOLUME:-openmuse-server-data}
+  browser-data:
+    name: ${OPENMUSE_BROWSER_VOLUME:-openmuse-browser-data}
+  workspace:
+    name: ${OPENMUSE_WORKSPACE_VOLUME:-openmuse-workspace}
+  computer-home:
+    name: ${OPENMUSE_HOME_VOLUME:-openmuse-computer-home}

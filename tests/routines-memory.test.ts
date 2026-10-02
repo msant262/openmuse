@@ -186,3 +186,36 @@ test("an oversized HTTP/legacy fact cannot blank later short preferences in boun
     await db.close();
   }
 });
+
+test("routine partial edits preserve pause and explicit resume remains required", async () => {
+  const db = await createStore();
+  try {
+    const routines = new RoutinesService(db, async () => ({ id: "unused" }));
+    const saved = await routines.create("wife", {
+      title: "Paused",
+      prompt: "Send email",
+      cron: "0 8 * * *",
+      enabled: false,
+    });
+    for (const patch of [
+      { title: "Renamed paused email" },
+      { title: "Mobile edit", prompt: "Send agenda", cron: "0 9 * * *", timezone: "Europe/Berlin" },
+    ]) {
+      assert.equal((await routines.update("wife", saved.id, patch)).enabled, false);
+    }
+    assert.equal((await routines.update("wife", saved.id, { enabled: true })).enabled, true);
+    assert.equal((await routines.update("wife", saved.id, { enabled: false })).enabled, false);
+    assert.equal(
+      (
+        await routines.create("wife", {
+          title: "Default",
+          prompt: "Read agenda",
+          cron: "0 8 * * *",
+        })
+      ).enabled,
+      true,
+    );
+  } finally {
+    await db.close();
+  }
+});

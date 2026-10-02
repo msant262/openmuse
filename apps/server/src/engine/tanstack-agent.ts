@@ -56,6 +56,8 @@ export function tanstackAgent(options: {
   maxSteps: number;
   tools: ToolDefinition[];
   prompt: string;
+  /** The process owner joins tool receipts after an observable is canceled. */
+  trackTool?: (execute: () => Promise<unknown>) => Promise<unknown>;
   loadBrowserImage?: BrowserImageLoader;
   loadFileImage?: BrowserImageLoader;
   onModelSelected?: (model: ModelSelection) => void;
@@ -111,7 +113,10 @@ export function tanstackAgent(options: {
               name: tool.name,
               description: tool.description,
               inputSchema: tool.parameters as SchemaInput,
-            }).server((args) => (tool.execute as (args: unknown) => Promise<unknown>)(args)),
+            }).server((args) => {
+              const execute = () => (tool.execute as (args: unknown) => Promise<unknown>)(args);
+              return options.trackTool ? options.trackTool(execute) : execute();
+            }),
           ),
         ],
         agentLoopStrategy: maxIterations(options.maxSteps),

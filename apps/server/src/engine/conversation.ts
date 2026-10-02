@@ -344,6 +344,7 @@ export class ConversationAgent extends AbstractAgent {
       ...remoteTools,
     ];
     const agent = tanstackAgent({
+      trackTool: (execute) => this.service.toolOperations.run(execute),
       onModelSelected: (model) => {
         selectedModel = `${model.provider}/${model.model}`;
       },

@@ -1,6 +1,6 @@
 # Personal browser and Take control
 
-The native agent now uses Playwright directly. Set `BROWSER_WORKER_URL` and `BROWSER_WORKER_TOKEN` as described in the existing worker setup. No Browser Use service or extra cloud account is required. Keep the worker private and retain its `/data` volume.
+The native agent now uses Playwright directly. Set `BROWSER_WORKER_URL` and `WORKER_TOKEN` as described in the existing worker setup. No Browser Use service or extra cloud account is required. Keep the worker private and retain its `/data` volume.
 
 The chat and durable task worker offer:
 
@@ -19,7 +19,9 @@ Durable tasks that encounter takeover pause with their checkpoints intact and re
 
 The existing queue, public-address DNS checks, request guards and DNS-pinning egress proxy remain active for production browser operations. Private/local/metadata destinations, unsupported protocols/ports and WebSockets remain blocked. Human navigation shares the same guards. The console renders screenshots, so remote website JavaScript never executes inside the phone's console document.
 
-Money controls are conservatively blocked until the native approval executor is installed in the permissions milestone. The guard checks real English, Portuguese and German labels and associated form submitters, including Enter submission. The trusted service receives a canonical binding to session/snapshot/element/action/URL/document fingerprint and form/page digest; the model sees only a safe approval-required message. Matching labels is a heuristic and cannot identify every custom or malicious payment UI. No caller boolean bypass exists. Any later approval executor must revalidate the binding under the session queue, reject takeover/page drift and retain single-use receipts; stale references after worker restart require a new preparation.
+Money controls use the installed native approval executor. The guard checks real English, Portuguese and German labels and associated form submitters, including Enter submission. The trusted service binds approval to the session/snapshot/element/action/URL/document fingerprint and form/page digest. Approval revalidates that binding under the session queue, rejects takeover/page drift, and retains a one-use durable receipt. The model sees a safe review-required message and cannot approve itself. Stale references after restart require new preparation. Label matching is a heuristic and cannot identify every custom or malicious payment UI.
+
+Durable tasks persist browser operation intents and tool receipts separately from public task state and replay that tool context after handback or restart. Logical action IDs deduplicate completed submissions across fresh snapshot IDs. Legacy calls without an ID use the observed control metadata; intentionally repeating the same control requires a distinct operation ID. A dispatched action whose outcome cannot be confirmed fences further automatic browser actions in that task. Inspect the site using Take control before starting any new task; OpenMuse never automatically resubmits that uncertain action. Screenshots remain bounded asset references in these receipts.
 
 Run `pnpm test` for server/model/ownership/lease contracts and `pnpm test:browser` for real Chromium DOM actions, phone-sized console interaction, profile persistence, production proxy navigation and takeover ordering. Install the worker's pinned browser first with `pnpm --dir apps/worker exec playwright install chromium`. Tests inject fixture HTML only into standalone Playwright pages; the production manager has no SSRF bypass option.
 

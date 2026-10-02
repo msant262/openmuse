@@ -87,6 +87,29 @@ test("natural-language tools save memory and a routine; real worker posts once a
       .routines as Routine[];
     assert.equal(routines.length, 1);
     assert.equal(routines[0].timezone, "Europe/Berlin");
+    const edit = async (patch: object) => {
+      const response = await server.app.request(`/api/agent/routines/${routines[0].id}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(patch),
+      });
+      assert.equal(response.status, 200);
+      return server.agent.routines.get("local-user", routines[0].id);
+    };
+    assert.equal((await edit({ enabled: false })).enabled, false);
+    assert.equal(
+      (
+        await edit({
+          title: "Today's edited agenda",
+          prompt: routines[0].prompt,
+          cron: routines[0].cron,
+          timezone: routines[0].timezone,
+        })
+      ).enabled,
+      false,
+    );
+    assert.equal((await edit({ title: "Agent partial rename" })).enabled, false);
+    assert.equal((await edit({ enabled: true })).enabled, true);
     assert.equal((await server.agent.memory.recall("local-user", "Portuguese")).length, 1);
     await db.compareAndSwap(
       "local-user",

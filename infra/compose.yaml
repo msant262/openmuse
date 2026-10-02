@@ -2,7 +2,8 @@ name: openmuse
 services:
   browser-worker:
     build:
-      context: ../apps/worker
+      context: ..
+      dockerfile: apps/worker/Dockerfile
     init: true
     restart: unless-stopped
     environment:

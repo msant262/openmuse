@@ -9,6 +9,8 @@ Built with CopilotKit React Native for iOS, Android, and web.
 
 [Quick start](#quick-start) · [Demo](#demo) · [Features](#features) · [Architecture](#architecture) · [Docs](docs/README.md) · [Contributing](CONTRIBUTING.md)
 
+[Personal 2-vCPU / 8-GB VPS deployment](DEPLOY.md) runs the self-hosted API, browser and guarded open computer with persistent state and daily backups.
+
 [![CI](https://github.com/CopilotKit/OpenMuse/actions/workflows/ci.yml/badge.svg)](https://github.com/CopilotKit/OpenMuse/actions/workflows/ci.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -42,7 +44,7 @@ The [Jev aquarium-trip demo](docs/demos/jev-generative-ui.md) walks through a fi
 
 OpenMuse is a personal-agent application with an agent computer, visible work, and rich results. It runs its own server, task worker, and browser worker. You can inspect and change the source under the MIT license.
 
-The computer combines **persistent Chromium and an optional Linux workspace**. The agent can browse public pages, run commands in its own container, work with files, and move PDFs between the computer and the app. You can open its browser or terminal and continue the work. Graphical desktops and autonomous checkout remain future work.
+The computer combines **persistent Chromium and an optional Linux workspace**. The agent can browse public pages, run commands in its own container, work with files, and move PDFs between the computer and the app. You can open its browser or terminal and continue the work. The guarded open profile adds Office/media files and background jobs. Payment controls use native review before execution; graphical desktops remain future work.
 
 ## Features
 
@@ -59,7 +61,7 @@ The computer combines **persistent Chromium and an optional Linux workspace**. T
 | **Personal context** | Editable name, tone, avatar, and memories. Background-update preferences and durable in-app notifications. |
 | **Rich Threads** | Self-hosted PGlite/Postgres persistence, stable main conversation, side chats, renaming, archiving, restoring and rich AG-UI replay. Optional legacy Intelligence storage. |
 
-The [feature inventory](docs/FEATURES.md) describes implemented capabilities and planned extensions. Health/bank/social connectors, device push, voice, generated executable tools, and automatic reservations/payments are on the [roadmap](ROADMAP.md).
+The [feature inventory](docs/FEATURES.md) describes implemented capabilities and planned extensions. Native APNs/FCM push and configurable image-generation adapters are installed and require operator credentials/device consent. Remote MCP connectors use explicit per-server tool allowlists. Health/bank/social integrations, voice and generated executable tools remain on the [roadmap](ROADMAP.md); supported financial actions require native review.
 
 ## Quick start
 
@@ -165,7 +167,7 @@ docker build -t openmuse-computer:local apps/computer
 COMPUTER_ENABLED=true pnpm dev
 ```
 
-The API needs access to the Docker CLI and engine. Commands run in a nonroot container with no host-directory mounts or credentials. A named `/workspace` volume retains files when stopped. Terminal networking is disabled; public web access uses the browser worker. Commands have a 30-second limit and saved output/exit receipts. **Files** supports folders, text editing, and PDF transfer to/from Documents. This is a Linux container, not a full operating-system VM. [Setup, Colima option, and boundaries](docs/COMPUTER.md).
+The API needs access to the Docker CLI and engine. Commands run in a nonroot container with no host-directory mounts or credentials. A named `/workspace` volume retains files when stopped. This offline profile disables terminal networking and limits commands to 30 seconds, with saved output/exit receipts. For the guarded open RPC profile with public networking, persistent home, Office/media tools and foreground commands up to 30 minutes/background jobs, use [the VPS Compose deployment](DEPLOY.md). **Files** supports folders, text editing, and PDF transfer to/from Documents. This is a Linux container, not a full operating-system VM. [Setup, Colima option, and boundaries](docs/COMPUTER.md).
 
 ### Application storage
 

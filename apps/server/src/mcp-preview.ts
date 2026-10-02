@@ -1,3 +1,5 @@
+import { configuredSecretScrubber } from "./configured-secrets.ts";
+
 const authentication =
   /password|passwd|secret|token|credential|authori[sz]ation|api[_-]?key|private[_-]?key|access[_-]?key|cookie|bearer|^(?:auth|authentication|headers|otp|pin)$|verification[_-]?code|session[_-]?(?:id|key)/i;
 const businessPriority = (key: string) =>
@@ -11,18 +13,12 @@ export function mcpRequestPreview(
   args: Record<string, unknown>,
   configuredSecrets: string[],
 ): string {
-  const secrets = configuredSecrets
-    .flatMap((secret) => {
-      const credential = /^(?:Bearer|Basic|Token|ApiKey)\s+(.+)$/i.exec(secret)?.[1];
-      return credential ? [secret, credential] : [secret];
-    })
-    .filter(Boolean);
+  const scrub = configuredSecretScrubber(configuredSecrets);
   let budget = 4800,
     truncated = false;
   function visit(value: unknown, depth: number): unknown {
     if (typeof value === "string") {
-      let text = value;
-      for (const secret of secrets) text = text.replaceAll(secret, "[redacted]");
+      const text = scrub(value);
       const allowed = Math.max(0, Math.min(1600, budget));
       budget -= Math.min(text.length, allowed);
       if (text.length > allowed) {
@@ -50,7 +46,7 @@ export function mcpRequestPreview(
         break;
       }
       const [key, part] = entries[index];
-      const safeKey = key.slice(0, 100);
+      const safeKey = scrub(key).slice(0, 100);
       if (safeKey !== key) truncated = true;
       budget -= safeKey.length + 8;
       const result = authentication.test(key) ? "[redacted]" : visit(part, depth + 1);

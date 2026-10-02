@@ -13,9 +13,22 @@ interface Database {
 }
 
 export class Store {
+  private failedWrite = false;
+  /** A caught SQL write error still invalidates an exit-zero stopped-writer snapshot. */
+  get persistenceFailed() {
+    return this.failedWrite;
+  }
   constructor(private readonly db: Database) {}
+  private async write(sql: string, params?: unknown[]) {
+    try {
+      return await this.db.query(sql, params);
+    } catch (error) {
+      this.failedWrite = true;
+      throw error;
+    }
+  }
   async appendActionLog(owner: string, entry: ActionLogEntry): Promise<void> {
-    await this.db.query(
+    await this.write(
       "INSERT INTO external_action_log(owner,id,time,data) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT(owner,id) DO NOTHING",
       [owner, entry.id, entry.time, JSON.stringify(entry)],
     );
@@ -33,9 +46,13 @@ export class Store {
     const entries = result.rows.slice(0, limit).map((row) => row.data as unknown as ActionLogEntry);
     return { entries, ...(result.rows.length > limit && { nextCursor: entries.at(-1)?.id }) };
   }
-  async unfinishedActionLog(): Promise<{ owner: string; value: ActionLogEntry }[]> {
+  async unfinishedActionLog(
+    cutoff = new Date().toISOString(),
+    after?: { time: string; owner: string; id: string },
+  ): Promise<{ owner: string; value: ActionLogEntry }[]> {
     const result = await this.db.query(
-      "SELECT jsonb_build_object('owner',start.owner,'value',start.data) AS data FROM external_action_log start WHERE start.data->>'result'='started' AND NOT EXISTS (SELECT 1 FROM external_action_log done WHERE done.owner=start.owner AND done.data->>'operationId'=start.data->>'operationId' AND done.data->>'result'<>'started') ORDER BY start.time LIMIT 200",
+      "SELECT jsonb_build_object('owner',start.owner,'value',start.data) AS data FROM external_action_log start WHERE start.data->>'result'='started' AND start.time <= $1::timestamptz AND ($2::timestamptz IS NULL OR (start.time,start.owner,start.id)>($2::timestamptz,$3::text,$4::text)) AND NOT EXISTS (SELECT 1 FROM external_action_log done WHERE done.owner=start.owner AND done.data->>'operationId'=start.data->>'operationId' AND done.data->>'result'<>'started') ORDER BY start.time,start.owner,start.id LIMIT 200",
+      [cutoff, after?.time ?? null, after?.owner ?? null, after?.id ?? null],
     );
     return result.rows.map(
       (row) => row.data as unknown as { owner: string; value: ActionLogEntry },
@@ -59,14 +76,14 @@ export class Store {
   ) {
     // Parallel publishers may see an in-flight receipt. Keep final/uncertain
     // native status from being replaced by that stale pending observation.
-    await this.db.query(
+    await this.write(
       "UPDATE records SET data=jsonb_set(data,'{nativeDelivery}',$3::jsonb),updated_at=now() WHERE owner=$1 AND kind='notifications' AND id=$2 AND ($4::text<>'pending' OR COALESCE(data->>'nativeDelivery','pending')='pending') AND (COALESCE(data->>'nativeDelivery','')<>'outcome_unknown' OR $4::text='outcome_unknown')",
       [owner, id, JSON.stringify(status), status],
     );
   }
   /** Notification and its original eligible devices share one durable snapshot. */
   async insertNotification(owner: string, value: AgentNotification, platforms: string[]) {
-    const result = await this.db.query(
+    const result = await this.write(
       `WITH notice AS (
        INSERT INTO records(owner,kind,id,data) VALUES($1,'notifications',$2,$3::jsonb)
        ON CONFLICT DO NOTHING RETURNING data
@@ -91,7 +108,7 @@ export class Store {
   }
   /** Same-token refresh keeps consent identity; replacement/re-enrollment gets a new one. */
   async registerPushDevice<T extends { id: string }>(owner: string, value: T): Promise<T> {
-    const result = await this.db.query(
+    const result = await this.write(
       `INSERT INTO records AS registration(owner,kind,id,data) VALUES($1,'push-devices',$2,$3::jsonb)
        ON CONFLICT(owner,kind,id) DO UPDATE SET data=excluded.data || jsonb_build_object('registrationId',
          CASE WHEN registration.data->>'token'=excluded.data->>'token'
@@ -108,7 +125,7 @@ export class Store {
     value: T,
     device: { id: string; token: string; platform: string; registrationId?: string },
   ): Promise<T | null> {
-    const result = await this.db.query(
+    const result = await this.write(
       `INSERT INTO records(owner,kind,id,data) SELECT $1,'push-deliveries',$2,$3::jsonb
        WHERE EXISTS (SELECT 1 FROM records WHERE owner=$1 AND kind='push-devices' AND id=$4
          AND data->>'token'=$5 AND data->>'platform'=$6 AND data->>'registrationId' IS NOT DISTINCT FROM $7::text)
@@ -129,7 +146,7 @@ export class Store {
     owner: string,
     device: { id: string; token: string; platform: string; registrationId?: string },
   ): Promise<void> {
-    await this.db.query(
+    await this.write(
       "DELETE FROM records WHERE owner=$1 AND kind='push-devices' AND id=$2 AND data->>'token'=$3 AND data->>'platform'=$4 AND data->>'registrationId' IS NOT DISTINCT FROM $5::text",
       [owner, device.id, device.token, device.platform, device.registrationId ?? null],
     );
@@ -142,18 +159,14 @@ export class Store {
     return result.rows.map((row) => row.data as T);
   }
   async put<T extends { id: string }>(owner: string, kind: string, value: T): Promise<T> {
-    await this.db.query(
+    await this.write(
       "INSERT INTO records(owner,kind,id,data) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT(owner,kind,id) DO UPDATE SET data=excluded.data,updated_at=now()",
       [owner, kind, value.id, JSON.stringify(value)],
     );
     return value;
   }
   async remove(owner: string, kind: string, id: string): Promise<void> {
-    await this.db.query("DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3", [
-      owner,
-      kind,
-      id,
-    ]);
+    await this.write("DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3", [owner, kind, id]);
   }
   async compareAndSwap<T>(
     owner: string,
@@ -162,7 +175,7 @@ export class Store {
     expected: Record<string, unknown>,
     patch: Record<string, unknown>,
   ): Promise<T | null> {
-    const result = await this.db.query(
+    const result = await this.write(
       "UPDATE records SET data=data || $5::jsonb,updated_at=now() WHERE owner=$1 AND kind=$2 AND id=$3 AND data @> $4::jsonb RETURNING data",
       [owner, kind, id, JSON.stringify(expected), JSON.stringify(patch)],
     );
@@ -173,7 +186,7 @@ export class Store {
     kind: string,
     value: T,
   ): Promise<T | null> {
-    const result = await this.db.query(
+    const result = await this.write(
       "INSERT INTO records(owner,kind,id,data) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT DO NOTHING RETURNING data",
       [owner, kind, value.id, JSON.stringify(value)],
     );
@@ -181,7 +194,7 @@ export class Store {
   }
   /** Atomic append avoids losing streamed events to another database connection. */
   async appendRecordEvent(owner: string, id: string, event: unknown): Promise<void> {
-    const result = await this.db.query(
+    const result = await this.write(
       `UPDATE records AS run SET data=jsonb_set(data,'{events}',COALESCE(data->'events','[]'::jsonb) || $3::jsonb),updated_at=now()
        WHERE owner=$1 AND kind='thread-runs' AND id=$2 AND data->>'status'='running' AND EXISTS (
          SELECT 1 FROM records thread WHERE thread.owner=run.owner AND thread.kind='threads' AND thread.id=run.data->>'threadId'
@@ -198,7 +211,7 @@ export class Store {
     runToken: string,
     leaseMs: number,
   ): Promise<boolean> {
-    const result = await this.db.query(
+    const result = await this.write(
       `UPDATE records SET data=data || jsonb_build_object('runToken',$3::text,'stopRunToken',NULL,'leaseUntil',clock_timestamp() + ($4::text || ' milliseconds')::interval),updated_at=now()
        WHERE owner=$1 AND kind='threads' AND id=$2 AND (data->>'runToken' IS NULL OR (data->>'leaseUntil')::timestamptz<=clock_timestamp()) RETURNING data`,
       [owner, id, runToken, leaseMs],
@@ -211,7 +224,7 @@ export class Store {
     runToken: string,
     leaseMs: number,
   ): Promise<boolean> {
-    const result = await this.db.query(
+    const result = await this.write(
       `UPDATE records SET data=data || jsonb_build_object('leaseUntil',clock_timestamp() + ($4::text || ' milliseconds')::interval)
        WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'runToken'=$3 AND (data->>'leaseUntil')::timestamptz>clock_timestamp() RETURNING data`,
       [owner, id, runToken, leaseMs],
@@ -263,7 +276,7 @@ export class Store {
     expectedEvents: unknown[],
     patch: Record<string, unknown>,
   ): Promise<boolean> {
-    const result = await this.db.query(
+    const result = await this.write(
       `WITH recovered AS (
          UPDATE records AS run SET data=data || $5::jsonb,updated_at=now()
          WHERE owner=$1 AND kind='thread-runs' AND id=$3 AND data->>'threadId'=$2
@@ -280,7 +293,7 @@ export class Store {
     return result.rows.length === 1;
   }
   async expireThreadLease(owner: string, id: string, token: string): Promise<boolean> {
-    const result = await this.db.query(
+    const result = await this.write(
       `UPDATE records SET data=data || '{"runToken":null,"leaseUntil":null}'::jsonb
        WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'runToken'=$3 AND (data->>'leaseUntil')::timestamptz<=clock_timestamp() RETURNING data`,
       [owner, id, token],
@@ -296,7 +309,7 @@ export class Store {
   }
   /** Fact IDs survive edits; deduplication compares the current text atomically. */
   async saveMemory(owner: string, value: AgentMemory): Promise<AgentMemory> {
-    const result = await this.db.query("SELECT openmuse_save_memory($1,$2::jsonb) AS data", [
+    const result = await this.write("SELECT openmuse_save_memory($1,$2::jsonb) AS data", [
       owner,
       JSON.stringify(value),
     ]);
@@ -326,7 +339,7 @@ export class Store {
     token: string,
     run: { id: string } & Record<string, unknown>,
   ) {
-    const result = await this.db.query(
+    const result = await this.write(
       `WITH saved AS (
       INSERT INTO records(owner,kind,id,data) SELECT $1,'thread-runs',$4,$5::jsonb
       WHERE EXISTS(SELECT 1 FROM records WHERE owner=$1 AND kind='threads' AND id=$2
@@ -348,7 +361,7 @@ export class Store {
     return result.rows.map((row) => row.data as { owner: string; value: T });
   }
   async claim<T>(owner: string, id: string, status: string, now: string): Promise<T | null> {
-    const result = await this.db.query(
+    const result = await this.write(
       `UPDATE records AS action SET data=jsonb_set(data,'{status}',$4::jsonb),updated_at=now()
        WHERE owner=$1 AND kind='actions' AND id=$2 AND data->>'status'='awaiting_review'
        AND (data->>'expiresAt')::timestamptz>$3::timestamptz
@@ -361,7 +374,7 @@ export class Store {
     return (result.rows[0]?.data as T | undefined) ?? null;
   }
   async recoverInterruptedActions(): Promise<void> {
-    await this.db.query(
+    await this.write(
       `UPDATE records SET data=data || '{"status":"outcome_unknown","error":"Server restarted during execution. Check the provider before creating another action."}'::jsonb WHERE kind='actions' AND data->>'status'='executing'`,
     );
   }
@@ -371,7 +384,7 @@ export class Store {
     id: string,
     expected: Record<string, unknown> = {},
   ): Promise<T | null> {
-    const result = await this.db.query(
+    const result = await this.write(
       "DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3 AND data @> $4::jsonb RETURNING data",
       [owner, kind, id, JSON.stringify(expected)],
     );
@@ -381,7 +394,7 @@ export class Store {
     return this.db.close();
   }
   async updateCredential(owner: string, connectionId: string, secret: string): Promise<boolean> {
-    const result = await this.db.query(
+    const result = await this.write(
       "UPDATE records SET data=jsonb_set(data,'{secret}',$3::jsonb),updated_at=now() WHERE owner=$1 AND kind='credentials' AND id='google' AND data->>'connectionId'=$2 RETURNING data",
       [owner, connectionId, JSON.stringify(secret)],
     );

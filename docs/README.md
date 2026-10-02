@@ -9,6 +9,7 @@ The demos follow a request from chat to the agent's inline browser, then show ho
 ## Guides
 
 - [Quick start and architecture](../README.md)
+- [Personal VPS, subscriptions, isolated computer and daily backups](../DEPLOY.md)
 - [Native iOS / Android / web setup](../apps/mobile/README.md)
 - [Browser worker, API, persistence, and network boundary](../apps/worker/README.md)
 - [Linux computer, terminal, and workspace files](COMPUTER.md)

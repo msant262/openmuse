@@ -53,6 +53,16 @@ const mutation = z.object({
 export class LocalThreads extends AgentRunner {
   private readonly context = new AsyncLocalStorage<string>();
   private readonly active = new Map<string, { runId: string; token: string; stop: () => void }>();
+  private readonly pendingRuns = new Set<Promise<void>>();
+  private closing = false;
+  private drainFailed = false;
+  /** Abort replies and join their durable checkpoints before closing the database. */
+  async close() {
+    this.closing = true;
+    for (const run of this.active.values()) run.stop();
+    await Promise.all([...this.pendingRuns]);
+    if (this.drainFailed) throw new Error("Conversation shutdown could not confirm persistence");
+  }
   constructor(
     private readonly db: Store,
     private readonly leaseMs = 30_000,
@@ -221,13 +231,20 @@ export class LocalThreads extends AgentRunner {
   run(request: AgentRunnerRunRequest): Observable<BaseEvent> {
     const owner = this.owner();
     const subject = new ReplaySubject<BaseEvent>();
-    void this.execute(owner, request, subject).catch(() => {
+    if (this.closing) {
+      subject.error(new AppError("Server is shutting down", 503));
+      return subject.asObservable();
+    }
+    const pending = this.execute(owner, request, subject).catch(() => {
+      if (this.closing) this.drainFailed = true;
       subject.next({
         type: EventType.RUN_ERROR,
         message: "Could not save the conversation. Please retry.",
       });
       subject.complete();
     });
+    this.pendingRuns.add(pending);
+    void pending.finally(() => this.pendingRuns.delete(pending));
     return subject.asObservable();
   }
   private async execute(
@@ -306,12 +323,13 @@ export class LocalThreads extends AgentRunner {
       },
     });
     let renewing = false;
+    let renewal: Promise<void> | undefined;
     let error: string | undefined;
     const heartbeat = setInterval(
       () => {
         if (renewing) return;
         renewing = true;
-        void this.db
+        renewal = this.db
           .renewThread(owner, threadId, token, this.leaseMs)
           .then(async (renewed) => {
             if (!renewed) {
@@ -341,23 +359,26 @@ export class LocalThreads extends AgentRunner {
       void pending.catch(() => {});
     };
     try {
-      await agent.runAgent(authoritative, {
-        onEvent: ({ event }) => {
-          if (event.type === EventType.RUN_STARTED) {
-            const started = event as BaseEvent & { input?: typeof input };
-            event = { ...started, input: authoritative };
-          }
-          if (event.type === EventType.RUN_ERROR)
-            error = (event as BaseEvent & { message: string }).message;
-          return persist(event);
-        },
-        onMessagesChanged: checkpoint,
-        onStateChanged: checkpoint,
-      });
+      if (this.closing) stopped = true;
+      else
+        await agent.runAgent(authoritative, {
+          onEvent: ({ event }) => {
+            if (event.type === EventType.RUN_STARTED) {
+              const started = event as BaseEvent & { input?: typeof input };
+              event = { ...started, input: authoritative };
+            }
+            if (event.type === EventType.RUN_ERROR)
+              error = (event as BaseEvent & { message: string }).message;
+            return persist(event);
+          },
+          onMessagesChanged: checkpoint,
+          onStateChanged: checkpoint,
+        });
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Reply interrupted";
     } finally {
       clearInterval(heartbeat);
+      await renewal;
     }
     try {
       const additions = finalizeRunEvents(run.events, {
@@ -402,6 +423,7 @@ export class LocalThreads extends AgentRunner {
         },
       );
     } catch {
+      this.drainFailed = true;
       subject.next({
         type: EventType.RUN_ERROR,
         message: "Could not save the conversation. Reconnect before continuing.",

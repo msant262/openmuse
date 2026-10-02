@@ -48,6 +48,15 @@ export class ActionService {
   private readonly now: () => number;
   private readonly log: ActionLog;
   private readonly external = new Map<string, ExternalExecutor>();
+  private readonly decisions = new Set<Promise<ActionProposal>>();
+  private closing = false;
+  private drainFailed = false;
+  async close() {
+    this.closing = true;
+    // Includes native HTTP approvals through their action/audit receipt writes.
+    await Promise.allSettled([...this.decisions]);
+    if (this.drainFailed) throw new Error("Action shutdown could not confirm durable receipts");
+  }
   registerExternal(tool: string, executor: ExternalExecutor) {
     this.external.set(tool, executor);
   }
@@ -180,12 +189,25 @@ export class ActionService {
     await this.record(owner, saved, "Ready for your review");
     return saved;
   }
-  async decide(
+  decide(
     owner: string,
     id: string,
     hash: string,
     decision: "approve" | "deny",
     actor: "human" | "policy" = "human",
+  ): Promise<ActionProposal> {
+    if (this.closing) return Promise.reject(new AppError("Server is shutting down", 503));
+    const decisionRun = this.decideInternal(owner, id, hash, decision, actor);
+    this.decisions.add(decisionRun);
+    void decisionRun.finally(() => this.decisions.delete(decisionRun)).catch(() => {});
+    return decisionRun;
+  }
+  private async decideInternal(
+    owner: string,
+    id: string,
+    hash: string,
+    decision: "approve" | "deny",
+    actor: "human" | "policy",
   ): Promise<ActionProposal> {
     const proposal = await this.db.get<ActionProposal>(owner, "actions", id);
     if (!proposal) throw new AppError("Action not found", 404);
@@ -311,17 +333,22 @@ export class ActionService {
         error: error instanceof Error ? error.message : "Execution failed",
       };
     }
-    await this.db.put(owner, "actions", finished);
-    await this.log.finish(
-      owner,
-      audit,
-      finished.status === "succeeded"
-        ? "succeeded"
-        : finished.status === "outcome_unknown"
-          ? "outcome_unknown"
-          : "failed",
-    );
-    await this.record(owner, finished, finished.result ?? finished.error ?? finished.status);
+    try {
+      await this.db.put(owner, "actions", finished);
+      await this.log.finish(
+        owner,
+        audit,
+        finished.status === "succeeded"
+          ? "succeeded"
+          : finished.status === "outcome_unknown"
+            ? "outcome_unknown"
+            : "failed",
+      );
+      await this.record(owner, finished, finished.result ?? finished.error ?? finished.status);
+    } catch (error) {
+      this.drainFailed = true;
+      throw error;
+    }
     return finished;
   }
   private async record(owner: string, action: ActionProposal, detail: string) {

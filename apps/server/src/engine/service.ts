@@ -39,6 +39,7 @@ import { MediaService } from "../media-tools.ts";
 import { MemoryService } from "../memory.ts";
 import { nativePushAdapters, PushService } from "../push.ts";
 import { RoutinesService } from "../routines.ts";
+import { OperationDrain } from "../shutdown.ts";
 import type { LocalThreads } from "../threads.ts";
 import type { WorkspaceService } from "../workspace.ts";
 import { analyzeSpending } from "./finance.ts";
@@ -54,6 +55,7 @@ export class AgentService {
   readonly memory: MemoryService;
   readonly mcp: McpService;
   readonly push: PushService;
+  readonly toolOperations = new OperationDrain(() => this.db.persistenceFailed);
   private localThreads?: LocalThreads;
   private routineTimer?: ReturnType<typeof setInterval>;
   private routineRefreshing = false;
@@ -165,11 +167,15 @@ export class AgentService {
     this.maintenance = undefined;
     // Abort connector discovery/auth and native sends before waiting on tasks:
     // startup requests must not hold shutdown open behind the task worker.
-    const adaptersClosed = Promise.all([this.push.close(), this.mcp.close()]);
-    await this.worker.stop();
+    const adaptersClosed = Promise.all([
+      this.push.close(),
+      this.mcp.close(),
+      this.toolOperations.close(),
+    ]);
+    // Observe both failure paths immediately; either may already carry a failed write.
+    await Promise.all([this.worker.stop(), adaptersClosed]);
     while (this.refreshing || this.routineRefreshing)
       await new Promise((resolve) => setTimeout(resolve, 10));
-    await adaptersClosed;
   }
   private async maintain() {
     if (this.refreshing) return;

@@ -492,3 +492,81 @@ test("restart recovery surfaces an expired native send as uncertain without send
     await db.close();
   }
 });
+
+test("native provider boundaries append safe deterministic audit entries and recover receipts without sending", async () => {
+  const db = await createStore();
+  let sends = 0;
+  try {
+    const push = new PushService(db, {
+      ios: async () => {
+        sends++;
+        return sends === 1 ? "accepted" : "rejected";
+      },
+    });
+    await push.register("wife", {
+      installationId: "private-phone",
+      platform: "ios",
+      token: "d".repeat(64),
+    });
+    for (const id of ["one", "two"])
+      await push.notify("wife", {
+        id,
+        title: "private-payload",
+        body: "private-body",
+        createdAt: new Date().toISOString(),
+        read: false,
+      });
+    let entries = (await db.actionLog("wife", 200)).entries;
+    assert.equal(entries.filter((e) => e.result === "started").length, 2);
+    assert.equal(entries.filter((e) => e.result === "succeeded").length, 1);
+    assert.equal(entries.filter((e) => e.result === "failed").length, 1);
+    assert.ok(entries.every((e) => /provider acceptance/.test(e.summary)));
+    assert.ok(!JSON.stringify(entries).includes("private-payload"));
+    assert.ok(!JSON.stringify(entries).includes("private-phone"));
+    assert.ok(!JSON.stringify(entries).includes("d".repeat(64)));
+    await db.put("wife", "push-deliveries", {
+      id: "interrupted",
+      deviceId: "private-phone",
+      notificationId: "one",
+      status: "sending",
+      leaseUntil: "2000-01-01T00:00:00Z",
+    });
+    await db.put("wife", "push-deliveries", {
+      id: "receipt-before-audit",
+      deviceId: "private-phone",
+      notificationId: "one",
+      status: "accepted",
+    });
+    await db.put("wife", "push-deliveries", {
+      id: "revoked",
+      deviceId: "private-phone",
+      notificationId: "one",
+      status: "suppressed",
+    });
+    await push.recover();
+    await push.recover();
+    entries = (await db.actionLog("wife", 200)).entries;
+    assert.equal(sends, 2);
+    assert.equal(
+      entries.filter((e) => e.operationId === "push:interrupted" && e.result === "outcome_unknown")
+        .length,
+      1,
+    );
+    assert.equal(entries.filter((e) => e.operationId === "push:receipt-before-audit").length, 2);
+    assert.deepEqual(
+      entries.filter((e) => e.operationId === "push:revoked").map((e) => e.result),
+      ["denied"],
+    );
+    const absent = new PushService(db, {});
+    await absent.notify("wife", {
+      id: "absent",
+      title: "No credentials",
+      body: "",
+      createdAt: new Date().toISOString(),
+      read: false,
+    });
+    assert.equal((await db.actionLog("wife", 200)).entries.length, entries.length);
+  } finally {
+    await db.close();
+  }
+});

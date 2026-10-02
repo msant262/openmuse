@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily private OpenMuse backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+RandomizedDelaySec=5min
+Unit=openmuse-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -70,6 +70,60 @@ conversion remain unverified. Final Compose/resource/egress acceptance belongs t
 
 ### Task 7: VPS deployment
 
-- [ ] Add Compose/server/browser/computer with init/restart/healthchecks, memory caps, persistent volumes and private/HTTPS access; avoid Docker socket in the computer and agent server.
-- [ ] Add daily DB/workspace backup, complete `.env.example` and `DEPLOY.md` for swap, subscriptions, MiMo/local, Google/Composio and mobile setup.
-- [ ] Validate Compose/config/scripts/build and full tests, record live limitations and exact run instructions; commit milestone 7.
+- [x] Add Compose/server/browser/computer with init/restart/healthchecks, memory caps, persistent volumes and private/HTTPS access; avoid Docker socket in the computer and agent server.
+- [x] Add daily DB/workspace backup, complete `.env.example` and `DEPLOY.md` for swap, subscriptions, MiMo/local, Google/Composio and mobile setup.
+- [x] Validate Compose/config/scripts/build and full tests, record live limitations and exact run instructions; commit milestone 7.
+
+Historical milestone 7 validation before final integration fixes: 385 tests passed,
+server/mobile/browser-worker types and server build passed, and tracked/new source
+passed Biome (four existing provider-test warnings).
+Official standalone Compose 5.5.1 validates the exact 6,845,104,128-byte stack and its
+resolved API environment. Actual compiled API active-stream SIGTERM exits 0 in 0.06s;
+partial replies persist across PGlite restart and a fresh turn proceeds without replay.
+Review regressions retain failed task/SQL receipts even before shutdown, join in-flight
+heartbeat writes, and preserve clean exits for fully recorded application failures.
+No Docker engine is available; image builds, kernel/cgroup/namespace isolation, initial
+volume permissions, live container backup/restore, VPS load and real-account/native
+delivery acceptance remain unverified. DEPLOY.md contains the exact operator steps.
+
+
+Final integration fixes retain seven milestones: durable ordinary browser intents/tool
+history and uncertain-action fences; foreground tool lifetime and cancellation drain;
+serialized native consent/registration; shared configured-secret scrubbing; default-free
+routine patches; complete paginated audit recovery and native delivery auditing. The
+linked browser/experience/model/demo guides now describe the installed adapters and
+actual configuration. New native-module fixtures use deferred permission/token/API
+responses; exports are JavaScript/Hermes artifacts, not physical phone acceptance.
+Raw cumulative chat storage compaction remains deferred. The SQL canonical projection
+bounds duplicate API history, not physical database/disk growth; monitor disk and backups.
+
+First final integration verification (historical ab77407): **401/401** tests pass (standalone full suite,
+zero failures/cancelled/skipped; 52.03s). Server/mobile/browser-worker types and server
+build pass; Biome checks 203 tracked/new source files with the four original provider-test
+warnings. Web/iOS/Android JavaScript exports pass. The initial
+full run was 400/401 because a mutual-exclusion test used a 150ms lease under parallel
+PGlite load; its normal-lease fixture passes focused and in the final full suite.
+No production thread lease behavior changed. The mobile harness's Node URL type import
+was corrected afterward and its four native consent tests and mobile types passed again.
+
+Root independently reran the final compiled HTTP/PGlite/model/MCP checks (15 local model
+requests, 3 MCP calls), including paused HTTP routine edits, raw/whole Bearer scrubbing,
+and safe native-send Activity entries. Actual compiled SIGTERM again exited 0 in 0.06s
+with durable partial reply, fresh restart and exactly 2 inference requests. Official
+Compose plus exact API environment checks again passed at 6,845,104,128 bytes total and
+1 GiB browser shm. These are new final-build checks; Docker/container/VPS/account/device
+limits above remain unchanged.
+
+
+Scoped residual repair preserves consent after awaited push audit persistence and records
+known pre-dispatch browser skips separately from completed/uncertain operations. The same
+logical skipped action can run after resume; completed receipts still deduplicate and
+unknown dispatches remain fenced. Latest standalone suite: **407/407**, no failures,
+cancellations or skips (52.88s). Server/browser-worker types and server build pass; Biome
+passes 204 tracked/new source files with the four existing provider-test warnings. Mobile
+source/dependencies are unchanged, so the prior mobile types and three JS/Hermes exports
+remain applicable. Fresh repaired-build root acceptance also passed: completed authenticated HTTP Disable
+while the real audit-start INSERT completion is held causes zero provider sends. The
+compiled HTTP/PGlite/model/MCP fixture retains its 15 local model requests/3 MCP calls,
+SIGTERM exits 0 in 0.06s with durable partial/restart/fresh turn, and official static
+Compose/exact API environment checks pass. No live account, device or Docker claims.

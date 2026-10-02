@@ -8,6 +8,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ActionLog } from "./action-log.ts";
 import type { ActionService } from "./actions.ts";
+import { configuredSecretScrubber, scrubConfiguredValue } from "./configured-secrets.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
 import { mcpRequestPreview } from "./mcp-preview.ts";
@@ -329,12 +330,9 @@ export class McpService {
     }
   }
   private clean(server: McpServerConfig, value: unknown): unknown {
-    const secrets = Object.values(this.headers(server));
-    const text = JSON.stringify(value, (_key, part) => {
-      if (typeof part !== "string") return part;
-      for (const secret of secrets) part = part.replaceAll(secret, "[redacted]");
-      return part;
-    });
+    const text = JSON.stringify(
+      scrubConfiguredValue(value, configuredSecretScrubber(Object.values(this.headers(server)))),
+    );
     return text.length <= 32000
       ? JSON.parse(text)
       : { truncated: true, text: text.slice(0, 30000) };

@@ -24,6 +24,8 @@ export class TaskWorker {
   private timer?: ReturnType<typeof setInterval>;
   private ticking = false;
   private stopping = false;
+  private drainFailed = false;
+  private readonly pendingTicks = new Set<Promise<void>>();
   private active = new Map<string, AbortController>();
   lastTickAt?: string;
   constructor(
@@ -47,7 +49,7 @@ export class TaskWorker {
     if (this.timer) return;
     this.stopping = false;
     this.timer = setInterval(() => {
-      // Timer callbacks cannot await runs; each run owns its durable error state.
+      // tick retains failures before this timer-owned promise is observed/logged.
       void this.tick().catch((error) => backgroundFailure("task worker tick", error));
     }, this.options.pollMs ?? 1000);
     void this.tick().catch((error) => backgroundFailure("initial task worker tick", error));
@@ -57,12 +59,21 @@ export class TaskWorker {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     for (const controller of this.active.values()) controller.abort();
+    await Promise.allSettled([...this.pendingTicks]);
     while (this.active.size || this.ticking) await new Promise((r) => setTimeout(r, 10));
+    if (this.drainFailed || this.db.persistenceFailed)
+      throw new Error("Task worker shutdown could not confirm durable completion");
   }
   abort(taskId: string) {
     this.active.get(taskId)?.abort();
   }
-  async tick() {
+  tick(): Promise<void> {
+    const pending = this.tickInternal();
+    this.pendingTicks.add(pending);
+    void pending.finally(() => this.pendingTicks.delete(pending)).catch(() => {});
+    return pending;
+  }
+  private async tickInternal() {
     if (this.stopping) return;
     if (this.running)
       await this.db.put("system", "worker-status", {
@@ -119,7 +130,15 @@ export class TaskWorker {
         eligible.push(record);
         if (eligible.length === 3) break;
       }
-      await Promise.all(eligible.map(({ owner, value }) => this.run(owner, value)));
+      // Join every claimed run even when another run's finalization rejects.
+      const results = await Promise.allSettled(
+        eligible.map(({ owner, value }) => this.run(owner, value)),
+      );
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") {
+        this.drainFailed = true;
+        throw failure.reason;
+      }
     } finally {
       this.ticking = false;
     }
@@ -177,9 +196,10 @@ export class TaskWorker {
       });
     };
     const startedAt = new Date(this.now()).toISOString();
+    const renewals = new Set<Promise<unknown>>();
     const heartbeat = setInterval(
       () => {
-        void this.db
+        const renewal = this.db
           .compareAndSwap(
             owner,
             "tasks",
@@ -190,7 +210,12 @@ export class TaskWorker {
           .then((value) => {
             if (!value) controller.abort();
           })
-          .catch(() => controller.abort());
+          .catch(() => {
+            this.drainFailed = true;
+            controller.abort();
+          });
+        renewals.add(renewal);
+        void renewal.finally(() => renewals.delete(renewal));
       },
       Math.max(10, Math.floor(leaseMs / 3)),
     );
@@ -255,6 +280,7 @@ export class TaskWorker {
       );
     } finally {
       clearInterval(heartbeat);
+      await Promise.allSettled([...renewals]);
       this.active.delete(taskId);
     }
     const settled = await this.db.get<AgentTask>(owner, "tasks", taskId);

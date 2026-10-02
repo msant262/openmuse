@@ -1,5 +1,15 @@
 # Release verification
 
+## Personal VPS integration · October 2, 2026
+
+- **385 tests pass**, with zero failures or skipped tests, including the existing sample/demo contracts. Server/mobile/browser-worker TypeScript checks, server build and Biome checks of tracked/new source pass. During implementation, the broad `pnpm lint` command scanned ignored research and encountered a historical `.superpowers` JSON formatting error; four existing model-provider test warnings remain.
+- The four-service deployment has an exact **6,845,104,128-byte** memory budget, one API/PGlite/in-process worker, init/restart/health contracts, loopback-only published API, persistent DB/profile/workspace/home, minimal sidecar secrets and coupled computer/gateway networking. Tests check the Compose structure and actual browser/shared-module layout under Node's native TypeScript loader.
+- Shutdown checks hold native and ordinary server-tool receipts through model cancellation, seal new work, persist partial local replies, release leases and reject unconfirmed persistence. Task finalization and settled/caught SQL write failures remain known through shutdown; complete ticks and outstanding heartbeat writes are joined. Fully recorded ordinary application/provider errors permit a clean exit. Backup tests mock Docker control while exercising real archive round trips, private modes/numeric ownership, stop/OOM/kill failures, resume failures, retention, checksums, unsafe paths and restores into fresh state.
+- Independent acceptance ran the **actual compiled API** against a continuous local model stream and on-disk PGlite: active-stream SIGTERM exited 0 in **0.06 seconds**, HTTP closed, the partial reply survived restart, and an immediate new turn completed with exactly two total model requests and no reader errors. The official standalone **Compose 5.5.1** validator accepted isolated configuration and the exact interpolated API environment, including optional blank values, also passed compiled `readConfig`.
+- No Docker daemon is available here. These checks establish neither image builds nor kernel/cgroup/namespace isolation, initial volume permissions, live container backup/restore, VPS load, account login, HTTPS/Tailscale nor physical native push. The [deployment guide](../DEPLOY.md) lists exact startup and real-host acceptance steps. Docker and native demonstrations below are historical evidence from their stated release, not verification of this new stack.
+
+## Earlier release evidence
+
 September 16, 2026 · Capybara and distinct mobile/web demos, following the agent browser release · local fictional workspace. This records exercised behavior and its limits; it does not establish that every planned capability is complete.
 
 ## Automated checks

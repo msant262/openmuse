@@ -1,0 +1,11 @@
+[Unit]
+Description=Consistent OpenMuse stopped-writer backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/opt/openmuse/scripts/backup.sh --project-dir /opt/openmuse --env-file /opt/openmuse/.env --backup-dir /var/backups/openmuse --retention-days 14
+TimeoutStartSec=45min

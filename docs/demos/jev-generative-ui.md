@@ -17,7 +17,7 @@ pnpm --dir apps/worker exec playwright install chromium
 pnpm dev:demo
 ```
 
-The isolated launcher sets `JEV_MODE=sample`, starts AI Mock and the normal API on `127.0.0.1:8788`, and starts a real browser worker on `127.0.0.1:8791`. It forwards only the Intelligence key from the private configuration, not Google or model-provider credentials. Demo data stays under ignored `artifacts/demo/`.
+The isolated launcher sets `JEV_MODE=sample`, starts AI Mock and the normal API on `127.0.0.1:8788`, and starts a real browser worker on `127.0.0.1:8791`. The default sample forwards no Intelligence, Google, TypeSafe or model-provider credentials and uses isolated local thread storage. Demo data stays under ignored `artifacts/demo/`.
 
 To exercise **real Jev decisions** with the same scripted agent and real browser, provide a server-side `TYPESAFE_API_KEY` through your secret manager and start `DEMO_JEV_MODE=live pnpm dev:demo` instead. The launcher forwards that key only to the API process. A resulting card is labeled `Live Jev · model decisions`; live comparison excerpts are taken directly from the pages read in that turn. The scripted agent still supplies the trip scenario and candidate set, while the TypeSafe service decides whether to show the prepared cards and ranks candidates. Live Jev may choose an ordinary agent response, so the exact card sequence is not guaranteed.
 

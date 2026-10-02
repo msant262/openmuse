@@ -108,8 +108,10 @@ test("Store runner durably replays rich messages, state and custom events after 
 
 test("simultaneous runner instances claim only one run; stopping retains partial text and permits the next turn", async () => {
   const db = await createStore();
-  const a = new LocalThreads(db, 150),
-    b = new LocalThreads(db, 150);
+  // This verifies mutual exclusion/stop/reuse, not lease expiration. Keep the
+  // normal lease so parallel PGlite load cannot expire it between fixture events.
+  const a = new LocalThreads(db),
+    b = new LocalThreads(db);
   let entered!: () => void;
   const started = new Promise<void>((resolve) => {
     entered = resolve;

@@ -14,6 +14,8 @@ Set the server's worker URL to `http://127.0.0.1:8790`. The host port binds only
 
 The image includes matching Playwright and Chromium versions. The Docker build uses the worker’s own npm lockfile. Local development uses the root pnpm workspace: run `pnpm install --frozen-lockfile`, then follow the local development commands below.
 
+Build the image from repository-root context (`docker build -f apps/worker/Dockerfile .`), which includes its shared browser-payment protocol module at the actual relative import path. `infra/compose.yaml`, Render and the disposable Docker test use this same context. The root [VPS Compose deployment](../../DEPLOY.md) keeps this worker entirely private and uses 1 GiB shared memory within the 2 GiB cap.
+
 ## API
 
 All endpoints except `GET /health` require `Authorization: Bearer <WORKER_TOKEN>`. JSON writes require `Content-Type: application/json`.

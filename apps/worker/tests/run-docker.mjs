@@ -3,11 +3,19 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const repository = fileURLToPath(new URL("../../../", import.meta.url));
 const name = `openmuse-worker-test-${randomUUID().slice(0, 8)}`;
 const env = { ...process.env, WORKER_TOKEN: randomBytes(32).toString("hex") };
 const run = (args, options = {}) =>
   execFileSync("docker", args, { env, stdio: "inherit", ...options });
-run(["build", "-t", "openmuse-browser-worker:test", root]);
+run([
+  "build",
+  "-f",
+  `${repository}apps/worker/Dockerfile`,
+  "-t",
+  "openmuse-browser-worker:test",
+  repository,
+]);
 try {
   run([
     "run",

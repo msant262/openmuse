@@ -50,6 +50,7 @@ export class ActionLog {
     }
   }
   async reconcile(startup = false) {
+    const cutoff = new Date().toISOString();
     for (const { owner, value } of await this.db.scan<{
       id: string;
       action: LogAction;
@@ -58,28 +59,42 @@ export class ActionLog {
       await this.append(owner, value.action, value.result);
       await this.db.remove(owner, "audit-completions", value.id);
     }
-    for (const { owner, value } of await this.db.unfinishedActionLog()) {
-      const action = await this.db.get<{ status: string }>(owner, "actions", value.operationId);
-      const command = await this.db.get<{ status: string }>(
-        owner,
-        "computer-commands",
-        value.operationId,
-      );
-      const image = value.operationId.startsWith("image:")
-        ? await this.db.get<{ status: string }>(
-            owner,
-            "image-generations",
-            value.operationId.slice(6),
-          )
-        : null;
-      const status = action?.status ?? command?.status ?? image?.status;
-      if (status && ["executing", "awaiting_review", "running"].includes(status)) continue;
-      const result: ActionLogEntry["result"] | undefined =
-        status === "succeeded"
+    let cursor: { time: string; owner: string; id: string } | undefined;
+    while (true) {
+      const batch = await this.db.unfinishedActionLog(cutoff, cursor);
+      if (!batch.length) break;
+      for (const { owner, value } of batch) {
+        cursor = { time: value.time, owner, id: value.id };
+        const action = await this.db.get<{ status: string }>(owner, "actions", value.operationId);
+        const command = await this.db.get<{ status: string }>(
+          owner,
+          "computer-commands",
+          value.operationId,
+        );
+        const image = value.operationId.startsWith("image:")
+          ? await this.db.get<{ status: string }>(
+              owner,
+              "image-generations",
+              value.operationId.slice(6),
+            )
+          : null;
+        const push = value.operationId.startsWith("push:")
+          ? await this.db.get<{ status: string }>(
+              owner,
+              "push-deliveries",
+              value.operationId.slice(5),
+            )
+          : null;
+        const status = action?.status ?? command?.status ?? image?.status ?? push?.status;
+        if (status && ["executing", "awaiting_review", "running", "sending"].includes(status))
+          continue;
+        const result: ActionLogEntry["result"] | undefined = ["succeeded", "accepted"].includes(
+          status ?? "",
+        )
           ? "succeeded"
-          : status === "failed"
+          : ["failed", "rejected", "invalid_token"].includes(status ?? "")
             ? "failed"
-            : status === "denied"
+            : ["denied", "suppressed"].includes(status ?? "")
               ? "denied"
               : status === "cancelled"
                 ? "cancelled"
@@ -97,7 +112,8 @@ export class ActionLog {
                     : startup
                       ? "outcome_unknown"
                       : undefined;
-      if (result) await this.append(owner, value, result);
+        if (result) await this.append(owner, value, result);
+      }
     }
   }
   async run<T>(

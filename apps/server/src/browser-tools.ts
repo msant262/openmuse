@@ -16,6 +16,11 @@ export function browserTools(
     before?: () => Promise<void>;
     stopped?: () => boolean;
     queue?: (operation: () => Promise<unknown>) => Promise<unknown>;
+    record?: (
+      name: string,
+      args: Record<string, unknown>,
+      operation: () => Promise<unknown>,
+    ) => Promise<unknown>;
     observed?: (id: string) => Promise<void>;
     paused?: (id: string) => Promise<void>;
   } = {},
@@ -27,7 +32,13 @@ export function browserTools(
     url?: string,
   ) => {
     options.signal?.throwIfAborted();
-    if (options.stopped?.()) return { paused: true, reason: "The task is paused or finished." };
+    if (options.stopped?.())
+      return {
+        paused: true,
+        skipped: true,
+        dispatched: false,
+        reason: "The task is paused or finished.",
+      };
     await options.before?.();
     let id = args.sessionId ?? options.sessionId?.();
     try {
@@ -65,42 +76,71 @@ export function browserTools(
     }
   };
   const run = (
+    name: string,
     args: { sessionId?: string },
     operation: (id: string) => Promise<unknown>,
     url?: string,
-  ) =>
-    options.queue
-      ? options.queue(() => perform(args, operation, url))
-      : perform(args, operation, url);
+  ) => {
+    const execute = () =>
+      options.record
+        ? options.record(name, args, () => perform(args, operation, url))
+        : perform(args, operation, url);
+    return options.queue ? options.queue(execute) : execute();
+  };
   return [
     defineTool({
       name: "browser_snapshot",
       description:
         "Read the current browser page and numbered interactive controls. Password values are omitted. Numbers belong only to the returned snapshotId.",
       parameters: session,
-      execute: (args) => run(args, (id) => service.snapshot(owner, id, options.signal)),
+      execute: (args) =>
+        run("browser_snapshot", args, (id) => service.snapshot(owner, id, options.signal)),
     }),
     defineTool({
       name: "browser_navigate",
       description:
         "Navigate the persistent personal browser to a public HTTP(S) page, retaining saved logins. Returns numbered controls.",
       parameters: session.extend({ url: z.url().max(4096) }),
-      execute: (args) => run(args, (id) => service.snapshot(owner, id, options.signal), args.url),
+      execute: (args) =>
+        run(
+          "browser_navigate",
+          args,
+          (id) => service.snapshot(owner, id, options.signal),
+          args.url,
+        ),
     }),
     defineTool({
       name: "browser_act",
       description:
         "Perform click/fill/select/press/scroll on one numbered element from the exact latest snapshot. Returns fresh controls. Human takeover and money approvals cannot be bypassed.",
-      parameters: z.object({ sessionId: z.uuid().optional(), act: browserActionSchema }).strict(),
+      parameters: z
+        .object({
+          sessionId: z.uuid().optional(),
+          operationId: z
+            .string()
+            .min(1)
+            .max(120)
+            .optional()
+            .describe(
+              "Stable logical action ID. Reuse after resume; use a new ID only for an intentionally distinct action.",
+            ),
+          act: browserActionSchema,
+        })
+        .strict(),
       execute: (args) =>
-        run(args, (id) => service.act(owner, id, args.act, options.signal, options.taskId)),
+        run("browser_act", args, (id) =>
+          service.act(owner, id, args.act, options.signal, options.taskId),
+        ),
     }),
     defineTool({
       name: "browser_screenshot",
       description:
         "Capture a bounded still-image as an owner-scoped asset reference; the latest image is hydrated for model visual evidence and the mobile card uses safe page metadata. Vision support depends on the selected model; numbered snapshot remains the action interface.",
       parameters: session,
-      execute: (args) => run(args, (id) => service.screenshotForAgent(owner, id, options.signal)),
+      execute: (args) =>
+        run("browser_screenshot", args, (id) =>
+          service.screenshotForAgent(owner, id, options.signal),
+        ),
     }),
   ];
 }

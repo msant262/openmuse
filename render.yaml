@@ -61,7 +61,7 @@ services:
     runtime: docker
     plan: standard
     dockerfilePath: ./apps/worker/Dockerfile
-    dockerContext: ./apps/worker
+    dockerContext: .
     disk:
       name: openmuse-browser-data
       mountPath: /data

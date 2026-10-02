@@ -4,6 +4,7 @@ import { type ClientHttp2Stream, connect } from "node:http2";
 import { JWT } from "google-auth-library";
 import { z } from "zod";
 import type { AgentNotification } from "../../../packages/domain/src/agent.ts";
+import { ActionLog } from "./action-log.ts";
 import type { Store } from "./db.ts";
 
 export interface PushConfig {
@@ -215,6 +216,31 @@ export function nativePushAdapters(
 }
 /** Direct OS push is optional; every notification remains durable in the app. */
 export class PushService {
+  private audit(delivery: Delivery) {
+    return {
+      operationId: `push:${delivery.id}`,
+      tool: "push.native",
+      target: "Native notification provider",
+      summary:
+        "Native notification request; success means provider acceptance, not physical delivery",
+    };
+  }
+  private async auditReceipt(owner: string, delivery: Delivery) {
+    if (delivery.status === "sending") return;
+    const log = new ActionLog(this.db);
+    if (delivery.status !== "suppressed") await log.append(owner, this.audit(delivery), "started");
+    await log.finish(
+      owner,
+      this.audit(delivery),
+      delivery.status === "accepted"
+        ? "succeeded"
+        : delivery.status === "suppressed"
+          ? "denied"
+          : delivery.status === "outcome_unknown"
+            ? "outcome_unknown"
+            : "failed",
+    );
+  }
   private active = new Set<Promise<unknown>>();
   private readonly abort = new AbortController();
   constructor(
@@ -263,6 +289,8 @@ export class PushService {
           await this.db.notificationDelivery(owner, value.notificationId, "outcome_unknown");
       }
     }
+    for (const { owner, value } of await this.db.scan<Delivery>("push-deliveries"))
+      await this.auditReceipt(owner, value);
     for (const { owner, value } of await this.db.scan<DeliveryIntent>("push-intents")) {
       const notice = await this.db.get<AgentNotification>(owner, "notifications", value.id);
       if (!notice) continue;
@@ -350,21 +378,39 @@ export class PushService {
           let status: Delivery["status"];
           try {
             const current = await this.db.get<Device>(owner, "push-devices", device.id);
-            status =
+            if (
               current?.token === device.token &&
               current.platform === device.platform &&
               current.registrationId === device.registrationId
-                ? await sender(
-                    device,
-                    { id: notice.id, title: notice.title.slice(0, 160), taskId: notice.taskId },
-                    AbortSignal.any([this.abort.signal, AbortSignal.timeout(15000)]),
-                  )
-                : "suppressed";
+            ) {
+              await new ActionLog(this.db).append(
+                owner,
+                this.audit(claimed as Delivery),
+                "started",
+              );
+              // Audit persistence is asynchronous: consent may have been revoked or
+              // replaced while it was pending. No await may separate this final
+              // registration check from invoking the external sender.
+              const latest = await this.db.get<Device>(owner, "push-devices", device.id);
+              if (
+                latest?.token === device.token &&
+                latest.platform === device.platform &&
+                latest.registrationId === device.registrationId
+              ) {
+                this.abort.signal.throwIfAborted();
+                status = await sender(
+                  device,
+                  { id: notice.id, title: notice.title.slice(0, 160), taskId: notice.taskId },
+                  AbortSignal.any([this.abort.signal, AbortSignal.timeout(15000)]),
+                );
+              } else status = "suppressed";
+            } else status = "suppressed";
           } catch {
             status = "outcome_unknown";
           }
           delivery = { id, status, deviceId: device.id, notificationId: notice.id };
           await this.db.put(owner, "push-deliveries", delivery);
+          await this.auditReceipt(owner, delivery);
           if (status === "invalid_token") await this.db.takePushDevice(owner, device);
         } else {
           delivery = await this.db.get<Delivery>(owner, "push-deliveries", id);
@@ -379,6 +425,12 @@ export class PushService {
           }
         }
       }
+    }
+    // Reconcile append-only outcomes even if a previous sender committed its receipt
+    // then stopped before appending the result. Frozen targets/claims still govern sends.
+    for (const id of ids) {
+      const receipt = await this.db.get<Delivery>(owner, "push-deliveries", id);
+      if (receipt) await this.auditReceipt(owner, receipt);
     }
     // Re-read claims after dispatch; another publisher may have completed one.
     for (const id of ids)

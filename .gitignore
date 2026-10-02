@@ -11,6 +11,8 @@ apps/mobile/android/
 .DS_Store
 *.tsbuildinfo
 artifacts/
+deployment-secrets/
+backups/
 __pycache__/
 *.pyc
 # Native platform push credentials/configuration are local deployment inputs.

@@ -15,6 +15,8 @@ export const routineInput = z
   })
   .strict();
 
+export const routinePatch = routineInput.extend({ enabled: z.boolean() }).partial();
+
 export function nextRoutineRun(cron: string, timezone: string, now: number): string {
   if (cron.trim().split(/\s+/).length !== 5 || !/^[\d*,/\s-]+$/.test(cron))
     throw new AppError("Use five numeric cron fields (minute, hour, day, month, weekday)", 422);
@@ -85,7 +87,7 @@ export class RoutinesService {
   }
 
   async update(owner: string, id: string, raw: unknown) {
-    const patch = routineInput.partial().parse(raw),
+    const patch = routinePatch.parse(raw),
       previous = await this.get(owner, id);
     if (previous.pending && patch.enabled !== false)
       throw new AppError("Routine is scheduling a run; retry shortly", 409);

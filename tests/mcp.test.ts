@@ -37,10 +37,15 @@ test("official streamable MCP tools honor allowlists, bind money approval and re
   let writes = 0,
     schemaChanged = false;
   const previousKey = process.env.OPENMUSE_MCP_TEST_KEY;
-  process.env.OPENMUSE_MCP_TEST_KEY = "private-test-credential";
+  process.env.OPENMUSE_MCP_TEST_KEY = "Bearer private-test-credential";
   const remote = new McpServer({ name: "test", version: "1" });
   remote.registerTool("read_agenda", { inputSchema: { day: z.string() } }, async ({ day }) => ({
-    content: [{ type: "text", text: `Agenda ${day}: ${process.env.OPENMUSE_MCP_TEST_KEY}` }],
+    content: [
+      {
+        type: "text",
+        text: `Agenda ${day}: private-test-credential / ${process.env.OPENMUSE_MCP_TEST_KEY}`,
+      },
+    ],
   }));
   const buySchema = z.object({
     event: z.string(),
@@ -55,7 +60,14 @@ test("official streamable MCP tools honor allowlists, bind money approval and re
   });
   remote.registerTool("buy_ticket", { inputSchema: buySchema }, async () => {
     writes++;
-    return { content: [{ type: "text", text: "Receipt 42" }] };
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Receipt 42 private-test-credential / ${process.env.OPENMUSE_MCP_TEST_KEY}`,
+        },
+      ],
+    };
   });
   remote.registerTool("uncertain_write", { inputSchema: {} }, async () => {
     writes++;
@@ -158,6 +170,10 @@ test("official streamable MCP tools honor allowlists, bind money approval and re
     await actions.decide("wife", review.actionId, proposal.hash, "approve");
     const result = await buy.execute(intent);
     assert.ok(JSON.stringify(result).includes("Receipt 42"));
+    assert.ok(!JSON.stringify(result).includes("private-test-credential"));
+    assert.ok(
+      !JSON.stringify(await db.list("wife", "mcp-receipts")).includes("private-test-credential"),
+    );
     assert.equal(writes, 1);
     assert.equal(
       (await db.actionLog("wife")).entries.filter((e) => e.result === "succeeded").length,
@@ -169,6 +185,9 @@ test("official streamable MCP tools honor allowlists, bind money approval and re
     const agenda = await read.execute({ day: "Monday" });
     assert.match(JSON.stringify(agenda), /Agenda Monday/);
     assert.ok(!JSON.stringify(agenda).includes("private-test-credential"));
+    const oversized = await read.execute({ day: `x${"private-test-credential".repeat(3000)}` });
+    assert.ok(!JSON.stringify(oversized).includes("private-test-credential"));
+    assert.ok(!JSON.stringify(oversized).includes("private-test-cred"));
     const buyAgain = (await mcp.tools("wife", "chat:two")).find((t) =>
       t.name.endsWith("buy_ticket"),
     );
@@ -220,7 +239,7 @@ test("official streamable MCP tools honor allowlists, bind money approval and re
       "failed",
     );
     assert.equal(writes, 1);
-    process.env.OPENMUSE_MCP_TEST_KEY = "private-test-credential";
+    process.env.OPENMUSE_MCP_TEST_KEY = "Bearer private-test-credential";
     const uncertain = tools.find((t) => t.name.endsWith("uncertain_write"));
     assert.ok(uncertain?.execute);
     const first = (await uncertain.execute({})) as { status: string };
