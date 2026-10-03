@@ -633,7 +633,6 @@ export const ptBR: Record<string, string> = {
   "Your connected browsing sessions.": "Suas sessões de navegação conectadas.",
   "Documents, forms and filled copies.": "Documentos, formulários e cópias preenchidas.",
   "Back to Apps": "Voltar para aplicativos",
-  "Retry main chat": "Tentar conversa principal novamente",
   "Open {name} activity and approvals": "Abrir atividade e aprovações de {name}",
   "Ready to review · {title}": "Pronto para revisar · {title}",
   "Needs your input · {title}": "Precisa de você · {title}",
@@ -905,5 +904,4 @@ export const ptBR: Record<string, string> = {
   "Open attachment: {name}": "Abrir anexo: {name}",
   "Reload task results.": "Recarregar resultados da tarefa.",
   "Reload task results": "Recarregar resultados da tarefa",
-  "Website address": "Endereço do site",
 };
