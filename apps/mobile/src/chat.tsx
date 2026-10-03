@@ -1738,6 +1738,7 @@ export function ChatScreen({
               onChangeText={(value) => {
                 draftRevision.current++;
                 setDraft(value);
+                if (!value.length) setInputHeight(44);
               }}
               onContentSizeChange={(event) =>
                 setInputHeight(Math.max(44, Math.min(140, event.nativeEvent.contentSize.height)))
@@ -1758,7 +1759,7 @@ export function ChatScreen({
               style={{
                 flex: 1,
                 color: colors.text,
-                height: inputHeight,
+                height: draft.length ? inputHeight : 44,
                 minHeight: 44,
                 maxHeight: 140,
                 fontSize: 16,
