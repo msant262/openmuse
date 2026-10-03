@@ -75,3 +75,21 @@ function writeGeneration(key: string, value: string) {
   if (confirmed.generation !== generation || confirmed.hash !== sha256(confirmed.value))
     throw new Error("Could not confirm saved messages");
 }
+
+export async function removeConversationCache(key: string) {
+  const pending = (writers.get(key) ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => {
+      for (const slot of [0, 1]) {
+        const file = new File(directory(), `${sha256(key)}.${slot}.json`);
+        if (file.exists) file.delete();
+      }
+      return "";
+    });
+  writers.set(key, pending);
+  try {
+    await pending;
+  } finally {
+    if (writers.get(key) === pending) writers.delete(key);
+  }
+}

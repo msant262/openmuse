@@ -23,16 +23,36 @@ export function canonicalModel(spec: string) {
   const { provider, model } = modelSpec(spec);
   return `${canonicalProvider(provider)}/${model}`;
 }
+const catalogCapabilities = new WeakMap<ModelProviderConfig, Map<string, ModelCapability>>();
+export function registerCatalogCapabilities(
+  config: ModelProviderConfig,
+  model: string,
+  capability: ModelCapability,
+) {
+  let models = catalogCapabilities.get(config);
+  if (!models) {
+    models = new Map();
+    catalogCapabilities.set(config, models);
+  }
+  models.set(canonicalModel(model), modelCapabilitySchema.parse(capability));
+}
+
 export function routingCapabilities(model: string, config: ModelProviderConfig) {
   const declared = config.routing?.capabilities[canonicalModel(model)];
+  const discovered = catalogCapabilities.get(config)?.get(canonicalModel(model));
   return {
-    capabilities: declared ?? {
-      tools: true,
-      vision: false,
-      structuredOutput: true,
-      contextTokens: 32768,
-    },
-    source: declared ? ("declared" as const) : ("compatibility_assumption" as const),
+    capabilities: declared ??
+      discovered ?? {
+        tools: true,
+        vision: false,
+        structuredOutput: true,
+        contextTokens: 32768,
+      },
+    source: declared
+      ? ("declared" as const)
+      : discovered
+        ? ("preflight" as const)
+        : ("compatibility_assumption" as const),
   };
 }
 export function meetsRequirements(capability: ModelCapability, requirements: ModelRequirements) {

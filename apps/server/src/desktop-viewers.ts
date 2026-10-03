@@ -75,7 +75,7 @@ export class DesktopViewers {
       artifactIds: [],
       plan: [],
       evidence: [],
-      input: {},
+      input: { internalActivity: true },
       state: { desiredRevision: 0, appliedRevision: 0 },
     };
     await this.agent.db.insertIfAbsent(owner, "tasks", task);

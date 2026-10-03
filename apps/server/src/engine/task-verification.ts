@@ -1,4 +1,5 @@
 import type { AgentArtifact, AgentTask } from "../../../../packages/domain/src/agent.ts";
+import { rasterMime } from "../../../../packages/domain/src/attachments.ts";
 import type { ActionProposal, Artifact } from "../../../../packages/domain/src/index.ts";
 import {
   type CompletionAssessment,
@@ -142,6 +143,20 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       format: format ?? "application/pdf",
       requiredItems: content,
     });
+  else if (
+    /\b(infogr[aá]fico|infographic|poster|p[oô]ster|ilustra[çc][aã]o|illustration)\b/i.test(
+      prompt,
+    ) ||
+    (/\b(crie|criar|gere|gerar|create|generate|draw|desenhe|produza)\b/i.test(prompt) &&
+      /\b(imagem|image|picture)\b/i.test(prompt))
+  )
+    criteria.push({
+      id: "requested-image",
+      kind: "file",
+      description: "The requested image was generated and is available as an attachment",
+      format: "image/*",
+      requiredItems: [],
+    });
   else if (/\b(pdf|docx|xlsx|pptx|txt|csv|arquivo|file|document|documento)\b/i.test(prompt))
     criteria.push({
       id: "requested-file",
@@ -205,6 +220,19 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       effect: "browser",
       description: "The requested form has observed confirmation after its submission",
       requiredItems: [],
+    });
+  if (
+    !criteria.length &&
+    /\b(write|draft|compose|create|escreva|escrever|redija|componha|crie|criar)\b/i.test(prompt) &&
+    /\b(poem|poema|poetry|poesia|greeting|sauda[çc][aã]o|story|hist[oó]ria|conto|caption|legenda|slogan|texto|text|mensagem|message)\b/i.test(
+      prompt,
+    )
+  )
+    criteria.push({
+      id: "requested-text",
+      kind: "response",
+      description: "The requested original text is delivered in the result",
+      requiredItems: content,
     });
   if (
     !criteria.length &&
@@ -479,7 +507,14 @@ export class TaskVerification {
             for (const id of task.artifactIds) {
               if (criterion.referenceId && id !== criterion.referenceId) continue;
               const file = await this.db.get<Artifact>(owner, "files", id);
-              if (!file || (criterion.format && file.mimeType !== criterion.format)) continue;
+              if (
+                !file ||
+                (criterion.format &&
+                  (criterion.format === "image/*"
+                    ? !file.mimeType.startsWith("image/")
+                    : file.mimeType !== criterion.format))
+              )
+                continue;
               const op = ops.find(
                 (entry) =>
                   entry.status === "succeeded" &&
@@ -511,6 +546,8 @@ export class TaskVerification {
                     structuredContent = JSON.parse(content);
                     if (!useful(structuredContent)) continue;
                   }
+                } else if (file.mimeType.startsWith("image/")) {
+                  if (rasterMime(bytes) !== file.mimeType) continue;
                 } else continue;
                 if (
                   criterion.requiredItems.every((item) =>
@@ -545,6 +582,16 @@ export class TaskVerification {
                 )
                 .map((op) => op.id),
             );
+          } else if (criterion.kind === "response") {
+            const text = (delivery ?? task.result ?? "").trim();
+            if (
+              text.length >= 8 &&
+              !/^(done|completed|pronto|feito|conclu[ií]do)[.!\s]*$/i.test(text) &&
+              criterion.requiredItems.every((item) =>
+                textContains(text, item, criterion.requiredItems),
+              )
+            )
+              evidenceIds = [`${taskId}:response:${revision}`];
           } else {
             evidenceIds = task.evidence
               .filter(

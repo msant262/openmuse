@@ -653,7 +653,10 @@ test("mutable chat tools create a durable task receipt with thread provenance in
     const task = await server.agent.getTask("owner", saved.taskId);
     assert.equal(task.originThreadId, body.threadId);
     assert.equal(task.originMessageId, body.clientMessageId);
-    assert.match(task.prompt, /browser_navigate/);
+    assert.equal(task.title, body.text);
+    assert.equal(task.prompt, body.text);
+    assert.match(String(task.state.delegatedBrief), /browser_navigate/);
+    assert.match(String(task.state.delegatedBrief), /https:\/\/example\.org\/account/);
     await lastValueFrom(conversation.clone().run(input).pipe(toArray()));
     conversation.abortRun();
     assert.equal((await fixture.db.list("owner", "tasks")).length, 1);

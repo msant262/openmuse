@@ -6,7 +6,6 @@ import {
   type MessageCircle,
   Monitor,
   MoreHorizontal,
-  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -27,10 +26,12 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ApiError } from "./api-errors";
 import { useI18n } from "./i18n";
-import { messageStorage } from "./message-storage";
+import { messageStorage, removeConversationCache } from "./message-storage";
+import { ThreadActions } from "./thread-actions";
 import { navigateFromThreadMenu, parseThreadSelection } from "./thread-selection";
-import { Button, colors, ErrorNotice, Field, s } from "./ui";
+import { Button, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 function newThreadId() {
@@ -53,6 +54,9 @@ const ThreadContext = createContext<{
   markAccepted: (id: string) => void;
   start: () => void;
   claimPrompt: (id: number) => boolean;
+  revision: number;
+  changed: () => void;
+  forget: (id: string, mainThreadId?: string) => void;
 } | null>(null);
 export function ThreadsProvider({ children }: { children: ReactNode }) {
   const { t } = useI18n();
@@ -66,6 +70,15 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | { key: string; detail: string }>("");
   const [attempt, setAttempt] = useState(0);
   const selectionVersion = useRef(0);
+  const [revision, setRevision] = useState(0);
+  const [deletedCaches, setDeletedCaches] = useState<string[]>([]);
+  useEffect(() => {
+    if (!deletedCaches.length) return;
+    const deleting = [...deletedCaches];
+    void Promise.all(deleting.map((id) => removeConversationCache(`${api.identityKey}\n${id}`)))
+      .then(() => setDeletedCaches((ids) => ids.filter((id) => !deleting.includes(id))))
+      .catch((cause) => setError(String(cause)));
+  }, [api, deletedCaches]);
   useEffect(() => {
     if (!enabled) return;
     let active = true;
@@ -107,10 +120,54 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
       active = false;
     };
   }, [api, enabled, attempt]);
+  // A missing saved thread is authoritative only after a 404/410. Never discard offline drafts.
+  const existingIds = JSON.stringify(
+    visited.filter((item) => item.existing).map((item) => item.id),
+  );
+  useEffect(() => {
+    if (!enabled || loading) return;
+    let active = true;
+    const ids = JSON.parse(existingIds) as string[];
+    void Promise.all(
+      ids.map(async (id) => {
+        try {
+          await api.request(`/api/copilotkit/threads/${encodeURIComponent(id)}`);
+          return undefined;
+        } catch (cause) {
+          return cause instanceof ApiError && [404, 410].includes(cause.status) ? id : undefined;
+        }
+      }),
+    ).then(async (results) => {
+      const deleted = new Set(results.filter((id): id is string => Boolean(id)));
+      if (!active || !deleted.size) return;
+      const main = await api
+        .request<{ threadId: string; existing: boolean }>("/api/main-thread")
+        .catch(() => undefined);
+      if (!active || !main) return;
+      const next = { id: main.threadId, existing: main.existing };
+      setMainId(next.id);
+      setSelection((current) => (deleted.has(current.id) ? next : current));
+      setVisited((items) => [
+        ...items.filter((item) => !deleted.has(item.id) && item.id !== next.id),
+        next,
+      ]);
+      setDeletedCaches((current) => [...current, ...deleted]);
+      setRevision((value) => value + 1);
+    });
+    return () => {
+      active = false;
+    };
+  }, [api, enabled, loading, existingIds]);
   function select(next: Selection) {
     selectionVersion.current++;
     setSelection(next);
-    setVisited((items) => (items.some((item) => item.id === next.id) ? items : [...items, next]));
+    setVisited((items) =>
+      items.some((item) => item.id === next.id)
+        ? items.map((item) =>
+            item.id === next.id ? { ...item, existing: item.existing || next.existing } : item,
+          )
+        : [...items, next],
+    );
     navigate("chat");
   }
   useEffect(() => {
@@ -128,6 +185,21 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
           if (handledPrompt.current === id) return false;
           handledPrompt.current = id;
           return true;
+        },
+        revision,
+        changed: () => setRevision((value) => value + 1),
+        forget: (id, replacementMainId) => {
+          selectionVersion.current++;
+          const nextMainId = replacementMainId || mainId;
+          const next = { id: nextMainId, existing: !replacementMainId };
+          if (replacementMainId) setMainId(replacementMainId);
+          setSelection((current) => (current.id === id ? next : current));
+          setVisited((items) => {
+            const kept = items.filter((item) => item.id !== id);
+            return kept.some((item) => item.id === nextMainId) ? kept : [...kept, next];
+          });
+          setDeletedCaches((ids) => [...ids, id]);
+          setRevision((value) => value + 1);
         },
         enabled,
         mainId,
@@ -179,12 +251,13 @@ export function ThreadsSheet({
     retry,
     select,
     start,
+    revision,
   } = useMuseThread();
   const { open, navigate, refresh } = useWorkspace();
-  const threads = useThreads({ agentId: "default", enabled, includeArchived: true, limit: 20 });
-  const [editing, setEditing] = useState<string>();
-  const [actions, setActions] = useState<string>();
-  const [name, setName] = useState("");
+  const threads = useThreads({ agentId: "default", enabled, includeArchived: true, limit: 100 });
+  useEffect(() => {
+    if (enabled) void threads.refetchThreads();
+  }, [revision]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [archived, setArchived] = useState(false);
@@ -193,8 +266,6 @@ export function ThreadsSheet({
     setError("");
     try {
       await action();
-      setEditing(undefined);
-      setActions(undefined);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -369,6 +440,16 @@ export function ThreadsSheet({
                     {matches(t("Main chat")) && (
                       <ThreadMenuRow
                         title={t("Main chat")}
+                        action={
+                          enabled ? (
+                            <ThreadActions
+                              id={mainId}
+                              name={t("Main chat")}
+                              main
+                              existing={selection.id === mainId ? selection.existing : true}
+                            />
+                          ) : undefined
+                        }
                         selected={!archived && selection.id === mainId}
                         onPress={() =>
                           navigateFromThreadMenu(onClose, () =>
@@ -410,6 +491,13 @@ export function ThreadsSheet({
                           <ThreadMenuRow
                             key={item.id}
                             title={item.name}
+                            action={
+                              <ThreadActions
+                                id={item.id}
+                                name={item.name}
+                                existing={item.existing}
+                              />
+                            }
                             selected={selection.id === item.id}
                             onPress={() => navigateFromThreadMenu(onClose, () => select(item))}
                           />
@@ -425,83 +513,13 @@ export function ThreadsSheet({
                                 )
                               }
                               action={
-                                <Pressable
-                                  accessibilityRole="button"
-                                  accessibilityLabel={t("Conversation actions")}
-                                  accessibilityState={{ expanded: actions === thread.id }}
-                                  onPress={() =>
-                                    setActions(actions === thread.id ? undefined : thread.id)
-                                  }
-                                  style={{
-                                    width: 32,
-                                    height: 38,
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                  }}
-                                >
-                                  <MoreHorizontal size={17} color={colors.muted} />
-                                </Pressable>
+                                <ThreadActions
+                                  id={thread.id}
+                                  name={thread.name || t("Untitled conversation")}
+                                  archived={thread.archived}
+                                />
                               }
                             />
-                            {actions === thread.id && (
-                              <View
-                                style={{
-                                  marginHorizontal: 5,
-                                  padding: 6,
-                                  backgroundColor: "#EEEEF0",
-                                  borderRadius: 14,
-                                }}
-                              >
-                                {editing === thread.id ? (
-                                  <View style={{ padding: 6 }}>
-                                    <Field
-                                      label={t("Conversation name")}
-                                      value={name}
-                                      onChangeText={setName}
-                                    />
-                                    <View style={[s.row, { justifyContent: "flex-end", gap: 6 }]}>
-                                      <Button small onPress={() => setEditing(undefined)}>
-                                        {t("Cancel")}
-                                      </Button>
-                                      <Button
-                                        small
-                                        disabled={threads.isMutating || !name.trim()}
-                                        onPress={() =>
-                                          void mutate(() =>
-                                            threads.renameThread(thread.id, name.trim()),
-                                          )
-                                        }
-                                      >
-                                        {t("Save name")}
-                                      </Button>
-                                    </View>
-                                  </View>
-                                ) : (
-                                  <>
-                                    <ThreadMenuRow
-                                      icon={Pencil}
-                                      title={t("Rename")}
-                                      onPress={() => {
-                                        setEditing(thread.id);
-                                        setName(thread.name || "");
-                                      }}
-                                    />
-                                    <ThreadMenuRow
-                                      icon={Archive}
-                                      title={thread.archived ? t("Restore") : t("Archive")}
-                                      disabled={threads.isMutating}
-                                      onPress={() =>
-                                        void mutate(() =>
-                                          thread.archived
-                                            ? threads.unarchiveThread(thread.id)
-                                            : threads.archiveThread(thread.id),
-                                        )
-                                      }
-                                    />
-                                  </>
-                                )}
-                              </View>
-                            )}
                           </View>
                         ))}
                         {!threads.isLoading &&

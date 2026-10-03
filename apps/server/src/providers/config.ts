@@ -18,6 +18,9 @@ export interface ModelProviderConfig {
   authDir: string;
   chatgptFile: string;
   grokFile: string;
+  codexFile?: string;
+  codexImageModel?: string;
+  codexResponsesModel?: string;
   openaiImageModel?: string;
   grokImageModel?: string;
   compatible?: CompatibleSettings;
@@ -138,6 +141,9 @@ export function modelProviderConfig(
     authDir,
     chatgptFile: resolve(env.CHATGPT_AUTH_FILE?.trim() || `${authDir}/chatgpt.json`),
     grokFile: resolve(env.GROK_AUTH_FILE?.trim() || `${authDir}/grok.json`),
+    codexFile: resolve(env.CODEX_AUTH_FILE?.trim() || `${authDir}/codex.json`),
+    codexImageModel: env.CODEX_IMAGE_MODEL?.trim() || "gpt-image-2",
+    codexResponsesModel: env.CODEX_IMAGE_RESPONSES_MODEL?.trim() || "gpt-6-astra",
     openaiImageModel: env.OPENAI_IMAGE_MODEL?.trim() || undefined,
     grokImageModel: env.GROK_IMAGE_MODEL?.trim() || undefined,
     compatible: settings("OPENAI_COMPATIBLE"),

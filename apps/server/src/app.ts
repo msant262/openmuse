@@ -64,8 +64,12 @@ import { executorRoutes } from "./executors/routes.ts";
 import { fileVersionRoutes } from "./file-versions.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
+import { IntegrationService, integrationRoutes } from "./integrations.ts";
 import { backgroundFailure } from "./log.ts";
 import { McpAuth } from "./mcp-auth.ts";
+import { CodexConnection, codexConnectionRoutes } from "./providers/codex-connection.ts";
+import { modelProviderConfig } from "./providers/config.ts";
+import { modelPreferenceRoutes } from "./providers/preferences.ts";
 import { LocalThreads } from "./threads.ts";
 import { WorkspaceService } from "./workspace.ts";
 
@@ -235,6 +239,16 @@ export async function createApp(
     credentialLogin,
   );
   const mcpAuth = new McpAuth(db, credentialSecretStore, config.mcpServers ?? [], config.publicUrl);
+  const integrations = new IntegrationService(db, credentialSecretStore, {
+    available: Boolean(
+      options.credentialSecretStore ||
+        (config.credentialsOpenBaoAddress && config.credentialsOpenBaoToken),
+    ),
+  });
+  agent.configureIntegrations(integrations);
+  const codexConnection = new CodexConnection(
+    config.modelProviders ?? modelProviderConfig(config.dataDir),
+  );
   agent.mcp.configureAuthentication(mcpAuth);
   credentialLogin.configureWake((owner, taskId) => agent.actor.wake(owner, taskId, "provider"));
   taskAuthority = new TaskExecutorAuthority(agent.journal, {
@@ -692,6 +706,9 @@ export async function createApp(
     c.json(await mcpAuth.disconnect(c.get("owner"), c.req.param("id"))),
   );
   app.route("/api", credentialRoutes(credentials, credentialLogin));
+  app.route("/api", integrationRoutes(integrations));
+  app.route("/api", modelPreferenceRoutes(db, config));
+  app.route("/api", codexConnectionRoutes(codexConnection));
   app.route("/api/desktop", desktopRoutes(desktop, desktopViewers, auth, browser));
   app.post("/api/conversations/:threadId/messages", async (c) => {
     if (!(threads instanceof LocalThreads))
@@ -1068,5 +1085,7 @@ export async function createApp(
     credentials,
     credentialGrants,
     credentialLogin,
+    integrations,
+    codexConnection,
   };
 }

@@ -2,6 +2,7 @@ import {
   Bell,
   ChevronLeft,
   ChevronRight,
+  Cpu,
   Fingerprint,
   Globe2,
   LayoutGrid,
@@ -17,7 +18,9 @@ import { useAgentWorkspace } from "./agent-workspace";
 import { AvatarStudio } from "./avatar-studio";
 import { AppLanguagePicker, AssistantChatPreferences } from "./desktop-shell";
 import { useI18n } from "./i18n";
+import { IntegrationSettings } from "./integration-settings";
 import { MemorySettings } from "./memory-settings";
+import { ModelSettings } from "./model-settings";
 import { NativePushSettings } from "./native-push-settings";
 import { ProfileSettings } from "./profile-settings";
 import { ConnectionsScreen } from "./screens";
@@ -26,6 +29,7 @@ import { useWorkspace } from "./workspace";
 
 const sections: { id: string; title: string; icon: LucideIcon }[] = [
   { id: "general", title: "General", icon: Settings2 },
+  { id: "models", title: "Models", icon: Cpu },
   { id: "connectors", title: "Connectors", icon: LayoutGrid },
   { id: "personality", title: "Personalization", icon: Sparkles },
   { id: "permissions", title: "Permissions", icon: ShieldCheck },
@@ -48,7 +52,7 @@ export function SettingsDialog({
   const [section, setSection] = useState("general");
   const [mobileDetail, setMobileDetail] = useState(false);
   const [languageOpen, setLanguageOpen] = useState(false);
-  const current = sections.find((item) => item.id === section)!;
+  const current = sections.find((item) => item.id === section) ?? sections[0];
   const actions = workspace.actions.filter((item) => item.status === "awaiting_review");
   function showNotifications() {
     onClose();
@@ -176,10 +180,28 @@ export function SettingsDialog({
                       </View>
                     )}
                   </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setSection("models")}
+                    style={[
+                      s.row,
+                      { padding: 16, gap: 12, backgroundColor: "#F0F0F1", borderRadius: 18 },
+                    ]}
+                  >
+                    <Cpu size={18} color={colors.muted} />
+                    <Text style={[s.text, { flex: 1 }]}>{t("Conversation model")}</Text>
+                    <ChevronRight size={16} color={colors.muted} />
+                  </Pressable>
                   <AssistantChatPreferences />
                 </>
               )}
-              {section === "connectors" && <ConnectionsScreen />}
+              {section === "models" && <ModelSettings />}
+              {section === "connectors" && (
+                <>
+                  <IntegrationSettings />
+                  <ConnectionsScreen />
+                </>
+              )}
               {section === "personality" && <ProfileSettings />}
               {section === "memory" && <MemorySettings />}
               {section === "notifications" && (

@@ -27,6 +27,7 @@ type Thread = LocalThreadEndpointRecord & {
   runToken: string | null;
   leaseUntil: string | null;
   stopRunToken?: string | null;
+  deletedAt?: string;
 };
 type Run = {
   id: string;
@@ -243,7 +244,7 @@ export class LocalThreads extends AgentRunner {
   private async get(owner: string, id: string): Promise<Thread> {
     identifier.parse(id);
     const value = await this.db.get<Thread>(owner, "threads", id);
-    if (!value) throw new AppError("Conversation not found", 404);
+    if (!value || value.deletedAt) throw new AppError("Conversation not found", 404);
     return value;
   }
   private async runs(owner: string, id: string): Promise<Run[]> {
@@ -311,6 +312,8 @@ export class LocalThreads extends AgentRunner {
     key: string,
     text: string,
   ): Promise<boolean> {
+    // A completed task keeps its files and audit record, but cannot resurrect a deleted chat.
+    if ((await this.db.get<Thread>(owner, "threads", threadId))?.deletedAt) return true;
     const id = createHash("sha256").update(`publication:${owner}:${threadId}:${key}`).digest("hex");
     if (await this.db.get(owner, "thread-runs", id)) return true;
     await this.ensure(owner, threadId);
@@ -765,8 +768,9 @@ export class LocalThreads extends AgentRunner {
         .max(100)
         .parse(url.searchParams.get("limit") ?? 20);
       const all = (await this.db.list<Thread>(owner, "threads"))
+        .filter((item) => !item.deletedAt)
         .filter((item) => url.searchParams.get("includeArchived") === "true" || !item.archived)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
       const cursor = url.searchParams.get("cursor");
       const start = cursor ? all.findIndex((item) => item.id === cursor) + 1 : 0;
       if (cursor && start === 0) throw new AppError("Conversation cursor is invalid", 422);
@@ -780,7 +784,23 @@ export class LocalThreads extends AgentRunner {
     const match = /^\/threads\/([^/]+)(?:\/(messages|events|state|archive))?$/.exec(path);
     if (!match) return undefined;
     const id = identifier.parse(decodeURIComponent(match[1]));
+    if (request.method === "DELETE" && !match[2]) {
+      const result = await this.db.deleteThread(owner, id, randomUUID());
+      if (result.status === "not_found") throw new AppError("Conversation not found", 404);
+      if (result.status === "busy")
+        throw new AppError(
+          "Stop the reply and finish or cancel this conversation's active tasks before deleting it.",
+          409,
+        );
+      return Response.json({
+        deleted: true,
+        threadId: id,
+        ...(result.mainThreadId ? { mainThreadId: result.mainThreadId } : {}),
+      });
+    }
     await this.get(owner, id);
+    if (request.method === "GET" && !match[2])
+      return Response.json(this.summary(await this.get(owner, id)));
     if (request.method === "GET" && match[2] && match[2] !== "archive") {
       if (
         match[2] === "messages" &&

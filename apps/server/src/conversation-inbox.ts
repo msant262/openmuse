@@ -199,6 +199,8 @@ export class ConversationInbox {
       mutations,
       events,
     );
+    if (result.status === "thread_deleted")
+      throw new AppError("This conversation was deleted. Start a new conversation.", 410);
     if (result.status === "binding_conflict")
       throw new AppError("This message ID was already accepted with different content", 409);
     if (result.status === "revision_conflict") {

@@ -7,7 +7,6 @@ import {
   Menu,
   MessageCircle,
   Newspaper,
-  Settings2,
   Shapes,
   SquareCheck,
   X,
@@ -41,6 +40,7 @@ import { Details } from "./src/details";
 import { useI18n } from "./src/i18n";
 import { WorkspaceSearch } from "./src/muse-search";
 import { CompanionDialog, SettingsDialog } from "./src/muse-settings";
+import { isProductTask, productNotifications } from "./src/muse-surfaces-model";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ShareReceiver } from "./src/share-receiver";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
@@ -389,12 +389,14 @@ function WorkspaceShell({
     return () => window.removeEventListener("keydown", dismiss);
   }, [workspaceDetail, close]);
   const pending =
-    (data?.notifications.filter((n) => !n.read).length || 0) +
-    workspace.actions.filter((a) => a.status === "awaiting_review").length;
+    productNotifications(data?.tasks ?? [], data?.notifications ?? []).filter((n) => !n.read)
+      .length + workspace.actions.filter((a) => a.status === "awaiting_review").length;
   const activeTask =
     data?.tasks.find(
-      (task) => task.status === "waiting_approval" || task.status === "waiting_input",
-    ) || data?.tasks.find((task) => task.status === "running");
+      (task) =>
+        isProductTask(task) &&
+        (task.status === "waiting_approval" || task.status === "waiting_input"),
+    ) || data?.tasks.find((task) => isProductTask(task) && task.status === "running");
   const agentName = data?.identity.name || "OkamiBot";
   const status = activeTask
     ? activeTask.status === "waiting_approval"
@@ -402,7 +404,7 @@ function WorkspaceShell({
       : activeTask.status === "waiting_input"
         ? t("Needs your input · {title}", { title: activeTask.title })
         : activeTask.plan.find((step) => step.status === "running")?.title || activeTask.title
-    : data?.tasks.some((task) => task.status === "queued")
+    : data?.tasks.some((task) => isProductTask(task) && task.status === "queued")
       ? t("Picking up your next task…")
       : t("Here when you need me");
   const title = titles[section] || titles.apps;

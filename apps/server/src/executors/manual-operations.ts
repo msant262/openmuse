@@ -104,8 +104,12 @@ export class ManualNativeOperations {
       owner,
       {
         kind: "agent",
-        title: `Computer: ${request.method}`,
+        title:
+          request.method === "transcribe_attachment"
+            ? "Transcrição do anexo"
+            : `Computer: ${request.method}`,
         prompt: `Perform the requested computer ${request.method} operation and retain its receipt`,
+        input: { internalActivity: request.method !== "transcribe_attachment" },
         ...(request.method === "transcribe_attachment"
           ? { originThreadId: request.args.threadId }
           : {}),

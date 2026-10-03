@@ -6,7 +6,6 @@ import {
   type AgentNotification,
   type AgentTask,
   type AgentWorkspace,
-  createTaskSchema,
   type Evidence,
   type Goal,
   goalInputSchema,
@@ -42,6 +41,7 @@ import type { Store } from "../db.ts";
 import type { DesktopService } from "../desktop-service.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
+import { ConnectedSearchBackend, type IntegrationService } from "../integrations.ts";
 import { InteractionRequests } from "../interaction-requests.ts";
 import { backgroundFailure } from "../log.ts";
 import { McpService } from "../mcp.ts";
@@ -58,7 +58,7 @@ import { sharedModelRouter } from "../providers/model-router.ts";
 import { PublicWeb } from "../public-web.ts";
 import { nativePushAdapters, PushService } from "../push.ts";
 import { RoutinesService } from "../routines.ts";
-import { HttpSearchBackend } from "../search.ts";
+import { HttpSearchBackend, type SearchBackend } from "../search.ts";
 import { OperationDrain } from "../shutdown.ts";
 import type { LocalThreads } from "../threads.ts";
 import type { WorkspaceService } from "../workspace.ts";
@@ -72,6 +72,7 @@ import { RuntimePause } from "./runtime-pause.ts";
 import { TaskActor, TaskBudgetExhaustedError } from "./task-actor.ts";
 import { TaskJournal, validateTaskEffect } from "./task-journal.ts";
 import { TaskMailbox } from "./task-mailbox.ts";
+import { taskInput } from "./task-routing.ts";
 import { TaskTiming as TaskTimingService } from "./task-timing.ts";
 import { mandatoryTaskCriteria, TaskVerification, textPlanDelivery } from "./task-verification.ts";
 import { WorkAdmission } from "./work-admission.ts";
@@ -87,8 +88,13 @@ export class AgentService {
     );
   }
   desktop?: DesktopService;
-  readonly search: HttpSearchBackend;
+  search: SearchBackend;
   readonly web = new PublicWeb();
+  integrations?: IntegrationService;
+  configureIntegrations(integrations: IntegrationService) {
+    this.integrations = integrations;
+    this.search = new ConnectedSearchBackend(integrations, new HttpSearchBackend(this.web));
+  }
   configureDesktop(desktop: DesktopService) {
     this.desktop = desktop;
   }
@@ -569,7 +575,7 @@ export class AgentService {
     parent?: { id: string; rootTaskId: string },
     originalUserPrompt?: string,
   ) {
-    const input = createTaskSchema.parse(raw);
+    const input = taskInput(raw);
     const goal = input.goalId ? await this.getGoal(owner, input.goalId) : undefined;
     const milestone = input.milestoneId
       ? goal?.milestones.find((m) => m.id === input.milestoneId)
@@ -639,7 +645,7 @@ export class AgentService {
     parent?: { id: string; rootTaskId: string },
     originalUserPrompt?: string,
   ): Promise<AgentTask> {
-    const input = createTaskSchema.parse(raw);
+    const input = taskInput(raw);
     const titles =
       input.kind === "document"
         ? [
@@ -675,6 +681,9 @@ export class AgentService {
         appliedRevision: 0,
         mailboxSeq: 0,
         appliedMailboxSeq: 0,
+        ...(originalUserPrompt && originalUserPrompt !== input.prompt
+          ? { delegatedBrief: input.prompt }
+          : {}),
         ...(parent ? { parentTaskId: parent.id, rootTaskId: parent.rootTaskId } : {}),
         connectionId: (await this.workspace.connection(owner))?.id ?? null,
         ...(held && input.kind === "monitor" ? { initializingMonitor: true } : {}),
@@ -1514,7 +1523,15 @@ export class AgentService {
         completion: { status: "unverified", checks: [], remaining: [error.message] },
       };
     }
-    if (task.kind === "document") return this.document(owner, task, context);
+    if (task.kind === "document") {
+      if (typeof task.input.messageId === "string" || task.state.source)
+        return this.document(owner, task, context);
+      // Recover older incorrectly classified creation requests without inventing a mail dependency.
+      task = await context.checkpoint({
+        kind: "agent",
+        criteria: mandatoryTaskCriteria({ ...task, kind: "agent" }),
+      });
+    }
     if (task.kind === "monitor") {
       try {
         return await this.observe(owner, task, context);
@@ -1611,6 +1628,25 @@ export class AgentService {
       Number(task.state.appliedRevision ?? 0),
       result,
     );
+    if (
+      completion.checks.some(
+        (check) =>
+          !check.passed &&
+          task.criteria?.some(
+            (criterion) =>
+              criterion.id === check.criterionId &&
+              criterion.kind === "file" &&
+              criterion.format === "image/*",
+          ),
+      )
+    ) {
+      const language = (await this.profiles.get(owner, task.originThreadId)).fields.language;
+      result = language.startsWith("pt")
+        ? "Não consegui gerar a imagem solicitada. Nenhum arquivo de imagem foi entregue."
+        : language.startsWith("de")
+          ? "Das angeforderte Bild konnte nicht erstellt werden. Es wurde keine Bilddatei geliefert."
+          : "I couldn't generate the requested image. No image file was delivered.";
+    }
     await context.event(
       "result",
       completion.status === "verified" ? "Work completed" : "Partial delivery",
@@ -1630,7 +1666,8 @@ export class AgentService {
   }
   private async publishOutcome(owner: string, saved: AgentTask) {
     const task = await this.getTask(owner, saved.id);
-    if (typeof task.input.proactivityCycleId === "string") return;
+    if (typeof task.input.proactivityCycleId === "string" || task.input.internalActivity === true)
+      return;
     if (terminal.has(task.status) && typeof task.state.parentTaskId === "string") {
       const parent = await this.db.get<AgentTask>(owner, "tasks", task.state.parentTaskId);
       const children = (await this.db.list<AgentTask>(owner, "tasks")).filter(
@@ -1756,13 +1793,22 @@ export class AgentService {
         }
       }
     } else if (task.status === "failed") {
-      if (task.originThreadId && task.result) {
+      if (task.originThreadId) {
+        const language = (await this.profiles.get(owner, task.originThreadId)).fields.language;
+        const prefix = language.startsWith("pt")
+          ? `Não consegui concluir “${task.title}”.`
+          : language.startsWith("de")
+            ? `„${task.title}“ konnte nicht abgeschlossen werden.`
+            : `I couldn't complete “${task.title}”.`;
+        const delivery =
+          task.result ||
+          `${prefix} ${task.error ?? (language.startsWith("pt") ? "A execução foi interrompida. O progresso está salvo no cartão da tarefa." : "Execution stopped. Progress is saved in the task card.")}`;
         await this.db.insertIfAbsent(owner, "thread-publications", {
-          id: `partial-result:${task.id}:${hash(task.result)}`,
+          id: `partial-result:${task.id}:${hash(delivery)}`,
           threadId: task.originThreadId,
           taskId: task.id,
           title: task.title,
-          text: task.result,
+          text: delivery,
           status: this.localThreads ? "pending" : "unsupported_cloud_mode",
         });
         await this.flushPublications();

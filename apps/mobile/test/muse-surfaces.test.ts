@@ -124,3 +124,96 @@ test("Feed excerpts keep form identifiers in task details without trimming ordin
   );
   assert.ok(question.includes("guardian_name"));
 });
+
+test("Feed removes legacy desktop receipts and background scans without hiding requested work", () => {
+  const internal = [
+    task({
+      id: "viewer",
+      title: "Desktop viewer",
+      prompt: "Authenticated desktop observation and control lifecycle",
+    }),
+    task({
+      id: "manual",
+      title: "Computer: list",
+      prompt: "Perform the requested computer list operation and retain its receipt",
+    }),
+    task({
+      id: "scan",
+      title: "Review pending personal work",
+      input: { proactivityCycleId: "cycle" },
+    }),
+    task({ id: "future", input: { internalActivity: true } }),
+  ];
+  const product = task({
+    id: "requested",
+    title: "Desktop viewer",
+    prompt: "Help me design a desktop viewer",
+  });
+  const notices = internal.map((item) =>
+    notification({ id: `notice-${item.id}`, taskId: item.id, title: item.title }),
+  );
+  const entries = buildFeed([...internal, product], notices, []);
+  assert.deepEqual(
+    entries.map((item) => item.taskId),
+    ["requested"],
+  );
+  assert.equal(internal.length, 4, "the underlying audit history is not mutated");
+});
+
+test("Feed hides orphan legacy telemetry and keeps meaningful standalone notices", () => {
+  const entries = buildFeed(
+    [],
+    [
+      notification({
+        id: "viewer",
+        taskId: "old-viewer",
+        title: "Desktop viewer",
+        body: "Desktop viewer closed; desktop and jobs remain available",
+      }),
+      notification({
+        id: "manual",
+        taskId: "old-manual",
+        title: "Computer: list",
+        body: "Work completed",
+      }),
+      notification({
+        id: "scan",
+        title: "Review pending personal work",
+        body: "Personal review is partial; source coverage and saved suggestions are available",
+      }),
+      notification({
+        id: "useful",
+        title: "Your flight price dropped",
+        body: "The saved route is now cheaper.",
+      }),
+    ],
+    [],
+  );
+  assert.deepEqual(
+    entries.map((item) => item.id),
+    ["notice:useful"],
+  );
+});
+
+test("Feed preserves the user's task title and describes legacy failures without an unrelated PDF instruction", () => {
+  const entries = buildFeed(
+    [
+      task({
+        title: "Create election infographic",
+        status: "failed",
+        result: undefined,
+        error: "Choose a current email with a PDF attachment to start this task",
+      }),
+    ],
+    [
+      notification({
+        title: "Task needs attention",
+        body: "Choose a current email with a PDF attachment to start this task",
+      }),
+    ],
+    [],
+  );
+  assert.equal(entries[0].title, "Create election infographic");
+  assert.equal(entries[0].status, "failed");
+  assert.equal(entries[0].body, "Could not finish this task. Open it to review or try again.");
+});

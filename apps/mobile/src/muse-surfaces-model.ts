@@ -39,7 +39,27 @@ export type FeedEntry = {
   date: string;
   kind?: string;
   artifact?: AgentArtifact;
+  status?: AgentTask["status"];
 };
+
+/** Internal desktop receipts and background scans remain in the activity log. */
+export function isProductTask(task: AgentTask) {
+  return !(
+    task.input.internalActivity === true ||
+    typeof task.input.proactivityCycleId === "string" ||
+    task.prompt === "Authenticated desktop observation and control lifecycle" ||
+    /^Perform the requested computer [a-z_]+ operation and retain its receipt$/.test(task.prompt)
+  );
+}
+
+/** Also recognizes legacy orphan notices, without filtering arbitrary user task titles. */
+export function isInternalNotice(notice: AgentNotification) {
+  return (
+    (notice.title === "Desktop viewer" && /^Desktop viewer (closed|expired)/.test(notice.body)) ||
+    (/^Computer: [a-z_]+$/.test(notice.title) && notice.body === "Work completed") ||
+    (notice.title === "Review pending personal work" && /^Personal review /.test(notice.body))
+  );
+}
 
 /** A feed is a view of saved work. Coalesce a task and its latest notification. */
 export function buildFeed(
@@ -47,7 +67,7 @@ export function buildFeed(
   notifications: AgentNotification[],
   artifacts: AgentArtifact[],
 ): FeedEntry[] {
-  const entries: FeedEntry[] = tasks.map((task) => {
+  const entries: FeedEntry[] = tasks.filter(isProductTask).map((task) => {
     const notice = notifications
       .filter((item) => item.taskId === task.id)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
@@ -58,15 +78,14 @@ export function buildFeed(
     return {
       id: `task:${task.id}`,
       taskId: task.id,
-      title: useNotice ? notice.title : task.title,
-      body: useNotice
-        ? notice.body
-        : task.question ||
-          task.result ||
-          task.error ||
-          artifact?.summary ||
-          task.plan.find((step) => step.status === "running" || step.status === "waiting")?.title ||
-          task.prompt,
+      title: task.title,
+      body:
+        task.status === "failed"
+          ? taskPreview(task)
+          : useNotice && !/^(Saved the latest update\.|Work completed$)/.test(notice.body)
+            ? notice.body
+            : taskPreview(task),
+      status: task.status,
       date: useNotice ? notice.createdAt : task.updatedAt,
       kind: task.kind,
       artifact,
@@ -74,7 +93,7 @@ export function buildFeed(
   });
   const taskIds = new Set(tasks.map((task) => task.id));
   for (const notice of notifications) {
-    if (!notice.taskId || !taskIds.has(notice.taskId))
+    if (!isInternalNotice(notice) && (!notice.taskId || !taskIds.has(notice.taskId)))
       entries.push({
         id: `notice:${notice.id}`,
         taskId: notice.taskId,
@@ -106,4 +125,39 @@ export function orderedTaskEvents(events: RunEvent[]) {
 export function feedExcerpt(body: string) {
   const fields = body.indexOf("Supported fields:");
   return fields > 0 ? body.slice(0, fields).trim() : body;
+}
+
+/** Legacy operational summaries have no useful result; show the real task state. */
+export function taskPreview(task: AgentTask) {
+  if (task.status === "failed" && !task.result)
+    return "Could not finish this task. Open it to review or try again.";
+  const text =
+    task.question ||
+    task.result ||
+    task.error ||
+    task.plan.find((step) => step.status === "running" || step.status === "waiting")?.title ||
+    "";
+  if (
+    text &&
+    !/^(Saved the latest update\.|Work completed$|Choose a current email with a PDF attachment)/.test(
+      text,
+    )
+  )
+    return text;
+  if (task.status === "failed")
+    return "Could not finish this task. Open it to review or try again.";
+  if (task.status === "succeeded") return "Completed";
+  if (task.status === "cancelled") return "Cancelled";
+  if (task.status === "paused") return "Paused";
+  if (task.status === "waiting_input") return "Your input is needed";
+  if (task.status === "waiting_approval") return "Waiting for approval";
+  if (task.status === "queued" || task.status === "scheduled") return "Scheduled";
+  return "In progress";
+}
+
+export function productNotifications(tasks: AgentTask[], notifications: AgentNotification[]) {
+  const internal = new Set(tasks.filter((task) => !isProductTask(task)).map((task) => task.id));
+  return notifications.filter(
+    (notice) => !isInternalNotice(notice) && (!notice.taskId || !internal.has(notice.taskId)),
+  );
 }

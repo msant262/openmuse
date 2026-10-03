@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Circle,
   CircleDollarSign,
+  Clock3,
   FileText,
   Globe2,
   Heart,
@@ -24,7 +25,6 @@ import {
   RefreshCw,
   Settings2,
   Square,
-  Target,
   Users,
   X,
 } from "lucide-react-native";
@@ -55,11 +55,19 @@ import type { FileRecoverySnapshot } from "../../../packages/domain/src/file-ver
 import type { InteractionRequest } from "../../../packages/domain/src/runtime";
 import { useAgentWorkspace } from "./agent-workspace";
 import { ArtifactResultCard } from "./artifact-result-card";
-import { useI18n } from "./i18n";
+import { t as translate, useI18n } from "./i18n";
 import { InteractionCard } from "./interaction-card";
 import { MemorySettings } from "./memory-settings";
 import { SubjectIllustration } from "./muse-surfaces-illustration";
-import { buildFeed, feedExcerpt, ideaCategory, orderedTaskEvents } from "./muse-surfaces-model";
+import {
+  buildFeed,
+  feedExcerpt,
+  ideaCategory,
+  isProductTask,
+  orderedTaskEvents,
+  productNotifications,
+  taskPreview,
+} from "./muse-surfaces-model";
 import { NativePushSettings } from "./native-push-settings";
 import { PlaybooksPanel } from "./playbooks";
 import { useInlinePreview } from "./preview";
@@ -88,7 +96,6 @@ import {
 import { useWorkspace } from "./workspace";
 
 export function statusLabel(value: string) {
-  if (value === "waiting_provider") return "Aguardando provedor";
   return value.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 }
 function stamp(value?: string) {
@@ -99,7 +106,7 @@ function stamp(value?: string) {
         hour: "numeric",
         minute: "2-digit",
       })
-    : "Not checked yet";
+    : translate("Not checked yet");
 }
 function errorText(e: unknown) {
   return e instanceof Error ? e.message : String(e);
@@ -109,18 +116,21 @@ function activeTask(task: AgentTask) {
 }
 export function AgentStatus() {
   const { data, error, refresh } = useAgentWorkspace();
+  const { t } = useI18n();
   if (data?.worker.running && !error) return null;
   return (
     <View style={{ gap: 8 }}>
-      <ErrorNotice error={error ? `Agent updates unavailable. ${error}` : ""} />
+      <ErrorNotice error={error ? `${t("Agent updates unavailable.")} ${error}` : ""} />
       {!!error && (
         <Button small onPress={() => void refresh().catch(() => {})}>
-          Reconnect agent
+          {t("Reconnect agent")}
         </Button>
       )}
       {!data && !error && <ActivityIndicator color={colors.blueDark} />}
       {data && !data.worker.running && (
-        <Text style={s.small}>Worker is offline. Saved work will continue when it reconnects.</Text>
+        <Text style={s.small}>
+          {t("Your assistant is reconnecting. Saved work will continue when it is available.")}
+        </Text>
       )}
     </View>
   );
@@ -136,7 +146,6 @@ export function TaskCard({
 }) {
   const { open } = useWorkspace();
   const { t } = useI18n();
-  const next = task.plan.find((step) => ["running", "waiting"].includes(step.status));
   const waiting = ["waiting_input", "waiting_approval", "waiting_provider"].includes(task.status);
   return (
     <Pressable
@@ -167,13 +176,7 @@ export function TaskCard({
       <View style={{ flex: 1, gap: 5 }}>
         <Text style={[s.text, { fontWeight: "500" }]}>{task.title}</Text>
         <Text numberOfLines={compact ? 2 : 3} style={s.muted}>
-          {resultSummary(
-            task.question ||
-              task.error ||
-              task.result ||
-              next?.title ||
-              t(statusLabel(task.status)),
-          )}
+          {t(resultSummary(taskPreview(task)))}
         </Text>
         <Text style={s.small}>
           {t(statusLabel(task.status))} · {stamp(task.updatedAt)}
@@ -186,7 +189,7 @@ export function TaskCard({
 export function ChatWork() {
   const { data } = useAgentWorkspace();
   const tasks = [...(data?.tasks || [])]
-    .filter(activeTask)
+    .filter((task) => activeTask(task) && isProductTask(task))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 2);
   if (!tasks.length) return null;
@@ -206,7 +209,9 @@ export function AgentActivityScreen() {
   const [filter, setFilter] = useState("All");
   const [pauseBusy, setPauseBusy] = useState(false);
   const [pauseError, setPauseError] = useState("");
-  const entries = buildFeed(data?.tasks || [], data?.notifications || [], data?.artifacts || []);
+  const [visibleCount, setVisibleCount] = useState(12);
+  const allEntries = buildFeed(data?.tasks || [], data?.notifications || [], data?.artifacts || []);
+  const entries = allEntries.slice(0, visibleCount);
   const tasks = [...(data?.tasks || [])]
     .filter(
       (task) =>
@@ -252,11 +257,38 @@ export function AgentActivityScreen() {
               borderBottomColor: colors.line,
             }}
           >
-            <SubjectIllustration title={entry.title} kind={entry.kind} size={36} />
+            <View
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 12,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "#F2F3F4",
+              }}
+            >
+              {entry.artifact ? (
+                <FileText size={18} color={colors.muted} />
+              ) : entry.status === "succeeded" ? (
+                <CheckCircle2 size={18} color="#519270" />
+              ) : (
+                <Clock3 size={18} color={colors.muted} />
+              )}
+            </View>
             <View style={{ flex: 1, gap: 10 }}>
               <Text style={[s.heading, { fontSize: 17, lineHeight: 24 }]}>{entry.title}</Text>
-              <Text selectable numberOfLines={8} style={[s.text, { lineHeight: 24 }]}>
-                {resultSummary(feedExcerpt(entry.body))}
+              {!!entry.status && entry.status !== "succeeded" && (
+                <Text
+                  style={[
+                    s.small,
+                    { color: entry.status === "failed" ? colors.danger : colors.muted },
+                  ]}
+                >
+                  {t(statusLabel(entry.status))}
+                </Text>
+              )}
+              <Text selectable numberOfLines={3} style={[s.muted, { lineHeight: 22 }]}>
+                {t(resultSummary(feedExcerpt(entry.body)))}
               </Text>
               {entry.artifact && <ArtifactCard artifact={entry.artifact} />}
               <View style={[s.row, { gap: 20, marginTop: 4 }]}>
@@ -293,6 +325,11 @@ export function AgentActivityScreen() {
           </View>
         </View>
       ))}
+      {allEntries.length > visibleCount && (
+        <Button small onPress={() => setVisibleCount((count) => count + 12)}>
+          {t("Show more updates")}
+        </Button>
+      )}
       {!entries.length && (
         <Empty
           icon={MessageCircle}
@@ -1514,17 +1551,17 @@ export function GoalsScreen() {
                 backgroundColor: "#24A46B",
               }}
             />
-            <Text style={[s.heading, { color: "#189A58" }]}>Tracking</Text>
+            <Text style={[s.heading, { color: "#189A58" }]}>{t("Tracking")}</Text>
           </View>
           <Button small icon={Plus} onPress={() => setAdding("Tracking")}>
-            Track
+            {t("Track")}
           </Button>
         </View>
         {(showAll ? monitors : monitors.slice(0, 3)).map((item) => (
           <Pressable
             key={item.id}
             accessibilityRole="button"
-            accessibilityLabel={`Open tracking: ${item.title}`}
+            accessibilityLabel={t("Open tracking: {title}", { title: item.title })}
             onPress={() => setSelectedMonitor(item.id)}
             style={[s.row, { gap: 12, paddingVertical: 13 }]}
           >
@@ -1544,12 +1581,14 @@ export function GoalsScreen() {
         ))}
         {!monitors.length && (
           <Text style={[s.muted, { paddingVertical: 10 }]}>
-            Ticket prices, a reservation, a page you’re watching.
+            {t(
+              "Follow a price or a page. Your assistant will let you know when something changes.",
+            )}
           </Text>
         )}
         {monitors.length > 3 && (
           <Button small onPress={() => setShowAll(!showAll)}>
-            {showAll ? "Show less" : `Show ${monitors.length - 3} more`}
+            {showAll ? t("Show less") : t("Show {count} more", { count: monitors.length - 3 })}
           </Button>
         )}
       </View>
@@ -1566,47 +1605,52 @@ export function GoalsScreen() {
               backgroundColor: "#3D9BDE",
             }}
           />
-          <Text style={[s.heading, { color: colors.blueDark }]}>Goals</Text>
+          <Text style={[s.heading, { color: colors.blueDark }]}>{t("Goals")}</Text>
         </View>
         {data?.goals.map((item) => (
           <GoalListRow key={item.id} goal={item} onOpen={() => setSelectedGoal(item.id)} />
         ))}
         {!data?.goals.length && (
           <Text style={[s.muted, { paddingVertical: 10 }]}>
-            Big plans start with one small step.
+            {t("What would you like to work toward? Add a goal and take it one step at a time.")}
           </Text>
         )}
       </View>
-      <View style={{ height: 1, backgroundColor: colors.line }} />
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => setAdding("Something else")}
-        style={[s.row, { gap: 12 }]}
-      >
-        <Plus size={22} color={colors.text} />
-        <Text style={s.heading}>{t("Create a goal")}</Text>
-      </Pressable>
-      {[
-        { name: "Health", icon: Heart },
-        { name: "Relationships", icon: Users },
-        { name: "Finances", icon: CircleDollarSign },
-        { name: "Something else", icon: Target },
-      ].map((item) => (
-        <Pressable
-          key={item.name}
-          accessibilityRole="button"
-          accessibilityLabel={`Create ${item.name.toLowerCase()} goal`}
-          onPress={() => setAdding(item.name)}
-          style={[s.row, { gap: 12, minHeight: 38 }]}
-        >
-          <item.icon size={23} color="#989C9F" />
-          <Text style={[s.text, { flex: 1, color: "#666A6D" }]}>{item.name}</Text>
-          <Plus size={18} color="#989C9F" />
-        </Pressable>
-      ))}
+      <View style={{ gap: 15, paddingTop: 6 }}>
+        <Button icon={Plus} onPress={() => setAdding("Something else")}>
+          {t("Create a goal")}
+        </Button>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          {[
+            { name: "Health", icon: Heart },
+            { name: "Relationships", icon: Users },
+            { name: "Finances", icon: CircleDollarSign },
+          ].map((item) => (
+            <Pressable
+              key={item.name}
+              accessibilityRole="button"
+              accessibilityLabel={t("Create a goal: {category}", { category: t(item.name) })}
+              onPress={() => setAdding(item.name)}
+              style={[
+                s.row,
+                {
+                  gap: 8,
+                  minHeight: 38,
+                  borderRadius: 20,
+                  paddingHorizontal: 14,
+                  backgroundColor: "#F4F4F5",
+                },
+              ]}
+            >
+              <item.icon size={17} color={colors.muted} />
+              <Text style={[s.text, { fontSize: 13, color: colors.muted }]}>{t(item.name)}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
       {adding && (
         <Sheet
-          title={adding === "Tracking" ? "Track something" : "Create a goal"}
+          title={t(adding === "Tracking" ? "Track something" : "Create a goal")}
           onClose={() => setAdding(undefined)}
         >
           {adding === "Tracking" ? (
@@ -1694,6 +1738,7 @@ function GoalListRow({ goal, onOpen }: { goal: Goal; onOpen: () => void }) {
 
 function GoalForm({ onDone, category }: { onDone: () => void; category?: string }) {
   const { mutate } = useAgentWorkspace();
+  const { t } = useI18n();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [milestones, setMilestones] = useState("");
@@ -1722,26 +1767,26 @@ function GoalForm({ onDone, category }: { onDone: () => void; category?: string 
   return (
     <View>
       <Field
-        label="Your goal"
+        label={t("Your goal")}
         value={title}
         onChangeText={setTitle}
-        placeholder="Build a three-month emergency fund"
+        placeholder={t("Build a three-month emergency fund")}
       />
       <Field
-        label="What does success look like?"
+        label={t("What does success look like?")}
         value={description}
         onChangeText={setDescription}
         multiline
       />
       <Field
-        label="Milestones (one per line)"
+        label={t("Milestones (one per line)")}
         value={milestones}
         onChangeText={setMilestones}
         multiline
       />
       <ErrorNotice error={error} />
       <Button primary disabled={!title.trim()} busy={busy} onPress={() => void save()}>
-        Create goal
+        {t("Create goal")}
       </Button>
     </View>
   );
@@ -1856,15 +1901,15 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
           busy={busy}
           onPress={() => void update({ status: goal.status === "active" ? "paused" : "active" })}
         >
-          {goal.status === "active" ? "Pause" : "Resume"}
+          {t(goal.status === "active" ? "Pause" : "Resume")}
         </Button>
         {goal.status !== "completed" && (
           <Button small busy={busy} onPress={() => void update({ status: "completed" })}>
-            Complete goal
+            {t("Complete goal")}
           </Button>
         )}
         <Button small primary busy={busy} onPress={() => void plan()}>
-          Plan next steps
+          {t("Plan next steps")}
         </Button>
       </View>
       <View style={{ borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 20, gap: 18 }}>
@@ -1907,6 +1952,7 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
 function MonitorForm({ onDone }: { onDone: () => void }) {
   const { workspace } = useWorkspace();
   const { mutate } = useAgentWorkspace();
+  const { t } = useI18n();
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [condition, setCondition] = useState<Monitor["condition"]>("change");
@@ -1923,9 +1969,9 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
     try {
       const minutes = Number(interval);
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > 10080)
-        throw new Error("Use a check interval from 1 to 10080 minutes.");
+        throw new Error(t("Use a check interval from 1 to 10080 minutes."));
       if (!sample && !/^https?:\/\//i.test(url.trim()))
-        throw new Error("Enter an http or https address for a public page.");
+        throw new Error(t("Enter an http or https address for a public page."));
       await mutate("/monitors", {
         title: title.trim(),
         url: sample ? "sample://availability" : url.trim(),
@@ -1944,66 +1990,74 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
   return (
     <View>
       <Field
-        label="What are you watching?"
+        label={t("What are you watching?")}
         value={title}
         onChangeText={setTitle}
-        placeholder="A table at my favorite restaurant"
+        placeholder={t("A table at my favorite restaurant")}
       />
       {workspace.mode === "sample" && (
         <CheckRow
           checked={sample}
-          label="Try the built-in availability page"
+          label={t("Try the built-in availability page")}
           onPress={() => setSample(!sample)}
         />
       )}
       {!sample && (
         <Field
-          label="Public page URL"
+          label={t("Public page URL")}
           value={url}
           onChangeText={setUrl}
           autoCapitalize="none"
           placeholder="https://example.com/product"
         />
       )}
-      <Text style={[s.small, { marginBottom: 10 }]}>Notify me when</Text>
+      <Text style={[s.small, { marginBottom: 10 }]}>{t("Notify me when")}</Text>
       <View style={[s.row, { gap: 7, flexWrap: "wrap", marginBottom: 16 }]}>
         {(["change", "contains", "price_below"] as const).map((item) => (
           <Button small primary={condition === item} key={item} onPress={() => setCondition(item)}>
-            {item === "change"
-              ? "Page changes"
-              : item === "contains"
-                ? "Text appears"
-                : "Price drops below"}
+            {t(
+              item === "change"
+                ? "Page changes"
+                : item === "contains"
+                  ? "Text appears"
+                  : "Price drops below",
+            )}
           </Button>
         ))}
       </View>
       {condition !== "change" && (
         <Field
-          label={condition === "contains" ? "Text to look for" : "Target price"}
+          label={t(condition === "contains" ? "Text to look for" : "Target price")}
           value={value}
           onChangeText={setValue}
         />
       )}
       {condition === "price_below" && (
         <>
-          <Field label="Nome exato do produto" value={priceTarget} onChangeText={setPriceTarget} />
           <Field
-            label="Moeda (EUR, USD, BRL...)"
+            label={t("Exact product name")}
+            value={priceTarget}
+            onChangeText={setPriceTarget}
+          />
+          <Field
+            label={t("Currency (EUR, USD, BRL...)")}
             value={currency}
             onChangeText={(value) => setCurrency(value.toUpperCase())}
           />
         </>
       )}
       <Field
-        label="Check every (minutes)"
+        label={t("Check every (minutes)")}
         value={interval}
         onChangeText={setInterval}
         keyboardType="number-pad"
       />
       <Text style={[s.small, { marginBottom: 14 }]}>
-        {sample
-          ? "Changes to this built-in page stay in your workspace."
-          : "OkamiBot checks this public page on the server and saves meaningful changes in Notifications."}
+        {t(
+          sample
+            ? "Changes to this built-in page stay in your workspace."
+            : "OkamiBot checks this public page on the server and saves meaningful changes in Notifications.",
+        )}
       </Text>
       <ErrorNotice error={error} />
       <Button
@@ -2014,12 +2068,13 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
         }
         onPress={() => void save()}
       >
-        Start tracking
+        {t("Start tracking")}
       </Button>
     </View>
   );
 }
 function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: () => void }) {
+  const { t } = useI18n();
   const { mutate } = useAgentWorkspace();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2051,25 +2106,30 @@ function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: (
   return (
     <View style={{ gap: 18 }}>
       <View style={s.between}>
-        <Text style={[s.heading, { flex: 1 }]}>Tracking</Text>
-        <Chip tint={colors.sky}>{statusLabel(monitor.status)}</Chip>
+        <Text style={[s.heading, { flex: 1 }]}>{t("Tracking")}</Text>
+        <Chip tint={colors.sky}>{t(statusLabel(monitor.status))}</Chip>
       </View>
       <Text selectable style={s.small}>
-        {monitor.url.startsWith("sample:") ? "Built-in availability page" : monitor.url}
+        {monitor.url.startsWith("sample:") ? t("Built-in availability page") : monitor.url}
       </Text>
       <Text style={s.text}>
         {monitor.condition === "change"
-          ? "Watch for a page change"
+          ? t("Watch for a page change")
           : monitor.condition === "contains"
-            ? `Watch for “${monitor.value}”`
-            : `Price below ${monitor.value}`}
+            ? t("Watch for “{value}”", { value: monitor.value })
+            : t("Price below {value}", { value: monitor.value })}
       </Text>
       <Text style={s.small}>
-        Every {monitor.intervalMinutes} min · {monitor.checks} checks
+        {t("Every {minutes} min · {count} checks", {
+          minutes: monitor.intervalMinutes,
+          count: monitor.checks,
+        })}
       </Text>
       <Text style={s.small}>
-        Last check: {stamp(monitor.lastCheckedAt)}
-        {monitor.status === "active" ? `\nNext check: ${stamp(monitor.nextCheckAt)}` : ""}
+        {t("Last check: {date}", { date: stamp(monitor.lastCheckedAt) })}
+        {monitor.status === "active"
+          ? `\n${t("Next check: {date}", { date: stamp(monitor.nextCheckAt) })}`
+          : ""}
       </Text>
       {!!monitor.lastValue && (
         <Text selectable numberOfLines={5} style={s.muted}>
@@ -2083,7 +2143,7 @@ function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: (
       )}
       {!!monitor.diffTruncated && (
         <Text style={s.small}>
-          Comparação parcial; consulte a fonte para ver o conteúdo completo.
+          {t("Partial comparison. Open the source for the full content.")}
         </Text>
       )}
       <ErrorNotice error={error || monitor.error || monitor.coverageWarning} />
@@ -2094,19 +2154,19 @@ function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: (
             busy={busy}
             onPress={() => void act(monitor.status === "active" ? "pause" : "resume")}
           >
-            {monitor.status === "active" ? "Pause" : "Resume"}
+            {t(monitor.status === "active" ? "Pause" : "Resume")}
           </Button>
           <Button small busy={busy} onPress={() => void act("check")}>
-            Check now
+            {t("Check now")}
           </Button>
           <Button small danger busy={busy} onPress={() => void act("stop")}>
-            Stop tracking
+            {t("Stop tracking")}
           </Button>
         </View>
       )}
       {monitor.url.startsWith("sample:") && monitor.status !== "stopped" && (
         <Button small busy={busy} onPress={() => void changeSample()}>
-          Change availability
+          {t("Change availability")}
         </Button>
       )}
       <TaskLink taskId={monitor.taskId} onOpen={onOpenTask} />
@@ -2131,7 +2191,7 @@ export function NotificationsSheet() {
     <Sheet title="Notifications" onClose={close}>
       <View style={{ gap: 14 }}>
         <ErrorNotice error={error} />
-        {data?.notifications.map((item) => (
+        {productNotifications(data?.tasks ?? [], data?.notifications ?? []).map((item) => (
           <View
             key={item.id}
             style={{
@@ -2200,7 +2260,7 @@ export function NotificationsSheet() {
             </View>
           </View>
         ))}
-        {!data?.notifications.length && (
+        {!productNotifications(data?.tasks ?? [], data?.notifications ?? []).length && (
           <Empty
             icon={Bell}
             title="You're all caught up"

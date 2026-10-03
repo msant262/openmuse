@@ -22,6 +22,8 @@ function fixture(setLocale: (locale: "en" | "pt-BR") => Promise<void>) {
       "./conversation-label": {},
       "./desktop-shell-styles": { desktopStyles: {} },
       "./i18n": { useI18n: () => ({ locale: "en", setLocale, t: (key: string) => key }) },
+      "./muse-surfaces-model": {},
+      "./thread-actions": {},
       "./memory-settings": { MemorySettings: "MemorySettings" },
       "./message-storage": {},
       "./profile-settings": { ProfileSettings: "ProfileSettings" },

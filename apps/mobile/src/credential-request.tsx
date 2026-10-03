@@ -25,6 +25,10 @@ export function CredentialRequestCard({
   const { t } = useI18n();
   const { api } = useWorkspace();
   const [current, setCurrent] = useState(request);
+  const integration = request.schema.integrationId;
+  const requestPath = integration
+    ? `/api/integrations/${integration}/requests/${request.id}`
+    : `/api/credential-requests/${request.id}`;
   const [values, setValues] = useState<CredentialValues>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -39,7 +43,7 @@ export function CredentialRequestCard({
     setValues({});
     setError("");
     setChallengeValue("");
-  }, [request]);
+  }, [request.id, request.revision, request.status, request.challengeId]);
   const disabled = busy || current.status !== "waiting";
   const validation = credentialFormError(current, values);
 
@@ -48,20 +52,17 @@ export function CredentialRequestCard({
     setBusy(true);
     try {
       const saved = await submission.submit(values, (body) =>
-        api.request<CredentialInteractionRequest>(
-          `/api/credential-requests/${request.id}/submit`,
-          body,
-        ),
+        api.request<CredentialInteractionRequest>(`${requestPath}/submit`, body),
       );
       setCurrent(saved);
-      if (saved.status === "saved") {
+      if (saved.status === "saved" || saved.status === "connected") {
         setValues({});
         onSaved?.();
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("The credential could not be saved."));
       const latest = await api
-        .request<CredentialInteractionRequest>(`/api/credential-requests/${request.id}`)
+        .request<CredentialInteractionRequest>(requestPath)
         .catch(() => undefined);
       if (latest) {
         setCurrent(latest);
@@ -96,7 +97,7 @@ export function CredentialRequestCard({
 
   const statusLabel =
     current.status === "saved"
-      ? t("Credential saved. Login still needs confirmation.")
+      ? t(integration ? "Account connected." : "Credential saved. Login still needs confirmation.")
       : current.status === "connected"
         ? t("Account connected.")
         : current.status === "needs_challenge"
@@ -122,21 +123,21 @@ export function CredentialRequestCard({
   return (
     <Card style={{ gap: 14 }}>
       <Text accessibilityRole="header" style={s.heading}>
-        {current.schema.title}
+        {t(current.schema.title)}
       </Text>
       <View style={{ gap: 3 }}>
         <Text style={s.small}>{t("Destination: {origin}", { origin: current.schema.origin })}</Text>
-        <Text style={s.muted}>{current.schema.purpose}</Text>
+        <Text style={s.muted}>{t(current.schema.purpose)}</Text>
       </View>
       {(current.status === "waiting" || current.status === "outcome_unknown") &&
         current.schema.fields.map((field) => (
           <View key={field.id} style={{ gap: 7 }}>
             <Text style={s.text}>
-              {field.label}
+              {t(field.label)}
               {field.required ? " *" : ""}
             </Text>
             <TextInput
-              accessibilityLabel={field.label}
+              accessibilityLabel={t(field.label)}
               accessibilityState={{ disabled }}
               aria-disabled={disabled}
               aria-required={field.required}
@@ -216,9 +217,7 @@ export function CredentialRequestCard({
             )}
           </Text>
         )}
-      <Text style={s.small}>
-        {t("Task {taskId} · Chat and other tasks remain available.", { taskId: current.taskId })}
-      </Text>
+      {!integration && <Text style={s.small}>{t("Chat and other tasks remain available.")}</Text>}
     </Card>
   );
 }

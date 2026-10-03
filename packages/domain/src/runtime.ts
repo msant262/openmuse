@@ -196,6 +196,8 @@ export const questionAnswerSchema = z.record(
 );
 export type QuestionAnswer = z.infer<typeof questionAnswerSchema>;
 export type CredentialFormSchema = {
+  /** API integrations use the vault directly, without a browser login task. */
+  integrationId?: "tavily";
   title: string;
   serviceName: string;
   origin: string;
@@ -360,7 +362,7 @@ export const completionCriterionSchema = z
   .object({
     id: runtimeId,
     description: z.string().trim().min(1).max(1000),
-    kind: z.enum(["artifact", "file", "receipt", "observation"]),
+    kind: z.enum(["artifact", "file", "receipt", "observation", "response"]),
     referenceId: runtimeId.optional(),
     format: z.string().max(100).optional(),
     effect: z

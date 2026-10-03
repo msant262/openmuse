@@ -362,7 +362,10 @@ test("SIWC streamed tools execute once and continue only after verified inferenc
         assert.equal(body.store, false);
         assert.equal(body.stream, true);
         assert.ok(Array.isArray(body.input));
-        assert.equal(body.instructions, "Use the tool once.");
+        assert.match(
+          body.instructions,
+          /^Current UTC date and time: \d{4}-\d{2}-\d{2}T[^\n]+\nUse the tool once\.$/,
+        );
         assert.equal(body.tools[0].type, "namespace");
         assert.equal(body.tools[0].name, "openmuse");
         assert.ok(
@@ -527,7 +530,7 @@ test("keyless compatible transport removes placeholder auth and image requests r
     body: "{}",
   });
   assert.equal(imageProvider("chatgpt/account-model", config, upstream), undefined);
-  assert.equal(imageProvider("grok/text-model", config, upstream), undefined);
+  assert.equal(imageProvider("grok/text-model", config, upstream)?.model, "grok-imagine-image-2.0");
   const image = imageProvider("local/text-model", config, upstream);
   assert.ok(image);
   await image.generate({ model: "untrusted-model-override", prompt: "Draw a flower" });

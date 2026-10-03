@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import { rasterMime } from "../../../packages/domain/src/attachments.ts";
@@ -18,12 +19,16 @@ import { authorizeTaskEffect, taskOperationId } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 import { modelProviderConfig } from "./providers/config.ts";
-import { imageProvider } from "./providers/images.ts";
+import { ImageNotDispatchedError } from "./providers/image-errors.ts";
+import { availableImageModels, imageProvider } from "./providers/images.ts";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const imageArgs = z.object({
   prompt: z.string().trim().min(1).max(8000),
   operationId: z.string().min(1).max(120),
+  name: z.string().trim().min(1).max(120).optional(),
+  provider: z.enum(["auto", "chatgpt", "grok", "selected"]).default("auto"),
+  aspectRatio: z.enum(["1:1", "3:4", "4:3", "9:16", "16:9"]).optional(),
 });
 export class MediaService {
   constructor(
@@ -32,6 +37,30 @@ export class MediaService {
     readonly config: Config,
     readonly upstream: typeof fetch = fetch,
   ) {}
+  async imageCapabilities(model: string | undefined) {
+    const config = this.config.modelProviders ?? modelProviderConfig(this.config.dataDir);
+    const models = await availableImageModels(model, config);
+    return {
+      available: models.length > 0,
+      providers: models.map((spec) => ({
+        provider: spec.split("/")[0],
+        model: imageProvider(spec, config)?.model,
+        subscription: /^(codex|grok|xai-oauth)\//.test(spec),
+      })),
+      ...(existsSync(config.chatgptFile) && {
+        chatgpt: {
+          connected: true,
+          imageGeneration: models.some((model) => model.startsWith("codex/")),
+          reason: models.some((model) => model.startsWith("codex/"))
+            ? undefined
+            : "Connect GPT Image separately in Settings using ChatGPT device authorization. The existing chat token-sharing grant does not include image_generation. No paid API key is required or used automatically.",
+        },
+      }),
+      unavailable: models.length
+        ? undefined
+        : "Connect an image-capable subscription or explicitly configure an image provider in Settings.",
+    };
+  }
   async generatedImage(
     owner: string,
     model: string | undefined,
@@ -41,18 +70,22 @@ export class MediaService {
     beforeDispatch?: () => Promise<void>,
   ): Promise<Awaited<ReturnType<Files["reference"]>> | { disabled: boolean; message: string }> {
     const args = imageArgs.parse(raw);
-    const provider = model
-      ? imageProvider(
-          model,
-          this.config.modelProviders ?? modelProviderConfig(this.config.dataDir),
-          this.upstream,
-        )
-      : undefined;
+    const config = this.config.modelProviders ?? modelProviderConfig(this.config.dataDir);
+    const available = await availableImageModels(model, config);
+    const imageModel =
+      args.provider === "selected"
+        ? model
+        : args.provider === "chatgpt"
+          ? available.find((spec) => spec.startsWith("codex/"))
+          : args.provider === "grok"
+            ? available.find((spec) => /^(grok|xai-oauth)\//.test(spec))
+            : available[0];
+    const provider = imageModel ? imageProvider(imageModel, config, this.upstream) : undefined;
     if (!provider)
       return {
         disabled: true,
         message:
-          "Image generation is disabled for the selected provider. Configure its documented image model/endpoint; ChatGPT Sign in and MiMo do not expose an image route here.",
+          "No connected image generator is available for this selection. Check image_generation_status and connect an image-capable subscription in Settings.",
       };
     const id = hash(taskOperationId() ?? `${scope}:${args.operationId}`);
     type Receipt = {
@@ -61,7 +94,13 @@ export class MediaService {
       status: "pending" | "succeeded" | "uncertain";
       fileId?: string;
     };
-    const binding = hash(JSON.stringify({ model, prompt: args.prompt }));
+    const binding = hash(
+      JSON.stringify({
+        provider: args.provider,
+        prompt: args.prompt,
+        aspectRatio: args.aspectRatio,
+      }),
+    );
     const previous = await this.db.get<Receipt>(owner, "image-generations", id);
     if (previous) {
       if (previous.binding !== binding)
@@ -97,6 +136,7 @@ export class MediaService {
         {
           prompt: args.prompt,
           n: 1,
+          ...(args.aspectRatio && { aspect_ratio: args.aspectRatio }),
           ...(!provider.model.startsWith("gpt-image-") && { response_format: "b64_json" }),
         },
         signal,
@@ -144,9 +184,14 @@ export class MediaService {
         );
       const file = await this.files.importAttachment(
         owner,
-        `image-${id.slice(0, 10)}.${mime === "image/jpeg" ? "jpg" : mime.split("/")[1]}`,
+        `${
+          (args.name ?? "image")
+            .replace(/[^\p{L}\p{N} _.-]/gu, "")
+            .replace(/\.[^.]+$/, "")
+            .slice(0, 100) || "image"
+        }-${id.slice(0, 6)}.${mime === "image/jpeg" ? "jpg" : mime.split("/")[1]}`,
         bytes,
-        "Generated image",
+        args.name ?? "Generated image",
         mime,
       );
       await this.db.put(owner, "image-generations", {
@@ -158,7 +203,7 @@ export class MediaService {
       await new ActionLog(this.db).finish(owner, audit, "succeeded");
       return this.files.reference(owner, file.id);
     } catch (error) {
-      if (!dispatchGuardPassed) {
+      if (!dispatchGuardPassed || error instanceof ImageNotDispatchedError) {
         await new ActionLog(this.db).finish(owner, audit, "rejected_not_dispatched");
         await this.db.remove(owner, "image-generations", id);
         throw error;
@@ -226,7 +271,7 @@ export class MediaService {
 }
 
 export const mediaInstructions =
-  "Use transcribe for owned audio/video in the computer: offline Whisper small CPU int8 detects Portuguese, English and German; optionally override language. Use preview_computer_file for Office-to-PDF. Long media jobs may run in background; poll computer_command_status and report actual receipts. Completed media returns owned attachment IDs, never claim success before completion. generate_image uses only the currently selected provider's explicitly configured capability and never falls back to a billed image API. Disabled capability is reported clearly. Never repeat a pending/uncertain image generation automatically.";
+  "For an image, illustration, poster or infographic, use generate_image to create the actual downloadable image. For an infographic about current facts, first research and verify sources, then include the exact verified facts, dates, labels and source names in a detailed visual prompt in the user's language; do not stop at a text outline. The image generator is independent of the chat model: image_generation_status lists connected image capabilities, including subscriptions. Auto selection prefers separately connected GPT Image through ChatGPT/Codex authorization, then Grok Imagine, independently of the chat model. For an explicit ChatGPT/GPT Image request use provider chatgpt; for Grok use provider grok. If the requested provider is not connected, show its Settings connection rather than substitute a different provider. Never add a billed API implicitly. No email or PDF attachment is needed to create an image. Give the image a descriptive name. The generated attachment is delivered automatically; refer to it naturally without exposing internal IDs. Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before completion or repeat a pending/uncertain generation automatically.";
 
 export function mediaTools(
   media: MediaService,
@@ -358,6 +403,12 @@ export function mediaTools(
   };
   return [
     tool(
+      "image_generation_status",
+      "List connected image generators independently of the chat model; returns capability and subscription status without credentials",
+      z.object({}),
+      async () => media.imageCapabilities(options.model()),
+    ),
+    tool(
       "view_file",
       "Inspect an owned raster image attachment using the model's image input capability",
       z.object({ fileId: z.string().min(1).max(128) }),
@@ -374,7 +425,7 @@ export function mediaTools(
     ),
     tool(
       "generate_image",
-      "Generate an image via the selected provider's configured image capability",
+      "Create an actual image, poster or infographic using an available connected image generator. Auto uses subscription image generation independently of the chat model. Provide a complete visual prompt with verified facts and a descriptive name. Returns a downloadable image attachment.",
       imageArgs,
       (args) =>
         media.generatedImage(

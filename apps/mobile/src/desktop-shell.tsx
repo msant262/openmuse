@@ -1,5 +1,6 @@
 import { useThreads } from "@copilotkit/react-native/headless";
 import {
+  Archive,
   ArrowLeft,
   Bell,
   CheckCircle2,
@@ -49,7 +50,9 @@ import { desktopStyles as d } from "./desktop-shell-styles";
 import { useI18n } from "./i18n";
 import { MemorySettings } from "./memory-settings";
 import { messageStorage } from "./message-storage";
+import { isProductTask, productNotifications, taskPreview } from "./muse-surfaces-model";
 import { ProfileSettings } from "./profile-settings";
+import { ThreadActions } from "./thread-actions";
 import { type Selection, useMuseThread } from "./threads";
 import { Button, Card, CheckRow, colors, ErrorNotice, HeaderFade, Mascot, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -140,7 +143,7 @@ export function DesktopShell({
   mobileNavigation,
   workspacePane,
   workspaceKind = "computer",
-  title,
+  title: _title,
   subtitle,
   settingsOpen,
   onSettings,
@@ -176,17 +179,26 @@ export function DesktopShell({
   const { api, section, open } = useWorkspace();
   const { data } = useAgentWorkspace();
   const { state: companionState } = useAvatarPresentation();
-  const { selection, visited, mainId, enabled, loading, select, start } = useMuseThread();
+  const { selection, visited, mainId, enabled, loading, select, start, revision } = useMuseThread();
+  const [archivedChats, setArchivedChats] = useState(false);
   const threads = useThreads({
     agentId: "default",
     enabled: desktop && enabled,
-    includeArchived: false,
-    limit: 8,
+    includeArchived: true,
+    limit: 100,
   });
+  useEffect(() => {
+    if (desktop && enabled) void threads.refetchThreads();
+  }, [revision]);
   const agentName = data?.identity.name || "OkamiBot";
-  const saved = threads.threads.filter((thread) => thread.id !== mainId && !thread.archived);
+  const saved = threads.threads.filter(
+    (thread) => thread.id !== mainId && thread.archived === archivedChats,
+  );
   const drafts = visited.filter(
-    (thread) => thread.id !== mainId && !threads.threads.some((item) => item.id === thread.id),
+    (thread) =>
+      !archivedChats &&
+      thread.id !== mainId &&
+      !threads.threads.some((item) => item.id === thread.id),
   );
   const identityKey = api.identityKey;
   const [labels, setLabels] = useState<{
@@ -244,6 +256,7 @@ export function DesktopShell({
       )
       .map((thread, index) => ({
         ...thread,
+        archived: false,
         name:
           localLabels[thread.id] ??
           (thread.existing
@@ -350,55 +363,124 @@ export function DesktopShell({
                   <MoreHorizontal size={19} color={colors.muted} />
                 </Pressable>
               </View>
+              <View style={{ paddingHorizontal: 10, paddingTop: 12, gap: 3 }}>
+                <View
+                  style={[
+                    d.conversationItem,
+                    selection.id === mainId && d.activeItem,
+                    { paddingRight: 3 },
+                  ]}
+                >
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => openThread({ id: mainId, existing: true })}
+                    style={[s.row, { gap: 9, flex: 1 }]}
+                  >
+                    <MessageCircle size={16} color={colors.muted} />
+                    <Text style={[d.conversationLabel, { flex: 1 }]}>{t("Main chat")}</Text>
+                  </Pressable>
+                  <ThreadActions
+                    id={mainId}
+                    name={t("Main chat")}
+                    main
+                    existing={selection.id === mainId ? selection.existing : true}
+                  />
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: archivedChats }}
+                  onPress={() => setArchivedChats(!archivedChats)}
+                  style={[s.row, { padding: 10, gap: 9 }]}
+                >
+                  <Archive size={15} color={colors.muted} />
+                  <Text style={[d.conversationLabel, { color: colors.muted }]}>
+                    {t(archivedChats ? "Show active" : "Archived")}
+                  </Text>
+                </Pressable>
+              </View>
+              <ErrorNotice error={threads.error?.message} />
               {conversationList.length ? (
                 <ScrollView
                   style={d.conversations}
-                  contentContainerStyle={{ paddingHorizontal: 10, paddingTop: 22, gap: 5 }}
+                  contentContainerStyle={{ paddingHorizontal: 10, paddingTop: 10, gap: 5 }}
                   showsVerticalScrollIndicator={false}
                 >
                   <Text style={[d.sectionLabel, { marginHorizontal: 10, marginBottom: 8 }]}>
-                    {t("Side chats")}
+                    {t(archivedChats ? "Archived" : "Side chats")}
                   </Text>
                   {conversationList
                     .filter((thread) => thread.name.toLowerCase().includes(search.toLowerCase()))
                     .map((thread) => (
-                      <Pressable
+                      <View
                         key={thread.id}
-                        accessibilityRole="button"
-                        accessibilityLabel={t(desktopCopy.openConversation, { name: thread.name })}
-                        accessibilityState={{ selected: selection.id === thread.id }}
-                        onPress={() => openThread({ id: thread.id, existing: thread.existing })}
-                        style={[d.conversationItem, selection.id === thread.id && d.activeItem]}
+                        style={[
+                          d.conversationItem,
+                          selection.id === thread.id && d.activeItem,
+                          { paddingRight: 2 },
+                        ]}
                       >
-                        <MessageCircle size={16} strokeWidth={1.7} color={colors.muted} />
-                        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                          <Text numberOfLines={1} style={d.conversationLabel}>
-                            {thread.name}
-                          </Text>
-                          <Text style={d.conversationDate}>{thread.detail}</Text>
-                        </View>
-                      </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={t(desktopCopy.openConversation, {
+                            name: thread.name,
+                          })}
+                          accessibilityState={{ selected: selection.id === thread.id }}
+                          onPress={() => openThread({ id: thread.id, existing: thread.existing })}
+                          style={[s.row, { flex: 1, minWidth: 0, gap: 9 }]}
+                        >
+                          <MessageCircle size={16} strokeWidth={1.7} color={colors.muted} />
+                          <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                            <Text numberOfLines={1} style={d.conversationLabel}>
+                              {thread.name}
+                            </Text>
+                            <Text style={d.conversationDate}>{thread.detail}</Text>
+                          </View>
+                        </Pressable>
+                        <ThreadActions
+                          id={thread.id}
+                          name={thread.name}
+                          existing={thread.existing}
+                          archived={thread.archived}
+                        />
+                      </View>
                     ))}
                 </ScrollView>
               ) : (
                 <View style={d.sideChatEmpty}>
                   <MessageCircle size={27} strokeWidth={1.5} color="#929297" />
                   <Text style={d.sideChatEmptyTitle}>
-                    {locale === "pt-BR" ? "Comece uma conversa separada" : "Start a side chat"}
+                    {archivedChats ? t("No archived conversations.") : t("Start a side chat")}
                   </Text>
                   <Text style={d.sideChatEmptyCopy}>
-                    {locale === "pt-BR"
-                      ? "Conversas separadas são uma forma opcional de organizar seus assuntos."
-                      : "Side chats are an optional way to organize your conversations by topic."}
+                    {t(
+                      archivedChats
+                        ? "Archived conversations stay saved and can be restored here."
+                        : "Side chats are an optional way to organize your conversations by topic.",
+                    )}
                   </Text>
-                  <Button small disabled={enabled && loading} onPress={newSideChat}>
+                  <Button
+                    small
+                    disabled={enabled && loading}
+                    onPress={() => {
+                      setArchivedChats(false);
+                      newSideChat();
+                    }}
+                  >
                     {t("New side chat")}
                   </Button>
                 </View>
               )}
               {!!conversationList.length && (
                 <View style={{ padding: 16 }}>
-                  <Button small icon={Plus} disabled={enabled && loading} onPress={newSideChat}>
+                  <Button
+                    small
+                    icon={Plus}
+                    disabled={enabled && loading}
+                    onPress={() => {
+                      setArchivedChats(false);
+                      newSideChat();
+                    }}
+                  >
                     {t("New side chat")}
                   </Button>
                 </View>
@@ -648,8 +730,14 @@ export function AgentInspector({
     { id: "upcoming", label: t("Upcoming"), icon: Clock3 },
     { id: "identity", label: t("Personality"), icon: Fingerprint },
   ];
-  const tasks = [...(data?.tasks ?? [])].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const shownTasks = tab === "upcoming" ? tasks.filter((task) => task.status === "queued") : tasks;
+  const tasks = [...(data?.tasks ?? [])]
+    .filter(isProductTask)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const shownTasks = (
+    tab === "upcoming"
+      ? tasks.filter((task) => ["queued", "scheduled"].includes(task.status))
+      : tasks
+  ).slice(0, 8);
   const actions = [...workspace.actions].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   function showDetail(detail: Parameters<typeof open>[0]) {
     if (compact) onClose();
@@ -683,7 +771,9 @@ export function AgentInspector({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={t(desktopCopy.notifications, {
-              pending: data?.notifications.filter((item) => !item.read).length ?? 0,
+              pending: productNotifications(data?.tasks ?? [], data?.notifications ?? []).filter(
+                (item) => !item.read,
+              ).length,
             })}
             onPress={() => showDetail({ type: "notifications" })}
             style={d.menuButton}
@@ -830,7 +920,7 @@ export function AgentInspector({
         ) : (
           <>
             <Text style={[d.inspectorSection, compact && { fontSize: 18 }]}>
-              {tab === "upcoming" ? t("Upcoming") : t("Today")}
+              {tab === "upcoming" ? t("Upcoming") : t("Recent work")}
             </Text>
             {!shownTasks.length && (
               <Text style={d.inspectorEmpty}>
@@ -868,11 +958,7 @@ export function AgentInspector({
                       numberOfLines={2}
                       style={[d.activityDetail, compact && { fontSize: 14, lineHeight: 20 }]}
                     >
-                      {task.question ||
-                        task.error ||
-                        task.result ||
-                        task.plan.find((step) => step.status === "running")?.title ||
-                        task.title}
+                      {t(taskPreview(task))}
                     </Text>
                     <Text style={[d.activityTime, compact && { fontSize: 13, lineHeight: 19 }]}>
                       {new Date(task.updatedAt).toLocaleTimeString(locale, {

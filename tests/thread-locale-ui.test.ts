@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { ApiError } from "../apps/mobile/src/api-errors.ts";
 import { parseThreadSelection } from "../apps/mobile/src/thread-selection.ts";
 
 type Selection = { id: string; existing: boolean };
@@ -65,8 +66,8 @@ function fixture({ pendingWrites = false } = {}) {
   };
   const api = {
     identityKey: "thread-locale-owner",
-    async request() {
-      mainRequests++;
+    async request(path: string) {
+      if (path === "/api/main-thread") mainRequests++;
       if (unavailable) throw new Error("Offline");
       return { threadId: main.id, existing: true };
     },
@@ -80,6 +81,8 @@ function fixture({ pendingWrites = false } = {}) {
     "react-native": {},
     "react-native-safe-area-context": {},
     "../../../packages/domain/src/brand": { PRODUCT_NAME: "OkamiBot" },
+    "./api-errors": { ApiError },
+    "./thread-actions": {},
     "./i18n": { useI18n: () => ({ t }) },
     "./thread-selection": { parseThreadSelection },
     "./ui": {},
@@ -87,6 +90,7 @@ function fixture({ pendingWrites = false } = {}) {
       useWorkspace: () => ({ workspace: { runtime: { richThreads: true } }, navigate() {}, api }),
     },
     "./message-storage": {
+      removeConversationCache: async () => {},
       messageStorage: {
         async read() {
           selectionReads++;

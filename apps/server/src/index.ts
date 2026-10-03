@@ -15,7 +15,7 @@ const db = await createStore({
 });
 await db.recoverInterruptedActions();
 await new ActionLog(db).reconcile(true);
-const { app, agent, actions, threads, executors } = await createApp(db, config);
+const { app, agent, actions, threads, executors, codexConnection } = await createApp(db, config);
 const stopTokenMaintenance = startModelTokenMaintenance(config);
 if (config.taskWorkerEnabled) agent.start();
 const requests = new RequestDrain();
@@ -46,6 +46,7 @@ const shutdown = async () => {
           agent.stop(),
           actions.close(),
           stopTokenMaintenance(),
+          codexConnection.close(),
         ]);
       },
       async () => {

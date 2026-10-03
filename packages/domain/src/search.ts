@@ -28,7 +28,7 @@ export const searchResultSchema = z
     provenance: z
       .object({
         backend: z.enum(["http", "browser"]),
-        provider: z.enum(["duckduckgo-html", "duckduckgo-lite", "bing-rss"]),
+        provider: z.enum(["duckduckgo-html", "duckduckgo-lite", "bing-rss", "tavily"]),
         searchUrl: z.url(),
         sessionId: z.uuid().optional(),
         fullPagesRead: z.literal(false),

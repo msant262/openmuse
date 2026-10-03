@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
+import { productNotifications } from "./muse-surfaces-model";
 import { colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -12,7 +13,9 @@ export function BackgroundUpdates() {
   const { open } = useWorkspace();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const updates = data?.notifications.filter((item) => !item.read) || [];
+  const updates = productNotifications(data?.tasks ?? [], data?.notifications ?? []).filter(
+    (item) => !item.read,
+  );
   const update = updates[0];
   if (!update || data?.identity.showChatUpdates === false) return null;
   async function dismiss() {

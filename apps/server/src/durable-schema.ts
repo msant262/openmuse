@@ -9,6 +9,9 @@ export async function initializeDurableConversations(query: (sql: string) => Pro
     DECLARE saved jsonb; next_seq bigint;
     BEGIN
       PERFORM pg_advisory_xact_lock(hashtextextended('openmuse-durable:' || event_owner,0));
+      IF EXISTS(SELECT 1 FROM records WHERE owner=event_owner AND kind='threads' AND id=event_thread AND data->>'deletedAt' IS NOT NULL) THEN
+        RAISE EXCEPTION 'Conversation was deleted';
+      END IF;
       SELECT data INTO saved FROM conversation_events WHERE owner=event_owner AND thread_id=event_thread AND id=event_id;
       IF FOUND THEN RETURN saved; END IF;
       SELECT COALESCE(max(seq),0)+1 INTO next_seq FROM conversation_events WHERE owner=event_owner AND thread_id=event_thread;
@@ -21,6 +24,14 @@ export async function initializeDurableConversations(query: (sql: string) => Pro
     DECLARE previous jsonb; change jsonb; saved jsonb; result jsonb := '[]'::jsonb; event jsonb; journal jsonb := '[]'::jsonb;
     BEGIN
       PERFORM pg_advisory_xact_lock(hashtextextended('openmuse-durable:' || mutation_owner,0));
+      IF EXISTS(SELECT 1 FROM records thread WHERE thread.owner=mutation_owner AND thread.kind='threads'
+        AND thread.data->>'deletedAt' IS NOT NULL AND (
+          EXISTS(SELECT 1 FROM jsonb_array_elements(mutations) candidate WHERE
+            thread.id=candidate->'value'->>'threadId' OR thread.id=candidate->'value'->'interaction'->>'threadId')
+          OR EXISTS(SELECT 1 FROM jsonb_array_elements(events) candidate WHERE thread.id=candidate->>'threadId')
+        )) THEN
+        RETURN jsonb_build_object('status','thread_deleted');
+      END IF;
       SELECT data INTO previous FROM records WHERE owner=mutation_owner AND kind='mutation-receipts' AND id=receipt_id;
       IF FOUND THEN
         IF previous->>'bindingHash' <> binding_hash THEN RETURN jsonb_build_object('status','binding_conflict'); END IF;

@@ -57,3 +57,8 @@ async function transact(
     db.close();
   }
 }
+
+/** Remove a confirmed deleted conversation after its chat component has unmounted. */
+export async function removeConversationCache(key: string) {
+  await transact("readwrite", (store) => store.delete(key));
+}

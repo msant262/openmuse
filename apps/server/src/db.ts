@@ -21,6 +21,7 @@ import { AppError } from "./errors.ts";
 import { backgroundFailure } from "./log.ts";
 import { memoryFingerprintFields } from "./memory-fingerprint.ts";
 import { initializeThreadCompaction, type ThreadMessagePage } from "./thread-compaction.ts";
+import { initializeThreadLifecycle } from "./thread-lifecycle.ts";
 
 type Row = { data: Record<string, unknown> };
 interface Database {
@@ -153,7 +154,13 @@ export class Store {
       [owner, receiptId, bindingHash, JSON.stringify(mutations), JSON.stringify(events)],
     );
     return result.rows[0].data as unknown as {
-      status: "applied" | "duplicate" | "binding_conflict" | "revision_conflict" | "paused";
+      status:
+        | "applied"
+        | "duplicate"
+        | "binding_conflict"
+        | "revision_conflict"
+        | "paused"
+        | "thread_deleted";
       values: T[];
       events: ConversationEvent[];
     };
@@ -730,10 +737,21 @@ export class Store {
   ): Promise<boolean> {
     const result = await this.write(
       `UPDATE records SET data=data || jsonb_build_object('runToken',$3::text,'stopRunToken',NULL,'leaseUntil',clock_timestamp() + ($4::text || ' milliseconds')::interval),updated_at=now()
-       WHERE owner=$1 AND kind='threads' AND id=$2 AND (data->>'runToken' IS NULL OR (data->>'leaseUntil')::timestamptz<=clock_timestamp()) RETURNING data`,
+       WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'deletedAt' IS NULL AND (data->>'runToken' IS NULL OR (data->>'leaseUntil')::timestamptz<=clock_timestamp()) RETURNING data`,
       [owner, id, runToken, leaseMs],
     );
     return result.rows.length === 1;
+  }
+  async deleteThread(owner: string, id: string, nextMain: string) {
+    const result = await this.write("SELECT openmuse_delete_thread($1,$2,$3) AS data", [
+      owner,
+      id,
+      nextMain,
+    ]);
+    return result.rows[0].data as unknown as {
+      status: "deleted" | "not_found" | "busy";
+      mainThreadId?: string | null;
+    };
   }
   async renewThread(
     owner: string,
@@ -1070,6 +1088,7 @@ export async function createStore(
   );
   await initializeDurableConversations((sql) => database.query(sql));
   await initializeThreadCompaction((sql) => database.query(sql));
+  await initializeThreadLifecycle((sql) => database.query(sql));
   await initializeTaskRuntime((sql) => database.query(sql));
   await database.query(
     "CREATE INDEX IF NOT EXISTS task_scheduler_due ON records(kind,(data->>'status'),(data->>'nextRunAt')) WHERE kind='tasks'",
