@@ -5,6 +5,26 @@ Lenovo existentes; o aceite de uso diário pela esposa ainda depende de
 conectores, push e ensaio no celular físico. ChatGPT e Grok estão conectados. Este documento registra
 resultados observados, sem equiparar testes com fixtures a contas reais.
 
+**Acesso ao produto:** [primeira entrada pelo navegador e Android](FIRST-ACCESS.md).
+A raiz HTTPS agora serve a interface web; `/api` e `/executor` preservam o backend.
+O export web foi reconstruído com cache limpo e URL HTTPS de produção, sem novo
+container e sem reiniciar a API.
+
+Atualização após o primeiro aceite real: o domínio público
+`https://app.okamibot.cloud` está acessível via Cloudflare Tunnel, sem Tailscale no
+aparelho do usuário. Entrada web com chave e cookie seguro verificada nesse
+domínio. API sem autenticação retorna 401; rotas de executor e manutenção
+retornam 404 no gateway público. O hostname privado continua disponível.
+A imagem API `993e611` recebeu a correção de replay `111ba4e`, em camada imutável
+com o arquivo compilado e hash registrados em `/opt/okami-web/server-replay-111ba4e`.
+Uma falha histórica não deixa mais um RUN_STARTED aberto ao reconectar. O chat
+principal respondeu depois da reconexão; 870/870 testes Node passaram após a
+correção. O limite operacional conservador de contexto foi ajustado para 131072
+em ChatGPT/Grok; 32768 bloqueava o catálogo de ferramentas antes de chamar o
+provedor. Esse número é orçamento de admissão do app, não uma medição da janela
+máxima do modelo. A interface desktop, os idiomas e os avatares estão sendo
+revistos conforme `docs/superpowers/plans/2026-10-03-product-rework.md`.
+
 Fontes de execução da última instalação técnica: imagem API `993e611`, fonte/scripts VPS `7c899ec`,
 fonte instalada Lenovo `985b51d`; app `ef147e3`. Os commits posteriores
 de integração e documentação preservam esses códigos verificados. A suíte final passou 867/867

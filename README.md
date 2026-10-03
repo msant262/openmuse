@@ -13,6 +13,8 @@ OkamiBot is this personal-agent fork of [OpenMuse](https://github.com/CopilotKit
 
 [Personal 2-vCPU / 8-GB VPS deployment](DEPLOY.md) runs the self-hosted API, browser and guarded open computer with persistent state and daily backups.
 
+[Abrir a instalação atual e testar pelo navegador ou Android](docs/FIRST-ACCESS.md).
+
 [![CI](https://github.com/CopilotKit/OpenMuse/actions/workflows/ci.yml/badge.svg)](https://github.com/CopilotKit/OpenMuse/actions/workflows/ci.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

@@ -1,24 +1,22 @@
 import * as Crypto from "expo-crypto";
 import { Platform } from "react-native";
 import { parsePayload, parseResponse } from "./api-errors";
-import {
-  AuthManager,
-  normalizeServerOrigin,
-  type Session,
-  type SessionTransport,
-} from "./auth-manager";
+import { AuthManager, type Session, type SessionTransport } from "./auth-manager";
 import { authenticatedFetch, authenticatedUpload } from "./auth-transport";
 import { ComputerRequests, durableComputerPath } from "./computer-requests";
 import { createCredentialStorage } from "./credential-storage";
 import { messageStorage } from "./message-storage";
 import { withWebSessionLock } from "./web-session-coordinator";
+import { resolveApiOrigin } from "./api-origin";
 
 export { ApiError } from "./api-errors";
 
-export const API_URL = normalizeServerOrigin(
-  process.env.EXPO_PUBLIC_API_URL ||
-    (Platform.OS === "android" ? "http://10.0.2.2:8787" : "http://localhost:8787"),
-);
+export const API_URL = resolveApiOrigin({
+  platform: Platform.OS,
+  configured: process.env.EXPO_PUBLIC_API_URL,
+  sameOrigin: process.env.EXPO_PUBLIC_WEB_SAME_ORIGIN === "true",
+  pageOrigin: typeof window === "undefined" ? undefined : window.location?.origin,
+});
 
 export class MuseApi {
   private readonly computerRequests = new ComputerRequests(
