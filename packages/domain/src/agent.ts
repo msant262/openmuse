@@ -194,6 +194,7 @@ export const agentProfilePatchSchema = z
   .object({
     assistantName: z.string().trim().min(1).max(80).optional(),
     preferredUserName: z.string().trim().max(80).optional(),
+    personality: z.string().trim().max(1500).optional(),
     language: z
       .string()
       .min(2)

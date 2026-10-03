@@ -135,6 +135,15 @@ export function profileIntent(
   text = text.trim();
   let conversation = preferenceScopePrefix.test(text);
   text = text.replace(preferenceScopePrefix, "");
+  const personality = text.match(
+    /^(?:sua personalidade|personalidade|your personality|personality)\s*:\s*([\s\S]+)$/i,
+  );
+  if (personality) {
+    const value = personality[1].trim();
+    return value.length <= 1500
+      ? { patch: { personality: value }, conversation, hasWork: false }
+      : null;
+  }
   const clauses = text.split(/\s*(?:[.!;,\n]+|\s+(?:e|and)\s+)\s*/i).filter(Boolean);
   for (const [index, raw] of clauses.entries()) {
     const clause = scopedPreference(raw.replace(/^(?:e|and)\s+/i, ""));
