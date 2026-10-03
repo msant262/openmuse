@@ -16,7 +16,21 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
       db.scan<{ hold?: boolean; expiresAt: string }>("work-admissions"),
       db.scan<{ hold?: boolean; expiresAt: string }>("resource-leases"),
       db.list<ExecutorDelivery>("__executors__", "deliveries"),
-      db.scan<{ status: string; receipt?: { cleanupConfirmed?: boolean } }>("task-operations"),
+      db.scan<{
+        status: string;
+        toolName?: string;
+        effect?: boolean;
+        receipt?: {
+          cleanupConfirmed?: boolean;
+          enabled?: boolean;
+          provider?: string;
+          status?: string;
+          workspacePath?: string;
+          network?: string;
+          commands?: unknown[];
+          error?: unknown;
+        };
+      }>("task-operations"),
     ],
   );
   const occupied = (row: { hold?: boolean; expiresAt: string }) =>
@@ -28,8 +42,22 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
   const workAdmissions = admissions.filter(({ value }) => occupied(value)).length;
   const activeOperations = operations.filter(
     ({ value }) =>
-      ["dispatching", "running"].includes(value.status) ||
-      (value.status === "outcome_unknown" && value.receipt?.cleanupConfirmed !== true),
+      // Older journals copied the computer's running state onto a completed
+      // read. Preserve that history while counting only actual pending work.
+      !(
+        value.status === "running" &&
+        value.effect === false &&
+        value.toolName === "computer_status" &&
+        !value.receipt?.error &&
+        typeof value.receipt?.enabled === "boolean" &&
+        ["docker", "rpc", "native"].includes(value.receipt.provider ?? "") &&
+        value.receipt.status === "running" &&
+        value.receipt.workspacePath === "/workspace" &&
+        ["disabled", "public-only"].includes(value.receipt.network ?? "") &&
+        Array.isArray(value.receipt.commands)
+      ) &&
+      (["dispatching", "running"].includes(value.status) ||
+        (value.status === "outcome_unknown" && value.receipt?.cleanupConfirmed !== true)),
   ).length;
   const nativeDeliveries = deliveries.filter(
     (value) =>

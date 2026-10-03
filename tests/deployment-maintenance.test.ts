@@ -91,3 +91,38 @@ test("real SQL gate serializes admission against maintenance, allows held cleanu
   assert.equal(await admission.claim("unblocked", "background", "unblocked"), true);
   await admission.release("unblocked");
 });
+
+test("maintenance ignores a completed legacy computer-status read without hiding active work or rewriting its receipt", async (t) => {
+  const server = await browserFallbackFixture(t);
+  const { deploymentStatus } = await import("../apps/server/src/deployment-status.ts");
+  const historical = {
+    id: "legacy-read",
+    toolName: "computer_status",
+    effect: false,
+    status: "running",
+    receipt: {
+      enabled: true,
+      provider: "native",
+      status: "running",
+      workspacePath: "/workspace",
+      network: "public-only",
+      commands: [],
+    },
+  };
+  await server.db.put("local-user", "task-operations", historical);
+  await new DeploymentMaintenance(server.db).update("local-user", randomUUID(), "begin");
+  const idle = await deploymentStatus(server.db);
+  assert.equal(idle.activeOperations, 0);
+  assert.equal(idle.readyForStoppedWriterBackup, true);
+  assert.deepEqual(await server.db.get("local-user", "task-operations", historical.id), historical);
+  for (const operation of [
+    { ...historical, id: "actual-effect", effect: true },
+    { ...historical, id: "dispatching-read", status: "dispatching" },
+    { ...historical, id: "unfinished-read", receipt: undefined },
+    { ...historical, id: "failed-read", receipt: { ...historical.receipt, error: "failed" } },
+  ])
+    await server.db.put("local-user", "task-operations", operation);
+  const busy = await deploymentStatus(server.db);
+  assert.equal(busy.activeOperations, 4);
+  assert.equal(busy.readyForStoppedWriterBackup, false);
+});
