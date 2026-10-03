@@ -1013,8 +1013,8 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
       const files = result.files;
       notify(
         files.length
-          ? `${files.length} PDF download${files.length === 1 ? "" : "s"} added to Files.`
-          : "No new PDF downloads in this session.",
+          ? `${files.length} download${files.length === 1 ? "" : "s"} added to Files.`
+          : "No new downloads in this session.",
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1112,7 +1112,7 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
         )}
         {!loading && browser.status !== "closed" && (
           <Button icon={Download} busy={busy} onPress={() => void importDownloads()}>
-            Import PDF downloads
+            Import downloads
           </Button>
         )}
         {!loading && browser.status !== "closed" && (

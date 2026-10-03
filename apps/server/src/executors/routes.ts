@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
+import { consumeBrowserFile } from "../browser-files.ts";
+import { acceptDesktopFrame } from "../desktop-frames.ts";
+import { consumeDesktopText } from "../desktop-input.ts";
 import { AppError } from "../errors.ts";
 import { executorReceiptSchema, safeOperationId } from "./protocol.ts";
 import type { ExecutorRegistry } from "./registry.ts";
@@ -26,6 +29,23 @@ export function executorRoutes(registry: ExecutorRegistry) {
   });
   app.use("/:executorId/*", bodyLimit({ maxSize: 36 * 1024 * 1024 }));
   const epoch = z.number().int().positive();
+  app.post("/:executorId/desktop/input", async (c) => {
+    const id = c.req.param("executorId");
+    registry.authenticate(id, c.req.header("authorization"));
+    return c.json(await consumeDesktopText(registry, id, await c.req.json()));
+  });
+  app.post("/:executorId/browser-files/:reference/consume", async (c) => {
+    const id = c.req.param("executorId");
+    registry.authenticate(id, c.req.header("authorization"));
+    return c.json(
+      await consumeBrowserFile(registry, id, c.req.param("reference"), await c.req.json()),
+    );
+  });
+  app.post("/:executorId/desktop/frame", async (c) => {
+    const id = c.req.param("executorId");
+    registry.authenticate(id, c.req.header("authorization"));
+    return c.json(await acceptDesktopFrame(registry, id, await c.req.json()));
+  });
   for (const route of ["register", "heartbeat", "claim", "receipt", "reconcile", "artifact"]) {
     app.post(`/:executorId/${route}`, async (c) => {
       const executorId = c.req.param("executorId");

@@ -44,14 +44,14 @@ The [Jev aquarium-trip demo](docs/demos/jev-generative-ui.md) walks through a fi
 
 OpenMuse is a personal-agent application with an agent computer, visible work, and rich results. It runs its own server, task worker, and browser worker. You can inspect and change the source under the MIT license.
 
-The computer combines **persistent Chromium and an optional Linux workspace**. The agent can browse public pages, run commands in its own container, work with files, and move PDFs between the computer and the app. You can open its browser or terminal and continue the work. The guarded open profile adds Office/media files and background jobs. Payment controls use native review before execution; graphical desktops remain future work.
+The computer combines **persistent Chromium and an optional Linux workspace**. The agent can browse public pages, run commands, work with files, and move PDFs between the computer and the app. The native executor shares its own X11 desktop and headed browser with a trusted mobile viewer; **Take control** reserves GUI and DOM input together, and handback resumes the same task. See [native desktop setup and acceptance limits](docs/NATIVE-DESKTOP.md). The guarded open profile adds Office/media files and background jobs. Payment controls use native review before execution.
 
 ## Features
 
 | Surface | What runs in this alpha |
 | --- | --- |
 | **Chat** | CopilotKit headless chat with streamed AG-UI events, mailbox search and reading, send/stop in one input pill, a visible follow-up queue, retained drafts, delegated tasks, and inline email, browser, PDF, plan, and finance cards. |
-| **Agent computer** | Persistent browser profiles and takeover console; optional isolated Linux terminal, saved command receipts, editable workspace files, and PDF transfer. |
+| **Agent computer** | Persistent browser profiles and takeover console; registered native desktop with masked observations and device-bound GUI input; optional isolated Linux terminal, saved command receipts, editable workspace files, and PDF transfer. |
 | **Activity** | Durable task plans, progress, input requests, pause/resume/cancel/retry, approvals, and saved receipts. SQL leases recover interrupted work. |
 | **Ideas** | Suggestions with source evidence; edit, accept, or dismiss. Sent replies and completed matching work are excluded. |
 | **Goals & Tracking** | Goals and milestones; recurring public-page checks for changes, text availability, or USD price thresholds, with deduplicated alerts and failure backoff. |
@@ -244,3 +244,13 @@ Issues and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.
 MIT licensed. Built by CopilotKit. Its original interface and fictional assets are included. Website, email, and document content supplies evidence, not permission to act.
 
 Live actions and the append-only action log are described in [Autonomy and approvals](docs/AUTONOMY.md).
+
+
+Native browser tools share the desktop's GUI/profile authority. `search_web` returns
+bounded index sources; `browser_upload_from_workspace` binds a fresh numbered file
+input to an owned workspace copy and SHA256 (5 MiB upload limit). Download tools
+verify hashes and publish owned attachments or controlled workspace versions
+(worker store 10 MiB/file, native transfer 8 MiB, 20 downloads/session). Popup tabs
+are closed and script dialogs dismissed with safe interruption metadata. Full
+multi-window workflows and connected Lenovo/mobile spreadsheet/login acceptance
+remain operator validation; see [native desktop notes](docs/NATIVE-DESKTOP.md).

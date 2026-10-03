@@ -69,6 +69,8 @@ export interface Artifact {
   fields?: { name: string; value: string; type: "text" | "checkbox" | "unsupported" }[];
 }
 export interface BrowserSession {
+  executorId?: string;
+  desktopSessionId?: string;
   id: string;
   title: string;
   url: string;

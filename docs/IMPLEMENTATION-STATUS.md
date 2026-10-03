@@ -10,7 +10,8 @@ Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-
 | 4 — Task direction, recovery and verified completion | Reviewed and integrated; native/provider composition follows |
 | 5 — Capability-aware model fallback | Reviewed and integrated; real subscription acceptance pending |
 | 6 — Native Linux executor and file recovery | Reviewed and integrated; physical deployment acceptance pending |
-| 7–9 | Pending integration |
+| 7 — Native desktop and browser | Reviewed and integrated; physical deployment acceptance pending |
+| 8–9 | Pending integration |
 | 10 — Bounded context and long-term memory | Reviewed and integrated; physical/provider acceptance pending |
 | 11–12 | Pending integration |
 
@@ -199,3 +200,26 @@ regressions. No live subscription or physical desktop acceptance is claimed.
 
 This independent milestone was integrated ahead of 7–9 while their connected
 browser/credential corrections were still in review. See [MEMORY-CONTEXT.md](MEMORY-CONTEXT.md).
+
+## Milestone 7
+
+The registered Linux account has a managed X11 desktop, persistent Chromium profile,
+numbered browser actions and observed-frame desktop input. The phone viewer uses the
+same session with exclusive take-control/handback, stale-frame rejection and bounded
+interactive admission. Uncertain native inputs preserve their work slot and resource
+leases until inspected/reset; they are not replayed.
+
+Browser-backed source search, workspace uploads with hash checks, downloads published
+as file attachments, popup/dialog guards and visibility-aware previews are connected
+to the existing conversation, task journal and resources. Search currently uses the
+DuckDuckGo HTML index; blocked or changed layouts return an explicit unavailable state.
+Unsupported popup tabs close and script dialogs dismiss; automatic multi-window
+selection/acceptance is not implemented.
+
+Root integrated the implementer's second delivery, corrected its Docker shared-module
+layout/dependency resolution, and combined it with milestone 10. The final full suite
+passed **706/706** (142.4 seconds) on 2026-10-03. Root composition checks passed 14/14;
+Docker-layout import/backup checks passed 3/3. The delivery also passed 21/21 real
+Chromium fixtures, 18/18 Python desktop checks and server/mobile/worker type checks.
+Real login, spreadsheet editing, phone intervention and file transfer on the deployed
+Lenovo remain physical acceptance work in milestone 12.

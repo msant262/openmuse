@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { trackNativeComputerOperation } from "../computer-resource-scope.ts";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
+import { nativeGraphicalReset, nativeInspection } from "./graphical-policy.ts";
 import {
   type ArtifactPublication,
   artifactPublicationSchema,
@@ -87,6 +88,10 @@ export class ExecutorRegistry {
   }
   get authorized() {
     return Boolean(this.options.authority);
+  }
+  /** One-use private payload channels recheck the same M4 dispatch authority. */
+  async validateDispatch(owner: string, operation: ExecutorOperation) {
+    return this.authority().beforeDispatch(owner, operation);
   }
   get watchdogMs() {
     return this.options.watchdogMs ?? 40000;
@@ -331,9 +336,7 @@ export class ExecutorRegistry {
         "Native dispatch requires a trusted task context or authenticated manual-operation authorization",
         503,
       );
-    const inspection =
-      request.kind === "file" &&
-      ["list", "read", "read_binary", "stat"].includes(String(request.args.operation));
+    const inspection = nativeInspection(request.kind, request.args);
     if (request.inspection !== inspection)
       throw new AppError("Native inspection permission does not match concrete operation", 422);
     if (owner !== registration.owner)
@@ -366,7 +369,13 @@ export class ExecutorRegistry {
         throw new AppError("Native operation ID binding conflict", 409);
       return prior.operation;
     }
-    if (request.kind === "file" || request.kind === "file-version")
+    if (
+      request.kind === "file" ||
+      request.kind === "file-version" ||
+      ((request.kind === "desktop" || request.kind === "browser") &&
+        !inspection &&
+        !nativeGraphicalReset(request.kind, request.args))
+    )
       await trackNativeComputerOperation(owner, operation.id);
     await dispatch?.onDispatch?.(operation.id);
     await this.options.beforePublish?.(owner, operation);
@@ -409,7 +418,8 @@ export class ExecutorRegistry {
       const operation = delivery.operation;
       const containment =
         operation.kind === "cancel" ||
-        (operation.kind === "session" && operation.args.operation === "stop");
+        (operation.kind === "session" && operation.args.operation === "stop") ||
+        nativeGraphicalReset(operation.kind, operation.args);
       if (
         delivery.state !== "queued" ||
         operation.executorEpoch !== epoch ||

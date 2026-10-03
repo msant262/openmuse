@@ -250,7 +250,18 @@ function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError:
     );
   return (
     <WorkspaceContext.Provider
-      value={{ workspace, api, section, navigate, refresh, open, close, notify: setToast, ask }}
+      value={{
+        workspace,
+        api,
+        section,
+        navigate,
+        refresh,
+        open,
+        close,
+        notify: setToast,
+        ask,
+        viewerActive: detail?.type === "computer" || detail?.type === "browser",
+      }}
     >
       <AgentWorkspaceProvider>
         <ComputerDraftProvider>

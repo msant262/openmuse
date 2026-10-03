@@ -128,6 +128,26 @@ class Journal:
                         "SELECT envelope,receipt FROM operations WHERE json_extract(envelope,'$.kind')='command' AND json_extract(envelope,'$.executorId')=?",
                         (executor_id,))]
 
+    def graphical_cleanup(self, reset):
+        """A completed fixed-session reset proves input release, not success.
+
+        Preserve outcome_unknown and never replay an earlier action. The reset
+        has already revoked its control revision and waited for GUI/DOM cleanup.
+        """
+        with self.lock:
+            rows=self.db.execute("SELECT id,envelope,receipt FROM operations WHERE json_extract(envelope,'$.kind') IN ('desktop','browser')").fetchall()
+            for operation_id,envelope,raw in rows:
+                operation=json.loads(envelope);receipt=json.loads(raw) if raw else None
+                if (operation_id==reset["id"] or operation["executorId"]!=reset["executorId"]
+                        or any(operation["args"].get(key)!=reset["args"].get(key) for key in ("sessionId","sessionGeneration"))
+                        or operation["args"].get("controlRevision",0)>=reset["args"]["controlRevision"]
+                        or operation["args"].get("operation") in ("observe","reset","snapshot","read","inspect","agent-screenshot","screenshot","control","downloads","download")
+                        or receipt and (receipt["status"] not in ("running","outcome_unknown") or receipt.get("data",{}).get("cleanupConfirmed") is True)):
+                    continue
+                self.receipt(operation_id,{**(receipt or {}),"status":"outcome_unknown",
+                    "data":{**((receipt or {}).get("data") or {}),"cleanupConfirmed":True,"cleanupOperationId":reset["id"]},
+                    "message":"Fixed desktop session inputs were released; earlier effects remain uncertain"})
+
     def recover(self):
         with self.lock:
             rows = self.db.execute("SELECT id,receipt,envelope FROM operations").fetchall()
@@ -237,7 +257,8 @@ class Gate:
         with self.lock:
             self.watchdog()
             if containment and not (operation["kind"]=="cancel" and set(operation["args"])=={"operationId"}
-                    or operation["kind"]=="session" and operation["args"]=={"operation":"stop"}):
+                    or operation["kind"]=="session" and operation["args"]=={"operation":"stop"}
+                    or operation["kind"]=="desktop" and operation["args"].get("operation")=="reset"):
                 raise ValueError("Containment requires a fixed owned stop/cancel operation")
             if self.pause_state["paused"] and not inspection and not containment:
                 raise ValueError("Native executor is globally paused")
@@ -280,7 +301,7 @@ class NodeTransport:
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def request(self, route, body):
-        if route not in ("register", "reconcile", "heartbeat", "claim", "receipt", "artifact"):
+        if route not in ("register", "reconcile", "heartbeat", "claim", "receipt", "artifact", "desktop/frame", "desktop/input") and not re.fullmatch(r"(?:credential-grants|browser-files)/[a-f0-9-]{36}/consume",route):
             raise ValueError("Unregistered native protocol route")
         url = self.origin + "/executor/" + self.executor_id + "/" + route
         request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
@@ -355,10 +376,12 @@ def prepare_sleep(executor_id, ipc_root=Path("/run/okami-executor")):
 
 
 class Supervisor:
-    def __init__(self, config, sessions, runtime, workspace, journal, transport, helper, clock=boottime, resource_snapshot=None, budget=None):
+    def __init__(self, config, sessions, runtime, workspace, journal, transport, helper, clock=boottime, resource_snapshot=None, budget=None, desktop=None):
         from .job_runtime import HostBudget, host_snapshot
         self.config, self.sessions, self.runtime = config, sessions, runtime
         self.workspace, self.journal, self.transport, self.helper = workspace, journal, transport, helper
+        self.desktop=desktop
+        self.desktop_frozen=False
         self.resource_snapshot = resource_snapshot or (lambda host_id:host_snapshot(host_id,accounts=sessions.registry.values()))
         account = sessions.account(config["executorId"])
         self.gate = Gate(journal, self.contain, clock, account["trustMode"])
@@ -401,16 +424,18 @@ class Supervisor:
         def attempt(operation):
             try:return bool(operation())
             except Exception:return False
+        graphical = attempt(lambda:self.desktop.close_gate(self.gate.epoch)) if self.desktop and not self.desktop_frozen else True
         network = attempt(lambda:self.helper.gate(executor_id, True))
         # Attempt every managed containment step even if networking fails.
         # Never move/freeze existing personal or RDP session scopes.
         account = attempt(lambda:self.helper.contain_account(executor_id)) if hasattr(self.helper, "contain_account") else True
         jobs = attempt(lambda:self.runtime.contain(executor_id, freeze=True))
         session = attempt(lambda:self.helper.contain_session(executor_id))
+        if graphical and account and session:self.desktop_frozen=True
         if self.budget:
             for operation_id in list(self.runtime.active):
                 self.budget.freeze(operation_id)
-        return network and account and jobs and session
+        return graphical and network and account and jobs and session
 
     def readiness(self):
         account = self.sessions.preflight(self.config["executorId"])
@@ -434,8 +459,11 @@ class Supervisor:
         conflicts=self.workspace.publication_conflicts() if hasattr(self.workspace,"publication_conflicts") else []
         files={"state":"ready"}
         if conflicts:files["reason"]=str(len(conflicts))+" artifact publications conflicted; inspect the current files"
+        graphical=(self.desktop.cached_status() if self.desktop_frozen and hasattr(self.desktop,"cached_status") else
+                   {"display":absent,"capture":absent,"input":absent,"browser":absent} if self.desktop_frozen else
+                   self.desktop.status()) if self.desktop else {"display":absent,"capture":absent,"input":absent,"browser":absent}
         return {"account": account, "runtime": runtime_ready, "files": files,"publicationConflicts":conflicts,
-                "display": absent, "capture": absent, "input": absent, "browser": absent,
+                **graphical,
                 "resources": resources, "trustMode": self.gate.trust_mode,
                 "containmentGuaranteed": self.gate.trust_mode == "restricted" and not self.gate.quarantined,
                 "quarantined": self.gate.quarantined}
@@ -446,7 +474,8 @@ class Supervisor:
                  "osAccountId":str(self.sessions.account(self.config["executorId"])["uid"]), "bootId":self.boot_id,
                  "instanceId":self.instance_id,
                  "minProtocolVersion":1, "maxProtocolVersion":1,
-                 "capabilities":[{"name":"command", "version":1}, {"name":"files", "version":1}],
+                 "capabilities":[{"name":"command", "version":1}, {"name":"files", "version":1}]+(
+                    [{"name":name,"version":1} for name in ("desktop","browser.dom","browser.screenshot","browser.pointer","browser.drag")] if self.desktop else []),
                  "readiness":self.readiness()}
         response = self.transport.request("register", hello)
         if response.get("protocolVersion") != 1:
@@ -471,6 +500,8 @@ class Supervisor:
                 self.helper.resume_session(self.config["executorId"])
                 if hasattr(self.helper, "resume_account"):
                     self.helper.resume_account(self.config["executorId"])
+                self.desktop_frozen=False
+                if self.desktop:self.desktop.gate(self.gate)
                 self.helper.gate(self.config["executorId"], False)
                 if self.gate.clock() >= self.gate.deadline:
                     self.gate.close("watchdog")
@@ -518,8 +549,11 @@ class Supervisor:
         return command
 
     def perform(self, operation):
-        inspection = operation["kind"] == "file" and operation["args"].get("operation") in ("list","read","read_binary","stat")
-        containment=operation["kind"]=="cancel" or operation["kind"]=="session" and operation["args"].get("operation")=="stop"
+        inspection = (operation["kind"] == "file" and operation["args"].get("operation") in ("list","read","read_binary","stat")
+                      or operation["kind"]=="desktop" and operation["args"].get("operation")=="observe"
+                      or operation["kind"]=="browser" and operation["args"].get("operation") in ("snapshot","read","inspect","agent-screenshot","screenshot","control","downloads","download"))
+        containment=(operation["kind"]=="cancel" or operation["kind"]=="session" and operation["args"].get("operation")=="stop"
+                     or operation["kind"]=="desktop" and operation["args"].get("operation")=="reset")
         if not self.journal.receive(operation):
             return  # Same-ID response retransmission is a receipt lookup, never execution.
         started = False
@@ -551,6 +585,45 @@ class Supervisor:
                     self.journal.receipt(operation["id"], {"status":"running", "progress":{"completedBytes":done,"totalBytes":total}})
                 data = self.workspace.handle(operation, cancelled=lambda: not self.gate.watchdog() and not inspection, progress=progress,
                                              publication_guard=lambda:self.gate.local_mutation(operation))
+            elif operation["kind"] in ("desktop","browser"):
+                if not self.desktop:raise ValueError("Registered graphical adapter is unavailable")
+                if self.desktop_frozen:raise ValueError("Desktop account is contained; inspect its last frame or resume explicitly")
+                self.desktop.gate(self.gate)
+                # Resolve one-use values only after journaling the safe envelope.
+                # Never write the ephemeral copy back to SQLite or log it.
+                ephemeral=operation
+                if operation["kind"]=="desktop" and operation["args"].get("action",{}).get("textReference"):
+                    import hashlib
+                    action=operation["args"]["action"]
+                    payload=self.transport.request("desktop/input",{"epoch":self.gate.epoch,"operationId":operation["id"],"textReference":action["textReference"],"sessionId":operation["args"]["sessionId"],"sessionGeneration":operation["args"]["sessionGeneration"]})
+                    text=payload.get("text")
+                    if not isinstance(text,str) or hashlib.sha256(text.encode()).hexdigest()!=action["textHash"]:raise ValueError("Private desktop input digest changed")
+                    ephemeral={**operation,"args":{**operation["args"],"action":{"action":"type","text":text}}}
+                if operation["kind"]=="browser" and operation["args"].get("operation")=="credentials":
+                    body=operation["args"]["body"]
+                    scope={"epoch":self.gate.epoch,"operationId":operation["id"],"sessionId":operation["args"]["browserSessionId"],"desktopSessionId":operation["args"]["sessionId"],"sessionGeneration":operation["args"]["sessionGeneration"],"origin":body["origin"]}
+                    if body.get("challengeId"):scope["challengeId"]=body["challengeId"]
+                    payload=self.transport.request("credential-grants/"+body["grantId"]+"/consume",scope)
+                    ephemeral={**operation,"args":{**operation["args"],"body":payload}}
+                if operation["kind"]=="browser" and operation["args"].get("operation")=="upload":
+                    import hashlib, base64
+                    body=operation["args"]["body"]
+                    payload=self.transport.request("browser-files/"+body["fileReference"]+"/consume",{"epoch":self.gate.epoch,"operationId":operation["id"],"sessionId":operation["args"]["browserSessionId"],"sessionGeneration":operation["args"]["sessionGeneration"]})
+                    blob=base64.b64decode(payload.get("base64",""),validate=True)
+                    if len(blob)!=body["size"] or hashlib.sha256(blob).hexdigest()!=body["sha256"] or any(payload.get(key)!=body[key] for key in ("artifactId","name","mimeType","snapshotId","element")):raise ValueError("Private browser upload binding changed")
+                    ephemeral={**operation,"args":{**operation["args"],"body":payload}}
+                self.gate.check(operation,inspection,containment)
+                started=True
+                data=self.desktop.perform(ephemeral)
+                self.gate.check(operation,inspection,containment)
+                if operation["kind"]=="desktop" and operation["args"].get("operation")=="reset" and data.get("cleanupConfirmed") is True:
+                    self.journal.graphical_cleanup(operation)
+                if "image" in data:
+                    frame={key:data[key] for key in ("image","mimeType","width","height","sequence","frameId","imageHash","observedAt") if key in data}
+                    self.transport.request("desktop/frame",{**frame,"epoch":self.gate.epoch,"operationId":operation["id"],
+                        "sessionId":operation["args"]["sessionId"],"sessionGeneration":operation["args"]["sessionGeneration"]})
+                    data={key:value for key,value in data.items() if key!="image"}
+                    data["imagePublished"]=True
             elif operation["kind"] == "session":
                 if operation["args"] not in ({"operation":"start"},{"operation":"stop"}):
                     raise ValueError("Session operation must be the registered start or stop")
@@ -576,10 +649,13 @@ class Supervisor:
             if reserved and not started:
                 resource_budget=operation["resourceBudget"]
                 self.budget.release(operation["id"],self.config["executorId"],resource_budget["memoryBytes"],resource_budget["heavy"])
+            if operation["kind"] in ("desktop","browser") and hasattr(error,"dispatched"):started=error.dispatched
             status = "outcome_unknown" if started else "rejected_not_dispatched"
-            message = type(error).__name__ + ": " + str(error)[:500]
-            local_cleanup=not started or operation["kind"] in ("file","file-version")
+            graphical=operation["kind"] in ("desktop","browser")
+            message = "Native graphical operation could not be confirmed; inspect before repeating input" if graphical else type(error).__name__ + ": " + str(error)[:500]
+            local_cleanup=not started or operation["kind"] in ("file","file-version") or graphical and getattr(error,"cleanup_confirmed",False)
             data = self.command_receipt(operation, status, {"message":message,"cleanupConfirmed":local_cleanup}) if operation["kind"] == "command" else {"cleanupConfirmed":local_cleanup}
+            if graphical:data["code"]=getattr(error,"code","DESKTOP_FAILED")
             self.journal.receipt(operation["id"], {"status":status, "data":data, "message":message})
 
     def release(self, operation_id):
@@ -620,7 +696,10 @@ class Supervisor:
             self.connect()
             return
         for operation in response.get("operations", []):
-            self.perform(operation)
+            if operation["kind"] in ("desktop","browser"):
+                thread=threading.Thread(target=self.perform,args=(operation,),daemon=True)
+                self.threads[operation["id"]]=thread;thread.start()
+            else:self.perform(operation)
 
     def heartbeat(self):
         while not self.stop_event.wait(15):
@@ -636,6 +715,10 @@ class Supervisor:
     def watchdog(self):
         while not self.stop_event.wait(.5):
             self.gate.watchdog()
+            if self.desktop and self.gate.epoch and self.gate.open and not self.desktop_frozen:
+                try:self.desktop.gate(self.gate)
+                except Exception:self.gate.close("desktop-gate-lost")
+            self.threads={key:thread for key,thread in self.threads.items() if thread.is_alive()}
 
     def run(self):
         for target in (self.heartbeat, self.watchdog):
@@ -685,9 +768,11 @@ def main():
     home_anchor=open_directory(account["home"])
     budget = HostBudget(host_snapshot(config["hostId"])["memoryTotalBytes"], config.get("reserveBytes",4*1024**3),
         state_path=Path("/var/lib/okami-executor") / ("host-" + config["hostId"] + "-resources.sqlite"))
+    from desktop.client import DesktopClient
+    desktop=DesktopClient(config["executorId"],account) if account.get("desktop") else None
     supervisor = Supervisor(config, sessions, JobRuntime(sessions, state_root=state_root / "jobs",workspace_fd=workspace.root_fd,home_fd=home_anchor,executor_id=config["executorId"]), workspace,
                             Journal(state_root / "journal.sqlite"),
-                            NodeTransport(config["serverOrigin"], config["executorId"], credential), helper, budget=budget)
+                            NodeTransport(config["serverOrigin"], config["executorId"], credential), helper, budget=budget,desktop=desktop)
     control = PrivateControl(supervisor, Path("/run/okami-executor") / (config["executorId"] + ".sock"))
     threading.Thread(target=control.serve, daemon=True).start()
     import signal

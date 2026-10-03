@@ -14,6 +14,8 @@ import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { browserAddress } from "./browser-address";
 import { useComputerDraft } from "./computer-drafts";
 import { LinuxWorkspace } from "./computer-workspace";
+import { DesktopViewer } from "./desktop";
+import { useInlinePreview } from "./preview";
 import { Button, Card, colors, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -57,7 +59,9 @@ export function ComputerEntry() {
   );
 }
 export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
+  const previewVisible = useInlinePreview();
   const { open } = useWorkspace();
+  const [, setTab] = useComputerDraft("tab");
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     setFailed(false);
@@ -81,7 +85,7 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
           </Text>
         </View>
       </View>
-      {browser.previewUrl && browser.status === "active" && !failed ? (
+      {previewVisible && browser.previewUrl && browser.status === "active" && !failed ? (
         <Image
           accessibilityLabel={`Browser preview: ${browser.title}`}
           source={{ uri: browser.previewUrl }}
@@ -105,7 +109,14 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
           </Text>
         </View>
       )}
-      <Button onPress={() => open({ type: "browser", browser })}>
+      <Button
+        onPress={() => {
+          if (browser.desktopSessionId) {
+            setTab("Desktop");
+            open({ type: "computer" });
+          } else open({ type: "browser", browser });
+        }}
+      >
         {browser.status === "closed"
           ? "Reopen browser"
           : browser.status === "error"
@@ -176,21 +187,30 @@ export function ComputerSheet() {
           </View>
         )}
         <View style={[s.row, { gap: 8 }]}>
-          {(["Browser", "Terminal", "Files"] as const).map((item) => (
+          {(["Desktop", "Browser", "Terminal", "Files"] as const).map((item) => (
             <Button
               key={item}
               primary={tab === item}
-              icon={item === "Browser" ? Globe2 : item === "Terminal" ? Terminal : FolderOpen}
+              icon={
+                item === "Desktop"
+                  ? Monitor
+                  : item === "Browser"
+                    ? Globe2
+                    : item === "Terminal"
+                      ? Terminal
+                      : FolderOpen
+              }
               onPress={() => setTab(item)}
             >
               {item}
             </Button>
           ))}
         </View>
-        <View style={{ display: tab === "Browser" ? "none" : "flex" }}>
+        <View style={{ display: tab === "Browser" || tab === "Desktop" ? "none" : "flex" }}>
           <LinuxWorkspace tab={tab === "Files" ? "Files" : "Terminal"} />
         </View>
         <ErrorNotice error={error} />
+        {tab === "Desktop" && <DesktopViewer />}
         {tab === "Browser" ? (
           <>
             <View>

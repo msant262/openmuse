@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { ActivityIndicator, AppState, Image, Text, View } from "react-native";
 import { z } from "zod";
 import type { ActionProposal, BrowserSession } from "../../../packages/domain/src";
+import { useInlinePreview } from "./preview";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -46,6 +47,7 @@ export function BrowserToolCard({
 }) {
   const { api, workspace, open } = useWorkspace();
   const { active } = useContext(BrowserRunContext);
+  const previewVisible = useInlinePreview(active);
   const working = loading && active;
   const value = resultValue(result);
   const observation = observationSchema.safeParse(value);
@@ -61,7 +63,7 @@ export function BrowserToolCard({
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !previewVisible) return;
     let active = true;
     async function connect() {
       setError("");
@@ -83,12 +85,12 @@ export function BrowserToolCard({
       active = false;
       subscription.remove();
     };
-  }, [api, sessionId, current?.updatedAt, retry]);
+  }, [api, sessionId, current?.updatedAt, retry, previewVisible]);
 
   const visited = observation.success ? observation.data : undefined;
   // A later turn can reuse the same browser. Never label that new page as an old source.
   const preview =
-    browser?.status === "active" && browser.url === visited?.url && !previewFailed
+    previewVisible && browser?.status === "active" && browser.url === visited?.url && !previewFailed
       ? browser.previewUrl
       : undefined;
   const failure = toolError.success

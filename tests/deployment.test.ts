@@ -111,11 +111,9 @@ test("root browser image layout loads actual worker/shared modules with native s
     await cp("apps/worker/src", join(worker, "src"), { recursive: true });
     await cp("apps/worker/package.json", join(worker, "package.json"));
     await cp("package.json", join(directory, "package.json"));
-    await mkdir(join(directory, "packages/domain/src"), { recursive: true });
-    await cp(
-      "packages/domain/src/browser-payment.ts",
-      join(directory, "packages/domain/src/browser-payment.ts"),
-    );
+    await mkdir(join(directory, "packages/domain"), { recursive: true });
+    await cp("packages/domain/src", join(directory, "packages/domain/src"), { recursive: true });
+    await symlink(resolve("apps/worker/node_modules"), join(directory, "node_modules"));
     await symlink(resolve("apps/worker/node_modules"), join(worker, "node_modules"));
     execFileSync(
       process.execPath,
@@ -130,7 +128,8 @@ test("root browser image layout loads actual worker/shared modules with native s
     const dockerfile = await readFile("apps/worker/Dockerfile", "utf8");
     assert(
       dockerfile.includes("apps/worker/src ./src") &&
-        dockerfile.includes("/app/packages/domain/src/browser-payment.ts"),
+        dockerfile.includes("packages/domain/src /app/packages/domain/src") &&
+        dockerfile.includes("ln -s /app/apps/worker/node_modules /app/node_modules"),
     );
     assert(dockerfile.includes("--experimental-strip-types"));
     const ignore = await readFile("apps/computer/.dockerignore", "utf8");

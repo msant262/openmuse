@@ -1,10 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { attachmentMime } from "../../../packages/domain/src/attachments.ts";
+import { browserUploadLimit } from "../../../packages/domain/src/browser-file.ts";
 import {
   type BrowserPaymentBinding,
   signBrowserAuthorization,
 } from "../../../packages/domain/src/browser-payment.ts";
 import type { BrowserSession } from "../../../packages/domain/src/index.ts";
+import { type SearchInput, searchResultSchema } from "../../../packages/domain/src/search.ts";
 import { ActionLog, auditTarget } from "./action-log.ts";
 import { approvalPolicy } from "./action-policy.ts";
 import type { ActionService } from "./actions.ts";
@@ -12,8 +15,15 @@ import type { Auth } from "./auth.ts";
 import { BrowserAssets } from "./browser-assets.ts";
 import { browserConsole } from "./browser-console.ts";
 import { BrowserError, browserActionSchema, snapshotSchema } from "./browser-contract.ts";
+import type { ComputerBackend } from "./computer-contract.ts";
 import type { Config } from "./config.ts";
+import {
+  type NativeCredentialPlan,
+  type TrustedCredentialInput,
+  trustedCredentialResultSchema,
+} from "./credential-browser-contract.ts";
 import type { Store } from "./db.ts";
+import type { DesktopService } from "./desktop-service.ts";
 import { ResourceBusyError, ResourceLeases } from "./engine/resource-leases.ts";
 import { RuntimePause } from "./engine/runtime-pause.ts";
 import { authorizeTaskEffect } from "./engine/task-journal.ts";
@@ -34,6 +44,20 @@ const readSchema = z.object({
   text: z.string().max(100_000),
   truncated: z.boolean(),
 });
+const downloadMetadataSchema = z.object({
+  id: z.uuid(),
+  name: z.string().max(180),
+  size: z
+    .number()
+    .int()
+    .min(1)
+    .max(10 * 1024 * 1024),
+  mimeType: z.string().max(128),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+});
 const failureSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -44,6 +68,7 @@ const failureSchema = z.object({
 type ChatBrowser = { id: string; sessionId: string };
 
 export class BrowserService {
+  private native?: DesktopService;
   private actions?: ActionService;
   private readonly log: ActionLog;
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -67,6 +92,13 @@ export class BrowserService {
     this.actions = actions;
     actions.registerExternal("browser.act", async (owner, raw, proposal, beforeDispatch) => {
       const { sessionId, binding } = raw as { sessionId: string; binding: BrowserPaymentBinding };
+      if (this.native)
+        throw new BrowserError(
+          "APPROVAL_FAILED",
+          "Native browser reviewed money adapter is unavailable",
+          409,
+          sessionId,
+        );
       await this.runtimePause.assertResumed(owner);
       const leaseOwner = `browser-review:${proposal.id}`;
       const requests = [
@@ -143,6 +175,59 @@ export class BrowserService {
       }
     });
   }
+  configureNative(desktop: DesktopService) {
+    this.native = desktop;
+  }
+  nativeSession(owner: string) {
+    return this.native?.session(owner);
+  }
+  isNativeSession(owner: string, id: string) {
+    return this.usesNative(owner, id);
+  }
+  private async usesNative(owner: string, id?: string) {
+    if (!this.native) return false;
+    if (!id) return true;
+    const session = await this.db.get<BrowserSession>(owner, "browsers", id);
+    return !session || Boolean(session.desktopSessionId);
+  }
+  /** Internal credential orchestrator only; call while runAutomated holds its
+   * exact profile/desktop lease. No typed values enter action logs or journal. */
+  async credentials(
+    owner: string,
+    id: string,
+    input: TrustedCredentialInput | NativeCredentialPlan,
+    signal?: AbortSignal,
+  ) {
+    await this.get(owner, id);
+    if (this.native && (await this.usesNative(owner, id))) {
+      if ("fields" in input)
+        throw new AppError("Native credentials require a secret-free vault reference", 403);
+      return this.native.credentials(owner, id, input, signal);
+    }
+    if (!("fields" in input))
+      throw new AppError("VPS credential fields must be resolved by the trusted broker", 503);
+    return trustedCredentialResultSchema.parse(
+      await (await this.ownedRequest(owner, `/sessions/${id}/credentials`, input, signal)).json(),
+    );
+  }
+  async submitCredentialChallenge(
+    owner: string,
+    id: string,
+    input: TrustedCredentialInput | NativeCredentialPlan,
+    signal?: AbortSignal,
+  ) {
+    if (!input.challenge)
+      throw new AppError("Trusted credential challenge binding is required", 403);
+    if (await this.usesNative(owner, id)) return this.credentials(owner, id, input, signal);
+    await this.get(owner, id);
+    if (!("fields" in input))
+      throw new AppError("VPS challenge code requires trusted ephemeral input", 503);
+    return trustedCredentialResultSchema.parse(
+      await (
+        await this.ownedRequest(owner, `/sessions/${id}/credential-challenge`, input, signal)
+      ).json(),
+    );
+  }
   private ownedRequest(owner: string, path: string, body?: unknown, signal?: AbortSignal) {
     const endpoint = path.split("/")[3] ?? "open";
     const human =
@@ -157,11 +242,31 @@ export class BrowserService {
         summary: `Browser ${endpoint}`,
         actor: human ? "human" : "agent",
       },
-      () => this.request(path, body, signal),
+      async () => {
+        const id =
+          /^\/sessions\/([^/]+)\//.exec(path)?.[1] ??
+          (body && typeof body === "object" && "id" in body && typeof body.id === "string"
+            ? body.id
+            : undefined);
+        return this.native && (await this.usesNative(owner, id))
+          ? this.native.browserRequest(owner, path, body, signal)
+          : this.request(path, body, signal);
+      },
     );
   }
   /** Whether the configured worker answers its health check, cached briefly for snapshots. */
   reachable(): Promise<boolean> {
+    if (this.native)
+      return this.native
+        .session(
+          this.config.nativeExecutors?.find(
+            (item) => item.executorId === this.config.nativeExecutorId,
+          )?.owner ?? "local-user",
+        )
+        .then(
+          () => true,
+          () => false,
+        );
     if (!this.config.workerUrl || !this.config.workerToken) return Promise.resolve(false);
     const now = this.now();
     if (this.health && now - this.health.checkedAt < 15_000) return this.health.reachable;
@@ -202,7 +307,12 @@ export class BrowserService {
       });
     } catch {
       signal?.throwIfAborted();
-      if (path.endsWith("/reviewed-act"))
+      if (
+        path.endsWith("/upload") ||
+        path.endsWith("/reviewed-act") ||
+        path.endsWith("/credentials") ||
+        path.endsWith("/credential-challenge")
+      )
         throw new BrowserError(
           "OUTCOME_UNKNOWN",
           "The reviewed browser response was lost. Check the site before preparing another action.",
@@ -235,6 +345,8 @@ export class BrowserService {
     return value;
   }
   decorate(owner: string, session: BrowserSession) {
+    if (this.native && session.desktopSessionId)
+      return { ...session, consoleUrl: undefined, previewUrl: undefined };
     return {
       ...session,
       consoleUrl: this.auth.sign(owner, `/api/browsers/${session.id}/console`),
@@ -242,7 +354,14 @@ export class BrowserService {
     };
   }
   private async save(owner: string, payload: unknown, expectedId: string) {
-    const session = sessionSchema.parse(payload);
+    const parsed = sessionSchema.parse(payload);
+    const native =
+      this.native && (await this.usesNative(owner, expectedId))
+        ? await this.native.session(owner)
+        : undefined;
+    const session = native
+      ? { ...parsed, executorId: native.executorId, desktopSessionId: native.id }
+      : parsed;
     if (session.id !== expectedId)
       throw new AppError("Browser worker returned a different session", 502);
     await this.db.put(owner, "browsers", session);
@@ -327,6 +446,39 @@ export class BrowserService {
       leases: import("../../../packages/domain/src/runtime.ts").ResourceLease[],
     ) => void,
   ): Promise<T> {
+    if (this.native && (await this.usesNative(owner, sessionId))) {
+      const desktop = await this.native.session(owner);
+      if (sessionId && sessionId !== desktop.browserSessionId)
+        throw new BrowserError(
+          "INVALID_SESSION",
+          "Use this account's registered persistent native browser",
+          409,
+        );
+      const id = desktop.browserSessionId;
+      const saved = await this.db.get<BrowserSession>(owner, "browsers", id);
+      await this.db.insertIfAbsent(owner, "browsers", {
+        id,
+        title: "Native personal browser",
+        url: url ?? "https://example.com/",
+        status: "idle",
+        control: "agent",
+        executorId: desktop.executorId,
+        desktopSessionId: desktop.id,
+        updatedAt: new Date().toISOString(),
+      });
+      return this.native.run(
+        owner,
+        desktop,
+        effect || Boolean(url) || saved?.status !== "active",
+        async () => {
+          await guard?.();
+          const active = await this.agentSession(owner, id, url, signal);
+          await guard?.();
+          return operation(active);
+        },
+        signal,
+      );
+    }
     const pause = await this.runtimePause.get(owner);
     if (effect) await this.runtimePause.assertResumed(owner);
     const id = sessionId ?? (await this.defaultProfile(owner)).sessionId;
@@ -451,6 +603,8 @@ export class BrowserService {
     });
   }
   private async defaultProfile(owner: string, migratedId?: string): Promise<ChatBrowser> {
+    if (this.native)
+      return { id: "personal", sessionId: (await this.native.session(owner)).browserSessionId };
     const profile =
       (await this.db.get<ChatBrowser>(owner, "browser-default", "personal")) ??
       (await this.db.insertIfAbsent(owner, "browser-default", {
@@ -642,8 +796,8 @@ export class BrowserService {
         url: z.url(),
         image: z.string().max(1_398_104),
         mimeType: z.literal("image/jpeg"),
-        width: z.literal(1280),
-        height: z.literal(800),
+        width: z.number().int().min(1).max(3840),
+        height: z.number().int().min(1).max(2160),
       })
       .parse(
         await (
@@ -688,16 +842,179 @@ export class BrowserService {
       );
     });
   }
-  async imports(owner: string, id: string) {
+  async uploadFromWorkspace(
+    owner: string,
+    id: string,
+    input: { snapshotId: string; element: number; path: string; expectedSha256: string },
+    computer: ComputerBackend,
+    signal?: AbortSignal,
+  ) {
     await this.get(owner, id);
-    const { downloads, failures } = z
+    signal?.throwIfAborted();
+    const file = await computer.fileBytes(owner, input.path);
+    if (!file.bytes.length || file.bytes.length > browserUploadLimit)
+      throw new BrowserError(
+        "UPLOAD_TOO_LARGE",
+        "Browser uploads must be between 1 byte and 5 MiB.",
+        413,
+        id,
+      );
+    const sha256 = createHash("sha256").update(file.bytes).digest("hex");
+    if (sha256 !== input.expectedSha256)
+      throw new BrowserError(
+        "STALE_FILE",
+        "Workspace file changed; inspect its current hash before uploading.",
+        409,
+        id,
+      );
+    signal?.throwIfAborted();
+    const source = await this.files.importAttachment(
+      owner,
+      file.name,
+      file.bytes,
+      `Workspace upload: ${input.path}`,
+    );
+    const attachment = await this.files.reference(owner, source.id);
+    signal?.throwIfAborted();
+    return this.serial(id, async () => {
+      const raw = await (
+        await this.ownedRequest(
+          owner,
+          `/sessions/${id}/upload`,
+          {
+            artifactId: source.id,
+            snapshotId: input.snapshotId,
+            element: input.element,
+            name: file.name,
+            mimeType: attachmentMime(file.name),
+            size: file.bytes.length,
+            sha256,
+            base64: Buffer.from(file.bytes).toString("base64"),
+          },
+          signal,
+        )
+      ).json();
+      const snapshot = snapshotSchema.parse(raw);
+      if (snapshot.sessionId !== id)
+        throw new BrowserError("INVALID_SESSION", "Upload returned another browser.", 409, id);
+      await this.save(
+        owner,
+        {
+          id,
+          title: snapshot.title,
+          url: snapshot.url,
+          status: "active",
+          control: snapshot.control,
+          updatedAt: new Date().toISOString(),
+        },
+        id,
+      );
+      return {
+        ...snapshot,
+        uploaded: { name: file.name, size: file.bytes.length, sha256 },
+        attachment,
+        completionVerified: false,
+      };
+    });
+  }
+  async publishDownloads(owner: string, id: string, signal?: AbortSignal) {
+    const result = await this.imports(owner, id, signal);
+    return {
+      attachments: await Promise.all(
+        result.files.map((file) => this.files.reference(owner, file.id)),
+      ),
+      failures: result.failures,
+      pending: result.pending,
+    };
+  }
+  async downloadToWorkspace(
+    owner: string,
+    id: string,
+    downloadId: string,
+    path: string,
+    computer: ComputerBackend,
+    signal?: AbortSignal,
+  ) {
+    const file = await this.downloadBytes(owner, id, downloadId, signal);
+    signal?.throwIfAborted();
+    const written = await computer.writeBytes(owner, path, file.bytes);
+    signal?.throwIfAborted();
+    const published = await this.files.importAttachment(
+      owner,
+      file.metadata.name,
+      file.bytes,
+      `Browser: ${id}`,
+      file.metadata.mimeType,
+    );
+    return {
+      ...written,
+      downloadId,
+      sha256: file.sha256,
+      attachment: await this.files.reference(owner, published.id),
+    };
+  }
+  private async downloadBytes(
+    owner: string,
+    id: string,
+    downloadId: string,
+    signal?: AbortSignal,
+    known?: z.infer<typeof downloadMetadataSchema>,
+  ) {
+    await this.get(owner, id);
+    z.uuid().parse(downloadId);
+    let metadata = known;
+    if (!metadata) {
+      const listing = await (
+        await this.ownedRequest(owner, `/sessions/${id}/downloads`, undefined, signal)
+      ).json();
+      metadata = z
+        .object({ downloads: z.array(downloadMetadataSchema) })
+        .parse(listing)
+        .downloads.find((item) => item.id === downloadId);
+    }
+    if (!metadata) throw new AppError("Download not found in this owned browser", 404);
+    const response = await this.ownedRequest(
+      owner,
+      `/sessions/${id}/downloads/${downloadId}`,
+      undefined,
+      signal,
+    );
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    if (
+      bytes.length !== metadata.size ||
+      bytes.length > 10 * 1024 * 1024 ||
+      (metadata.sha256 && metadata.sha256 !== sha256)
+    )
+      throw new AppError("Download size or digest changed before publication", 409);
+    return { metadata, bytes, sha256 };
+  }
+  async search(owner: string, id: string, input: SearchInput, signal?: AbortSignal) {
+    return this.serial(id, async () => {
+      const response = await this.ownedRequest(owner, `/sessions/${id}/search`, input, signal);
+      const { cleanupConfirmed: _cleanup, ...body } = (await response.json()) as Record<
+        string,
+        unknown
+      >;
+      const result = searchResultSchema.parse(body);
+      if (result.provenance.sessionId !== id)
+        throw new AppError("Search result belongs to another session", 502);
+      return result;
+    });
+  }
+  async imports(owner: string, id: string, signal?: AbortSignal) {
+    await this.get(owner, id);
+    const { downloads, failures, pending } = z
       .object({
-        downloads: z.array(
-          z.object({ id: z.string(), name: z.string(), size: z.number(), mimeType: z.string() }),
-        ),
+        downloads: z.array(downloadMetadataSchema),
         failures: z.array(failureSchema),
+        pending: z.number().int().min(0).max(20).default(0),
       })
-      .parse(await (await this.ownedRequest(owner, `/sessions/${id}/downloads`)).json());
+      .parse(
+        await (
+          await this.ownedRequest(owner, `/sessions/${id}/downloads`, undefined, signal)
+        ).json(),
+      );
     const saved = [];
     for (const download of downloads) {
       const existing = await this.db.get<{ fileId: string }>(
@@ -709,20 +1026,18 @@ export class BrowserService {
         saved.push(this.files.signed(owner, await this.files.get(owner, existing.fileId)));
         continue;
       }
-      const response = await this.ownedRequest(
-        owner,
-        `/sessions/${id}/downloads/${encodeURIComponent(download.id)}`,
-      );
-      const file = await this.files.import(
+      const transfer = await this.downloadBytes(owner, id, download.id, signal, download);
+      const file = await this.files.importAttachment(
         owner,
         download.name,
-        new Uint8Array(await response.arrayBuffer()),
+        transfer.bytes,
         `Browser · ${id}`,
+        download.mimeType,
       );
       await this.db.put(owner, "browser-downloads", { id: download.id, fileId: file.id });
       saved.push(file);
     }
-    return { files: saved, failures };
+    return { files: saved, failures, pending };
   }
   console(owner: string, id: string) {
     return browserConsole(this.auth.sign(owner, `/api/browsers/${id}/preview`));

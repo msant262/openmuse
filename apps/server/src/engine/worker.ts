@@ -3,6 +3,7 @@ import type { AgentTask, RunEvent } from "../../../../packages/domain/src/agent.
 import type { ResourceLease, ResourceRequest } from "../../../../packages/domain/src/runtime.ts";
 import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Store } from "../db.ts";
+import { AppError } from "../errors.ts";
 import { backgroundFailure } from "../log.ts";
 import { ResourceBusyError, ResourceLeases } from "./resource-leases.ts";
 import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
@@ -103,6 +104,38 @@ export class TaskWorker {
   abort(taskId: string, cause: TaskAbortCause = "explicit_cancel") {
     this.active.get(taskId)?.abort(new TaskAbortError(cause));
   }
+  /** Authenticated viewer lifecycle uses the same task lease/heartbeat/cleanup
+   * machinery, with independent interactive admission and no model inference. */
+  async runInteractive(owner: string, task: AgentTask, execute: TaskHandler): Promise<void> {
+    const viewer = await this.db.get<{ deviceId: string; closed: boolean }>(
+      owner,
+      "desktop-viewer-sessions",
+      task.id,
+    );
+    const device = viewer
+      ? await this.db.get<{ owner: string; revokedAt: number | null }>(
+          "system",
+          "device-sessions",
+          viewer.deviceId,
+        )
+      : undefined;
+    if (!viewer || viewer.closed || device?.owner !== owner || device.revokedAt !== null)
+      throw new AppError(
+        "Interactive admission requires a trusted authenticated desktop viewer",
+        403,
+      );
+    if (this.stopping || this.active.has(task.id) || this.inFlight.has(task.id))
+      throw new AppError("Interactive control lifecycle is unavailable or already active", 409);
+    if (!(await this.admission.claim(task.id, "interactive", task.id)))
+      throw new AppError("Interactive control admission is unavailable", 409);
+    const pending = this.run(owner, task, execute, true);
+    this.inFlight.set(task.id, pending);
+    try {
+      await pending;
+    } finally {
+      if (this.inFlight.get(task.id) === pending) this.inFlight.delete(task.id);
+    }
+  }
   tick(): Promise<void> {
     const pending = this.tickInternal();
     this.pendingTicks.add(pending);
@@ -127,6 +160,7 @@ export class TaskWorker {
       for (const record of due) {
         if (this.stopping) break;
         const task = record.value;
+        if (await this.db.get(record.owner, "desktop-viewer-sessions", task.id)) continue;
         if (this.inFlight.has(task.id) || this.active.has(task.id)) continue;
         if (task.status === "paused") {
           if (
@@ -195,7 +229,12 @@ export class TaskWorker {
       deadlineA - deadlineB || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
     );
   }
-  private async run(owner: string, previous: AgentTask) {
+  private async run(
+    owner: string,
+    previous: AgentTask,
+    execute = this.execute,
+    inspectionLifecycle = false,
+  ) {
     if (this.stopping) {
       await this.admission.release(previous.id);
       return;
@@ -235,7 +274,7 @@ export class TaskWorker {
       const latest = await this.db.get<AgentTask>(owner, "tasks", taskId);
       if (controller.signal.aborted) throw controller.signal.reason;
       if (latest?.leaseId !== leaseId || latest.status !== "running") throw new LostLeaseError();
-      await this.pause.assertResumed(owner);
+      if (!inspectionLifecycle) await this.pause.assertResumed(owner);
     };
     const acquireResources = async (requests: ResourceRequest[]) => {
       const leases = await this.resources.acquire(owner, taskId, requests);
@@ -355,7 +394,7 @@ export class TaskWorker {
         startedAt,
         status: "running",
       });
-      const result = await this.execute(owner, task, {
+      const result = await execute(owner, task, {
         signal: controller.signal,
         guard,
         checkpoint,

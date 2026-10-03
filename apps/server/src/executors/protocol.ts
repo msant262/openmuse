@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { desktopSessionSchema } from "../../../../packages/domain/src/desktop.ts";
 
 export const EXECUTOR_PROTOCOL = { min: 1, max: 1 } as const;
 export const safeExecutorId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
@@ -45,6 +46,7 @@ export const artifactPublicationConflictSchema = z.object({
   observedAt: z.number().nonnegative(),
 });
 export const executorReadinessSchema = z.object({
+  desktopSession: desktopSessionSchema.optional(),
   account: readinessCheckSchema.default(unavailable),
   runtime: readinessCheckSchema.default(unavailable),
   files: readinessCheckSchema.default(unavailable),

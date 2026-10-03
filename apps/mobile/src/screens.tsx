@@ -42,6 +42,7 @@ import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { ActionLogScreen } from "./action-log-screen";
 import { API_URL } from "./api";
 import { localDateTime, zonedInstant } from "./date-time";
+import { useInlinePreview } from "./preview";
 import {
   Button,
   Card,
@@ -847,6 +848,7 @@ export function CalendarScreen() {
   );
 }
 export function BrowserScreen() {
+  const previewVisible = useInlinePreview();
   const { workspace: w, api, refresh, open } = useWorkspace();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -925,7 +927,7 @@ export function BrowserScreen() {
                 <Chip tint={b.status === "active" ? colors.green : colors.canvas}>{b.status}</Chip>
                 <ArrowUpRight size={17} color={colors.muted} />
               </View>
-              {!!b.previewUrl && (
+              {previewVisible && !!b.previewUrl && (
                 <Image
                   source={{ uri: api.url(b.previewUrl) }}
                   resizeMode="cover"

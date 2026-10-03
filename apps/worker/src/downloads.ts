@@ -1,17 +1,20 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { Download } from "playwright";
+import { attachmentMime, rasterMime } from "../../../packages/domain/src/attachments.ts";
 
 export const MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024;
 export interface PdfDownload {
   id: string;
   name: string;
   size: number;
-  mimeType: "application/pdf";
+  mimeType: string;
+  sha256?: string;
+  storageExtension?: "pdf" | "bin";
 }
 export interface DownloadFailure {
   id: string;
@@ -35,13 +38,37 @@ export async function readDownloadFailures(directory: string, recoverInterrupted
     if (!name.endsWith(".json")) continue;
     const path = join(folder, name);
     const outcome = JSON.parse(await readFile(path, "utf8")) as Outcome;
-    if (outcome.status === "pending" && recoverInterrupted) {
-      if (await stat(join(directory, "downloads", `${outcome.id}.json`)).catch(() => null)) {
+    if (recoverInterrupted) {
+      // Journal identity is also the cleanup boundary. Never derive a removal
+      // path from an unchecked or mismatched local record.
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(outcome.id) ||
+        name !== `${outcome.id}.json` ||
+        !["pending", "failed"].includes(outcome.status)
+      )
+        throw new Error("Invalid download recovery record");
+      const metadataPath = join(directory, "downloads", `${outcome.id}.json`);
+      const metadata = await lstat(metadataPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (metadata) {
+        if (!metadata.isFile()) throw new Error("Download metadata is not a regular file");
+        // Metadata publication is the commit point. Even an unreadable or
+        // damaged manifest is not permission to delete its published artifact.
         await rm(path, { force: true });
         continue;
       }
-      outcome.status = "failed";
-      await persist(path, outcome);
+      if (outcome.status === "pending") {
+        outcome.status = "failed";
+        await persist(path, outcome);
+      }
+      // Keep the failed journal before cleanup and retry it on each restart.
+      // Nonrecursive removal surfaces filesystem faults and cannot wipe a
+      // directory unexpectedly found at a transfer's file destination.
+      await rm(join(directory, "downloads", `${outcome.id}.pdf`), { force: true });
+      await rm(join(directory, "downloads", `${outcome.id}.bin`), { force: true });
+      await rm(`${metadataPath}.tmp`, { force: true });
     }
     if (outcome.status === "failed") {
       const { status: _status, ...failure } = outcome;
@@ -77,7 +104,8 @@ export async function capturePdfDownload(options: {
     createdAt: new Date().toISOString(),
   };
   const outcomePath = join(outcomes, `${id}.json`);
-  const destination = join(folder, `${id}.pdf`);
+  const extension = name.toLowerCase().endsWith(".pdf") ? "pdf" : "bin";
+  const destination = join(folder, `${id}.${extension}`);
   // A worker restart can now report an interrupted transfer even if Chromium
   // never reaches its completion callback.
   await persist(outcomePath, outcome);
@@ -87,7 +115,7 @@ export async function capturePdfDownload(options: {
   try {
     if (limitReached) {
       outcome.code = "DOWNLOAD_LIMIT";
-      outcome.message = "This session has reached its 20 PDF download limit.";
+      outcome.message = "This session has reached its 20 download limit.";
       await download.cancel();
       throw new Error("Download limit reached");
     }
@@ -123,16 +151,35 @@ export async function capturePdfDownload(options: {
       }),
       createWriteStream(destination, { mode: 0o600, flags: "wx" }),
     );
-    if (prefix.toString("ascii") !== "%PDF-") {
+    const content = await readFile(destination);
+    const isPdf = prefix.toString("ascii") === "%PDF-";
+    const mime = isPdf ? "application/pdf" : attachmentMime(name);
+    const office = /\.(docx|xlsx|pptx)$/i.test(name);
+    const text = /\.(txt|csv|json|srt)$/i.test(name);
+    const valid =
+      mime === "application/pdf"
+        ? prefix.toString("ascii") === "%PDF-"
+        : mime.startsWith("image/")
+          ? rasterMime(content) === mime
+          : office
+            ? content.subarray(0, 4).equals(Buffer.from([80, 75, 3, 4]))
+            : text
+              ? !content.includes(0) &&
+                !/<!doctype\s+html|<html(?:\s|>)/i.test(content.subarray(0, 1024).toString())
+              : false;
+    if (!valid) {
       outcome.code = "UNSUPPORTED_DOWNLOAD";
-      outcome.message = "Only PDF downloads can be imported. This file was not a PDF.";
+      outcome.message =
+        "Download must be a PDF, text/CSV/JSON, Office document or supported raster image with matching content.";
       throw new Error("Unsupported download");
     }
     const metadata: PdfDownload = {
       id,
-      name: name.toLowerCase().endsWith(".pdf") ? name : `${name}.pdf`,
+      name: isPdf && !name.toLowerCase().endsWith(".pdf") ? `${name}.pdf` : name,
       size: bytes,
-      mimeType: "application/pdf",
+      mimeType: mime,
+      storageExtension: extension,
+      sha256: createHash("sha256").update(content).digest("hex"),
     };
     await persist(join(folder, `${id}.json`), metadata);
     published = true;
@@ -143,7 +190,7 @@ export async function capturePdfDownload(options: {
     if (published) throw error;
     if (oversized) {
       outcome.code = "DOWNLOAD_TOO_LARGE";
-      outcome.message = "The download exceeds 10 MiB. Choose a smaller PDF.";
+      outcome.message = "The download exceeds 10 MiB. Choose a smaller file.";
     }
     outcome.status = "failed";
     await persist(outcomePath, outcome);

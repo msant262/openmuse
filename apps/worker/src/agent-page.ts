@@ -362,6 +362,39 @@ export class AgentPage {
       throw stale();
     }
   }
+  async upload(
+    reference: { snapshotId: string; element: number },
+    file: { name: string; mimeType: string; buffer: Buffer },
+    guard: () => void,
+  ) {
+    const inspected = await this.inspect({ ...reference, action: "press", key: "Enter" });
+    if (inspected.live.tag !== "input" || inspected.live.type !== "file")
+      throw new WorkerError(
+        "INVALID_UPLOAD_TARGET",
+        "Select a visible file input from the latest snapshot.",
+        409,
+      );
+    if (inspected.requiresApproval)
+      throw new WorkerError(
+        "PAYMENT_APPROVAL_REQUIRED",
+        "This upload form may submit a money action; use native review.",
+        409,
+      );
+    guard();
+    if (
+      reference.snapshotId !== this.snapshotId ||
+      this.page.url() !== this.url ||
+      inspected.target.frame.isDetached() ||
+      inspected.target.frame.url() !== inspected.target.frameUrl
+    )
+      throw new WorkerError("STALE_SNAPSHOT", "Upload target changed before dispatch.", 409);
+    this.snapshotId = undefined;
+    try {
+      await inspected.target.handle.setInputFiles(file, { timeout: 10_000 });
+    } finally {
+      await this.invalidate();
+    }
+  }
   async act(action: BrowserAction, guard: () => void) {
     const inspected = await this.inspect(action);
     if (inspected.requiresApproval)

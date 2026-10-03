@@ -22,6 +22,13 @@ export const browserActionSchema = z.discriminatedUnion("action", [
     .strict(),
 ]);
 export const snapshotSchema = z.object({
+  interruptions: z
+    .object({
+      popupsBlocked: z.number().int().min(0).max(1000),
+      dialogsDismissed: z.number().int().min(0).max(1000),
+      last: z.enum(["POPUP_BLOCKED", "DIALOG_DISMISSED"]).optional(),
+    })
+    .optional(),
   sessionId: z.uuid(),
   snapshotId: z.uuid(),
   url: z.url(),

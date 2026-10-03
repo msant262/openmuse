@@ -25,6 +25,7 @@ export type Detail =
   | { type: "menu" };
 export interface WorkspaceContextValue {
   workspace: Workspace;
+  viewerActive?: boolean;
   api: MuseApi;
   section: Section;
   navigate: (section: Section) => void;

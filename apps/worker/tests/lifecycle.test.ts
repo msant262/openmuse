@@ -4,10 +4,57 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createBrowserManager } from "../src/browser.ts";
+import { publicFixture } from "./public-fixture.ts";
+
+let fixture: Awaited<ReturnType<typeof publicFixture>>;
+before(async () => {
+  fixture = await publicFixture();
+});
+after(async () => {
+  await fixture?.close();
+});
+
+test("real HTTP and HTTPS CONNECT carry downloads that survive browser restart", {
+  timeout: 30_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-browser-wire-download-"));
+  let browser = await createBrowserManager({ dataDir });
+  const id = randomUUID();
+  const start = fixture.requests.length;
+  try {
+    await browser.create(id, "http://browser.fixture.test/");
+    assert.match((await browser.read(id)).text, /Local fixture content/);
+    await browser.navigate(id, "https://browser.fixture.test/");
+    const snapshot = await browser.snapshot(id);
+    const downloadLink = snapshot.elements.find((element) => element.label === "Download");
+    assert.ok(downloadLink);
+    await browser.act(id, {
+      snapshotId: snapshot.snapshotId,
+      element: downloadLink.number,
+      action: "click",
+    });
+    // Closing waits for actual Playwright transfer publication; the restarted
+    // manager must serve the original bytes and stable download ID.
+    await browser.close();
+    browser = await createBrowserManager({ dataDir });
+    const result = await browser.downloads(id);
+    assert.equal(result.downloads.length, 1);
+    assert.deepEqual(result.failures, []);
+    const item = await browser.download(id, result.downloads[0].id);
+    assert.equal(item.bytes.toString(), "%PDF-1.4\nfixture download\n%%EOF\n");
+    assert.equal(item.metadata.name, "fixture.pdf");
+    const requests = fixture.requests.slice(start);
+    assert.ok(requests.some((request) => request.path === "/" && !request.secure));
+    assert.ok(requests.some((request) => request.path === "/download.pdf" && request.secure));
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
 
 test("real Chromium cleans failed profiles and restores a saved UUID after worker restart", {
   timeout: 90_000,
@@ -18,10 +65,7 @@ test("real Chromium cleans failed profiles and restores a saved UUID after worke
   const failedId = randomUUID();
   try {
     await assert.rejects(
-      browser.create(
-        failedId,
-        "https://httpbin.org/redirect-to?url=http%3A%2F%2F127.0.0.1%3A8790%2Fhealth",
-      ),
+      browser.create(failedId, "https://browser.fixture.test/redirect-private"),
       { code: "NAVIGATION_FAILED" },
     );
     assert.equal(browser.list().length, 0, "failed creation must release its saved-profile slot");
@@ -30,14 +74,15 @@ test("real Chromium cleans failed profiles and restores a saved UUID after worke
       false,
       "unclaimed profile is removed",
     );
-    await browser.create(id, "https://example.com/");
+    await browser.create(id, "https://browser.fixture.test/");
     await browser.closeSession(id);
     const context = await chromium.launchPersistentContext(join(dataDir, id, "profile"), {
       headless: true,
+      proxy: { server: fixture.proxyUrl, bypass: "<-loopback>" },
     });
     try {
       const page = await context.newPage();
-      await page.goto("https://example.com/");
+      await page.goto("https://browser.fixture.test/");
       await page.evaluate(() => localStorage.setItem("openmuse-profile-test", "retained"));
     } finally {
       await context.close();
@@ -45,22 +90,21 @@ test("real Chromium cleans failed profiles and restores a saved UUID after worke
     await browser.close();
     browser = await createBrowserManager({ dataDir });
     assert.equal(browser.list()[0]?.status, "closed");
-    const reopened = await browser.create(id, "https://example.com/");
+    const reopened = await browser.create(id, "https://browser.fixture.test/");
     assert.equal(reopened.id, id);
-    assert.equal(reopened.title, "Example Domain");
+    assert.equal(reopened.title, "Browser fixture");
     const read = await browser.read(id);
-    // example.com's body copy changes; only its title is stable.
-    assert.ok(read.text.trim().length > 0);
-    await browser.navigate(id, "https://www.rfc-editor.org/rfc/rfc9110.txt");
+    assert.match(read.text, /Local fixture content/);
+    await browser.navigate(id, "https://browser.fixture.test/large.txt");
     const largeRead = await browser.read(id);
     assert.equal(largeRead.text.length, 100_000);
     assert.equal(largeRead.truncated, true);
-    assert.equal(largeRead.url, "https://www.rfc-editor.org/rfc/rfc9110.txt");
+    assert.equal(largeRead.url, "https://browser.fixture.test/large.txt");
     await browser.closeSession(id);
     const state = JSON.parse(await readFile(join(dataDir, id, "storage.json"), "utf8"));
     assert(
       state.origins
-        .find((origin: { origin: string }) => origin.origin === "https://example.com")
+        .find((origin: { origin: string }) => origin.origin === "https://browser.fixture.test")
         ?.localStorage.some(
           (item: { name: string; value: string }) =>
             item.name === "openmuse-profile-test" && item.value === "retained",
@@ -79,7 +123,7 @@ test("real manager persists human takeover and preempts queued agent mutations u
   let browser = await createBrowserManager({ dataDir });
   const id = randomUUID();
   try {
-    await browser.create(id, "https://example.com/");
+    await browser.create(id, "https://browser.fixture.test/");
     const snapshot = await browser.snapshot(id);
     const link = snapshot.elements.find((item) => item.tag === "a");
     assert.ok(link);
@@ -95,17 +139,17 @@ test("real manager persists human takeover and preempts queued agent mutations u
     await rejected;
     await watching;
     assert.equal((await browser.control(id)).control, "human");
-    await assert.rejects(browser.navigate(id, "https://example.com/"), {
+    await assert.rejects(browser.navigate(id, "https://browser.fixture.test/"), {
       code: "BROWSER_CONTROLLED",
     });
     await browser.input(id, { type: "scroll", deltaY: 100 });
     await browser.close();
     browser = await createBrowserManager({ dataDir });
     assert.equal((await browser.control(id)).control, "human");
-    await assert.rejects(browser.create(id, "https://example.com/"), {
+    await assert.rejects(browser.create(id, "https://browser.fixture.test/"), {
       code: "BROWSER_CONTROLLED",
     });
-    await browser.create(id, "https://example.com/", false);
+    await browser.create(id, "https://browser.fixture.test/", false);
     const restored = await browser.snapshot(id);
     assert.equal(restored.control, "human");
     await browser.setControl(id, "agent");
@@ -135,12 +179,14 @@ async function processFixture(dataDir: string, stage: boolean) {
   await writeFile(
     preload,
     `
+    import { installFixtureTransport } from ${JSON.stringify(new URL("./public-fixture.ts", import.meta.url).href)};
+    installFixtureTransport(${JSON.stringify(fixture.transport)});
     import { chromium } from ${JSON.stringify(import.meta.resolve("playwright"))};
     const launch = chromium.launchPersistentContext.bind(chromium);
     chromium.launchPersistentContext = async (...args) => {
       const context = await launch(...args);
       await context.addInitScript(() => {
-        if (location.origin !== "https://example.com") return;
+        if (location.origin !== "https://browser.fixture.test") return;
         ${
           stage
             ? `localStorage.setItem("openmuse-shutdown-test", "fresh");
@@ -237,7 +283,7 @@ test("active worker SIGTERM flushes real cookies/localStorage and human mode bef
   const id = randomUUID();
   try {
     worker = await processFixture(dataDir, true);
-    await worker.api("/sessions/human", { id, url: "https://example.com/" });
+    await worker.api("/sessions/human", { id, url: "https://browser.fixture.test/" });
     const directory = join(dataDir, "profiles", id);
     assert.equal(
       JSON.parse(await readFile(join(directory, "session.json"), "utf8")).status,
@@ -265,7 +311,7 @@ test("active worker SIGTERM flushes real cookies/localStorage and human mode bef
     const restored = await worker.api("/sessions");
     assert.equal(restored[0].control, "human");
     assert.equal(restored[0].status, "closed");
-    await worker.api("/sessions/human", { id, url: "https://example.com/" });
+    await worker.api("/sessions/human", { id, url: "https://browser.fixture.test/" });
     const observed = JSON.parse((await worker.api(`/sessions/${id}/read`)).text);
     assert.equal(observed.value, "fresh");
     assert.match(observed.cookie, /openmuse_shutdown_cookie=fresh/);
@@ -288,7 +334,7 @@ test("profile flush failure makes SIGTERM nonzero and cannot report a closed ses
   const id = randomUUID();
   try {
     worker = await processFixture(dataDir, true);
-    await worker.api("/sessions/human", { id, url: "https://example.com/" });
+    await worker.api("/sessions/human", { id, url: "https://browser.fixture.test/" });
     const directory = join(dataDir, "profiles", id);
     // A real filesystem failure at the state publication boundary, not a mocked close.
     await mkdir(join(directory, "storage.json"));
@@ -366,7 +412,7 @@ test("shutdown retains an earlier reported profile flush failure", {
   const id = randomUUID();
   try {
     worker = await processFixture(dataDir, true);
-    await worker.api("/sessions/human", { id, url: "https://example.com/" });
+    await worker.api("/sessions/human", { id, url: "https://browser.fixture.test/" });
     await mkdir(join(dataDir, "profiles", id, "storage.json"));
     await assert.rejects(worker.api(`/sessions/${id}/close`, {}), /SESSION_CLOSE_FAILED/);
     await assert.rejects(worker.api(`/sessions/${id}/close`, {}), /SESSION_CLOSE_FAILED/);

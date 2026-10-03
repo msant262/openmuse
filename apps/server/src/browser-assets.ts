@@ -7,7 +7,12 @@ import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
 
 const MAX_BYTES = 1024 * 1024;
-type ScreenshotAsset = { id: string; size: number; mimeType: "image/jpeg"; createdAt: string };
+type ScreenshotAsset = {
+  id: string;
+  size: number;
+  mimeType: "image/jpeg" | "image/png";
+  createdAt: string;
+};
 /** Images live once beneath DATA_DIR; cumulative AG-UI history stores only owner-scoped refs. */
 export class BrowserAssets {
   constructor(
@@ -21,7 +26,11 @@ export class BrowserAssets {
       createHash("sha256").update(owner).digest("hex"),
     );
   }
-  async save(owner: string, bytes: Buffer): Promise<ScreenshotAsset> {
+  async save(
+    owner: string,
+    bytes: Buffer,
+    mimeType: "image/jpeg" | "image/png" = "image/jpeg",
+  ): Promise<ScreenshotAsset> {
     if (!bytes.length || bytes.length > MAX_BYTES)
       throw new AppError("Browser screenshot exceeds 1 MiB", 413);
     const id = createHash("sha256").update(bytes).digest("hex");
@@ -33,14 +42,14 @@ export class BrowserAssets {
     try {
       await writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
       // A complete image becomes visible atomically, including concurrent same-hash saves.
-      await rename(temporary, join(folder, `${id}.jpg`));
+      await rename(temporary, join(folder, `${id}.${mimeType === "image/png" ? "png" : "jpg"}`));
     } finally {
       await rm(temporary, { force: true });
     }
     const asset = {
       id,
       size: bytes.length,
-      mimeType: "image/jpeg" as const,
+      mimeType,
       createdAt: new Date().toISOString(),
     };
     await this.db.insertIfAbsent(owner, "browser-screenshots", asset);
@@ -51,7 +60,7 @@ export class BrowserAssets {
     const asset = await this.db.get<ScreenshotAsset>(owner, "browser-screenshots", id);
     if (!asset) throw new AppError("Screenshot not found", 404);
     const handle = await open(
-      join(this.directory(owner), `${id}.jpg`),
+      join(this.directory(owner), `${id}.${asset.mimeType === "image/png" ? "png" : "jpg"}`),
       constants.O_RDONLY | constants.O_NOFOLLOW,
     );
     try {
@@ -63,7 +72,7 @@ export class BrowserAssets {
         throw new AppError("Screenshot storage is invalid", 502);
       return {
         type: "image",
-        source: { type: "data", value: bytes.toString("base64"), mimeType: "image/jpeg" },
+        source: { type: "data", value: bytes.toString("base64"), mimeType: asset.mimeType },
       };
     } finally {
       await handle.close();

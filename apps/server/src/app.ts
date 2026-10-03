@@ -20,6 +20,9 @@ import { computerRoutes } from "./computer-routes.ts";
 import { RpcComputerService } from "./computer-rpc.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
+import { desktopRoutes } from "./desktop-routes.ts";
+import { DesktopService, nativeDesktopTransport } from "./desktop-service.ts";
+import { currentDesktopViewerScope, DesktopViewers } from "./desktop-viewers.ts";
 import { ResourceLeases } from "./engine/resource-leases.ts";
 import { agentRoutes } from "./engine/routes.ts";
 import { RuntimePause, RuntimePausedError } from "./engine/runtime-pause.ts";
@@ -27,6 +30,7 @@ import { AgentService } from "./engine/service.ts";
 import { currentExecutorContext, TaskExecutorAuthority } from "./engine/task-executor-authority.ts";
 import { LostLeaseError } from "./engine/worker.ts";
 import { AppError } from "./errors.ts";
+import { nativeGraphicalReset } from "./executors/graphical-policy.ts";
 import {
   currentManualNativeScope,
   ManualNativeOperations,
@@ -44,6 +48,7 @@ import { executorRoutes } from "./executors/routes.ts";
 import { fileVersionRoutes } from "./file-versions.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
+import { backgroundFailure } from "./log.ts";
 import { LocalThreads } from "./threads.ts";
 import { WorkspaceService } from "./workspace.ts";
 
@@ -88,7 +93,12 @@ export async function createApp(
     registrations: config.nativeExecutors ?? [],
     authority: options.nativeAuthority,
     beforePublish: async (owner: string, operation: ExecutorOperation) => {
-      if (operation.inspection || operation.kind === "cancel") return;
+      if (
+        operation.inspection ||
+        operation.kind === "cancel" ||
+        nativeGraphicalReset(operation.kind, operation.args)
+      )
+        return;
       if (!(await agent.workAdmission.holdForDispatch(operation.taskId)))
         throw new LostLeaseError();
       await db.compareAndSwapTask(
@@ -130,7 +140,7 @@ export async function createApp(
             resourceLeaseIds: target.resourceLeaseIds,
           });
       }
-      const manual = currentManualNativeScope();
+      const manual = currentManualNativeScope() ?? currentDesktopViewerScope();
       if (context?.kind === "task" && request && manual?.owner === owner)
         return taskAuthority.registerManualRequest(owner, id, manual.deviceId, request, context);
       return context;
@@ -168,6 +178,27 @@ export async function createApp(
     wake: (owner, taskId) => agent.actor.wake(owner, taskId, "job"),
   });
   registryOptions.authority ??= taskAuthority;
+  const desktop =
+    config.computerBackend === "native" && config.nativeExecutorId
+      ? new DesktopService(
+          db,
+          config.dataDir,
+          nativeDesktopTransport(executors, {
+            executorId: config.nativeExecutorId,
+            context: nativeContext,
+            manualContext: options.nativeManualContext,
+          }),
+        )
+      : undefined;
+  const desktopViewers = desktop ? new DesktopViewers(agent, desktop) : undefined;
+  if (desktop) {
+    browser.configureNative(desktop);
+    agent.configureDesktop(desktop);
+    desktop.configureWake(async () => {
+      void agent.worker.tick().catch((error) => backgroundFailure("desktop handback", error));
+    });
+    await desktopViewers!.recover();
+  }
   const manualNative =
     config.computerBackend === "native"
       ? new ManualNativeOperations(agent, computer, files)
@@ -380,6 +411,7 @@ export async function createApp(
     return c.json(snapshot);
   });
   app.route("/api/agent", agentRoutes(agent));
+  app.route("/api/desktop", desktopRoutes(desktop, desktopViewers, auth, browser));
   app.post("/api/conversations/:threadId/messages", async (c) => {
     if (!(threads instanceof LocalThreads))
       throw new AppError("Durable admission requires local thread storage", 409);
@@ -687,6 +719,8 @@ export async function createApp(
     computer,
     executors,
     manualNative,
+    desktop,
+    desktopViewers,
     threads,
     inbox,
   };

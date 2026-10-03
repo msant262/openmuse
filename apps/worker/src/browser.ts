@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserContext, Page } from "playwright";
+import { browserUploadSchema } from "../../../packages/domain/src/browser-file.ts";
+import { defaultSearchEndpoint, searchInputSchema } from "../../../packages/domain/src/search.ts";
 import { AgentPage, browserAction } from "./agent-page.ts";
 import {
   capturePdfDownload,
@@ -9,9 +12,11 @@ import {
   readDownloadFailures,
 } from "./downloads.ts";
 import { WorkerError } from "./errors.ts";
+import { type NativeBrowserConfig, nativeLaunchOptions } from "./native-config.ts";
 import { validatePublicUrl } from "./network.ts";
 import { startEgressProxy } from "./proxy.ts";
 import { ReviewedActions } from "./reviewed-actions.ts";
+import { extractSearch } from "./search.ts";
 
 export interface Session {
   id: string;
@@ -28,6 +33,12 @@ type Running = {
   pending: Set<Promise<void>>;
   downloadError?: boolean;
   agent: AgentPage;
+  interruptions: {
+    popupsBlocked: number;
+    dialogsDismissed: number;
+    last?: "POPUP_BLOCKED" | "DIALOG_DISMISSED";
+  };
+  unsafeSurface?: boolean;
 };
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -42,6 +53,14 @@ export async function createBrowserManager(options: {
   dataDir: string;
   maxSessions?: number;
   idleTimeoutMs?: number;
+  native?: NativeBrowserConfig;
+  beforeEffect?: () => void;
+  /** Trusted constructor configuration only; callers cannot select an index URL. */
+  searchEndpoint?: string;
+  protect?: (
+    masks: [number, number, number, number][],
+    state: { suspended: boolean; screenOffset?: { x: number; y: number; scale: number } },
+  ) => Promise<void>;
 }) {
   const { dataDir, maxSessions = 3, idleTimeoutMs = 30 * 60_000 } = options;
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
@@ -64,7 +83,16 @@ export async function createBrowserManager(options: {
     }
     if (sessions.has(id)) await readDownloadFailures(join(dataDir, id), true);
   }
-  const directory = (id: string) => join(dataDir, validateSessionId(id));
+  const directory = (id: string) => {
+    const checked = validateSessionId(id);
+    if (options.native && checked !== options.native.sessionId)
+      throw new WorkerError(
+        "INVALID_SESSION",
+        "Native browser profile belongs to its fixed registered desktop",
+        403,
+      );
+    return join(dataDir, checked);
+  };
   async function persist(session: Session) {
     const path = join(directory(session.id), "session.json");
     await writeFile(`${path}.tmp`, JSON.stringify(session), { mode: 0o600 });
@@ -88,6 +116,12 @@ export async function createBrowserManager(options: {
       throw new WorkerError(
         "SESSION_CLOSED",
         "Open this browser session before using its console.",
+        409,
+      );
+    if (value.unsafeSurface)
+      throw new WorkerError(
+        "BROWSER_SURFACE_UNSAFE",
+        "A popup or dialog could not be contained; close this session before continuing.",
         409,
       );
     value.touched = Date.now();
@@ -122,6 +156,7 @@ export async function createBrowserManager(options: {
     return list;
   }
   function guardAgent(id: string) {
+    options.beforeEffect?.();
     if (sessions.get(id)?.control === "human")
       throw new WorkerError(
         "BROWSER_CONTROLLED",
@@ -158,6 +193,12 @@ export async function createBrowserManager(options: {
     return refresh(id);
   }
   async function validatePage(instance: Running) {
+    if (instance.unsafeSurface)
+      throw new WorkerError(
+        "BROWSER_SURFACE_UNSAFE",
+        "A popup or dialog could not be contained; close this session before continuing.",
+        409,
+      );
     for (const frame of instance.page.frames()) {
       if (["about:blank", "about:srcdoc"].includes(frame.url())) continue;
       await validatePublicUrl(frame.url());
@@ -246,11 +287,14 @@ export async function createBrowserManager(options: {
           LANG: "C.UTF-8",
         },
         headless: true,
+        ...(options.native ? nativeLaunchOptions(options.native) : {}),
         // The worker flushes profile state before it closes Chromium on signals.
         handleSIGINT: false,
         handleSIGTERM: false,
         handleSIGHUP: false,
-        viewport: { width: 1280, height: 800 },
+        viewport: options.native
+          ? { width: options.native.width ?? 1280, height: options.native.height ?? 720 }
+          : { width: 1280, height: 800 },
         proxy: { server: proxy.url, bypass: "<-loopback>" },
         serviceWorkers: "block",
         acceptDownloads: true,
@@ -300,13 +344,30 @@ export async function createBrowserManager(options: {
         touched: Date.now(),
         pending: new Set(),
         agent: new AgentPage(page),
+        interruptions: { popupsBlocked: 0, dialogsDismissed: 0 },
       };
       running.set(id, instance);
       context.on("page", (popup) => {
-        void popup.close();
+        instance.interruptions.popupsBlocked = Math.min(
+          1000,
+          instance.interruptions.popupsBlocked + 1,
+        );
+        instance.interruptions.last = "POPUP_BLOCKED";
+        void instance.agent.invalidate();
+        void popup.close().catch(() => {
+          instance.unsafeSurface = true;
+        });
       });
       page.on("dialog", (dialog) => {
-        void dialog.dismiss();
+        instance.interruptions.dialogsDismissed = Math.min(
+          1000,
+          instance.interruptions.dialogsDismissed + 1,
+        );
+        instance.interruptions.last = "DIALOG_DISMISSED";
+        void instance.agent.invalidate();
+        void dialog.dismiss().catch(() => {
+          instance.unsafeSurface = true;
+        });
       });
       page.on("download", (download) => {
         const pending = downloads(id).then((saved) =>
@@ -367,6 +428,15 @@ export async function createBrowserManager(options: {
   sweeper.unref();
   return {
     list: () => [...sessions.values()],
+    resetInput: async (id: string) => {
+      const instance = running.get(id);
+      if (!instance) return;
+      await instance.agent.invalidate();
+      await Promise.all([
+        ...["Shift", "Control", "Alt", "Meta"].map((key) => instance.page.keyboard.up(key)),
+        instance.page.mouse.up(),
+      ]);
+    },
     create: (id: string, url: string, agent = true) => {
       const session = sessions.get(id);
       if (!agent && session) {
@@ -409,7 +479,60 @@ export async function createBrowserManager(options: {
         await validatePage(instance);
         const result = await instance.agent.snapshot();
         await refresh(id);
-        return { sessionId: id, control: sessions.get(id)?.control ?? "agent", ...result };
+        return {
+          sessionId: id,
+          control: sessions.get(id)?.control ?? "agent",
+          ...result,
+          interruptions: { ...instance.interruptions },
+        };
+      }),
+    search: (id: string, raw: unknown) =>
+      serial(id, async () => {
+        const input = searchInputSchema.parse(raw);
+        guardAgent(id);
+        const url = new URL(options.searchEndpoint ?? defaultSearchEndpoint);
+        url.searchParams.set("q", input.query);
+        await navigate(id, url.href);
+        const instance = active(id);
+        await validatePage(instance);
+        guardAgent(id);
+        const result = await extractSearch(instance.page, input);
+        return { ...result, provenance: { ...result.provenance, sessionId: id } };
+      }),
+    upload: (id: string, raw: unknown) =>
+      serial(id, async () => {
+        const checked = browserUploadSchema.safeParse(raw);
+        if (!checked.success)
+          throw new WorkerError(
+            "INVALID_UPLOAD",
+            "A bounded file and current numbered file input are required.",
+            422,
+          );
+        const file = checked.data,
+          bytes = Buffer.from(file.base64, "base64");
+        if (
+          bytes.length !== file.size ||
+          createHash("sha256").update(bytes).digest("hex") !== file.sha256
+        )
+          throw new WorkerError("INVALID_UPLOAD", "Upload size or digest changed.", 422);
+        guardAgent(id);
+        const instance = active(id);
+        await validatePage(instance);
+        await instance.agent.upload(
+          file,
+          { name: file.name, mimeType: file.mimeType, buffer: bytes },
+          () => guardAgent(id),
+        );
+        guardAgent(id);
+        await validatePage(instance);
+        await refresh(id);
+        return {
+          sessionId: id,
+          control: sessions.get(id)?.control ?? "agent",
+          ...(await instance.agent.snapshot()),
+          interruptions: { ...instance.interruptions },
+          uploaded: { name: file.name, size: file.size, sha256: file.sha256 },
+        };
       }),
     reviewedAct: (id: string, authorization: unknown) =>
       serial(id, async () => {
@@ -466,6 +589,7 @@ export async function createBrowserManager(options: {
           sessionId: id,
           control: sessions.get(id)?.control ?? "agent",
           ...(await instance.agent.snapshot()),
+          interruptions: { ...instance.interruptions },
         };
       });
     },
@@ -485,8 +609,8 @@ export async function createBrowserManager(options: {
           ...(await refresh(id)),
           mimeType: "image/jpeg",
           image: bytes.toString("base64"),
-          width: 1280,
-          height: 800,
+          width: instance.page.viewportSize()?.width ?? 1280,
+          height: instance.page.viewportSize()?.height ?? 800,
         };
       }),
     closeSession: (id: string) => serial(id, () => closeSession(id)),
@@ -571,17 +695,34 @@ export async function createBrowserManager(options: {
           "A download outcome could not be saved. Check worker storage and try again.",
           500,
         );
-      return { downloads: saved, failures: await readDownloadFailures(directory(id)) };
+      return {
+        downloads: saved,
+        failures: await readDownloadFailures(directory(id)),
+        pending: running.get(id)?.pending.size ?? 0,
+      };
     },
     download: async (id: string, downloadId: string) => {
       validateSessionId(downloadId);
       const metadata = (await downloads(id)).find((item) => item.id === downloadId);
-      if (!metadata) throw new WorkerError("DOWNLOAD_NOT_FOUND", "PDF download not found.", 404);
-      const path = join(directory(id), "downloads", `${downloadId}.pdf`);
+      if (!metadata)
+        throw new WorkerError("DOWNLOAD_NOT_FOUND", "Browser download not found.", 404);
+      const path = join(
+        directory(id),
+        "downloads",
+        `${downloadId}.${metadata.storageExtension === "bin" ? "bin" : "pdf"}`,
+      );
       const info = await stat(path);
       if (info.size > MAX_DOWNLOAD_BYTES)
-        throw new WorkerError("DOWNLOAD_TOO_LARGE", "The PDF exceeds 10 MiB.", 413);
-      return { metadata, bytes: await readFile(path) };
+        throw new WorkerError("DOWNLOAD_TOO_LARGE", "The download exceeds 10 MiB.", 413);
+      const bytes = await readFile(path);
+      const digest = createHash("sha256").update(bytes).digest("hex");
+      if (bytes.length !== metadata.size || (metadata.sha256 && metadata.sha256 !== digest))
+        throw new WorkerError(
+          "DOWNLOAD_CHANGED",
+          "Stored download bytes changed; download again before publication.",
+          409,
+        );
+      return { metadata: { ...metadata, sha256: digest }, bytes };
     },
     close: () => {
       closing = true;

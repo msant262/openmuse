@@ -3,15 +3,18 @@ import { createServer, type IncomingMessage } from "node:http";
 import { createBrowserManager, validateSessionId } from "./browser.ts";
 import { WorkerError } from "./errors.ts";
 
-async function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readBody(
+  request: IncomingMessage,
+  maxBytes = 64 * 1024,
+): Promise<Record<string, unknown>> {
   if (!request.headers["content-type"]?.startsWith("application/json"))
     throw new WorkerError("INVALID_BODY", "A JSON request body is required.");
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     size += Buffer.byteLength(chunk);
-    if (size > 64 * 1024)
-      throw new WorkerError("BODY_TOO_LARGE", "Request body exceeds 64 KiB.", 413);
+    if (size > maxBytes)
+      throw new WorkerError("BODY_TOO_LARGE", "Request body exceeds its operation limit.", 413);
     chunks.push(Buffer.from(chunk));
   }
   try {
@@ -35,6 +38,7 @@ export async function createWorkerServer(options: {
   dataDir: string;
   maxSessions?: number;
   idleTimeoutMs?: number;
+  searchEndpoint?: string;
 }) {
   if (options.token.length < 32)
     throw new Error("WORKER_TOKEN must contain at least 32 characters.");
@@ -75,7 +79,7 @@ export async function createWorkerServer(options: {
         return;
       }
       const match =
-        /^\/sessions\/([^/]+)\/(navigate|agent-navigate|close|screenshot|agent-screenshot|snapshot|act|inspect|reviewed-act|control|read|input|downloads)(?:\/([^/]+))?$/.exec(
+        /^\/sessions\/([^/]+)\/(navigate|agent-navigate|close|screenshot|agent-screenshot|snapshot|act|inspect|reviewed-act|control|read|input|downloads|search|upload)(?:\/([^/]+))?$/.exec(
           pathname,
         );
       if (!match) throw new WorkerError("NOT_FOUND", "Worker endpoint not found.", 404);
@@ -99,6 +103,10 @@ export async function createWorkerServer(options: {
         json(200, await browser.reviewedAct(id, body.authorization));
       } else if (action === "act" && !downloadId && request.method === "POST")
         json(200, await browser.act(id, await readBody(request)));
+      else if (action === "upload" && !downloadId && request.method === "POST")
+        json(200, await browser.upload(id, await readBody(request, 7 * 1024 * 1024)));
+      else if (action === "search" && !downloadId && request.method === "POST")
+        json(200, await browser.search(id, await readBody(request)));
       else if (action === "control" && !downloadId && request.method === "GET")
         json(200, await browser.control(id));
       else if (action === "control" && !downloadId && request.method === "POST") {
@@ -121,7 +129,7 @@ export async function createWorkerServer(options: {
         else {
           const result = await browser.download(id, downloadId);
           response.writeHead(200, {
-            "content-type": "application/pdf",
+            "content-type": result.metadata.mimeType,
             "content-length": result.bytes.length,
             "content-disposition": `attachment; filename="${result.metadata.name}"`,
           });

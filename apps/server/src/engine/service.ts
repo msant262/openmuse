@@ -36,6 +36,7 @@ import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Config } from "../config.ts";
 import { ConversationInbox } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
+import type { DesktopService } from "../desktop-service.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { InteractionRequests } from "../interaction-requests.ts";
@@ -47,6 +48,7 @@ import { modelProviderConfig } from "../providers/config.ts";
 import { sharedModelRouter } from "../providers/model-router.ts";
 import { nativePushAdapters, PushService } from "../push.ts";
 import { RoutinesService } from "../routines.ts";
+import { BrowserSearchBackend } from "../search.ts";
 import { OperationDrain } from "../shutdown.ts";
 import type { LocalThreads } from "../threads.ts";
 import type { WorkspaceService } from "../workspace.ts";
@@ -68,6 +70,11 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const date = () => new Date().toISOString();
 const terminal = new Set(["succeeded", "failed", "cancelled"]);
 export class AgentService {
+  desktop?: DesktopService;
+  readonly search: BrowserSearchBackend;
+  configureDesktop(desktop: DesktopService) {
+    this.desktop = desktop;
+  }
   readonly profiles: AgentProfile;
   readonly interactions: InteractionRequests;
   readonly worker: TaskWorker;
@@ -173,6 +180,7 @@ export class AgentService {
     readonly computer: ComputerBackend = new ComputerService(db, config),
     readonly media: MediaService = new MediaService(db, files, config),
   ) {
+    this.search = new BrowserSearchBackend(browser);
     this.journal = new TaskJournal(db);
     this.inbox = new ConversationInbox(db, (owner, id) => files.get(owner, id));
     this.mailbox = new TaskMailbox(db, this.inbox);

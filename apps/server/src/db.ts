@@ -1040,7 +1040,16 @@ export async function createStore(
       PERFORM pg_advisory_xact_lock(hashtextextended('openmuse-runtime-control',0));
       SELECT (data->>'paused')::boolean INTO paused_now FROM records
         WHERE owner='__runtime__' AND kind='runtime-pause' AND id='global';
-      IF COALESCE(paused_now,false) THEN RETURN false; END IF;
+      -- Interactive desktop lifecycles observe/reset while paused. Their
+      -- actual input still crosses the ordinary M4 global effect barrier.
+      IF COALESCE(paused_now,false) AND work_class<>'interactive' THEN RETURN false; END IF;
+      IF work_class='interactive' AND NOT EXISTS (
+        SELECT 1 FROM records viewer JOIN records device ON device.owner='system'
+          AND device.kind='device-sessions' AND device.id=viewer.data->>'deviceId'
+        WHERE viewer.kind='desktop-viewer-sessions' AND viewer.id=task_id
+          AND viewer.data->>'closed'='false' AND device.data->>'owner'=viewer.owner
+          AND jsonb_typeof(device.data->'revokedAt')='null'
+      ) THEN RETURN false; END IF;
       SELECT data INTO existing FROM records
         WHERE owner='__runtime__' AND kind='work-admissions' AND id=task_id;
       IF FOUND THEN
@@ -1058,8 +1067,9 @@ export async function createStore(
       SELECT count(*) INTO occupied FROM records
         WHERE owner='__runtime__' AND kind='work-admissions'
           AND (data->>'hold'='true' OR (data->>'expiresAt')::timestamptz>now_at)
+          AND COALESCE(data->>'workClass','background')=work_class
           AND id<>task_id;
-      IF occupied>=4 THEN RETURN false; END IF;
+      IF (occupied >= CASE WHEN work_class='interactive' THEN 2 ELSE 4 END) THEN RETURN false; END IF;
       INSERT INTO records(owner,kind,id,data) VALUES('__runtime__','work-admissions',task_id,
         jsonb_build_object('id',task_id,'workClass',work_class,'rootTaskId',root_task_id,
           'claimant',claimant,'hold',false,'expiresAt',expires_at))

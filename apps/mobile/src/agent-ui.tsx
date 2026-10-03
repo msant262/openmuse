@@ -40,6 +40,7 @@ import { useAgentWorkspace } from "./agent-workspace";
 import { InteractionCard } from "./interaction-card";
 import { MemorySettings } from "./memory-settings";
 import { NativePushSettings } from "./native-push-settings";
+import { useInlinePreview } from "./preview";
 import { ProfileSettings } from "./profile-settings";
 import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
@@ -326,6 +327,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
   return <TaskDetailContent key={`${api.identityKey}:${taskId}`} taskId={taskId} />;
 }
 function TaskDetailContent({ taskId }: { taskId: string }) {
+  const previewVisible = useInlinePreview();
   const { api, workspace, close, open, refresh: refreshWorkspace } = useWorkspace();
   const { data, mutate } = useAgentWorkspace();
   const [detail, setDetail] = useState<{
@@ -625,7 +627,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
             <Card key={browser.id} style={{ gap: 10 }}>
               <Text style={s.heading}>{browser.title || "Agent browser"}</Text>
               <Text style={s.small}>{browser.url}</Text>
-              {browser.status === "active" && browser.previewUrl && (
+              {previewVisible && browser.status === "active" && browser.previewUrl && (
                 <Image
                   accessibilityLabel="Agent browser preview"
                   source={{ uri: api.url(browser.previewUrl) }}

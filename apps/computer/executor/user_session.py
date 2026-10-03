@@ -7,6 +7,7 @@ import pwd
 import re
 import stat
 import subprocess
+import uuid
 from .filesystem import open_directory
 
 SAFE_ACCOUNT = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -45,6 +46,20 @@ class UserSession:
                 raise ValueError("Invalid native account registry")
             if account["user"] in ("marcos", "astrid", "astride", "root"):
                 raise ValueError("Personal/operator accounts cannot be native bot registrations")
+            desktop=account.get("desktop")
+            if desktop:
+                if not SAFE_EXECUTOR.fullmatch(account.get("hostId","lenovo")):
+                    raise ValueError("Invalid trusted desktop host identity")
+                if set(desktop)-{"sessionId","display","profileId","width","height"}:
+                    raise ValueError("Unexpected trusted desktop registration fields")
+                uuid.UUID(desktop["sessionId"])
+                if type(desktop.get("display")) is not int or not 60<=desktop["display"]<=199 or not SAFE_EXECUTOR.fullmatch(desktop.get("profileId","personal")):
+                    raise ValueError("Invalid trusted desktop display/profile")
+                if any(type(desktop.get(key,default)) is not int or not minimum<=desktop.get(key,default)<=maximum for key,default,minimum,maximum in (("width",1280,320,3840),("height",720,240,2160))):
+                    raise ValueError("Invalid trusted desktop dimensions")
+        displays=[account["desktop"]["display"] for account in registry.values() if account.get("desktop")]
+        if len(set(displays))!=len(displays):raise ValueError("Registered native desktops need distinct X displays")
+        for executor_id,account in registry.items():
             home, workspace = Path(account["home"]), Path(account["workspace"])
             if (not home.is_absolute() or home == Path("/") or home not in workspace.parents
                     or any(not re.fullmatch(r"/[A-Za-z0-9._/-]+", path) or ".." in path.split("/") for path in (account["home"], account["workspace"]))):

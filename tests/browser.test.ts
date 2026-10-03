@@ -292,14 +292,22 @@ test("browser imports return rejected downloads even when no PDF was accepted", 
     data: { downloads: [], failures: [failure] },
   }));
   await db.put("owner", "browsers", savedSession);
-  assert.deepEqual(await service.imports("owner", sessionId), { files: [], failures: [failure] });
+  assert.deepEqual(await service.imports("owner", sessionId), {
+    files: [],
+    failures: [failure],
+    pending: 0,
+  });
 });
 
 test("worker persists unsupported, oversized and interrupted download outcomes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "openmuse-download-outcomes-"));
   try {
     const cases = [
-      { name: "notes.txt", contents: Buffer.from("not a PDF"), code: "UNSUPPORTED_DOWNLOAD" },
+      {
+        name: "unsafe.exe",
+        contents: Buffer.from("not an accepted file"),
+        code: "UNSUPPORTED_DOWNLOAD",
+      },
       {
         name: "large.pdf",
         contents: Buffer.alloc(10 * 1024 * 1024 + 1),

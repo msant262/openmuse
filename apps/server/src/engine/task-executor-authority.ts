@@ -8,7 +8,18 @@ import type {
 } from "../../../../packages/domain/src/runtime.ts";
 import { workspacePath } from "../computer.ts";
 import { bindingHash } from "../conversation-inbox.ts";
+import {
+  desktopProfileKey,
+  desktopResourceKey,
+  type NativeDesktopSession,
+} from "../desktop-contract.ts";
 import { AppError } from "../errors.ts";
+import {
+  nativeBrowserArgsSchema,
+  nativeDesktopArgsSchema,
+  nativeGraphicalReset,
+  nativeInspection,
+} from "../executors/graphical-policy.ts";
 import { ResourceBusyError } from "./resource-leases.ts";
 import { RuntimePause } from "./runtime-pause.ts";
 import { currentTaskScope, type JournalOperation, type TaskJournal } from "./task-journal.ts";
@@ -264,16 +275,28 @@ export class TaskExecutorAuthority {
           );
     const holdTaskId = parent?.resourceHoldTaskId ?? trusted.taskId;
     if (leases.some((lease) => lease.taskId !== holdTaskId)) throw new ResourceBusyError([]);
-    const inspection =
-      request.kind === "file" &&
-      ["list", "read", "read_binary", "stat"].includes(String(request.args.operation));
+    const inspection = nativeInspection(request.kind, request.args);
     if (Boolean(request.inspection) !== inspection)
       throw new AppError("Native inspection does not match concrete operation", 422);
     let resourceKey = `system-admin:${registration.hostId}`;
-    const exclusive = !inspection;
+    const reset = nativeGraphicalReset(request.kind, request.args);
+    const exclusive = !inspection && !reset;
     if (request.kind === "command" || request.kind === "media")
       resourceKey = `cpu-heavy:${registration.hostId}`;
-    else if (request.kind === "file" || request.kind === "file-version") {
+    else if (request.kind === "desktop" || request.kind === "browser") {
+      const session = await this.graphicalSession(owner, request, executorEpoch, context);
+      if (!inspection && !reset) {
+        resourceKey = desktopResourceKey(session);
+        if (
+          !leases.some(
+            (lease) =>
+              lease.request.key === desktopProfileKey(session) &&
+              lease.request.mode === "exclusive",
+          )
+        )
+          throw new ResourceBusyError([]);
+      }
+    } else if (request.kind === "file" || request.kind === "file-version") {
       let path = request.args.path;
       if (typeof path !== "string") {
         const reference =
@@ -310,10 +333,23 @@ export class TaskExecutorAuthority {
         trusted.resourceBudget,
       );
     }
+    let graphicalExpiry = Number.POSITIVE_INFINITY;
+    if (request.kind === "desktop" || request.kind === "browser") {
+      graphicalExpiry = Date.now() + 45_000;
+      if (request.args.actor === "human") {
+        const grant = await this.journal.db.get<{ expiresAt?: number }>(
+          owner,
+          "desktop-control",
+          String(request.args.sessionId),
+        );
+        graphicalExpiry = Math.min(graphicalExpiry, grant?.expiresAt ?? 0);
+      }
+    }
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(
       Math.min(
         Date.now() + 30 * 60_000,
+        graphicalExpiry,
         Date.parse(task.timing?.validUntil ?? "") || Number.POSITIVE_INFINITY,
       ),
     ).toISOString();
@@ -343,7 +379,7 @@ export class TaskExecutorAuthority {
       status: "queued",
       toolName: `native.${request.kind}`,
       args: request.args,
-      effect: !inspection,
+      effect: !inspection && !reset,
       runToken: trusted.runToken,
       resourceLeaseIds: leases.map((lease) => lease.id),
       resourceHoldTaskId: holdTaskId,
@@ -462,7 +498,96 @@ export class TaskExecutorAuthority {
       stored.resourceFence !== operation.resourceFence
     )
       throw new AppError("Native dispatch binding or fence changed", 409);
+    if (operation.kind === "desktop" || operation.kind === "browser") {
+      const manual = stored.manualRequestId
+        ? await this.journal.db.get<ManualRequest>(
+            owner,
+            "manual-executor-requests",
+            stored.manualRequestId,
+          )
+        : undefined;
+      await this.graphicalSession(
+        owner,
+        request,
+        operation.executorEpoch,
+        manual
+          ? { kind: "manual", requestId: manual.id, deviceId: manual.deviceId, owner }
+          : undefined,
+      );
+      if (manual) await this.device(owner, manual.deviceId);
+    }
     await this.journal.authorizeDispatch(owner, operation.id, operation.revision, stored.runToken);
+  }
+  private async graphicalSession(
+    owner: string,
+    request: NativeRequest,
+    epoch: number,
+    context?: NativeDispatchContext,
+  ): Promise<NativeDesktopSession> {
+    const registration = this.options.executor(owner, request.executorId);
+    const node = await this.journal.db.get<{
+      epoch: number;
+      hello: { osAccountId: string; readiness: { desktopSession?: NativeDesktopSession } };
+    }>("__executors__", "nodes", request.executorId);
+    const desktop = node?.hello.readiness.desktopSession;
+    if (!desktop || node?.epoch !== epoch)
+      throw new AppError("Trusted native desktop binding is unavailable", 409);
+    const args =
+      request.kind === "desktop"
+        ? nativeDesktopArgsSchema.parse(request.args)
+        : nativeBrowserArgsSchema.parse(request.args);
+    if (
+      args.sessionId !== desktop.id ||
+      args.sessionGeneration !== desktop.sessionGeneration ||
+      ("browserSessionId" in args && args.browserSessionId !== desktop.browserSessionId)
+    )
+      throw new AppError("Native desktop session/generation/profile changed", 409);
+    const control = await this.journal.db.get<{
+      control: string;
+      revision: number;
+      deviceId?: string;
+      grantId?: string;
+      expiresAt?: number;
+      generation: string;
+    }>(owner, "desktop-control", desktop.id);
+    const reset = nativeGraphicalReset(request.kind, request.args);
+    if (reset) {
+      if (
+        context?.kind !== "manual" ||
+        control?.control !== "changing" ||
+        control.deviceId !== context.deviceId ||
+        ![control.revision, control.revision + 1].includes(args.controlRevision)
+      )
+        throw new AppError(
+          "Native desktop reset requires the current device control transition",
+          403,
+        );
+    } else if (args.controlRevision !== (control?.revision ?? 0))
+      throw new AppError("Native desktop control revision changed", 409);
+    if ("actor" in args && args.actor === "human") {
+      if (
+        context?.kind !== "manual" ||
+        control?.control !== "human" ||
+        control.generation !== desktop.sessionGeneration ||
+        control.deviceId !== context.deviceId ||
+        control.grantId !== args.grantId ||
+        (control.expiresAt ?? 0) <= Date.now()
+      )
+        throw new AppError("Native human input grant is expired or belongs to another device", 403);
+    } else if (
+      !nativeInspection(request.kind, request.args) &&
+      !nativeGraphicalReset(request.kind, request.args) &&
+      control &&
+      control.control !== "agent"
+    )
+      throw new AppError("Desktop is under human control", 409, "BROWSER_CONTROLLED");
+    return {
+      ...desktop,
+      executorId: request.executorId,
+      hostId: registration.hostId,
+      osAccountId: node.hello.osAccountId,
+      executorEpoch: epoch,
+    };
   }
   async recordReceipt(
     owner: string,
