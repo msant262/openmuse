@@ -7,8 +7,8 @@ resultados observados, sem equiparar testes com fixtures a contas reais.
 
 **Acesso ao produto:** [primeira entrada pelo navegador e Android](FIRST-ACCESS.md).
 A raiz HTTPS agora serve a interface web; `/api` e `/executor` preservam o backend.
-O export web foi reconstruído com cache limpo e URL HTTPS de produção, sem novo
-container e sem reiniciar a API.
+O export web foi reconstruído com cache limpo e URL HTTPS de produção. A revisão
+atual também atualizou a API para oferecer criação persistente de companheiros.
 
 Atualização após o primeiro aceite real: o domínio público
 `https://app.okamibot.cloud` está acessível via Cloudflare Tunnel, sem Tailscale no
@@ -24,29 +24,54 @@ configurações de nome/personalidade, cinco avatares 3D animados e editor de
 aparência. O visualizador mantém a imagem durante polling e entrada manual.
 O build anterior permanece em `/opt/okami-web/releases/40390aa-public` para rollback.
 
-A revisão visual inspirada no Muse usa a fonte mobile `a2845d4` e o build web
-`/opt/okami-web/releases/a2845d4-public`. Refez os cinco personagens locais,
-poses de trabalho/resposta, retrato na conversa, personalização visual, previews
-sem despejo de JSON, histórico de navegador e recibos compactos com detalhes
-preservados. Durante a inicialização do 3D, o app mantém uma prévia local com
-indicador de carregamento; a legenda só anuncia movimento quando o renderer está pronto.
-A suíte no pin passou **931/931 testes**, além de TypeScript,
-build web/servidor e verificações focais de interface. O backend permaneceu
-na mesma imagem durante essa publicação. Evidências e referências estão no
-[registro da revisão Muse](superpowers/plans/2026-10-03-muse-experience.md) e
-em `artifacts/muse-rework/` e `artifacts/android/muse-release-evidence/`.
-Os APKs ARM64 e x86_64 foram produzidos da árvore limpa `a2845d4`, com assinatura
-de produção verificada e URL pública embutida. No emulador API 34, os cinco
-personagens, trabalho/resposta, movimento reduzido, funcionamento sem rede e
-personalização salva e reaberta foram observados. O upgrade final preservou
-pareamento e rascunho; a prévia de carregamento apareceu antes do 3D, sem fallback. O design personalizado também apareceu na web.
-Identidade e perfil foram restaurados exatamente ao backup. O APK baixado pelo
-endereço público retornou HTTP 200 e SHA256 idêntico ao artefato assinado.
-Isso não substitui o aceite no celular físico.
-A API continua na imagem `openmuse-server:product-d6fa127`, com fonte registrada
-em `/root/okami-deployment/source-pin`. A publicação anterior dessa imagem drenou o trabalho ativo e
-preservou a pausa na revisão 16, desativada; ao terminar, manutenção encerrada e
-contadores de tarefas, admissões, recursos, operações, entregas e HTTP zerados.
+A revisão `a2845d4` foi **rejeitada visualmente pelo usuário**, apesar dos
+931/931 testes funcionais daquela versão. Seus cinco modelos procedurais não
+atendiam ao acabamento, movimento nem à criação livre exigidos. O
+[registro anterior](superpowers/plans/2026-10-03-muse-experience.md) é histórico;
+não representa aceite visual.
+
+A correção atual usa **web e Android `360b60d`**, com web em
+`/opt/okami-web/releases/360b60d-public`, e **API `32a1ae5`**, imagem
+`openmuse-server:product-32a1ae5`. O novo estúdio transforma uma descrição livre
+em quatro imagens reais, aplica a opção escolhida e gera vídeos de repouso,
+trabalho e resposta. A direção de arte de pelúcia vale para qualquer personagem;
+a galeria salva permite reutilizar criações ou voltar ao padrão. A conta Grok
+conectada gera imagens e vídeos independentemente do modelo de conversa.
+O personagem padrão usa novas imagens e vídeos locais, incluindo fones,
+notebook e mesa no estado de trabalho. A interface mantém o retrato até o
+primeiro quadro, respeita movimento reduzido e reorganiza navegação, conversa,
+prévia e estúdio nos layouts desktop e móvel. Ícone e abertura também foram
+atualizados. Prompts e origem dos assets estão em
+`apps/mobile/assets/companions/README.md`; arquitetura em [AVATAR-GENERATION.md](AVATAR-GENERATION.md).
+
+O ensaio real do mesmo padrão visual produziu quatro dragões turquesa, quatro
+robôs lavanda e, pela interface pública, quatro raposas. A segunda raposa gerou
+os três vídeos, foi reaberta pela galeria após recarregar a página e reproduziu
+os três estados sem nova geração. A conclusão de um vídeo não sobrescreveu uma
+seleção posterior. O serviço público de vídeo respondeu HTTP 206 com bytes MP4
+válidos. Durante o encerramento surgiu outra criação em uma sessão do usuário;
+essa escolha foi preservada, sem restaurar o backup antigo por cima dela.
+Somente as duas sessões temporárias deste ensaio foram revogadas, com remoção
+dos arquivos privados de credenciais. Referências, limites e evidências:
+[plano da correção](superpowers/plans/2026-10-03-muse-fidelity-correction.md),
+`artifacts/muse-fidelity/` e `artifacts/android/muse-fidelity-release/evidence/`.
+
+As verificações Node foram executadas em dois lotes: 431/432 e 519/519. A única
+falha era o harness do visualizador desktop, que precisava reconhecer imports
+MP4 e a URL Expo; foi corrigida e o ensaio real com Playwright passou. Após as
+últimas alterações, geração/renderização/visualizador passaram 19/19, estúdio
+11/11, idioma 4/4 e branding 1/1. TypeScript mobile/servidor, builds web/servidor
+e Biome sem erros também passaram; avisos de lint permanecem. Esses resultados
+comprovam funcionamento e regressões, não equivalência visual exata nem
+aprovação do usuário.
+
+A publicação da API drenou o trabalho ativo, com contadores zerados e manutenção
+encerrada ao final, preservando a pausa desativada na revisão 16. O pin está em
+`/root/okami-deployment/source-pin`. As publicações posteriores da web e do APK
+não reiniciaram a API nem interromperam a criação iniciada pelo usuário.
+O APK final foi baixado do endereço público: HTTP 200, tamanho e SHA256 idênticos
+ao artefato assinado. A raiz entrega o bundle final; health responde 200, API
+sem autenticação 401 e executor/manutenção 404 no gateway público.
 
 A validação final em `d6fa127` passou **908/908 testes Node**, TypeScript e build
 do servidor. Biome terminou sem erros (189 avisos existentes e duas informações).
@@ -175,34 +200,37 @@ prolongada dos testes curtos nem latência de chat a partir do healthcheck.
 
 ## Android
 
-Fonte mobile final: `40390aa`; identificador técnico `app.openmuse.mobile` e scheme
+Fonte mobile final: `360b60d`; identificador técnico `app.openmuse.mobile` e scheme
 `openmuse` preservados. Os APKs usam a chave persistente privada do projeto,
 assinatura verificada, release não debuggable e certificado SHA256
 `e6d8e6aeb25f3c1603efd369b9898dbb865343f4148a1969cd85383331053f8a`.
 Ambos usam `https://app.okamibot.cloud`, sem Tailscale no aparelho.
 
-- [ARM64 para o telefone](https://app.okamibot.cloud/downloads/okamibot.apk?v=40390aa):
-  52.809.546 bytes; SHA256
-  `4923208c4255b2a99f6a45598ee80a81308043da1193befb66b10fa7e64a1557`.
+- [ARM64 para o telefone](https://app.okamibot.cloud/downloads/okamibot.apk?v=360b60d):
+  58.499.825 bytes; SHA256
+  `a7f56342c0072751977f29e2bc8cfd184afce1463eb36f7b323ed5018b0ed23d`.
   O download público foi comparado ao build local assinado.
-- [x86_64 para o emulador](../artifacts/android/public-release/okamibot-release-x86_64.apk):
-  54.554.385 bytes; SHA256
-  `755d6981c5fa1cabdc46920b9d0331987e46368550ba5888acb1473f7df5dff2`.
+- [x86_64 para o emulador](../artifacts/android/muse-fidelity-release/okamibot-release-x86_64.apk):
+  60.244.664 bytes; SHA256
+  `25d8286fc8803c095967a3e4d65348cb3d120a20576f9500a8addc989c457578`.
 - Recibos de assinatura/proveniência ficam junto dos APKs em
-  `artifacts/android/public-release/`. Evidências de interface ficam em
-  `artifacts/android/public-preflight-evidence/` e
-  `artifacts/android/public-release-evidence/`. Esses artefatos são locais e
+  `artifacts/android/muse-fidelity-release/`. Evidências de interface ficam em
+  `artifacts/android/muse-fidelity-release/evidence/`. Esses artefatos são locais e
   ignorados pelo Git.
 
-A atualização no emulador preservou pareamento e rascunho e acessou o workspace
-real por HTTPS público. Nome, personalidade e avatar foram salvos e conferidos
-após reinício; os valores anteriores foram restaurados e relidos. O log final
-filtrado do processo não apresentou erros. O recibo de aceite é
-`artifacts/android/public-release-evidence/receipt.json`. A verificação nativa cobriu seleção persistente de idioma,
-menu, configurações, cinco espécies, animação 3D e controles do editor; cor
-inválida impede salvar. No navegador, a verificação real cobriu salvar e recarregar
-nome/personalidade, preset e aparência personalizada, além de assumir controle,
-entrada de teclado/mouse e devolução ao agente sem remover a imagem da tela.
+A atualização final no emulador API 34 preservou pareamento e rascunho e acessou
+o workspace real por HTTPS público. O novo ícone, os rótulos em português e a
+retomada após HOME foram conferidos, com zero erros no logcat filtrado. Os três
+vídeos do padrão, reprodução offline e retrato estático com movimento reduzido
+foram observados no build `32a1ae5`, cujo renderer é idêntico ao final. A pausa em
+segundo plano está implementada por AppState/player.pause(); o release não expõe
+telemetria direta que comprove seu estado, e a alocação do codec permaneceu no
+dump. O recibo `evidence/native-acceptance.json` registra esse limite.
+
+O ensaio Android não alterou a identidade global: carregou e preservou a criação
+mais recente do usuário. Idioma, rede e escalas foram restaurados, somente o
+rascunho de teste foi removido, e o AVD foi encerrado. Não houve teste em telefone
+físico; esse aceite permanece necessário.
 
 Instale o ARM64 como atualização se já houver app compatível, preservando dados.
 Se a assinatura não corresponder, interrompa sem desinstalar/limpar dados para
