@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
-import { enableNativePush } from "./native-push";
 import { useI18n } from "./i18n";
+import { enableNativePush } from "./native-push";
 import { Button, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 export function NativePushSettings() {
@@ -25,7 +25,9 @@ export function NativePushSettings() {
     <View style={{ gap: 8 }}>
       <Text style={s.heading}>{t("Phone notifications")}</Text>
       <Text style={s.small}>
-        {t("Native delivery is optional. Results always stay in Activity. Delivery requires your phone's permission and server platform credentials.")}
+        {t(
+          "Native delivery is optional. Results always stay in Activity. Delivery requires your phone's permission and server platform credentials.",
+        )}
       </Text>
       <View style={[s.row, { gap: 8 }]}>
         <Button small busy={busy} onPress={() => void change(true)}>

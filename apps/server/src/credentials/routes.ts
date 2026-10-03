@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { CredentialBroker } from "./broker.ts";
+import type { CredentialBroker } from "./broker.ts";
 import type { CredentialLoginService } from "./login.ts";
 
 export function credentialRoutes(

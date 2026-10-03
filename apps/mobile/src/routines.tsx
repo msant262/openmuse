@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import type { Routine } from "../../../packages/domain/src/agent";
-import { useI18n } from "./i18n";
 import { useAgentWorkspace } from "./agent-workspace";
+import { useI18n } from "./i18n";
 import { cronDayTime, dayTimeCron } from "./routine-schedule";
 import { Button, Card, ErrorNotice, Field, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -64,7 +64,12 @@ export function RoutinesPanel() {
           <Text style={s.heading}>{value.title}</Text>
           <Text style={s.small}>
             {value.enabled
-              ? t("Next: {date}", { date: new Date(value.nextRunAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US", { timeZone: value.timezone }) })
+              ? t("Next: {date}", {
+                  date: new Date(value.nextRunAt).toLocaleString(
+                    locale === "pt-BR" ? "pt-BR" : "en-US",
+                    { timeZone: value.timezone },
+                  ),
+                })
               : t("Paused")}{" "}
             · {value.timezone}
           </Text>
@@ -165,7 +170,12 @@ function RoutineEditor({
               </Button>
             ))}
           </View>
-          <Field label={t("Time (24-hour)")} value={time} onChangeText={setTime} placeholder="08:00" />
+          <Field
+            label={t("Time (24-hour)")}
+            value={time}
+            onChangeText={setTime}
+            placeholder="08:00"
+          />
         </>
       )}
       <Field

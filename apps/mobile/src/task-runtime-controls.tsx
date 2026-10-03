@@ -105,7 +105,10 @@ function TimingControls({ task }: { task: AgentTask }) {
   const zone = task.timing?.timezone ?? "Europe/Berlin";
   function date(value: string) {
     try {
-      return new Date(value).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US", { timeZone: zone, timeZoneName: "short" });
+      return new Date(value).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US", {
+        timeZone: zone,
+        timeZoneName: "short",
+      });
     } catch {
       return value;
     }
@@ -119,7 +122,10 @@ function TimingControls({ task }: { task: AgentTask }) {
     <Card style={{ gap: 10 }}>
       <Text style={s.heading}>{t("Priority and timing")}</Text>
       <Text style={s.muted}>
-        {t("Priority: {priority} · {zone}", { priority: t(task.timing?.priority ?? "normal"), zone })}
+        {t("Priority: {priority} · {zone}", {
+          priority: t(task.timing?.priority ?? "normal"),
+          zone,
+        })}
       </Text>
       {task.timing?.dueAt && (
         <Text style={s.text}>
@@ -139,7 +145,9 @@ function TimingControls({ task }: { task: AgentTask }) {
         </Text>
       )}
       <Text style={s.small}>
-        {t("The desired deadline is a target. Authorization expiry prevents new actions after that time; it does not undo actions already sent.")}
+        {t(
+          "The desired deadline is a target. Authorization expiry prevents new actions after that time; it does not undo actions already sent.",
+        )}
       </Text>
       <ErrorNotice error={error} />
       {!!notice && (
@@ -190,11 +198,15 @@ function TimingControls({ task }: { task: AgentTask }) {
             onChangeText={(validUntil) => setDraft({ ...draft, validUntil })}
           />
           <Text style={s.small}>
-            {t("Use DD/MM/YYYY HH:mm in the selected zone, or an ISO date with an explicit offset. If clocks repeat an hour, include the offset. Clear a field to remove that limit.")}
+            {t(
+              "Use DD/MM/YYYY HH:mm in the selected zone, or an ISO date with an explicit offset. If clocks repeat an hour, include the offset. Clear a field to remove that limit.",
+            )}
           </Text>
           {pending && (
             <Text style={s.small}>
-              {t("This submitted change is kept for a retry. Reload to inspect the server before making another edit.")}
+              {t(
+                "This submitted change is kept for a retry. Reload to inspect the server before making another edit.",
+              )}
             </Text>
           )}
           <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>

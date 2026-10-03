@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import type { AgentMemory, RevisionEntry } from "../../../packages/domain/src/agent";
-import { useI18n } from "./i18n";
 import { useAgentWorkspace } from "./agent-workspace";
+import { useI18n } from "./i18n";
 import { Button, Card, ErrorNotice, Field, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -156,13 +156,17 @@ function MemoryRow({ memory, changed }: { memory: AgentMemory; changed: () => Pr
       </Text>
       {!!memory.updatedAt && (
         <Text style={s.small}>
-          {t("Changed {date}", { date: new Date(memory.updatedAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US") })}
+          {t("Changed {date}", {
+            date: new Date(memory.updatedAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US"),
+          })}
         </Text>
       )}
       {!!memory.validUntil && (
         <Text style={s.small}>
           {t("Valid until {date} · {timezone}", {
-            date: new Date(memory.validUntil).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US"),
+            date: new Date(memory.validUntil).toLocaleString(
+              locale === "pt-BR" ? "pt-BR" : "en-US",
+            ),
             timezone: memory.timezone ?? t("explicit offset"),
           })}
         </Text>
@@ -196,7 +200,9 @@ function MemoryRow({ memory, changed }: { memory: AgentMemory; changed: () => Pr
             {t("Revision {revision} · {action} · {date}", {
               revision: entry.revision,
               action: t(entry.action),
-              date: new Date(entry.changedAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US"),
+              date: new Date(entry.changedAt).toLocaleString(
+                locale === "pt-BR" ? "pt-BR" : "en-US",
+              ),
             })}
           </Text>
           <Text style={s.text}>{entry.value.text}</Text>

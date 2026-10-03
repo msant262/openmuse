@@ -6,8 +6,8 @@ import type { AgentArtifact, AgentTask } from "../../../packages/domain/src/agen
 import { ArtifactCard, TaskCard } from "./agent-ui";
 import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { BrowserThreadCard } from "./computer";
-import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useI18n } from "./i18n";
+import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function FileThreadCard({ file }: { file: Artifact }) {
@@ -47,7 +47,11 @@ export function FileThreadCard({ file }: { file: Artifact }) {
               </View>
             ))
           ) : (
-            <Text style={s.muted}>{t("{fileType} · Tap to open or download", { fileType: localizedAttachmentLabel(file, t) })}</Text>
+            <Text style={s.muted}>
+              {t("{fileType} · Tap to open or download", {
+                fileType: localizedAttachmentLabel(file, t),
+              })}
+            </Text>
           )}
         </View>
         <View style={[s.row, { gap: 13 }]}>

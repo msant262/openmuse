@@ -5,7 +5,6 @@ import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import {
-  credentialAdapterSchema,
   type CredentialAdapter,
   type CredentialBrowserBinding,
   type CredentialConnection,
@@ -13,6 +12,7 @@ import {
   type CredentialRef,
   type CredentialRequestRecord,
   type CredentialStatus,
+  credentialAdapterSchema,
   type SecretStore,
   type ValidCredentialAdapter,
 } from "./contracts.ts";

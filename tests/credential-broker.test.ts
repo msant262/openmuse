@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createApp } from "../apps/server/src/app.ts";
 import { CredentialBroker } from "../apps/server/src/credentials/broker.ts";
+import type { CredentialAdapter, SecretStore } from "../apps/server/src/credentials/contracts.ts";
 import { OpenBaoSecretStore } from "../apps/server/src/credentials/openbao-store.ts";
 import { createStore } from "../apps/server/src/db.ts";
-import type { CredentialAdapter, SecretStore } from "../apps/server/src/credentials/contracts.ts";
 
 const canary = "CREDENTIAL-CANARY-91f0a2";
 const adapter: CredentialAdapter = {
@@ -103,8 +103,9 @@ test("credential forms store secrets privately and resume the matching task by r
   assert.equal(replay.status, "saved");
   assert.equal(secrets.writes, 1, "a repeated response ID must not create another version");
   const task = await db.get<Record<string, unknown>>("owner", "tasks", taskId);
-  assert.equal(task?.status, "queued");
-  assert.deepEqual((task?.state as Record<string, unknown>).credentialRef, saved.credentialRef);
+  assert.ok(task);
+  assert.equal(task.status, "queued");
+  assert.deepEqual((task.state as Record<string, unknown>).credentialRef, saved.credentialRef);
 
   const serialized = JSON.stringify({
     request: await db.get("owner", "interaction-requests", request.id),

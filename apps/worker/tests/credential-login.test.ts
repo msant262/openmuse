@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  type CredentialPage,
   credentialLogin,
   credentialLoginInputSchema,
-  type CredentialPage,
 } from "../src/credential-login.ts";
 
 const secret = "canary-login-password-92841";
@@ -163,9 +163,8 @@ test("returns outcome_unknown after an uncertain submit and never retries it", a
 
 test("does not fill a form whose trusted selectors resolve outside the adapter origin", async () => {
   const page = readyForm();
-  page.evaluate = async function <T, A>(): Promise<T> {
-    return { ready: true, actionOrigin: "https://attacker.fixture.test" } as T;
-  };
+  page.evaluate = async <T, A>(): Promise<T> =>
+    ({ ready: true, actionOrigin: "https://attacker.fixture.test" }) as T;
   page.locators.set("#submit", { count: 1, visible: true, enabled: true });
   const result = await credentialLogin(page.asPage(), input(), {
     sessionId: "a67e4034-71fc-4e20-8965-28c64f75f2c9",

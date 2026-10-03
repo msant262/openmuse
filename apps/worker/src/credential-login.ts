@@ -1,5 +1,5 @@
-import { WorkerError } from "./errors.ts";
 import { z } from "zod";
+import { WorkerError } from "./errors.ts";
 
 const trustedOrigin = z
   .string()

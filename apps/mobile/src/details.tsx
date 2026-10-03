@@ -34,15 +34,15 @@ import {
 } from "../../../packages/domain/src";
 import type { ComputerCommand } from "../../../packages/domain/src/computer";
 import { DelegateSheet, NotificationsSheet, TaskDetail } from "./agent-ui";
+import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import BrowserConsole from "./BrowserConsole";
 import { browserAddress, browserSite } from "./browser-address";
 import { ComputerSheet } from "./computer";
-import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
 import { connectorReviewLines } from "./external-action-preview";
-import PdfReader from "./PdfReader";
 import { useI18n } from "./i18n";
+import PdfReader from "./PdfReader";
 import {
   Button,
   Card,
@@ -76,7 +76,11 @@ export function Details({ detail }: { detail: Detail }) {
   if (detail.type === "review") return <ReviewDetail initial={detail.action} />;
   if (detail.type === "browser") return <BrowserDetail initial={detail.browser} />;
   return (
-    <Sheet title={t("Your workspace")} subtitle={t("A little room for everything.")} onClose={close}>
+    <Sheet
+      title={t("Your workspace")}
+      subtitle={t("A little room for everything.")}
+      onClose={close}
+    >
       {[
         { section: "mail" as const, title: t("Mail"), icon: MailIcon },
         { section: "calendar" as const, title: t("Calendar"), icon: CalendarDays },
@@ -141,9 +145,11 @@ function MailDetail({ mail: m }: { mail: Mail }) {
   return (
     <Sheet
       title={m.subject}
-      subtitle={thread.length === 1
-        ? t("1 message in this conversation")
-        : t("{count} messages in this conversation", { count: thread.length })}
+      subtitle={
+        thread.length === 1
+          ? t("1 message in this conversation")
+          : t("{count} messages in this conversation", { count: thread.length })
+      }
       onClose={close}
     >
       {loading && (
@@ -158,7 +164,9 @@ function MailDetail({ mail: m }: { mail: Mail }) {
             <View style={{ gap: 4, flex: 1 }}>
               <Text style={s.heading}>{message.sender}</Text>
               <Text style={s.small}>{message.from}</Text>
-              <Text style={s.small}>{t("To: {recipients}", { recipients: message.to.join(", ") })}</Text>
+              <Text style={s.small}>
+                {t("To: {recipients}", { recipients: message.to.join(", ") })}
+              </Text>
             </View>
             <Text style={s.small}>
               {dateLabel(message.date)} · {timeLabel(message.date)}
@@ -507,7 +515,13 @@ function EventEditor({
         timeZone={zone}
         allDay={allDay}
       />
-      <DateTimeEditor label={t("Ends")} value={end} onChange={setEnd} timeZone={zone} allDay={allDay} />
+      <DateTimeEditor
+        label={t("Ends")}
+        value={end}
+        onChange={setEnd}
+        timeZone={zone}
+        allDay={allDay}
+      />
       {allDay && (
         <Text style={[s.small, { marginBottom: 15 }]}>
           {t("The end date is the day after the last day of your event.")}
@@ -552,8 +566,12 @@ function EventEditor({
       <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
         <Button primary icon={ShieldCheck} busy={busy} onPress={() => void propose()}>
           {w.runtime.approvalPolicy === "money"
-            ? e ? t("Save changes") : t("Save event")
-            : e ? t("Review changes") : t("Review event")}
+            ? e
+              ? t("Save changes")
+              : t("Save event")
+            : e
+              ? t("Review changes")
+              : t("Review event")}
         </Button>
         {e && (
           <Button icon={Trash2} disabled={busy} danger onPress={() => void propose(true)}>
@@ -661,8 +679,12 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
             ))}
             <Text style={s.small}>
               {d.tool === "mcp.call"
-                ? t("Review this request, amount and recipient before approving. Approval applies only to these arguments, connector and account; changes require a fresh review.")
-                : t("Inspect the page, amount and recipient before approving. Approval applies only to this prepared action; page changes or human takeover require a fresh review.")}
+                ? t(
+                    "Review this request, amount and recipient before approving. Approval applies only to these arguments, connector and account; changes require a fresh review.",
+                  )
+                : t(
+                    "Inspect the page, amount and recipient before approving. Approval applies only to this prepared action; page changes or human takeover require a fresh review.",
+                  )}
             </Text>
             {typeof d.sessionId === "string" && (
               <Button
@@ -671,7 +693,9 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
                     .request<BrowserSession>(`/api/browsers/${d.sessionId}`)
                     .then((browser) => open({ type: "browser", browser }))
                     .catch((failure) =>
-                      setError(failure instanceof Error ? failure.message : t("Browser unavailable")),
+                      setError(
+                        failure instanceof Error ? failure.message : t("Browser unavailable"),
+                      ),
                     );
                 }}
               >
@@ -696,7 +720,10 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
                 const file = w.files.find((f) => f.id === id);
                 return (
                   <Text key={String(id)} style={s.text}>
-                    {t("{name} · version {version}", { name: file?.name || String(id), version: String(id).slice(-8) })}
+                    {t("{name} · version {version}", {
+                      name: file?.name || String(id),
+                      version: String(id).slice(-8),
+                    })}
                   </Text>
                 );
               })
@@ -728,7 +755,10 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
                 <ReviewLine label={t("Time zone")} value={String(d.timeZone || "")} />
                 <ReviewLine label={t("All day")} value={d.allDay ? t("Yes") : t("No")} />
                 <ReviewLine label={t("Location")} value={String(d.location || t("None"))} />
-                <ReviewLine label={t("Attendees")} value={arrayText(d.attendees) || t("Just you")} />
+                <ReviewLine
+                  label={t("Attendees")}
+                  value={arrayText(d.attendees) || t("Just you")}
+                />
                 <ReviewLine label={t("Notes")} value={String(d.description || t("None"))} />
               </>
             )}
@@ -903,7 +933,15 @@ function FileDetail({ file: initial }: { file: Artifact }) {
     }
   }
   return (
-    <Sheet title={f.name} subtitle={t("{fileType} · {source}", { fileType: localizedAttachmentLabel(f, t), source: t(f.source) })} onClose={close} wide>
+    <Sheet
+      title={f.name}
+      subtitle={t("{fileType} · {source}", {
+        fileType: localizedAttachmentLabel(f, t),
+        source: t(f.source),
+      })}
+      onClose={close}
+      wide
+    >
       {f.mimeType === "application/pdf" ? (
         <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
       ) : f.mimeType.startsWith("image/") ? (
@@ -1024,7 +1062,7 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
         );
       const files = result.files;
       notify(
-          files.length
+        files.length
           ? t("{count} downloads added to Files.", { count: files.length })
           : t("No new downloads in this session."),
       );
@@ -1076,7 +1114,11 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
           />
         </View>
         <Button primary busy={busy} disabled={loading || !url.trim()} onPress={() => void mutate()}>
-          {browser.status === "closed" ? t("Reopen") : browser.status === "error" ? t("Reconnect") : t("Go")}
+          {browser.status === "closed"
+            ? t("Reopen")
+            : browser.status === "error"
+              ? t("Reconnect")
+              : t("Go")}
         </Button>
       </View>
       <ErrorNotice error={error} />
@@ -1103,7 +1145,9 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
         <Empty
           icon={Globe2}
           title={
-            browser.status === "closed" ? t("This session is closed") : t("Preview is not available")
+            browser.status === "closed"
+              ? t("This session is closed")
+              : t("Preview is not available")
           }
           detail={
             browser.status === "closed"

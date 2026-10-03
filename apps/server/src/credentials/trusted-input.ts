@@ -1,6 +1,6 @@
 import {
-  credentialAdapterSchema,
   type CredentialAdapter,
+  credentialAdapterSchema,
   type ValidCredentialAdapter,
 } from "./contracts.ts";
 

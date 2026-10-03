@@ -39,11 +39,11 @@ import type {
   EmailDraft,
 } from "../../../packages/domain/src";
 import { ActionLogScreen } from "./action-log-screen";
-import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { API_URL } from "./api";
+import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { localDateTime, zonedInstant } from "./date-time";
-import { McpConnections } from "./mcp-connections";
 import { useI18n } from "./i18n";
+import { McpConnections } from "./mcp-connections";
 import { useInlinePreview } from "./preview";
 import {
   Button,
@@ -99,7 +99,9 @@ export function TodayScreen() {
         <View style={{ flex: 1, gap: 15, zIndex: 1 }}>
           <View style={[s.row, { gap: 7 }]}>
             <Sparkles size={13} color={colors.blueDark} />
-            <Text style={[s.label, { color: colors.blueDark }]}>{t("A little clarity, every day")}</Text>
+            <Text style={[s.label, { color: colors.blueDark }]}>
+              {t("A little clarity, every day")}
+            </Text>
           </View>
           <Text
             style={{
@@ -116,7 +118,8 @@ export function TodayScreen() {
             {events.length
               ? t("{count} things on your calendar", { count: events.length })
               : t("Your calendar has room")}
-            {unread.length ? `, ${t("{count} unread emails", { count: unread.length })}` : ""}.{"\n"}
+            {unread.length ? `, ${t("{count} unread emails", { count: unread.length })}` : ""}.
+            {"\n"}
             {t("Let’s make space for what matters.")}
           </Text>
           <Button
@@ -455,7 +458,10 @@ export function AgendaRow({
           </Text>
         )}
         <Text numberOfLines={1} style={[s.small, { fontSize: 11 }]}>
-          {e.location || (e.attendees.length ? t("{count} attendees", { count: e.attendees.length }) : t("Time for you"))}
+          {e.location ||
+            (e.attendees.length
+              ? t("{count} attendees", { count: e.attendees.length })
+              : t("Time for you"))}
         </Text>
       </View>
       <ChevronRight size={14} color={colors.muted} />
@@ -535,7 +541,10 @@ export function MailScreen() {
                 key={d.id}
                 icon={Mail}
                 title={d.subject}
-                detail={t("To: {recipients} · saved {date}", { recipients: d.to.join(", "), date: dateLabel(d.createdAt) })}
+                detail={t("To: {recipients} · saved {date}", {
+                  recipients: d.to.join(", "),
+                  date: dateLabel(d.createdAt),
+                })}
                 onPress={() => open({ type: "email", draft: d })}
               />
             ))
@@ -715,7 +724,10 @@ export function CalendarScreen() {
       <View style={[s.between, { gap: 12, flexWrap: "wrap" }]}>
         <View style={[s.row, { gap: 8 }]}>
           <Text style={s.title}>
-            {anchor.toLocaleDateString(locale === "pt-BR" ? "pt-BR" : "en-US", { month: "long", year: "numeric" })}
+            {anchor.toLocaleDateString(locale === "pt-BR" ? "pt-BR" : "en-US", {
+              month: "long",
+              year: "numeric",
+            })}
           </Text>
           <IconButton
             icon={ChevronLeft}
@@ -773,7 +785,11 @@ export function CalendarScreen() {
                   backgroundColor: key === date ? colors.sky : "transparent",
                 }}
               >
-                <Text style={s.small}>{day.toLocaleDateString(locale === "pt-BR" ? "pt-BR" : "en-US", { weekday: "short" })}</Text>
+                <Text style={s.small}>
+                  {day.toLocaleDateString(locale === "pt-BR" ? "pt-BR" : "en-US", {
+                    weekday: "short",
+                  })}
+                </Text>
                 <Text
                   style={[
                     s.title,
@@ -811,7 +827,10 @@ export function CalendarScreen() {
           </Button>
         </View>
         <Text style={[s.small, { marginTop: 7, marginBottom: 13 }]}>
-          {t("{calendar} · {zone}. Events show their own time zone.", { calendar: selected?.name || t("Your calendar"), zone })}
+          {t("{calendar} · {zone}. Events show their own time zone.", {
+            calendar: selected?.name || t("Your calendar"),
+            zone,
+          })}
         </Text>
         <ErrorNotice error={error} />
         {!!error && (
@@ -933,7 +952,9 @@ export function BrowserScreen() {
                     {b.url}
                   </Text>
                 </View>
-                <Chip tint={b.status === "active" ? colors.green : colors.canvas}>{t(b.status)}</Chip>
+                <Chip tint={b.status === "active" ? colors.green : colors.canvas}>
+                  {t(b.status)}
+                </Chip>
                 <ArrowUpRight size={17} color={colors.muted} />
               </View>
               {previewVisible && !!b.previewUrl && (
@@ -954,7 +975,9 @@ export function BrowserScreen() {
           <Empty
             icon={Globe2}
             title={t("Start with a website")}
-            detail={t("Open a session above to keep your browsing together. Live previews appear when the browser worker is configured.")}
+            detail={t(
+              "Open a session above to keep your browsing together. Live previews appear when the browser worker is configured.",
+            )}
           />
         )}
       </Card>
@@ -1066,9 +1089,7 @@ export function FilesScreen() {
                 <Text numberOfLines={1} style={[s.heading, { fontSize: 14 }]}>
                   {f.name}
                 </Text>
-                <Text style={s.small}>
-                  {localizedAttachmentLabel(f, t)}
-                </Text>
+                <Text style={s.small}>{localizedAttachmentLabel(f, t)}</Text>
                 <View style={[s.between, { marginTop: 9 }]}>
                   <Chip>{t(f.source)}</Chip>
                   <Text style={s.small}>{dateLabel(f.createdAt)}</Text>
@@ -1083,7 +1104,9 @@ export function FilesScreen() {
           <Empty
             icon={FileText}
             title={t("Your documents live here")}
-            detail={t("Import an Office document, PDF, image, audio or video. Read supported previews and save or share a copy.")}
+            detail={t(
+              "Import an Office document, PDF, image, audio or video. Read supported previews and save or share a copy.",
+            )}
           />
         </Card>
       )}
@@ -1187,7 +1210,7 @@ export function ActivityScreen() {
                     {dateLabel(a.date)} · {timeLabel(a.date)}
                   </Text>
                 </View>
-              <Chip>{t(a.status)}</Chip>
+                <Chip>{t(a.status)}</Chip>
               </View>
             ))
           ) : (
@@ -1279,7 +1302,9 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
       connected: false,
       group: "openbot",
     },
-  ].filter((row) => `${row.name} ${t(row.name)} ${row.group}`.toLowerCase().includes(query.toLowerCase()));
+  ].filter((row) =>
+    `${row.name} ${t(row.name)} ${row.group}`.toLowerCase().includes(query.toLowerCase()),
+  );
   return (
     <View style={{ gap: 22 }}>
       <McpConnections query={query} />
@@ -1358,7 +1383,9 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
           {selected === "google" ? (
             <View style={{ gap: 18 }}>
               <Text style={s.muted}>
-                {t("Bring Gmail and Google Calendar into your conversations. Choose read access, then enable sending and editing when you need it.")}
+                {t(
+                  "Bring Gmail and Google Calendar into your conversations. Choose read access, then enable sending and editing when you need it.",
+                )}
               </Text>
               <View style={[s.row, { gap: 7, flexWrap: "wrap" }]}>
                 {google?.capabilities.map((cap) => (
@@ -1411,7 +1438,10 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                 .filter((model) => model.failures > 0 && model.message)
                 .map((model) => (
                   <Text key={model.model} style={s.small}>
-                    {t("Last notice · {model}: {message}", { model: model.model, message: model.message ?? "" })}
+                    {t("Last notice · {model}: {message}", {
+                      model: model.model,
+                      message: model.message ?? "",
+                    })}
                   </Text>
                 ))}
               <Button
@@ -1425,10 +1455,14 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
           ) : (
             <View style={{ gap: 14 }}>
               <Text style={s.text}>
-                {t("The OpenBot adapter is available in this open-source project. A live OpenBot backend has not been configured.")}
+                {t(
+                  "The OpenBot adapter is available in this open-source project. A live OpenBot backend has not been configured.",
+                )}
               </Text>
               <Text style={s.muted}>
-                {t("Your current computer uses OkamiBot’s persistent Chromium worker. OpenBot integration will expand the execution backend while keeping this interface.")}
+                {t(
+                  "Your current computer uses OkamiBot’s persistent Chromium worker. OpenBot integration will expand the execution backend while keeping this interface.",
+                )}
               </Text>
             </View>
           )}

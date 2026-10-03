@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { ExecutorOperation } from "../executors/protocol.ts";
 import { AppError } from "../errors.ts";
+import type { ExecutorOperation } from "../executors/protocol.ts";
 import type { CredentialGrantBroker } from "./grants.ts";
 
 export type CredentialNodeRegistry = {

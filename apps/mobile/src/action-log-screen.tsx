@@ -46,7 +46,9 @@ export function ActionLogScreen() {
         </Button>
       </View>
       <Text style={s.small}>
-        {t("A permanent record of tool calls and outcomes. Command contents, passwords and message bodies are omitted.")}
+        {t(
+          "A permanent record of tool calls and outcomes. Command contents, passwords and message bodies are omitted.",
+        )}
       </Text>
       <ErrorNotice error={error} />
       {entries.map((entry) => (
@@ -59,11 +61,14 @@ export function ActionLogScreen() {
             {entry.tool} · {entry.target}
           </Text>
           <Text style={s.small}>
-            {new Date(entry.time).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US")} · {entry.actor}
+            {new Date(entry.time).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US")} ·{" "}
+            {entry.actor}
           </Text>
         </View>
       ))}
-      {!busy && !entries.length && <Text style={s.muted}>{t("External actions will appear here.")}</Text>}
+      {!busy && !entries.length && (
+        <Text style={s.muted}>{t("External actions will appear here.")}</Text>
+      )}
       {cursor && (
         <Button busy={busy} onPress={() => void load(cursor)}>
           {t("Load earlier actions")}

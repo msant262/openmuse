@@ -1,13 +1,13 @@
 import * as Crypto from "expo-crypto";
 import { Platform } from "react-native";
 import { parsePayload, parseResponse } from "./api-errors";
+import { resolveApiOrigin } from "./api-origin";
 import { AuthManager, type Session, type SessionTransport } from "./auth-manager";
 import { authenticatedFetch, authenticatedUpload } from "./auth-transport";
 import { ComputerRequests, durableComputerPath } from "./computer-requests";
 import { createCredentialStorage } from "./credential-storage";
 import { messageStorage } from "./message-storage";
 import { withWebSessionLock } from "./web-session-coordinator";
-import { resolveApiOrigin } from "./api-origin";
 
 export { ApiError } from "./api-errors";
 

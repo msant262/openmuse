@@ -75,7 +75,10 @@ export function McpConnections({ query = "" }: { query?: string }) {
                   : t("Needs connection")}
           </Text>
           <Text style={s.small}>
-            {t("{count} allowed tools: {tools}", { count: row.tools.length, tools: row.tools.join(", ") })}
+            {t("{count} allowed tools: {tools}", {
+              count: row.tools.length,
+              tools: row.tools.join(", "),
+            })}
           </Text>
           {row.oauth ? (
             <Button

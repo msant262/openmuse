@@ -270,16 +270,20 @@ export function ProfileSettings() {
         label={t("Personality and preferences")}
         value={fields.personality}
         onChangeText={(value) => edit("personality", value)}
-        placeholder={t("For example: warm, direct, curious; explain things with everyday examples.")}
+        placeholder={t(
+          "For example: warm, direct, curious; explain things with everyday examples.",
+        )}
         maxLength={1500}
         multiline
       />
       <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
-        {([
-          ["en-US", "English"],
-          ["pt-BR", "Portuguese (Brazil)"],
-          ["de-DE", "German"],
-        ] as const).map(([language, label]) => (
+        {(
+          [
+            ["en-US", "English"],
+            ["pt-BR", "Portuguese (Brazil)"],
+            ["de-DE", "German"],
+          ] as const
+        ).map(([language, label]) => (
           <Button
             key={language}
             small
@@ -382,7 +386,9 @@ export function ProfileSettings() {
               revision: entry.revision,
               action: t(entry.action),
               origin: t(entry.value.origin?.kind ?? "migration"),
-              date: new Date(entry.changedAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US"),
+              date: new Date(entry.changedAt).toLocaleString(
+                locale === "pt-BR" ? "pt-BR" : "en-US",
+              ),
             })}
           </Text>
           <Text style={s.small}>{JSON.stringify(entry.value.fields)}</Text>

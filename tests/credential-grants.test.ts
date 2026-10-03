@@ -4,16 +4,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import type { AgentTask } from "../packages/domain/src/agent.ts";
 import { createApp } from "../apps/server/src/app.ts";
 import type { Config } from "../apps/server/src/config.ts";
-import { createStore } from "../apps/server/src/db.ts";
 import type { CredentialAdapter, SecretStore } from "../apps/server/src/credentials/contracts.ts";
 import { trustedCredentialPlan } from "../apps/server/src/credentials/trusted-input.ts";
+import { createStore } from "../apps/server/src/db.ts";
+import type { AgentTask } from "../packages/domain/src/agent.ts";
 import {
   hello as baseHello,
-  nodeToken,
   registration as baseRegistration,
+  nodeToken,
 } from "./helpers/executors.ts";
 
 const owner = "local-user";

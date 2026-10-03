@@ -88,7 +88,9 @@ export function VoiceInput({
         {state.isRecording ? t("Stop and transcribe") : t("Record audio")}
       </Button>
       {state.isRecording && (
-        <Text style={s.small}>{t("Recording · {seconds} s", { seconds: Math.floor(state.durationMillis / 1000) })}</Text>
+        <Text style={s.small}>
+          {t("Recording · {seconds} s", { seconds: Math.floor(state.durationMillis / 1000) })}
+        </Text>
       )}
       <ErrorNotice error={error} />
     </View>

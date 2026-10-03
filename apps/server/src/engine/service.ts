@@ -34,9 +34,9 @@ import { ComputerService } from "../computer.ts";
 import type { ComputerBackend } from "../computer-contract.ts";
 import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Config } from "../config.ts";
+import { bindingHash, ConversationInbox } from "../conversation-inbox.ts";
 import type { CredentialBroker } from "../credentials/broker.ts";
 import type { CredentialLoginService } from "../credentials/login.ts";
-import { bindingHash, ConversationInbox } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import type { DesktopService } from "../desktop-service.ts";
 import { AppError } from "../errors.ts";
@@ -46,14 +46,14 @@ import { backgroundFailure } from "../log.ts";
 import { McpService } from "../mcp.ts";
 import { MediaService } from "../media-tools.ts";
 import { MemoryService } from "../memory.ts";
-import { modelProviderConfig } from "../providers/config.ts";
-import { sharedModelRouter } from "../providers/model-router.ts";
 import { Playbooks } from "../playbooks.ts";
 import {
   ProactivityEvidenceChangedError,
   ProactivitySourceUnavailableError,
 } from "../proactivity/evidence.ts";
 import { ProactivityService } from "../proactivity/service.ts";
+import { modelProviderConfig } from "../providers/config.ts";
+import { sharedModelRouter } from "../providers/model-router.ts";
 import { nativePushAdapters, PushService } from "../push.ts";
 import { RoutinesService } from "../routines.ts";
 import { BrowserSearchBackend } from "../search.ts";

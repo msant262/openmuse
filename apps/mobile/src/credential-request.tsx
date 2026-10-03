@@ -2,12 +2,12 @@ import * as Crypto from "expo-crypto";
 import { useEffect, useMemo, useState } from "react";
 import { Text, TextInput, View } from "react-native";
 import type { CredentialInteractionRequest } from "../../../packages/domain/src/runtime";
-import { useI18n } from "./i18n";
 import {
   CredentialSubmission,
   type CredentialValues,
   credentialFormError,
 } from "./credential-state";
+import { useI18n } from "./i18n";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -85,7 +85,9 @@ export function CredentialRequestCard({
       setCurrent((previous) => ({ ...previous, status: "connecting" }));
       onSaved?.();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("The verification code could not be sent."));
+      setError(
+        cause instanceof Error ? cause.message : t("The verification code could not be sent."),
+      );
       setChallengeValue("");
     } finally {
       setChallengeBusy(false);
@@ -100,7 +102,9 @@ export function CredentialRequestCard({
         : current.status === "needs_challenge"
           ? current.challengeKind === "otp" || current.challengeKind === "totp"
             ? t("Enter the verification code from the site in this secure card.")
-            : t("The bot will try to complete verification. If it needs help, it will ask you to take control of the browser.")
+            : t(
+                "The bot will try to complete verification. If it needs help, it will ask you to take control of the browser.",
+              )
           : current.status === "invalid_credentials"
             ? t("The site rejected these credentials. Reopen the request to try again.")
             : current.status === "expired"
@@ -111,7 +115,9 @@ export function CredentialRequestCard({
                   ? t("The vault could not confirm the save. The request needs reconciliation.")
                   : current.status === "saving"
                     ? t("Saving securely to the credential vault…")
-                    : t("Your values go directly to the credential vault; the conversation stores only connection status.");
+                    : t(
+                        "Your values go directly to the credential vault; the conversation stores only connection status.",
+                      );
 
   return (
     <Card style={{ gap: 14 }}>
@@ -205,10 +211,14 @@ export function CredentialRequestCard({
       {current.status === "needs_challenge" &&
         !["otp", "totp"].includes(current.challengeKind ?? "") && (
           <Text style={s.small}>
-            {t("If the bot asks for help, take control in the browser and finish verification. When you hand control back, the task resumes and checks the result.")}
+            {t(
+              "If the bot asks for help, take control in the browser and finish verification. When you hand control back, the task resumes and checks the result.",
+            )}
           </Text>
         )}
-      <Text style={s.small}>{t("Task {taskId} · Chat and other tasks remain available.", { taskId: current.taskId })}</Text>
+      <Text style={s.small}>
+        {t("Task {taskId} · Chat and other tasks remain available.", { taskId: current.taskId })}
+      </Text>
     </Card>
   );
 }

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { LocaleStore, translate } from "./i18n-core";
 import { ptBR } from "./i18n-catalog";
+import { LocaleStore, translate } from "./i18n-core";
 import { messageStorage } from "./message-storage";
+
 export type { Locale } from "./i18n-core";
 
 const localeStore = new LocaleStore(messageStorage);

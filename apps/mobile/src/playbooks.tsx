@@ -65,10 +65,7 @@ export function PlaybooksPanel() {
       <Text style={s.muted}>
         {t('After a task is done, ask in chat: "save this way of doing it as a procedure."')}
       </Text>
-      <Button
-        small
-        onPress={() => ask(t("Show my saved procedures and help me choose one."))}
-      >
+      <Button small onPress={() => ask(t("Show my saved procedures and help me choose one."))}>
         {t("Open in chat")}
       </Button>
       {values.map((value) => (

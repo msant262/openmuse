@@ -5,9 +5,9 @@ import {
   type QuestionAnswer,
   questionSchema,
 } from "../../../packages/domain/src/runtime";
-import { QuestionSubmission, questionAnswerError, questionOptionSpace } from "./interaction-state";
 import { CredentialRequestCard } from "./credential-request";
 import { useI18n } from "./i18n";
+import { QuestionSubmission, questionAnswerError, questionOptionSpace } from "./interaction-state";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -186,7 +186,9 @@ export function InteractionCard({
             ? t("Question closed")
             : t("Send answer")}
       </Button>
-      <Text style={s.small}>{t("Task {taskId} · Other tasks and chat remain available.", { taskId: current.taskId })}</Text>
+      <Text style={s.small}>
+        {t("Task {taskId} · Other tasks and chat remain available.", { taskId: current.taskId })}
+      </Text>
     </Card>
   );
 }

@@ -23,12 +23,37 @@ const request: CredentialInteractionRequest = {
 };
 
 test("credential form validates its trusted HTTPS destination and declared fields", () => {
-  assert.equal(credentialFormError(request, { username: "owner@example.test", password: "secret" }), "");
+  assert.equal(
+    credentialFormError(request, { username: "owner@example.test", password: "secret" }),
+    "",
+  );
   assert.match(credentialFormError(request, { username: "", password: "secret" }), /Email/);
-  assert.match(credentialFormError(request, { username: "owner@example.test", password: "" }), /Password/);
-  assert.match(credentialFormError(request, { username: "owner@example.test", password: "secret", destination: "https://evil.test" }), /unsupported/i);
-  assert.match(credentialFormError({ ...request, schema: { ...request.schema, origin: "http://portal.example.test" } }, { username: "owner@example.test", password: "secret" }), /destination/i);
-  assert.match(credentialFormError({ ...request, status: "saved" }, { username: "owner@example.test", password: "secret" }), /no longer open/i);
+  assert.match(
+    credentialFormError(request, { username: "owner@example.test", password: "" }),
+    /Password/,
+  );
+  assert.match(
+    credentialFormError(request, {
+      username: "owner@example.test",
+      password: "secret",
+      destination: "https://evil.test",
+    }),
+    /unsupported/i,
+  );
+  assert.match(
+    credentialFormError(
+      { ...request, schema: { ...request.schema, origin: "http://portal.example.test" } },
+      { username: "owner@example.test", password: "secret" },
+    ),
+    /destination/i,
+  );
+  assert.match(
+    credentialFormError(
+      { ...request, status: "saved" },
+      { username: "owner@example.test", password: "secret" },
+    ),
+    /no longer open/i,
+  );
 });
 
 test("double taps share one private submission and retries keep one response ID", async () => {
@@ -53,10 +78,12 @@ test("double taps share one private submission and retries keep one response ID"
   assert.equal(replay.status, "saved");
 
   const retry = new CredentialSubmission(request, "response-stable-2");
-  await assert.rejects(retry.submit(values, async (body) => {
-    sent.push(body.clientResponseId);
-    throw new Error("ACK lost");
-  }));
+  await assert.rejects(
+    retry.submit(values, async (body) => {
+      sent.push(body.clientResponseId);
+      throw new Error("ACK lost");
+    }),
+  );
   await retry.submit(values, async (body) => {
     sent.push(body.clientResponseId);
     return { ...request, status: "saved" };

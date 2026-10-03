@@ -1,18 +1,18 @@
 import { randomUUID } from "node:crypto";
-import type { CredentialBroker } from "./broker.ts";
-import { AppError } from "../errors.ts";
 import { currentTaskScope } from "../engine/task-journal.ts";
+import { AppError } from "../errors.ts";
+import type { ExecutorOperation } from "../executors/protocol.ts";
+import type { CredentialBroker } from "./broker.ts";
+import type { CredentialChallenge } from "./contracts.ts";
 import {
   matchesTrustedCredentialPlan,
-  trustedCredentialPlan,
-  trustedCredentialInput,
-  trustedCredentialChallengeInput,
-  trustedCredentialChallengePlan,
   type NativeCredentialPlan,
   type TrustedCredentialInput,
+  trustedCredentialChallengeInput,
+  trustedCredentialChallengePlan,
+  trustedCredentialInput,
+  trustedCredentialPlan,
 } from "./trusted-input.ts";
-import type { CredentialChallenge } from "./contracts.ts";
-import type { ExecutorOperation } from "../executors/protocol.ts";
 
 export type NativeCredentialSession = {
   id: string;

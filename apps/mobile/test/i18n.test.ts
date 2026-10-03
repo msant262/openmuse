@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { LocaleStore, translate } from "../src/i18n-core.ts";
 import { ptBR } from "../src/i18n-catalog.ts";
+import { LocaleStore, translate } from "../src/i18n-core.ts";
 
 test("the app defaults to English and restores the language selected on this device", async () => {
   let saved: string | null = null;
