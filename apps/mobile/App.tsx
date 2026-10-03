@@ -34,6 +34,7 @@ import { AvatarPresentationProvider } from "./src/avatar-presentation";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { CompanionHeading } from "./src/companion-heading";
 import { ComputerDraftProvider } from "./src/computer-drafts";
+import { CredentialPromptsProvider } from "./src/credential-prompts";
 import { AgentInspector, AppLanguagePicker, DesktopShell, desktopCopy } from "./src/desktop-shell";
 import { desktopStyles as d } from "./src/desktop-shell-styles";
 import { Details } from "./src/details";
@@ -315,14 +316,16 @@ function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError:
       <AgentWorkspaceProvider>
         <ComputerDraftProvider>
           <ThreadsProvider>
-            <ShareReceiver />
-            <WorkspaceShell
-              detail={detail}
-              toast={toast}
-              clearToast={() => setToast("")}
-              error={error || sessionError}
-              prompt={prompt}
-            />
+            <CredentialPromptsProvider>
+              <ShareReceiver />
+              <WorkspaceShell
+                detail={detail}
+                toast={toast}
+                clearToast={() => setToast("")}
+                error={error || sessionError}
+                prompt={prompt}
+              />
+            </CredentialPromptsProvider>
           </ThreadsProvider>
         </ComputerDraftProvider>
       </AgentWorkspaceProvider>

@@ -8,8 +8,14 @@ export function credentialRoutes(
   login?: CredentialLoginService,
 ): Hono<{ Variables: { owner: string } }> {
   const app = new Hono<{ Variables: { owner: string } }>();
+  app.get("/credentials", async (c) =>
+    c.json({ connections: await broker.connections(c.get("owner")) }),
+  );
   app.get("/credential-requests/:id", async (c) =>
     c.json(await broker.status(c.get("owner"), z.uuid().parse(c.req.param("id")))),
+  );
+  app.post("/credential-requests/:id/cancel", async (c) =>
+    c.json(await broker.cancel(c.get("owner"), z.uuid().parse(c.req.param("id")))),
   );
   app.post("/credential-requests/:id/submit", async (c) => {
     const body = z

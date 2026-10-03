@@ -196,6 +196,8 @@ export const questionAnswerSchema = z.record(
 );
 export type QuestionAnswer = z.infer<typeof questionAnswerSchema>;
 export type CredentialFormSchema = {
+  /** Generic vault-backed fields requested at runtime, independent of a provider catalog. */
+  credentialKind?: "api";
   /** API integrations use the vault directly, without a browser login task. */
   integrationId?: "tavily";
   title: string;

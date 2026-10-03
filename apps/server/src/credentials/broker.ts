@@ -7,12 +7,14 @@ import { AppError } from "../errors.ts";
 import {
   type CredentialAdapter,
   type CredentialBrowserBinding,
+  type CredentialChallenge,
   type CredentialConnection,
   type CredentialFormSchema,
   type CredentialRef,
   type CredentialRequestRecord,
   type CredentialStatus,
   credentialAdapterSchema,
+  runtimeCredentialAdapterSchema,
   type SecretStore,
   type ValidCredentialAdapter,
 } from "./contracts.ts";
@@ -58,6 +60,52 @@ export class CredentialBroker {
     return value;
   }
 
+  async resolveAdapter(owner: string, id: string): Promise<ValidCredentialAdapter> {
+    const configured = this.adapters.get(id);
+    if (configured) return configured;
+    const stored = await this.db.get<{ id: string; adapter: unknown }>(
+      owner,
+      "credential-adapters",
+      id,
+    );
+    if (!stored) throw new AppError("Connection form not found", 404);
+    return credentialAdapterSchema.parse(stored.adapter);
+  }
+
+  async registerAdapter(owner: string, raw: unknown): Promise<ValidCredentialAdapter> {
+    const definition = runtimeCredentialAdapterSchema.parse(raw);
+    credentialAdapterSchema.parse({
+      ...definition,
+      id: "runtime-validation",
+      allowedRedirectOrigins: [],
+    });
+    if (!definition.fields.some((field) => field.type === "password"))
+      throw new AppError("A site login form must identify its password field", 422);
+    // A runtime descriptor must never place a password in an arbitrary public
+    // text box. Intersect the observed selector with the real input type. The
+    // browser worker also checks common form ownership, POST and destination.
+    if (Object.values(definition.selectors).some((selector) => /[(),\\]/.test(selector)))
+      throw new AppError("Use a simple CSS selector for each login input", 422);
+    const selectors = Object.fromEntries(
+      definition.fields.map((field) => [
+        field.id,
+        `:is(${definition.selectors[field.id]}):is(${field.type === "password" ? 'input[type="password"]' : 'input[type="text"],input[type="email"],input:not([type])'})`,
+      ]),
+    );
+    const adapter = credentialAdapterSchema.parse({
+      ...definition,
+      id: `runtime-${bindingHash(definition).slice(0, 40)}`,
+      selectors,
+      allowedRedirectOrigins: [],
+    });
+    await this.db.insertIfAbsent(owner, "credential-adapters", { id: adapter.id, adapter });
+    return adapter;
+  }
+
+  async connections(owner: string) {
+    return this.db.list<CredentialConnection>(owner, "credentials");
+  }
+
   catalog() {
     return [...this.adapters.values()].map((adapter) => ({
       id: adapter.id,
@@ -71,7 +119,7 @@ export class CredentialBroker {
     owner: string,
     input: { taskId: string; revision: number; adapterId: string; purpose: string },
   ) {
-    const adapter = this.adapter(input.adapterId);
+    const adapter = await this.resolveAdapter(owner, input.adapterId);
     if (!input.purpose.trim() || input.purpose.length > 400)
       throw new AppError("Describe why this service is needed", 422);
     const task = await this.db.get<AgentTask>(owner, "tasks", input.taskId);
@@ -129,6 +177,8 @@ export class CredentialBroker {
           ]
         : [],
     );
+    if (result.status === "thread_deleted")
+      throw new AppError("This conversation was deleted", 410);
     if (result.status === "binding_conflict")
       throw new AppError("A different connection request already exists", 409);
     if (result.status === "revision_conflict") {
@@ -172,7 +222,7 @@ export class CredentialBroker {
       record.id,
     );
     if (existing) return existing;
-    return this.card(this.adapter(record.adapterId), record);
+    return this.card(await this.resolveAdapter(owner, record.adapterId), record);
   }
 
   async status(owner: string, id: string) {
@@ -194,10 +244,100 @@ export class CredentialBroker {
           { status: "waiting" },
           { status: "expired" },
         );
-        return this.card(this.adapter(record.adapterId), expired);
+        return this.card(await this.resolveAdapter(owner, record.adapterId), expired);
       }
     }
     return this.interaction(owner, record);
+  }
+
+  async cancel(owner: string, id: string) {
+    const record = await this.db.get<CredentialRequestRecord>(owner, "credential-requests", id);
+    if (!record) throw new AppError("Credential request not found", 404);
+    if (record.status === "cancelled") return this.status(owner, id);
+    if (!["waiting", "needs_challenge"].includes(record.status))
+      throw new AppError("This connection is already being processed", 409);
+    const task = await this.db.get<AgentTask>(owner, "tasks", record.taskId);
+    if (
+      task?.status !== "waiting_input" ||
+      (record.status === "waiting" && task.attempts !== record.revision) ||
+      task.state.interactionRequestId !== id ||
+      (record.status === "needs_challenge" &&
+        task.state.credentialChallengeId !== record.challengeId)
+    )
+      throw new AppError("This task changed; open its current request", 409);
+    const challenge = record.challengeId
+      ? await this.db.get<CredentialChallenge>(owner, "credential-challenges", record.challengeId)
+      : undefined;
+    if (
+      record.status === "needs_challenge" &&
+      (challenge?.status !== "waiting" || challenge.taskId !== task.id)
+    )
+      throw new AppError("This verification step changed", 409);
+    const interaction = this.card(await this.resolveAdapter(owner, record.adapterId), {
+      ...record,
+      status: "cancelled",
+    });
+    const result = await this.db.durableMutation(
+      owner,
+      `credential-cancel:${id}`,
+      bindingHash({ id, taskId: task.id, revision: record.revision }),
+      [
+        {
+          kind: "credential-requests",
+          id,
+          mode: "merge",
+          expected: { status: record.status },
+          value: { status: "cancelled" },
+        },
+        {
+          kind: "interaction-requests",
+          id,
+          mode: "replace",
+          expected: { status: record.status },
+          value: interaction,
+        },
+        ...(challenge
+          ? [
+              {
+                kind: "credential-challenges",
+                id: challenge.id,
+                mode: "merge" as const,
+                expected: { status: "waiting" },
+                value: { status: "superseded" },
+              },
+            ]
+          : []),
+        {
+          kind: "tasks",
+          id: task.id,
+          mode: "merge",
+          expected: { status: task.status, attempts: task.attempts, state: task.state },
+          value: {
+            status: "cancelled",
+            leaseId: null,
+            leaseUntil: null,
+            question: null,
+            updatedAt: nowIso(),
+            state: { ...task.state, credentialStatus: "cancelled" },
+          },
+        },
+      ],
+      record.threadId
+        ? [
+            {
+              id: `credential-cancel:${id}`,
+              threadId: record.threadId,
+              origin: "user",
+              kind: "interaction",
+              payload: interaction,
+            },
+          ]
+        : [],
+    );
+    if (!["applied", "duplicate"].includes(result.status))
+      throw new AppError("This connection request changed", 409);
+    this.grantInvalidator?.(owner, record.credentialRefId);
+    return interaction;
   }
 
   private validateValues(adapter: ValidCredentialAdapter, raw: unknown) {
@@ -253,7 +393,7 @@ export class CredentialBroker {
     }
     if (task.state.interactionRequestId !== id)
       throw new AppError("Wait for this task to pause before saving the connection", 409);
-    const adapter = this.adapter(record.adapterId);
+    const adapter = await this.resolveAdapter(owner, record.adapterId);
     const data = this.validateValues(adapter, input.values);
     if (record.status === "waiting") {
       const saving = await this.db.compareAndSwap<CredentialRequestRecord>(
@@ -399,6 +539,8 @@ export class CredentialBroker {
           ]
         : [],
     );
+    if (result.status === "thread_deleted")
+      throw new AppError("This conversation was deleted", 410);
     if (result.status === "binding_conflict")
       throw new AppError("This response ID already belongs to another credential save", 409);
     if (result.status === "revision_conflict") {
@@ -454,7 +596,7 @@ export class CredentialBroker {
       throw new AppError("This task is not authorized to use that connection", 403);
     const connection = await this.db.get<CredentialConnection>(owner, "credentials", refId);
     if (!connection) throw new AppError("Connection not found", 404);
-    return { task, connection, adapter: this.adapter(connection.adapterId) };
+    return { task, connection, adapter: await this.resolveAdapter(owner, connection.adapterId) };
   }
 
   private referencesTask(task: AgentTask, refId: string) {
@@ -503,7 +645,7 @@ export class CredentialBroker {
           : { challengeKind: undefined }),
       } satisfies CredentialRequestRecord;
       await this.db.put(owner, "credential-requests", revised);
-      const interaction = this.card(this.adapter(request.adapterId), revised);
+      const interaction = this.card(await this.resolveAdapter(owner, request.adapterId), revised);
       await this.db.put(owner, "interaction-requests", interaction);
       if (request.threadId && request.status !== requestStatus) {
         await this.db.appendConversationEvent(owner, {

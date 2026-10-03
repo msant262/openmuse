@@ -1,68 +1,70 @@
-import { KeyRound, Search } from "lucide-react-native";
+import { KeyRound } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
-import type { CredentialInteractionRequest } from "../../../packages/domain/src/runtime";
 import { CodexConnection } from "./codex-connection";
-import { CredentialRequestCard } from "./credential-request";
 import { useI18n } from "./i18n";
 import { Button, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
-type Integration = {
+type SavedConnection = {
   id: string;
-  name: string;
-  status: "connected" | "disconnected" | "invalid_credentials" | "unavailable";
+  kind: "api" | "browser";
+  serviceName: string;
   origin: string;
-  description: string;
+  status: string;
+  updatedAt?: string;
 };
+
 export function IntegrationSettings() {
-  const { api } = useWorkspace();
+  const { api, ask } = useWorkspace();
   const { t } = useI18n();
-  const [items, setItems] = useState<Integration[]>();
-  const [request, setRequest] = useState<CredentialInteractionRequest>();
+  const [items, setItems] = useState<SavedConnection[]>();
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string>();
   const [attempt, setAttempt] = useState(0);
-  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState<string>();
   useEffect(() => {
     let active = true;
-    void api
-      .request<Integration[]>("/api/integrations")
-      .then((value) => {
-        if (active) setItems(value);
+    void Promise.all([
+      api.request<{ connections: Omit<SavedConnection, "kind">[] }>("/api/service-credentials"),
+      api.request<{ connections: Omit<SavedConnection, "kind">[] }>("/api/credentials"),
+    ])
+      .then(([apiConnections, browserConnections]) => {
+        if (active) {
+          const connections: SavedConnection[] = [
+            ...apiConnections.connections.map((connection) => ({
+              ...connection,
+              kind: "api" as const,
+            })),
+            ...browserConnections.connections.map((connection) => ({
+              ...connection,
+              kind: "browser" as const,
+            })),
+          ].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+          setItems(connections.filter((connection) => connection.status !== "revoked"));
+          setError("");
+        }
       })
-      .catch((cause) => {
-        if (active) setError(String(cause));
+      .catch(() => {
+        if (active) setError(t("Saved connections could not be loaded."));
       });
     return () => {
       active = false;
     };
-  }, [api, attempt]);
-  async function connect() {
-    setBusy(true);
+  }, [api, attempt, t]);
+  async function disconnect(connection: SavedConnection) {
+    setBusy(connection.id);
     setError("");
     try {
-      setRequest(
-        await api.request<CredentialInteractionRequest>("/api/integrations/tavily/request", {}),
-      );
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function disconnect() {
-    setBusy(true);
-    setError("");
-    try {
-      await api.request("/api/integrations/tavily/disconnect", {});
-      setRequest(undefined);
-      setConfirmDisconnect(false);
+      const prefix =
+        connection.kind === "browser" ? "/api/credentials" : "/api/service-credentials";
+      await api.request(`${prefix}/${encodeURIComponent(connection.id)}/revoke`, {});
+      setConfirmDisconnect(undefined);
       setAttempt((value) => value + 1);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+    } catch {
+      setError(t("The connection could not be removed. Try again."));
     } finally {
-      setBusy(false);
+      setBusy(undefined);
     }
   }
   return (
@@ -72,83 +74,64 @@ export function IntegrationSettings() {
         <Text style={s.heading}>{t("Connected services")}</Text>
       </View>
       <CodexConnection />
+      <Text style={s.muted}>
+        {t(
+          "When your agent needs a credential, a secure form opens automatically. Saved connections appear here.",
+        )}
+      </Text>
       {!items && !error && <ActivityIndicator color={colors.muted} />}
+      {items?.length === 0 && <Text style={s.small}>{t("No saved service credentials yet.")}</Text>}
       {items?.map((item) => (
         <View
-          key={item.id}
+          key={`${item.kind}:${item.id}`}
           style={{ padding: 16, gap: 12, borderRadius: 18, backgroundColor: "#F3F3F4" }}
         >
           <View style={[s.row, { gap: 11 }]}>
-            <Search size={20} color={colors.text} />
+            <KeyRound size={20} color={colors.text} />
             <View style={{ flex: 1, gap: 3 }}>
-              <Text style={s.heading}>{item.name}</Text>
-              <Text style={s.small}>
-                {t(
-                  item.status === "connected"
-                    ? "Connected"
-                    : item.status === "unavailable"
-                      ? "Not available"
-                      : item.status === "invalid_credentials"
-                        ? "Update your API key"
-                        : "Not connected",
-                )}
-              </Text>
+              <Text style={s.heading}>{item.serviceName}</Text>
+              <Text style={s.small}>{item.origin}</Text>
             </View>
           </View>
-          <Text style={s.muted}>{t("Search the web with Tavily using your own API key.")}</Text>
-          {item.status === "connected" ? (
-            <View style={{ gap: 8 }}>
-              <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
-                <Button small busy={busy} onPress={() => void connect()}>
-                  {t("Update key")}
+          <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+            <Button
+              small
+              disabled={!!busy}
+              onPress={() =>
+                ask(
+                  t(
+                    "Update the credential for {service} at {origin}. Open the secure credential form and continue when I save it.",
+                    { service: item.serviceName, origin: item.origin },
+                  ),
+                )
+              }
+            >
+              {t("Update credential")}
+            </Button>
+            <Button small danger disabled={!!busy} onPress={() => setConfirmDisconnect(item.id)}>
+              {t("Disconnect")}
+            </Button>
+          </View>
+          {confirmDisconnect === item.id && (
+            <>
+              <Text style={s.muted}>
+                {t("Remove the saved credential for {service}?", { service: item.serviceName })}
+              </Text>
+              <View style={[s.row, { gap: 8 }]}>
+                <Button small disabled={!!busy} onPress={() => setConfirmDisconnect(undefined)}>
+                  {t("Cancel")}
                 </Button>
-                <Button small danger disabled={busy} onPress={() => setConfirmDisconnect(true)}>
+                <Button small danger busy={busy === item.id} onPress={() => void disconnect(item)}>
                   {t("Disconnect")}
                 </Button>
               </View>
-              {confirmDisconnect && (
-                <>
-                  <Text style={s.muted}>
-                    {t(
-                      "Remove the saved Tavily key? Web search will use the other available sources.",
-                    )}
-                  </Text>
-                  <View style={[s.row, { gap: 8 }]}>
-                    <Button small onPress={() => setConfirmDisconnect(false)}>
-                      {t("Cancel")}
-                    </Button>
-                    <Button small danger busy={busy} onPress={() => void disconnect()}>
-                      {t("Disconnect Tavily")}
-                    </Button>
-                  </View>
-                </>
-              )}
-            </View>
-          ) : (
-            <Button
-              small
-              icon={KeyRound}
-              busy={busy}
-              disabled={item.status === "unavailable"}
-              onPress={() => void connect()}
-            >
-              {t("Connect Tavily")}
-            </Button>
+            </>
           )}
         </View>
       ))}
-      {request && (
-        <CredentialRequestCard request={request} onSaved={() => setAttempt((value) => value + 1)} />
-      )}
       <ErrorNotice error={error} />
-      {!!error && !items && (
-        <Button
-          small
-          onPress={() => {
-            setError("");
-            setAttempt((value) => value + 1);
-          }}
-        >
+      {!!error && (
+        <Button small onPress={() => setAttempt((value) => value + 1)}>
           {t("Retry")}
         </Button>
       )}

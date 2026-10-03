@@ -55,7 +55,7 @@ export class CredentialSubmission {
     if (error) return Promise.reject(new Error(error));
     this.pending = send({ clientResponseId: this.clientResponseId, values })
       .then((request) => {
-        if (request.status === "saved") this.saved = request;
+        if (request.status === "saved" || request.status === "connected") this.saved = request;
         return request;
       })
       .finally(() => {

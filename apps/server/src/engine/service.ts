@@ -36,6 +36,8 @@ import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Config } from "../config.ts";
 import { bindingHash, ConversationInbox } from "../conversation-inbox.ts";
 import type { CredentialBroker } from "../credentials/broker.ts";
+import type { GenericCredentials } from "../credentials/generic.ts";
+import { credentialHttpRequestSchema } from "../credentials/generic-contracts.ts";
 import type { CredentialLoginService } from "../credentials/login.ts";
 import type { Store } from "../db.ts";
 import type { DesktopService } from "../desktop-service.ts";
@@ -91,6 +93,37 @@ export class AgentService {
   search: SearchBackend;
   readonly web = new PublicWeb();
   integrations?: IntegrationService;
+  genericCredentials?: GenericCredentials;
+  configureGenericCredentials(credentials: GenericCredentials) {
+    this.genericCredentials = credentials;
+    this.actions.registerExternal(
+      "credential.http",
+      async (owner, raw, proposal, beforeDispatch) => {
+        const binding = z
+          .object({ taskId: z.string().min(1), request: credentialHttpRequestSchema })
+          .strict()
+          .parse(raw);
+        if (proposal.taskId !== binding.taskId)
+          throw new AppError("Credential action does not match this task", 403);
+        const result = await credentials.httpRequest(owner, binding.request, {
+          taskId: binding.taskId,
+          beforeDispatch,
+        });
+        if (!result.ok) {
+          const error = new AppError(
+            `The service returned HTTP ${result.status}; the action was not confirmed`,
+            502,
+            [401, 403].includes(result.status)
+              ? "CREDENTIAL_RECONNECT_REQUIRED"
+              : "CREDENTIAL_HTTP_FAILED",
+          );
+          if (result.status >= 500) Object.assign(error, { outcomeUnknown: true });
+          throw error;
+        }
+        return JSON.stringify(result);
+      },
+    );
+  }
   configureIntegrations(integrations: IntegrationService) {
     this.integrations = integrations;
     this.search = new ConnectedSearchBackend(integrations, new HttpSearchBackend(this.web));
@@ -1483,11 +1516,52 @@ export class AgentService {
           state: { ...task.state, approvalResult: action.result },
           actionId: null,
         });
-      } else if (action.status !== "awaiting_review" && action.status !== "executing")
+      } else if (action.status !== "awaiting_review" && action.status !== "executing") {
+        if (
+          action.status === "failed" &&
+          action.kind === "external.action" &&
+          action.data.tool === "credential.http" &&
+          this.genericCredentials
+        ) {
+          const binding = await this.db.get<{
+            hash: string;
+            binding: { taskId: string; request: unknown };
+          }>(owner, "external-action-bindings", action.id);
+          const request = credentialHttpRequestSchema.safeParse(binding?.binding.request);
+          if (
+            binding?.hash === action.hash &&
+            binding.binding.taskId === task.id &&
+            request.success
+          ) {
+            const connection = await this.genericCredentials.metadata(
+              owner,
+              request.data.credentialId,
+            );
+            if (connection.status === "invalid_credentials") {
+              const interaction = await this.genericCredentials.reconnect(owner, connection.id, {
+                taskId: task.id,
+                revision: task.attempts,
+              });
+              task = await context.checkpoint({
+                actionId: null,
+                state: {
+                  ...task.state,
+                  interactionRequestId: interaction.id,
+                  serviceCredentialRequestId: interaction.id,
+                },
+              });
+              return {
+                status: "waiting_input",
+                question: `Waiting for the secure ${connection.serviceName} credential form.`,
+                state: task.state,
+              };
+            }
+          }
+        }
         throw new Error(
           `Reviewed action ${action.status}: ${action.error ?? "No further action was taken"}`,
         );
-      else if (
+      } else if (
         action.status === "awaiting_review" &&
         (action.preparedRevision ?? 0) !== Number(task.state.appliedRevision ?? 0)
       ) {

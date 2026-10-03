@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useAvatarPresentation } from "./avatar-presentation";
 import { AvatarRenderer } from "./avatar-renderer";
+import { credentialStatusSummary } from "./credential-prompts-state";
 import { useI18n } from "./i18n";
 export const colors = {
   canvas: "#FFFFFF",
@@ -559,6 +560,8 @@ export function HeaderFade() {
 export { dateLabel, relativeDate, timeLabel } from "./display-date";
 
 export function resultSummary(value: string) {
+  const credential = credentialStatusSummary(value);
+  if (credential) return credential;
   return /^Saved to (?:sample|local) sent mail(?: · .+)?$/.test(value)
     ? "Reply saved in your local Sent mail."
     : value;

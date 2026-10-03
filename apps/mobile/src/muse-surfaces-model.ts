@@ -5,6 +5,7 @@ import type {
   Idea,
   RunEvent,
 } from "../../../packages/domain/src/agent";
+import { credentialStatusSummary } from "./credential-prompts-state";
 
 export function subjectIllustration(text: string, kind?: string) {
   if (/travel|trip|flight|hotel|via(gem|jar)|voo|viagem|férias/i.test(text)) return "🌍";
@@ -137,6 +138,8 @@ export function taskPreview(task: AgentTask) {
     task.error ||
     task.plan.find((step) => step.status === "running" || step.status === "waiting")?.title ||
     "";
+  const credential = credentialStatusSummary(text);
+  if (credential) return credential;
   if (
     text &&
     !/^(Saved the latest update\.|Work completed$|Choose a current email with a PDF attachment)/.test(

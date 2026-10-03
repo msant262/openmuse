@@ -2,6 +2,7 @@ import * as Crypto from "expo-crypto";
 import { useEffect, useMemo, useState } from "react";
 import { Text, TextInput, View } from "react-native";
 import type { CredentialInteractionRequest } from "../../../packages/domain/src/runtime";
+import { credentialRequestPath } from "./credential-prompts-state";
 import {
   CredentialSubmission,
   type CredentialValues,
@@ -18,17 +19,21 @@ function responseId(requestId: string) {
 export function CredentialRequestCard({
   request,
   onSaved,
+  onBusy,
+  onCancelled,
+  embedded = false,
 }: {
   request: CredentialInteractionRequest;
-  onSaved?: () => void;
+  onSaved?: (request: CredentialInteractionRequest) => void;
+  onBusy?: (busy: boolean) => void;
+  onCancelled?: (request: CredentialInteractionRequest) => void;
+  embedded?: boolean;
 }) {
   const { t } = useI18n();
   const { api } = useWorkspace();
   const [current, setCurrent] = useState(request);
-  const integration = request.schema.integrationId;
-  const requestPath = integration
-    ? `/api/integrations/${integration}/requests/${request.id}`
-    : `/api/credential-requests/${request.id}`;
+  const integration = request.schema.integrationId || request.schema.credentialKind === "api";
+  const requestPath = credentialRequestPath(request);
   const [values, setValues] = useState<CredentialValues>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -40,10 +45,18 @@ export function CredentialRequestCard({
   );
   useEffect(() => {
     setCurrent(request);
+  }, [request]);
+  useEffect(() => {
     setValues({});
     setError("");
     setChallengeValue("");
-  }, [request.id, request.revision, request.status, request.challengeId]);
+  }, [request.id, request.revision, request.challengeId]);
+  useEffect(() => {
+    if (!["waiting", "outcome_unknown"].includes(request.status)) setValues({});
+  }, [request.status]);
+  useEffect(() => {
+    onBusy?.(busy || challengeBusy);
+  }, [busy, challengeBusy, onBusy]);
   const disabled = busy || current.status !== "waiting";
   const validation = credentialFormError(current, values);
 
@@ -57,7 +70,7 @@ export function CredentialRequestCard({
       setCurrent(saved);
       if (saved.status === "saved" || saved.status === "connected") {
         setValues({});
-        onSaved?.();
+        onSaved?.(saved);
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("The credential could not be saved."));
@@ -83,8 +96,9 @@ export function CredentialRequestCard({
         value: challengeValue,
       });
       setChallengeValue("");
-      setCurrent((previous) => ({ ...previous, status: "connecting" }));
-      onSaved?.();
+      const saved = { ...current, status: "connecting" as const };
+      setCurrent(saved);
+      onSaved?.(saved);
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : t("The verification code could not be sent."),
@@ -92,6 +106,25 @@ export function CredentialRequestCard({
       setChallengeValue("");
     } finally {
       setChallengeBusy(false);
+    }
+  }
+
+  async function cancel() {
+    setBusy(true);
+    setError("");
+    try {
+      const cancelled = await api.request<CredentialInteractionRequest>(
+        `${requestPath}/cancel`,
+        {},
+      );
+      setValues({});
+      setChallengeValue("");
+      setCurrent(cancelled);
+      onCancelled?.(cancelled);
+    } catch {
+      setError(t("The connection request could not be cancelled. Try again."));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -121,10 +154,12 @@ export function CredentialRequestCard({
                       );
 
   return (
-    <Card style={{ gap: 14 }}>
-      <Text accessibilityRole="header" style={s.heading}>
-        {t(current.schema.title)}
-      </Text>
+    <Card style={{ gap: 18, ...(embedded ? { padding: 0, backgroundColor: "transparent" } : {}) }}>
+      {!embedded && (
+        <Text accessibilityRole="header" style={s.heading}>
+          {t(current.schema.title)}
+        </Text>
+      )}
       <View style={{ gap: 3 }}>
         <Text style={s.small}>{t("Destination: {origin}", { origin: current.schema.origin })}</Text>
         <Text style={s.muted}>{t(current.schema.purpose)}</Text>
@@ -142,14 +177,19 @@ export function CredentialRequestCard({
               aria-disabled={disabled}
               aria-required={field.required}
               autoCapitalize="none"
+              autoComplete="off"
               autoCorrect={false}
+              textContentType="none"
               editable={!disabled}
               secureTextEntry={field.type === "password"}
               value={values[field.id] ?? ""}
               onChangeText={(value) =>
                 setValues((previous) => ({ ...previous, [field.id]: value }))
               }
-              returnKeyType="next"
+              returnKeyType={field.id === current.schema.fields.at(-1)?.id ? "done" : "next"}
+              onSubmitEditing={() => {
+                if (!disabled && !validation) void submit();
+              }}
               style={{
                 ...s.input,
                 borderColor: colors.line,
@@ -167,7 +207,9 @@ export function CredentialRequestCard({
               accessibilityLabel={t("Verification code")}
               accessibilityState={{ disabled: challengeBusy }}
               autoCapitalize="none"
+              autoComplete="off"
               autoCorrect={false}
+              textContentType="none"
               editable={!challengeBusy}
               secureTextEntry
               value={challengeValue}
@@ -218,6 +260,20 @@ export function CredentialRequestCard({
           </Text>
         )}
       {!integration && <Text style={s.small}>{t("Chat and other tasks remain available.")}</Text>}
+      {(current.status === "waiting" || current.status === "needs_challenge") && (
+        <>
+          <Text style={s.small}>
+            {t(
+              "Your values go directly to the credential vault; the conversation stores only connection status.",
+            )}
+          </Text>
+          {onCancelled && (
+            <Button small disabled={busy || challengeBusy} onPress={() => void cancel()}>
+              {t("Cancel connection request")}
+            </Button>
+          )}
+        </>
+      )}
     </Card>
   );
 }

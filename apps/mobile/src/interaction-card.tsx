@@ -7,7 +7,7 @@ import {
   questionSchema,
 } from "../../../packages/domain/src/runtime";
 import { questionReceiptAnswers } from "./artifact-presentation";
-import { CredentialRequestCard } from "./credential-request";
+import { CredentialRequestReceipt } from "./credential-prompts";
 import { useI18n } from "./i18n";
 import { QuestionSubmission, questionAnswerError, questionOptionSpace } from "./interaction-state";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
@@ -79,8 +79,7 @@ export function InteractionCard({
       setBusy(false);
     }
   }
-  if (current.kind === "credential")
-    return <CredentialRequestCard request={current} onSaved={onAnswered} />;
+  if (current.kind === "credential") return <CredentialRequestReceipt request={current} />;
   if (current.kind !== "question") return null;
   if (!questionSchema.safeParse(current.schema).success)
     return (

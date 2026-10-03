@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { defineTool } from "@copilotkit/runtime/v2";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { CredentialInteractionRequest } from "../../../packages/domain/src/runtime.ts";
 import type { SearchInput, SearchResult } from "../../../packages/domain/src/search.ts";
 import { configuredSecretScrubber } from "./configured-secrets.ts";
 import type { SecretStore } from "./credentials/contracts.ts";
+import type { GenericCredentials } from "./credentials/generic.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
 import type { SearchBackend, SearchContext } from "./search.ts";
@@ -46,6 +46,10 @@ const responseSchema = z.object({
 /** Fixed-origin API credentials share the private vault, never model/tool arguments or records. */
 export class IntegrationService {
   private queues = new Map<string, Promise<unknown>>();
+  private genericCredentials?: GenericCredentials;
+  configureGenericCredentials(service: GenericCredentials) {
+    this.genericCredentials = service;
+  }
   constructor(
     private readonly db: Store,
     private readonly vault: SecretStore,
@@ -151,6 +155,50 @@ export class IntegrationService {
     if (record.interaction.status === "waiting" && Date.parse(record.expiresAt) <= this.now())
       return { ...record.interaction, status: "expired" as const };
     return record.interaction;
+  }
+  async cancel(owner: string, id: string) {
+    return this.serial(owner, async () => {
+      const record = await this.record(owner, id);
+      if (record.interaction.status === "cancelled") return record.interaction;
+      if (record.interaction.status !== "waiting")
+        throw new AppError("This connection request is no longer open", 409);
+      const interaction = { ...record.interaction, status: "cancelled" as const };
+      const result = await this.db.durableMutation(
+        owner,
+        `integration-cancel:${id}`,
+        id,
+        [
+          {
+            kind: "integration-requests",
+            id,
+            mode: "replace",
+            expected: { interaction: record.interaction },
+            value: { ...record, interaction },
+          },
+          {
+            kind: "interaction-requests",
+            id,
+            mode: "replace",
+            expected: { status: "waiting" },
+            value: interaction,
+          },
+        ],
+        interaction.threadId
+          ? [
+              {
+                id: `integration-cancel:${id}`,
+                threadId: interaction.threadId,
+                origin: "user",
+                kind: "interaction",
+                payload: interaction,
+              },
+            ]
+          : [],
+      );
+      if (!["applied", "duplicate"].includes(result.status))
+        throw new AppError("This connection request changed", 409);
+      return interaction;
+    });
   }
   private async call(
     path: "/usage" | "/search",
@@ -361,32 +409,46 @@ export class IntegrationService {
   async search(input: SearchInput, context: SearchContext): Promise<SearchResult | null> {
     context.signal?.throwIfAborted();
     const connection = await this.db.get<Connection>(context.owner, "integrations", "tavily");
-    if (!this.options.available || connection?.status !== "connected") return null;
-    await context.before?.();
-    let apiKey: string;
+    const generic = await this.genericCredentials?.findByOrigin(context.owner, provider.origin);
+    if (!this.options.available || (!generic && connection?.status !== "connected")) return null;
+    if (!generic) await context.before?.();
+    let apiKey = "";
     try {
-      const secret = await this.vault.read(context.owner, connection.credentialRef);
-      if (!secret?.data.apiKey) return null;
-      apiKey = secret.data.apiKey;
+      if (!generic && connection) {
+        const secret = await this.vault.read(context.owner, connection.credentialRef);
+        if (!secret?.data.apiKey) return null;
+        apiKey = secret.data.apiKey;
+      }
     } catch {
       return null;
     }
     try {
-      const response = responseSchema.parse(
-        await this.call(
-          "/search",
-          apiKey,
+      const body = {
+        query: input.query,
+        max_results: input.limit,
+        search_depth: "basic",
+        include_answer: false,
+        include_raw_content: false,
+        include_images: false,
+      };
+      let raw: unknown;
+      if (generic && this.genericCredentials) {
+        const result = await this.genericCredentials.httpForOrigin(
+          context.owner,
+          provider.origin,
           {
-            query: input.query,
-            max_results: input.limit,
-            search_depth: "basic",
-            include_answer: false,
-            include_raw_content: false,
-            include_images: false,
+            path: "/search",
+            method: "POST",
+            body,
+            intent: "read",
+            summary: "Search public web sources",
           },
-          context.signal,
-        ),
-      );
+          { signal: context.signal, beforeDispatch: context.before },
+        );
+        if (!result?.ok) return null;
+        raw = JSON.parse(result.body);
+      } else raw = await this.call("/search", apiKey, body, context.signal);
+      const response = responseSchema.parse(raw);
       const scrub = configuredSecretScrubber([apiKey]);
       const sources: SearchResult["sources"] = [];
       for (const item of response.results) {
@@ -400,7 +462,7 @@ export class IntegrationService {
           !["https:", "http:"].includes(url.protocol) ||
           url.username ||
           url.password ||
-          item.url.includes(apiKey)
+          (apiKey && item.url.includes(apiKey))
         )
           continue;
         const title = scrub(item.title).trim().slice(0, 300);
@@ -427,7 +489,7 @@ export class IntegrationService {
       };
     } catch (error) {
       context.signal?.throwIfAborted();
-      if (error instanceof AppError && error.code === "INTEGRATION_INVALID_KEY")
+      if (connection && error instanceof AppError && error.code === "INTEGRATION_INVALID_KEY")
         await this.db.compareAndSwap(
           context.owner,
           "integrations",
@@ -450,39 +512,6 @@ export class ConnectedSearchBackend implements SearchBackend {
   }
 }
 
-export const integrationInstructions =
-  " To connect Tavily or enter its API key, call connect_integration with id tavily immediately. It opens the secure in-app field and returns only connection metadata. Do not claim the connector is unavailable without checking list_integrations. Never ask the person to paste keys into chat, tool arguments, files or commands. Once connected, search_web automatically uses Tavily. Connection setup is not a research task and needs no questionnaire.";
-export function integrationTools(
-  service: IntegrationService | undefined,
-  owner: string,
-  threadId?: string,
-) {
-  if (!service) return [];
-  return [
-    defineTool({
-      name: "list_integrations",
-      description: "List available in-app integrations and connection status, without credentials.",
-      parameters: z.object({}).strict(),
-      execute: () => service.catalog(owner),
-    }),
-    defineTool({
-      name: "connect_integration",
-      description:
-        "Open the secure in-app API key form for Tavily. No key is accepted by this tool. Use when asked to connect Tavily or how to provide its key.",
-      parameters: z.object({ id: z.literal("tavily") }).strict(),
-      execute: async ({ id }) => {
-        const current = (await service.catalog(owner)).find((integration) => integration.id === id);
-        return current?.status === "connected"
-          ? {
-              ...current,
-              message:
-                "Tavily is connected and search_web uses it automatically. The key can be replaced in connection settings.",
-            }
-          : service.request(owner, { id, threadId });
-      },
-    }),
-  ];
-}
 export function integrationRoutes(service: IntegrationService) {
   const app = new Hono<{ Variables: { owner: string } }>();
   app.get("/integrations", async (c) => c.json(await service.catalog(c.get("owner"))));
@@ -495,6 +524,9 @@ export function integrationRoutes(service: IntegrationService) {
   });
   app.get("/integrations/tavily/requests/:id", async (c) =>
     c.json(await service.status(c.get("owner"), z.uuid().parse(c.req.param("id")))),
+  );
+  app.post("/integrations/tavily/requests/:id/cancel", async (c) =>
+    c.json(await service.cancel(c.get("owner"), z.uuid().parse(c.req.param("id")))),
   );
   app.post("/integrations/tavily/requests/:id/submit", async (c) => {
     const body = z

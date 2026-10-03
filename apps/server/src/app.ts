@@ -24,11 +24,13 @@ import { createConversationAnnotationValidator } from "./conversation-annotation
 import { conversationResources, currentConversationFrame } from "./conversation-resources.ts";
 import { CredentialBroker } from "./credentials/broker.ts";
 import type { CredentialAdapter, SecretStore } from "./credentials/contracts.ts";
+import { GenericCredentials, genericCredentialRoutes } from "./credentials/generic.ts";
 import { CredentialGrantBroker } from "./credentials/grants.ts";
 import { CredentialLoginService } from "./credentials/login.ts";
 import { configureNativeCredentialInjector } from "./credentials/native.ts";
 import { credentialNodeRoutes } from "./credentials/node-routes.ts";
 import { OpenBaoSecretStore } from "./credentials/openbao-store.ts";
+import { credentialPromptRoutes } from "./credentials/prompts.ts";
 import { credentialRoutes } from "./credentials/routes.ts";
 import type { Store } from "./db.ts";
 import { DeploymentMaintenance } from "./deployment-maintenance.ts";
@@ -246,6 +248,14 @@ export async function createApp(
     ),
   });
   agent.configureIntegrations(integrations);
+  const genericCredentials = new GenericCredentials(db, credentialSecretStore, {
+    available: Boolean(
+      options.credentialSecretStore ||
+        (config.credentialsOpenBaoAddress && config.credentialsOpenBaoToken),
+    ),
+  });
+  agent.configureGenericCredentials(genericCredentials);
+  integrations.configureGenericCredentials(genericCredentials);
   const codexConnection = new CodexConnection(
     config.modelProviders ?? modelProviderConfig(config.dataDir),
   );
@@ -707,6 +717,8 @@ export async function createApp(
   );
   app.route("/api", credentialRoutes(credentials, credentialLogin));
   app.route("/api", integrationRoutes(integrations));
+  app.route("/api", genericCredentialRoutes(genericCredentials));
+  app.route("/api", credentialPromptRoutes(db, credentials, genericCredentials, integrations));
   app.route("/api", modelPreferenceRoutes(db, config));
   app.route("/api", codexConnectionRoutes(codexConnection));
   app.route("/api/desktop", desktopRoutes(desktop, desktopViewers, auth, browser));
@@ -1086,6 +1098,7 @@ export async function createApp(
     credentialGrants,
     credentialLogin,
     integrations,
+    genericCredentials,
     codexConnection,
   };
 }

@@ -26,8 +26,8 @@ export async function initializeThreadLifecycle(query: (sql: string) => Promise<
       DELETE FROM thread_messages WHERE owner=event_owner AND thread_id=event_thread;
       DELETE FROM conversation_events WHERE owner=event_owner AND thread_id=event_thread;
       DELETE FROM records WHERE owner=event_owner AND kind IN ('thread-runs','conversation-inbox','task-mailbox','thread-publications') AND data->>'threadId'=event_thread;
-      DELETE FROM records WHERE owner=event_owner AND kind='interaction-requests' AND data->>'threadId'=event_thread;
-      DELETE FROM records WHERE owner=event_owner AND kind='integration-requests' AND data->'interaction'->>'threadId'=event_thread;
+      DELETE FROM records WHERE owner=event_owner AND kind IN ('interaction-requests','credential-requests') AND data->>'threadId'=event_thread;
+      DELETE FROM records WHERE owner=event_owner AND kind IN ('integration-requests','service-credential-requests') AND data->'interaction'->>'threadId'=event_thread;
       DELETE FROM records WHERE owner=event_owner AND (
         (kind='jev_threads' AND id=event_thread)
         OR (kind='jev_panels' AND data->'panel'->>'threadId'=event_thread)

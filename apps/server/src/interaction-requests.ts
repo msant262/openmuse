@@ -104,7 +104,18 @@ export class InteractionRequests {
     return saved.values[0];
   }
   async forTask(owner: string, task: AgentTask) {
-    const existing = (await this.db.list<InteractionRequest>(owner, "interaction-requests")).find(
+    const requests = await this.db.list<InteractionRequest>(owner, "interaction-requests");
+    // Credentials have their own private channel. Never manufacture a normal
+    // chat questionnaire for a task already waiting for that secure form.
+    const credential = requests.find(
+      (request) =>
+        request.kind === "credential" &&
+        request.id === task.state.interactionRequestId &&
+        request.taskId === task.id &&
+        (request.revision === task.attempts || request.status === "needs_challenge"),
+    );
+    if (credential) return credential;
+    const existing = requests.find(
       (request) =>
         request.kind === "question" &&
         request.taskId === task.id &&
@@ -179,7 +190,11 @@ export class InteractionRequests {
   async status(owner: string, id: string): Promise<InteractionRequest> {
     const request = await this.db.get<InteractionRequest>(owner, "interaction-requests", id);
     if (!request) throw new AppError("Question not found", 404);
-    if (request.status === "waiting" && request.kind !== "proactivity") {
+    if (
+      request.status === "waiting" &&
+      request.kind !== "proactivity" &&
+      !(request.kind === "credential" && request.schema.integrationId)
+    ) {
       const task = await this.db.get<AgentTask>(owner, "tasks", request.taskId);
       if (
         !task ||

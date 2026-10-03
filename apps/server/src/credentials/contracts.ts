@@ -79,6 +79,12 @@ export const credentialAdapterSchema = z
 export type CredentialAdapter = z.input<typeof credentialAdapterSchema>;
 export type ValidCredentialAdapter = z.output<typeof credentialAdapterSchema>;
 
+/** Site metadata from the current login form; the broker fixes its id and limits secret targets. */
+export const runtimeCredentialAdapterSchema = z
+  .object(credentialAdapterSchema.shape)
+  .omit({ id: true, allowedRedirectOrigins: true })
+  .strict();
+
 export type CredentialStatus =
   | "saved"
   | "connecting"
@@ -114,6 +120,7 @@ export type CredentialRequestRecord = {
     | "error"
     | "expired"
     | "superseded"
+    | "cancelled"
     | "outcome_unknown";
   createdAt: string;
   expiresAt: string;

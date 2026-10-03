@@ -4,6 +4,30 @@ import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  "Secure connection": "Conexão segura",
+  "A secure connection is needed to continue.": "É necessária uma conexão segura para continuar.",
+  "Close secure connection": "Fechar conexão segura",
+  "Enter securely": "Inserir com segurança",
+  "Do this later": "Fazer depois",
+  "Cancel connection request": "Cancelar solicitação de conexão",
+  "Connection needed ({count})": "Conexão necessária ({count})",
+  "Credential saved. Your task will continue.": "Credencial salva. Sua tarefa vai continuar.",
+  "A credential is needed to continue.": "É necessária uma credencial para continuar.",
+  "Credential saved securely.": "Credencial salva com segurança.",
+  "Connection request cancelled.": "Solicitação de conexão cancelada.",
+  "Connection request closed.": "Solicitação de conexão encerrada.",
+  "The connection request could not be cancelled. Try again.":
+    "Não foi possível cancelar a solicitação de conexão. Tente novamente.",
+  "Saved connections could not be loaded.": "Não foi possível carregar as conexões salvas.",
+  "The connection could not be removed. Try again.":
+    "Não foi possível remover a conexão. Tente novamente.",
+  "When your agent needs a credential, a secure form opens automatically. Saved connections appear here.":
+    "Quando seu agente precisa de uma credencial, um formulário seguro abre automaticamente. As conexões salvas aparecem aqui.",
+  "No saved service credentials yet.": "Ainda não há credenciais de serviços salvas.",
+  "Update credential": "Atualizar credencial",
+  "Update the credential for {service} at {origin}. Open the secure credential form and continue when I save it.":
+    "Atualize a credencial de {service} em {origin}. Abra o formulário seguro de credenciais e continue quando eu salvar.",
+  "Remove the saved credential for {service}?": "Remover a credencial salva de {service}?",
   "Previous questions and answers ({count})": "Perguntas e respostas anteriores ({count})",
   ...museInterfacePTBR,
   ...avatarPTBR,

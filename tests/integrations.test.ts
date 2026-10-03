@@ -3,14 +3,15 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { Hono } from "hono";
 import type { SecretStore } from "../apps/server/src/credentials/contracts.ts";
+import { GenericCredentials } from "../apps/server/src/credentials/generic.ts";
 import { createStore } from "../apps/server/src/db.ts";
 import { AppError } from "../apps/server/src/errors.ts";
 import {
   ConnectedSearchBackend,
   IntegrationService,
   integrationRoutes,
-  integrationTools,
 } from "../apps/server/src/integrations.ts";
+import type { AgentTask } from "../packages/domain/src/agent.ts";
 import { searchResultSchema } from "../packages/domain/src/search.ts";
 
 const canary = "tvly-test-DO-NOT-PERSIST-7a40eb";
@@ -64,12 +65,7 @@ test("Tavily secure card survives reconnect, stays owner-scoped, and automatical
   });
   const threadId = randomUUID();
   await db.put("owner", "threads", { id: threadId });
-  const tool = integrationTools(service, "owner", threadId).find(
-    (item) => item.name === "connect_integration",
-  );
-  assert.ok(tool?.execute);
-  const execute = tool.execute as unknown as (args: { id: "tavily" }) => Promise<unknown>;
-  const request = (await execute({ id: "tavily" })) as Awaited<ReturnType<typeof service.request>>;
+  const request = await service.request("owner", { id: "tavily", threadId });
   assert.equal(request.schema.integrationId, "tavily");
   assert.equal(request.schema.fields[0].type, "password");
   assert.equal((await service.request("owner", { id: "tavily", threadId })).id, request.id);
@@ -207,4 +203,90 @@ test("integration routes accept secrets only on secure submission, and unavailab
   });
   assert.equal(response.status, 422);
   assert.equal((await response.text()).includes(canary), false);
+});
+
+test("a runtime credential for Tavily powers search without a legacy integration connection or provider-specific setup", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  const { vault } = vaultFixture();
+  let requests = 0;
+  const credentials = new GenericCredentials(db, vault, {
+    available: true,
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async (target, input) => {
+      requests++;
+      assert.equal(target.url.href, "https://api.tavily.com/search");
+      assert.equal(input.method, "POST");
+      assert.equal(input.headers.Authorization, `Bearer ${canary}`);
+      assert.equal(String(input.body).includes(canary), false);
+      return {
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          results: [
+            {
+              title: "Available makeup offers",
+              url: "https://shop.example.test/offers",
+              content: `Offers listed today ${canary}`,
+            },
+          ],
+        }),
+      };
+    },
+  });
+  const integrations = new IntegrationService(db, vault, {
+    available: true,
+    fetch: async () => {
+      throw new Error("Legacy fixed-provider credential path must not run");
+    },
+  });
+  integrations.configureGenericCredentials(credentials);
+  const threadId = randomUUID();
+  await db.put("owner", "threads", { id: threadId });
+  const task: AgentTask = {
+    id: randomUUID(),
+    title: "Find makeup offers",
+    prompt: "Find makeup offers using my Tavily account",
+    kind: "agent",
+    status: "waiting_input",
+    attempts: 0,
+    originThreadId: threadId,
+    plan: [],
+    evidence: [],
+    artifactIds: [],
+    input: {},
+    state: {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const request = await credentials.request(
+    "owner",
+    {
+      serviceName: "Tavily",
+      origin: "https://api.tavily.com",
+      purpose: "Find the requested makeup offers",
+      fields: [{ id: "key", label: "API key", type: "password", required: true }],
+      authentication: { type: "bearer", fieldId: "key" },
+    },
+    { taskSeed: task },
+  );
+  assert.equal(request.schema.credentialKind, "api");
+  assert.equal(request.schema.integrationId, undefined);
+  await credentials.submit("owner", request.id, {
+    clientResponseId: "generic-tavily-save-123",
+    values: { key: canary },
+  });
+  assert.equal((await db.list("owner", "integrations")).length, 0);
+  assert.equal((await db.list("owner", "integration-requests")).length, 0);
+  const backend = new ConnectedSearchBackend(integrations, {
+    search: async () => {
+      throw new Error("Connected credential must power search before fallback");
+    },
+  });
+  const result = await backend.search({ query: "makeup promotions", limit: 3 }, { owner: "owner" });
+  assert.equal(requests, 1);
+  assert.equal(result.provenance.provider, "tavily");
+  assert.equal(result.sources[0].url, "https://shop.example.test/offers");
+  assert.equal(JSON.stringify(result).includes(canary), false);
+  searchResultSchema.parse(result);
 });
