@@ -462,11 +462,11 @@ export function auditedComputer(
         () => backend.writeBytes(owner, path, bytes),
         fileResource(owner, path, "exclusive"),
       ),
-    fileBytes: (owner, path) =>
+    fileBytes: (owner, path, options) =>
       run(
         owner,
         "export",
-        () => backend.fileBytes(owner, path),
+        () => backend.fileBytes(owner, path, options),
         fileResource(owner, path, "shared"),
       ),
     ...(readCommand && {

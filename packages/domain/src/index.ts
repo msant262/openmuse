@@ -42,6 +42,8 @@ export interface Mail {
   label: string;
   attachments: string[];
   cache?: WorkspaceCache;
+  /** Gmail system labels retain Sent/Draft provenance independently of display labels. */
+  systemLabels?: string[];
 }
 export interface CalendarEvent {
   id: string;

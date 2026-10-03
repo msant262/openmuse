@@ -1,4 +1,18 @@
 import { z } from "zod";
+import type { ProactivitySuggestion } from "./proactivity.ts";
+
+export const normalizedRegionSchema = z
+  .object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().gt(0).max(1),
+    height: z.number().gt(0).max(1),
+  })
+  .strict()
+  .superRefine((region, ctx) => {
+    if (region.x + region.width > 1 || region.y + region.height > 1)
+      ctx.addIssue({ code: "custom", message: "Region must stay inside its source image" });
+  });
 
 export const runtimeId = z
   .string()
@@ -19,23 +33,26 @@ export const messageReferenceSchema = z.discriminatedUnion("kind", [
       attachmentId: runtimeId,
       version: z.string().max(256),
       quote: z.string().max(8000).optional(),
+      region: normalizedRegionSchema.optional(),
     })
     .strict(),
   z
     .object({
       kind: z.literal("frame"),
       frameId: runtimeId,
-      sessionGeneration: z.number().int().min(0),
-      region: z
-        .object({
-          x: z.number().min(0).max(1),
-          y: z.number().min(0).max(1),
-          width: z.number().min(0).max(1),
-          height: z.number().min(0).max(1),
-        })
-        .strict(),
+      sessionGeneration: z.uuid(),
+      region: normalizedRegionSchema,
+      snapshotArtifactId: runtimeId.optional(),
+      snapshotVersion: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
     })
-    .strict(),
+    .strict()
+    .superRefine((reference, ctx) => {
+      if (Boolean(reference.snapshotArtifactId) !== Boolean(reference.snapshotVersion))
+        ctx.addIssue({ code: "custom", message: "Frame snapshot ID and version must be paired" });
+    }),
 ]);
 export const acceptedMessageSchema = z
   .object({
@@ -198,6 +215,7 @@ type InteractionRequestBase = {
   createdAt: string;
   answeredAt?: string;
   fieldBindings?: Record<string, { name: string; checkbox: boolean }>;
+  suggestion?: ProactivitySuggestion;
 };
 export type QuestionInteractionRequest = InteractionRequestBase & {
   kind: "question";
@@ -226,7 +244,7 @@ export type CredentialInteractionRequest = InteractionRequestBase & {
   challengeKind?: "totp" | "otp" | "push" | "captcha" | "webauthn" | "unknown";
 };
 export type OtherInteractionRequest = InteractionRequestBase & {
-  kind: "oauth" | "approval";
+  kind: "oauth" | "approval" | "proactivity";
   schema: QuestionSchema;
   status: "waiting" | "answered" | "superseded";
   answer?: QuestionAnswer;

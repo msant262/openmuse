@@ -166,6 +166,8 @@ export class McpService {
     this.authentication = authentication;
   }
   private connections = new Map<string, Promise<Connection>>();
+  private catalogGenerations = new Map<string, number>();
+  private retiredConnections = new Set<Promise<unknown>>();
   private readonly abort = new AbortController();
   private active = new Set<Promise<unknown>>();
   private signals = new Map<string, AbortSignal>();
@@ -184,6 +186,9 @@ export class McpService {
         // preflight. A rejected barrier is known not sent, without an unknown
         // connector receipt or a dependency on ambient model task scope.
         await beforeDispatch();
+        this.abort.signal.throwIfAborted();
+        signal?.throwIfAborted();
+        this.assertCurrent(owner, server, connection, binding.tool);
         let result: unknown;
         try {
           result = await this.dispatch(
@@ -312,6 +317,26 @@ export class McpService {
         }
       })();
       this.connections.set(key, pending);
+      // Retire old auth transports only after operations already using them
+      // settle. New calls resolve the current key, and fresh auth is checked
+      // again immediately before dispatch. Token refresh cannot accumulate SSEs.
+      void pending
+        .then(() => {
+          for (const [oldKey, oldConnection] of this.connections) {
+            if (oldKey === key || !oldKey.startsWith(`${owner}:${server.id}:`)) continue;
+            this.connections.delete(oldKey);
+            const retired = Promise.allSettled([...this.active]).then(async () => {
+              try {
+                await (await oldConnection).client.close();
+              } catch {
+                /* closed/unavailable */
+              }
+            });
+            this.retiredConnections.add(retired);
+            void retired.finally(() => this.retiredConnections.delete(retired));
+          }
+        })
+        .catch(() => {});
       void pending.catch(() => {
         if (this.connections.get(key) === pending) this.connections.delete(key);
       });
@@ -319,12 +344,64 @@ export class McpService {
     return pending;
   }
   private async catalogue(owner: string, server: McpServerConfig) {
-    const connection = await this.connection(owner, server);
+    const authorization = await this.authentication?.access(owner, server);
+    const configFingerprint = this.fingerprint(server);
+    const fingerprint = digest({ config: configFingerprint, authorization });
+    const key = `${owner}:${server.id}`;
+    const generation = (this.catalogGenerations.get(key) ?? 0) + 1;
+    this.catalogGenerations.set(key, generation);
+    const current = () => {
+      const configured = this.servers.find((candidate) => candidate.id === server.id);
+      if (!configured || this.fingerprint(configured) !== configFingerprint) return false;
+      try {
+        if (server.oauth && authorization)
+          this.authentication!.assertCurrent(owner, server.id, authorization.generation);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const cached = () =>
+      this.db.get<{ id: string; fingerprint: string; tools: Tool[]; revision: string }>(
+        owner,
+        "mcp-catalogues",
+        server.id,
+      );
     try {
-      connection.tools = await this.listAllowed(connection.client, server);
-      return connection;
+      const connection = await this.connection(owner, server);
+      const tools = await this.listAllowed(connection.client, server);
+      if (!current()) throw new AppError("MCP configuration changed during discovery", 409);
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const prior = await cached();
+        if (!current()) throw new AppError("MCP configuration changed during discovery", 409);
+        if (this.catalogGenerations.get(key) !== generation) {
+          if (prior?.fingerprint === fingerprint) return prior;
+          throw new AppError("MCP discovery was superseded", 409);
+        }
+        const value = {
+          id: server.id,
+          fingerprint,
+          tools,
+          revision: `${Date.now()}:${generation}`,
+        };
+        const saved = prior
+          ? await this.db.compareAndSwap(
+              owner,
+              "mcp-catalogues",
+              server.id,
+              { revision: prior.revision },
+              value,
+            )
+          : await this.db.insertIfAbsent(owner, "mcp-catalogues", value);
+        if (!current()) throw new AppError("MCP configuration changed during discovery", 409);
+        if (saved) return value;
+      }
+      throw new AppError("MCP discovery changed concurrently", 409);
     } catch (error) {
-      await connection.client.close().catch(() => {});
+      // Cached descriptions aid planning during a transient outage. Dispatch below
+      // still requires fresh remote discovery and the current configured allowlist.
+      const previous = await cached();
+      if (current() && previous?.fingerprint === fingerprint) return previous;
       throw error;
     }
   }
@@ -341,7 +418,15 @@ export class McpService {
           502,
         );
       }
-      tools.push(...result.tools.filter((tool) => Object.hasOwn(server.tools, tool.name)));
+      // Descriptions/default values can echo connector credentials too. They
+      // cross both model context and the persistent catalogue boundary.
+      const allowed = result.tools.filter((tool) => Object.hasOwn(server.tools, tool.name));
+      tools.push(
+        ...(scrubConfiguredValue(
+          this.authentication?.scrub(allowed) ?? allowed,
+          configuredSecretScrubber(Object.values(this.headers(server))),
+        ) as Tool[]),
+      );
       cursor = result.nextCursor;
       if (!cursor) return tools;
     }
@@ -444,9 +529,9 @@ export class McpService {
     for (const server of this.servers) {
       options.signal?.throwIfAborted();
       if (!Object.keys(server.tools).length) continue;
-      let connection: Connection;
+      let connection: Pick<Connection, "tools" | "fingerprint">;
       try {
-        connection = await this.catalogue(owner, server);
+        connection = await this.track(() => this.catalogue(owner, server));
       } catch {
         options.signal?.throwIfAborted();
         definitions.push(
@@ -582,6 +667,7 @@ export class McpService {
   async close() {
     this.abort.abort();
     await Promise.allSettled([...this.active]);
+    await Promise.allSettled([...this.retiredConnections]);
     await Promise.allSettled(
       [...this.connections.values()].map(async (value) => (await value).client.close()),
     );

@@ -629,3 +629,14 @@ test("a check keeps the baseline from a run that finishes during the request", a
   assert.equal(task?.status, "queued");
   assert.equal(task?.state.lastHash, afterRun);
 });
+
+test("task-screen resume cannot revive a stopped monitor left paused by an interrupted control", async () => {
+  const monitor = await createMonitor("Terminal control");
+  await read(`/monitors/${monitor.id}/control`, { action: "stop" });
+  await db.compareAndSwap(owner, "tasks", monitor.taskId, {}, { status: "paused" });
+  assert.equal(
+    (await request(`/tasks/${monitor.taskId}/control`, { action: "resume" })).status,
+    409,
+  );
+  assert.equal((await db.get<Monitor>(owner, "monitors", monitor.id))?.status, "stopped");
+});

@@ -21,7 +21,12 @@ type Persisted = {
   pending: OutboxMessage[];
   cursor: number;
   events: ConversationEvent[];
-  draft: { text: string; attachmentIds: string[]; revision: number };
+  draft: {
+    text: string;
+    attachmentIds: string[];
+    annotations: AcceptedMessageInput["annotations"];
+    revision: number;
+  };
   messages: unknown[];
 };
 type Snapshot = Persisted & { loaded: boolean; running: boolean; paused: boolean; error: string };
@@ -57,7 +62,7 @@ const empty = (): Snapshot => ({
   pending: [],
   cursor: 0,
   events: [],
-  draft: { text: "", attachmentIds: [], revision: 0 },
+  draft: { text: "", attachmentIds: [], annotations: [], revision: 0 },
   messages: [],
   loaded: false,
   running: false,
@@ -79,6 +84,7 @@ const savedOutboxSchema = z
     draft: z.object({
       text: z.string(),
       attachmentIds: z.array(acceptedMessageSchema.shape.clientMessageId),
+      annotations: acceptedMessageSchema.shape.annotations,
       revision: z.number().int().min(0),
     }),
     messages: z.array(z.unknown()),
@@ -112,7 +118,14 @@ export class MessageOutbox {
         "Saved messages belong to a different conversation; preserve the data and retry",
       );
     const { version, pending, cursor, events, draft, messages } = parsed;
-    return { version, pending, cursor, events, draft, messages };
+    return {
+      version,
+      pending,
+      cursor,
+      events,
+      draft: { ...draft, annotations: draft.annotations ?? [] },
+      messages,
+    };
   }
   open() {
     this.opening ??= this.storage
@@ -179,7 +192,14 @@ export class MessageOutbox {
       return {
         pending: [...previous.pending, value],
         ...(clearDraft
-          ? { draft: { text: "", attachmentIds: [], revision: previous.draft.revision + 1 } }
+          ? {
+              draft: {
+                text: "",
+                attachmentIds: [],
+                annotations: [],
+                revision: previous.draft.revision + 1,
+              },
+            }
           : {}),
       };
     });
@@ -192,9 +212,18 @@ export class MessageOutbox {
       return { pending: previous.pending.filter((message) => message.id !== id) };
     });
   }
-  async saveDraft(text: string, attachmentIds: string[]) {
+  async saveDraft(
+    text: string,
+    attachmentIds: string[],
+    annotations?: AcceptedMessageInput["annotations"],
+  ) {
     await this.commit((previous) => ({
-      draft: { text, attachmentIds, revision: previous.draft.revision + 1 },
+      draft: {
+        text,
+        attachmentIds,
+        annotations: annotations ?? previous.draft.annotations,
+        revision: previous.draft.revision + 1,
+      },
     }));
   }
   async saveMessages(messages: readonly unknown[]) {

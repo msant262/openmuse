@@ -47,6 +47,8 @@ export interface AgentTask {
   kind: "agent" | "document" | "monitor" | "finance" | "plan";
   status: TaskStatus;
   goalId?: string;
+  milestoneId?: string;
+  responsible?: "user" | "agent";
   originThreadId?: string;
   originMessageId?: string;
   timing?: TaskTiming;
@@ -82,9 +84,29 @@ export interface Goal {
   description: string;
   category: string;
   status: "active" | "paused" | "completed";
-  milestones: { id: string; title: string; done: boolean }[];
+  revision?: number;
+  responsible?: "user" | "agent";
+  progress?: number;
+  origin?: GoalOrigin;
+  updatedAt?: string;
+  milestones: GoalMilestone[];
   createdAt: string;
 }
+export type GoalOrigin = {
+  kind: "user" | "agent";
+  at: string;
+  source: string;
+  taskId?: string;
+  evidenceIds?: string[];
+};
+export type GoalMilestone = {
+  id: string;
+  title: string;
+  done: boolean;
+  responsible?: "user" | "agent";
+  taskId?: string;
+  origin?: GoalOrigin;
+};
 export interface Monitor {
   id: string;
   taskId: string;
@@ -100,6 +122,12 @@ export interface Monitor {
   lastHash?: string;
   error?: string;
   checks: number;
+  currency?: string;
+  priceTarget?: string;
+  matched?: boolean;
+  coverageWarning?: string;
+  lastDiff?: string;
+  diffTruncated?: boolean;
 }
 export interface Idea {
   id: string;
@@ -231,6 +259,7 @@ export const createTaskSchema = z.object({
   prompt: z.string().trim().min(1).max(12000),
   kind: z.enum(["agent", "document", "monitor", "finance", "plan"]).default("agent"),
   goalId: z.string().optional(),
+  milestoneId: z.string().optional(),
   originThreadId: z
     .string()
     .min(1)
@@ -250,6 +279,11 @@ export const monitorInputSchema = z
     condition: z.enum(["change", "contains", "price_below"]).default("change"),
     value: z.string().max(300).default(""),
     intervalMinutes: z.number().int().min(1).max(10080).default(15),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
+    priceTarget: z.string().trim().min(1).max(300).optional(),
   })
   .superRefine((v, c) => {
     if (v.condition !== "change" && !v.value.trim())
@@ -259,6 +293,11 @@ export const monitorInputSchema = z
       (!Number.isFinite(Number(v.value)) || Number(v.value) <= 0)
     )
       c.addIssue({ code: "custom", message: "Enter a positive price" });
+    if (v.condition === "price_below" && (!v.currency || !v.priceTarget))
+      c.addIssue({
+        code: "custom",
+        message: "Choose the currency and exact product name for a price watch",
+      });
   });
 export const goalInputSchema = z.object({
   title: z.string().trim().min(1).max(160),

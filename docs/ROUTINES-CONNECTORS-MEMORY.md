@@ -2,13 +2,21 @@
 
 These modules use OpenMuse's existing owner-scoped Postgres/PGlite database. They do not require CopilotKit Intelligence, Expo's push service, or Composio. Keep `CPK_INTELLIGENCE_API_KEY` empty for self-hosted main-chat publication and past-chat search. The optional legacy cloud mode still works, but routine results in that mode are available through Activity rather than automatic main-chat publication, and local past-chat search is unavailable.
 
+## Gmail and Calendar parsing
+
+The Google adapter unfolds MIME headers, decodes unsupported body charsets with UTF-8 replacement, takes mailbox addresses from angle brackets when a display name also contains an address, and keeps attached `message/rfc822` parts out of the outer message body. Truncated UTF-8 and lone Unicode surrogates are replaced per field so one malformed string does not abort a mailbox read. Message, thread, attachment, cache, and draft identifiers retain their existing format.
+
+`GoogleClient.listEvents` keeps all-day boundaries as validated civil dates. Its optional `timeZone` is an IANA zone for date-only `timeMin`/`timeMax` values and the default query window; date-only query bounds require that zone explicitly and resolve to the first valid instant of each local date when daylight saving skips midnight. Explicit RFC 3339 values with offsets remain supported. All-day event rows use a valid event or calendar timezone, then an explicit query timezone; if none is available, the adapter raises `CalendarTimeZoneUnknownError` instead of assigning UTC to a civil date. Timed rows with explicit offsets remain readable when timezone metadata is absent and use UTC as a display fallback; `listEventsWithMetadata` reports those event IDs. Malformed ranges fail the read instead of presenting an empty agenda. The metadata method includes the exact range, exclusive end, timezone source, 100-row limit, and whether Google returned another page.
+
+The model-facing `read_calendar` tool requires an explicit `timeMin`, exclusive `timeMax` and IANA `timeZone`, and supports only `primary`. It verifies the authenticated connection's Calendar read scopes before the query and its connection identity afterwards. Responses distinguish fresh, partial, unavailable and disconnected sources; they include the authorized calendar IDs, timezone provenance and truncation. A disconnected source has no authorized calendar IDs. An empty or truncated result does not establish availability across other calendars. Its range is capped at 366 days. [Proactive review](PROACTIVITY.md) uses the same adapter for a seven-day primary-calendar observation.
+
 ## Scheduled routines
 
 Set `ROUTINE_TIMEZONE=Europe/Berlin` (or your IANA timezone) and keep `TASK_WORKER_ENABLED=true` on the process executing tasks. The scheduler runs alongside that task worker. If using a separate task worker, use shared Postgres as documented in [rich threads](RICH-THREADS.md); PGlite must have a single process owner.
 
 Ask in chat: “Every weekday at 8:00 send me today's agenda in Portuguese.” The model translates that request into `manage_routine`; it returns the saved timezone and next run. Without a model backend, the Apps or Activity routine editor still works. Its day/time fields cover daily and weekday schedules, with cron available under Advanced schedule. All schedules persist in the DB and continue when the mobile app closes.
 
-The app can create, edit, pause, resume and delete routines. The agent tool supports the same operations. Schedules have five numeric cron fields; seconds and timezone abbreviations are rejected. Daylight-saving transitions follow `cron-parser`'s IANA timezone handling. Routines execute ordinary delegated tasks, so payment review, cancellation, connected tools and action logging apply. Pausing/deleting stops future slots; a slot already queued remains a separate task that can be cancelled in Activity.
+The app can create, edit, pause, resume and delete routines. The agent tool supports the same operations. Live creation requires an explicit IANA timezone; natural-language requests use the configured user timezone unless the user names an override. Live edits, pause, resume and deletion require the current revision returned by list. Title or prompt edits preserve the saved timezone, next run and cadence. Schedules have five numeric cron fields; seconds and timezone abbreviations are rejected. Daylight-saving transitions follow `cron-parser`'s IANA timezone handling. Routines execute ordinary delegated tasks, so payment review, cancellation, connected tools and action logging apply. Pausing/deleting stops future slots; a slot already queued remains a separate task that can be cancelled in Activity.
 
 The scheduler saves a pending UTC slot before enqueueing it, then uses a deterministic task key. Restart recovery resumes that slot before advancing its schedule. Missed schedules produce one latest due run, rather than a backlog of old external actions. If the previous run is still queued/running/paused/waiting for approval, the next occurrence is skipped. An existing pending slot survives enqueue failures and is retried. Edits during a pending enqueue require retrying; pause/delete can invalidate the pending slot.
 
@@ -17,9 +25,9 @@ Completed results wait behind an active main-chat lease. Publication commits a d
 Authenticated endpoints:
 
 - `GET /api/agent/routines`: schedules and default timezone.
-- `POST /api/agent/routines`: title, prompt, cron, optional timezone/enabled, and a stable `idempotencyKey` of 16–160 characters. Reusing it for changed details returns 409, including simultaneous requests. A deleted routine keeps its key tombstone; create a replacement with a new key.
-- `POST /api/agent/routines/:id`: selected fields to update.
-- `POST /api/agent/routines/:id/delete`: stop future slots and tombstone the schedule.
+- `POST /api/agent/routines`: title, prompt, cron, explicit timezone in live mode, optional enabled, and a stable `idempotencyKey` of 16–160 characters. Reusing it for changed details returns 409, including simultaneous requests. A deleted routine keeps its key tombstone; create a replacement with a new key.
+- `POST /api/agent/routines/:id`: selected fields and `expectedRevision` in live mode.
+- `POST /api/agent/routines/:id/delete`: `expectedRevision` in live mode; stop future slots and tombstone the schedule.
 
 ## Remote MCP
 

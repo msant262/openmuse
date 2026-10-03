@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { messageContentHash } from "../../../apps/server/src/conversation-inbox.ts";
+import { acceptedMessageSchema } from "../../../packages/domain/src/runtime.ts";
 import { ApiError } from "../src/api-errors.ts";
 import { hashMessageContent, sha256 } from "../src/message-hash.ts";
 import {
@@ -192,6 +193,60 @@ test("mobile hash is SHA-256 compatible for Unicode, attachments, steering and a
     ],
   };
   assert.equal(hashMessageContent(body), messageContentHash(body));
+});
+
+test("staged annotations persist in the composer draft across reopen and join the accepted envelope", async () => {
+  const disk = storage();
+  const citation = {
+    reference: { kind: "message" as const, messageId: "source-message", quote: "Check this" },
+    comment: "This is the part I mean",
+  };
+  let outbox = new MessageOutbox(disk, "owner:chat", "chat");
+  await outbox.saveDraft("Please review", [], [citation]);
+  outbox = new MessageOutbox(disk, "owner:chat", "chat");
+  await outbox.open();
+  assert.deepEqual(outbox.getSnapshot().draft.annotations, [citation]);
+  await outbox.enqueue({ id: "annotated", text: "Please review", annotations: [citation] });
+  assert.deepEqual(outbox.getSnapshot().pending[0].annotations, [citation]);
+  assert.deepEqual(outbox.getSnapshot().draft.annotations, [citation]);
+  await outbox.enqueue({ id: "clear", text: "Send", annotations: [citation], clearDraft: true });
+  assert.deepEqual(outbox.getSnapshot().draft.annotations, []);
+});
+
+test("frame marking persists only the masked frame reference, never screenshot bytes or credentials", () => {
+  const body = {
+    threadId: "chat",
+    clientMessageId: "marked-frame",
+    text: "Check this screen",
+    contentHash: "a".repeat(64),
+    attachmentIds: [],
+    annotations: [
+      {
+        reference: {
+          kind: "frame" as const,
+          frameId: "frame-1",
+          sessionGeneration: "6cbbf4e2-7646-47ad-8e7b-367bd77f0802",
+          region: { x: 0.2, y: 0.1, width: 0.2, height: 0.3 },
+        },
+        comment: "Please inspect this masked region",
+      },
+    ],
+  };
+  const parsed = acceptedMessageSchema.parse(body);
+  assert.equal(JSON.stringify(parsed).includes("PASSWORD_CANARY"), false);
+  assert.equal(JSON.stringify(parsed).includes("base64"), false);
+  assert.equal(JSON.stringify(parsed).includes("frame-1"), true);
+  assert.throws(() =>
+    acceptedMessageSchema.parse({
+      ...body,
+      annotations: [
+        {
+          ...body.annotations[0],
+          reference: { ...body.annotations[0].reference, image: "PASSWORD_CANARY" },
+        },
+      ],
+    }),
+  );
 });
 
 test("shared-key writers merge fresh persisted queues; snapshot/tail races preserve events and device scopes stay separate", async () => {

@@ -64,6 +64,21 @@ const readSchema = z.object({
   title: z.string().max(300),
   text: z.string().max(100_000),
   truncated: z.boolean(),
+  contentHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+  sourceLength: z.number().int().nonnegative().optional(),
+  products: z
+    .array(
+      z.object({
+        name: z.string().max(300),
+        price: z.number().positive(),
+        currency: z.string().regex(/^[A-Z]{3}$/),
+      }),
+    )
+    .max(400)
+    .optional(),
 });
 const downloadMetadataSchema = z.object({
   id: z.uuid(),

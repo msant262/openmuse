@@ -8,7 +8,9 @@ import {
   type SessionTransport,
 } from "./auth-manager";
 import { authenticatedFetch, authenticatedUpload } from "./auth-transport";
+import { ComputerRequests, durableComputerPath } from "./computer-requests";
 import { createCredentialStorage } from "./credential-storage";
+import { messageStorage } from "./message-storage";
 import { withWebSessionLock } from "./web-session-coordinator";
 
 export { ApiError } from "./api-errors";
@@ -19,6 +21,11 @@ export const API_URL = normalizeServerOrigin(
 );
 
 export class MuseApi {
+  private readonly computerRequests = new ComputerRequests(
+    messageStorage,
+    (value) => Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, value),
+    () => Crypto.randomUUID(),
+  );
   private identityScope?: string;
   private readonly fallbackScope = `${API_URL}\nlegacy-session:${Crypto.randomUUID()}`;
   constructor(private readonly credential: string | AuthManager) {}
@@ -38,10 +45,27 @@ export class MuseApi {
       : this.credential.authorization();
   }
   async request<T>(path: string, body?: unknown, method?: string): Promise<T> {
+    if (durableComputerPath(path) && (!method || ["POST", "GET"].includes(method)))
+      return this.computerRequests.request(
+        this.identityKey,
+        path,
+        body,
+        (nextPath, nextBody, requestId) =>
+          this.send(nextPath, nextBody, nextPath === path ? method : "GET", requestId),
+      );
+    return this.send(path, body, method);
+  }
+  private async send<T>(
+    path: string,
+    body?: unknown,
+    method?: string,
+    requestId?: string,
+  ): Promise<T> {
     const init = {
       method: method ?? (body === undefined ? "GET" : "POST"),
       headers: {
         Authorization: `Bearer ${this.token}`,
+        ...(requestId ? { "Idempotency-Key": requestId } : {}),
         ...(body === undefined || body instanceof FormData
           ? {}
           : { "Content-Type": "application/json" }),

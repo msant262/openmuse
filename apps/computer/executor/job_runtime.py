@@ -1,4 +1,5 @@
 """Managed job services under a shared bots slice; never a UID-wide kill sweep."""
+import base64
 import hashlib
 import json
 import os
@@ -167,9 +168,19 @@ class JobRuntime:
         timeout = args.get("timeoutMs", 1800000)
         if not isinstance(timeout, int) or not 1000 <= timeout <= 1800000:
             raise ValueError("Invalid job timeout")
-        command = args.get("command")
-        if not isinstance(command, str) or not 1 <= len(command) <= 16000:
-            raise ValueError("Invalid command")
+        if operation.get("kind","command")=="media":
+            kind=args.get("mediaKind")
+            parameters=args.get("parameters")
+            if kind not in ("transcribe","preview") or not isinstance(parameters,dict):
+                raise ValueError("Invalid native media request")
+            encoded=base64.b64encode(json.dumps({"kind":kind,"parameters":parameters}).encode()).decode()
+            if len(encoded)>24000:raise ValueError("Media request exceeds limit")
+            executable=["/opt/okami-computer/venv/bin/python","-I",str(Path(__file__).resolve().parent.parent/"media_job.py"),encoded]
+        else:
+            command = args.get("command")
+            if not isinstance(command, str) or not 1 <= len(command) <= 16000:
+                raise ValueError("Invalid command")
+            executable=["/usr/bin/bash", "--noprofile", "--norc", "-c", command]
         unit = self.unit(operation["id"])
         # No shell runs as root: systemd changes to the fixed registered User first.
         argv = ["systemd-run", "--quiet", "--no-block", "--unit=" + unit,
@@ -189,16 +200,16 @@ class JobRuntime:
                 "--property=InaccessiblePaths=/root -/var/lib/okami-executor -/etc/okami-executor -/run/docker.sock -/run/lxd -/run/okami-executor",
                 "--property=PrivateTmp=true", "--property=RestrictSUIDSGID=true",
                 "--property=Environment=PATH=/usr/local/bin:/usr/bin:/bin HOME=" + account["home"] + " LANG=C.UTF-8",
-                "/usr/bin/bash", "--noprofile", "--norc", "-c", command]
+                *executable]
         memory = args.get("memoryMaxBytes")
         if memory is not None:
             if not isinstance(memory, int) or memory < 16 * 1024**2:
                 raise ValueError("Invalid job memory budget")
-            argv.insert(-5, "--property=MemoryMax=" + str(memory))
+            argv.insert(-len(executable), "--property=MemoryMax=" + str(memory))
         with self.lock:
             if operation["id"] in self.active:
                 return {"unit": unit, "status": "running"}
-            self.active[operation["id"]] = {"unit": unit, "executorId": operation["executorId"]}
+            self.active[operation["id"]] = {"unit": unit, "executorId": operation["executorId"], "kind":operation.get("kind","command")}
         # The watchdog can contain the account slice while systemd-run waits.
         # Keep this identity even if its response is lost: inspect, never relaunch.
         self.runner(argv)
@@ -282,7 +293,7 @@ class JobRuntime:
     def adopt(self, operation):
         # After supervisor restart, record the old service for containment; never launch it again.
         with self.lock:
-            self.active[operation["id"]] = {"unit": self.unit(operation["id"]), "executorId": operation["executorId"]}
+            self.active[operation["id"]] = {"unit": self.unit(operation["id"]), "executorId": operation["executorId"], "kind":operation.get("kind","command")}
 
     def release(self, operation_id):
         with self.lock:
@@ -304,6 +315,15 @@ class JobRuntime:
         # Journal data is read from the fixed unit only, not an arbitrary log path.
         text = self.runner(["journalctl", "--unit=" + self.unit(operation_id), "--output=cat", "--no-pager", "--lines=2000"])
         encoded = text.encode("utf8")
+        if self.active.get(operation_id,{}).get("kind")=="media":
+            try:
+                line=next(line for line in reversed(text.splitlines()) if line.startswith("OKAMI_MEDIA_RESULT:"))
+                if len(line.encode())>131072:raise ValueError("Media result exceeds limit")
+                result=json.loads(line.removeprefix("OKAMI_MEDIA_RESULT:"))
+                if not isinstance(result,dict):raise ValueError("Invalid media result")
+                return {"stdout":"", "stderr":"", "truncated":False, "result":result}
+            except (StopIteration,ValueError):
+                return {"stdout":"", "stderr":"Media result unavailable; inspect the input, installed tools and offline model", "truncated":False,"mediaError":True}
         return {"stdout": encoded[:131072].decode("utf8", errors="replace"), "stderr": "",
                 "truncated": len(encoded) > 131072}
 

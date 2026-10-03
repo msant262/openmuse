@@ -125,7 +125,7 @@ class Journal:
         with self.lock:
             return [{"operation":json.loads(envelope),"receipt":json.loads(receipt) if receipt else None}
                     for envelope,receipt in self.db.execute(
-                        "SELECT envelope,receipt FROM operations WHERE json_extract(envelope,'$.kind')='command' AND json_extract(envelope,'$.executorId')=?",
+                        "SELECT envelope,receipt FROM operations WHERE json_extract(envelope,'$.kind') IN ('command','media') AND json_extract(envelope,'$.executorId')=?",
                         (executor_id,))]
 
     def graphical_cleanup(self, reset):
@@ -399,7 +399,7 @@ class Supervisor:
         owned_commands=journal.owned_commands(config["executorId"])
         for item in owned_commands:
             receipt = item["receipt"] or {}
-            if (item["operation"]["kind"] == "command" and
+            if (item["operation"]["kind"] in ("command", "media") and
                     (not receipt or receipt.get("status") == "running" or
                      (receipt.get("status") == "outcome_unknown" and receipt.get("data", {}).get("cleanupConfirmed") is not True))):
                 runtime.adopt(item["operation"])
@@ -533,8 +533,8 @@ class Supervisor:
 
     def command_receipt(self, operation, status, result):
         args = operation["args"]
-        command = {"id":operation["id"], "command":args["command"], "cwd":args.get("cwd", "/workspace"),
-                   "kind":"command", "timeoutMs":args.get("timeoutMs",1800000), "background":args.get("background",False),
+        command = {"id":operation["id"], "command":args.get("command",args.get("mediaKind","media")), "cwd":args.get("cwd", "/workspace"),
+                   "kind":args.get("mediaKind","command"), "timeoutMs":args.get("timeoutMs",1800000), "background":args.get("background",False),
                    "status":status if status in ("running", "succeeded", "failed", "rejected_not_dispatched") else "interrupted",
                    "stdout":result.get("stdout", ""), "stderr":result.get("stderr",result.get("message", "")),
                    "truncated":result.get("truncated",False), "startedAt":operation.get("createdAt",utc())}
@@ -546,6 +546,7 @@ class Supervisor:
             command["completedAt"] = utc()
         if "exitCode" in result:
             command["exitCode"] = result["exitCode"]
+        if "result" in result:command["result"]=result["result"]
         return command
 
     def perform(self, operation):
@@ -562,7 +563,7 @@ class Supervisor:
             if operation["executorId"]!=self.config["executorId"]:
                 raise ValueError("Operation belongs to another registered executor")
             self.gate.check(operation, inspection, containment)
-            if operation["kind"] == "command":
+            if operation["kind"] in ("command", "media"):
                 resource_budget = operation.get("resourceBudget")
                 if not self.budget or not resource_budget:
                     raise ValueError("Trusted native resource budget is unavailable")
@@ -631,7 +632,7 @@ class Supervisor:
                 data = (self.sessions.start if operation["args"]["operation"] == "start" else self.sessions.stop)(self.config["executorId"])
             elif operation["kind"] == "cancel":
                 target = self.journal.get(operation["args"]["operationId"])
-                if (target["operation"]["executorId"] != self.config["executorId"] or target["operation"]["kind"]!="command"
+                if (target["operation"]["executorId"] != self.config["executorId"] or target["operation"]["kind"] not in ("command", "media")
                         or target["operation"]["taskId"]!=operation["taskId"] or target["operation"]["resourceKey"]!=operation["resourceKey"]):
                     raise ValueError("Job cancellation target is not owned")
                 started = True
@@ -654,13 +655,13 @@ class Supervisor:
             graphical=operation["kind"] in ("desktop","browser")
             message = "Native graphical operation could not be confirmed; inspect before repeating input" if graphical else type(error).__name__ + ": " + str(error)[:500]
             local_cleanup=not started or operation["kind"] in ("file","file-version") or graphical and getattr(error,"cleanup_confirmed",False)
-            data = self.command_receipt(operation, status, {"message":message,"cleanupConfirmed":local_cleanup}) if operation["kind"] == "command" else {"cleanupConfirmed":local_cleanup}
+            data = self.command_receipt(operation, status, {"message":message,"cleanupConfirmed":local_cleanup}) if operation["kind"] in ("command", "media") else {"cleanupConfirmed":local_cleanup}
             if graphical:data["code"]=getattr(error,"code","DESKTOP_FAILED")
             self.journal.receipt(operation["id"], {"status":status, "data":data, "message":message})
 
     def release(self, operation_id):
         operation=self.journal.get(operation_id)["operation"]
-        if operation["executorId"]!=self.config["executorId"] or operation["kind"]!="command":
+        if operation["executorId"]!=self.config["executorId"] or operation["kind"] not in ("command", "media"):
             raise ValueError("Cleanup release belongs to another executor")
         resource_budget=operation.get("resourceBudget")
         if self.budget and resource_budget:
@@ -678,6 +679,7 @@ class Supervisor:
                 if state["status"] != "running" and (item["receipt"]["status"] == "running" or state.get("cleanupConfirmed")):
                     output = self.runtime.output(operation_id)
                     status = "outcome_unknown" if item["receipt"]["status"] == "outcome_unknown" else state["status"]
+                    if status=="succeeded" and output.get("mediaError"):status="failed"
                     self.journal.receipt(operation_id, {"status":status,
                         "data":self.command_receipt(item["operation"], status, {**state, **output})})
                     if state.get("cleanupConfirmed"):
@@ -690,7 +692,7 @@ class Supervisor:
         if self.gate.needs_reconciliation:
             for operation in response.get("operations",[]):
                 if self.journal.receive(operation):
-                    data=self.command_receipt(operation,"rejected_not_dispatched",{}) if operation["kind"]=="command" else {}
+                    data=self.command_receipt(operation,"rejected_not_dispatched",{}) if operation["kind"] in ("command", "media") else {}
                     self.journal.receipt(operation["id"],{"status":"rejected_not_dispatched","data":data,
                         "message":"Fresh handshake/reconciliation was required before this claimed operation could start"})
             self.connect()

@@ -27,6 +27,8 @@ import { configureNativeCredentialInjector } from "./credentials/native.ts";
 import { credentialNodeRoutes } from "./credentials/node-routes.ts";
 import { OpenBaoSecretStore } from "./credentials/openbao-store.ts";
 import { credentialRoutes } from "./credentials/routes.ts";
+import { createConversationAnnotationValidator } from "./conversation-annotations.ts";
+import { conversationResources, currentConversationFrame } from "./conversation-resources.ts";
 import type { Store } from "./db.ts";
 import { desktopRoutes } from "./desktop-routes.ts";
 import { DesktopService, nativeDesktopTransport } from "./desktop-service.ts";
@@ -370,6 +372,38 @@ export async function createApp(
   if (threads instanceof LocalThreads) {
     agent.configureThreads(threads);
     threads.configureInbox(inbox, conversationAgentFactory(config, agent));
+    inbox.configureAnnotationValidator(
+      createConversationAnnotationValidator({
+        db,
+        attachment: async (owner, id) => ({
+          bytes: await files.bytes(owner, id),
+          mimeType: (await files.get(owner, id)).mimeType,
+        }),
+        history: async (owner, threadId) => (await threads.history(owner, threadId)).messages,
+        desktopSession: desktop
+          ? async (owner) => {
+              const current = await desktop.session(owner);
+              return { id: current.id, sessionGeneration: current.sessionGeneration };
+            }
+          : undefined,
+        snapshotFrame: async (owner, threadId, clientMessageId, frame) => {
+          const extension = frame.mimeType === "image/png" ? ".png" : ".jpg";
+          const bytes = Buffer.from(frame.image, "base64");
+          const artifact = await files.importAttachment(
+            owner,
+            `desktop-frame-${frame.frameId}${extension}`,
+            bytes,
+            "Masked desktop frame annotation",
+            frame.mimeType,
+            `annotation-frame:${threadId}:${clientMessageId}:${frame.frameId}`,
+          );
+          return {
+            artifactId: artifact.id,
+            version: createHash("sha256").update(bytes).digest("hex"),
+          };
+        },
+      }),
+    );
   }
   await agent.initialize();
   if (threads instanceof LocalThreads) await threads.initializeInbox();
@@ -600,6 +634,25 @@ export async function createApp(
       202,
     );
   });
+  app.get("/api/conversations/:threadId/resources", async (c) => {
+    if (!(threads instanceof LocalThreads))
+      throw new AppError("Conversation resource libraries require local durable chat storage", 409);
+    const threadId = c.req.param("threadId");
+    await threads.ensure(c.get("owner"), threadId);
+    return c.json(
+      await conversationResources(db, files, c.get("owner"), threadId, {
+        reachable: () => browser.reachable(),
+        decorateBrowser: (owner, session) => browser.decorate(owner, session),
+        desktop,
+      }),
+    );
+  });
+  app.get("/api/conversations/:threadId/frame", async (c) => {
+    if (!(threads instanceof LocalThreads))
+      throw new AppError("Desktop annotations require local durable chat storage", 409);
+    await threads.ensure(c.get("owner"), c.req.param("threadId"));
+    return c.json(await currentConversationFrame(db, desktop, c.get("owner")));
+  });
   app.get("/api/conversations/:threadId/events", async (c) =>
     c.json(
       await inbox.eventsAfter(
@@ -740,15 +793,22 @@ export async function createApp(
   });
   app.post("/api/files", async (c) => {
     const data = await c.req.parseBody();
+    const uploadId = z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+      .optional()
+      .parse(data.uploadId);
+    const uploadedName = z.string().min(1).max(180).optional().parse(data.fileName);
     const file = data.file;
     if (!(file instanceof File)) throw new AppError("Choose a file");
     return c.json(
       await files.importAttachment(
         c.get("owner"),
-        file.name,
+        uploadedName ?? file.name,
         new Uint8Array(await file.arrayBuffer()),
         "Uploaded by you",
         file.type,
+        uploadId ? `mobile-upload:${uploadId}` : undefined,
       ),
       201,
     );

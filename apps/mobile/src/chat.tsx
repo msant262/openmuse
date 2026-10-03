@@ -29,7 +29,9 @@ import {
   View,
 } from "react-native";
 import { z } from "zod";
+import type { ProactivitySuggestion } from "../../../packages/domain/src/proactivity";
 import type {
+  AcceptedMessageInput,
   ConversationAcceptance,
   ConversationReplay,
   InteractionRequest,
@@ -40,8 +42,18 @@ import { useAgentWorkspace } from "./agent-workspace";
 import { AssistantResponse } from "./assistant-response";
 import { BackgroundUpdates } from "./background-updates";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
+import { ChatAttachments } from "./chat-attachments";
 import { BrowserThreadCard } from "./computer";
+import {
+  type AnnotationSource,
+  ConversationAnnotationComposer,
+} from "./conversation-annotation-composer";
 import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
+import {
+  type ConversationFileResource,
+  type ConversationFrame,
+  ConversationResourceLibrary,
+} from "./conversation-resources";
 import { runConversationTurn } from "./conversation-run";
 import { FileToolCard } from "./file-tool-card";
 import { InteractionCard } from "./interaction-card";
@@ -57,6 +69,9 @@ import {
 } from "./message-outbox";
 import { messageStorage } from "./message-storage";
 import { modelSelectionNotice, modelUsageUrl } from "./model-errors";
+import { ProactivityCard } from "./proactivity-card";
+import { suggestionsFromRequests } from "./proactivity-state";
+
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
 import { type Selection, useMuseThread } from "./threads";
 import { Button, Card, CheckRow, colors, ErrorNotice, s } from "./ui";
@@ -311,6 +326,9 @@ export function ChatScreen({
   const { copilotkit } = useCopilotKit();
   const renderToolCall = useRenderToolCall();
   const [draft, setDraft] = useState("");
+  const [annotations, setAnnotations] = useState<AcceptedMessageInput["annotations"]>([]);
+  const [annotationSource, setAnnotationSource] = useState<AnnotationSource>();
+  const [showResourceLibrary, setShowResourceLibrary] = useState(false);
   const [directionTarget, setDirectionTarget] = useState<string>();
   useEffect(() => {
     if (
@@ -333,6 +351,15 @@ export function ChatScreen({
   const [loaded, setLoaded] = useState(false);
   const [picking, setPicking] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
+  const composerValues = useRef({ draft, attachments, annotations });
+  composerValues.current = { draft, attachments, annotations };
+  const composerMounted = useRef(true);
+  useEffect(() => {
+    composerMounted.current = true;
+    return () => {
+      composerMounted.current = false;
+    };
+  }, []);
   const list = useRef<ScrollView>(null);
   const [queue] = useState(() =>
     durableChat
@@ -340,6 +367,7 @@ export function ChatScreen({
       : new ConversationQueue(),
   );
   const [questions, setQuestions] = useState<InteractionRequest[]>([]);
+  const [suggestions, setSuggestions] = useState<ProactivitySuggestion[]>([]);
   const draftRevision = useRef(0);
   const [composerSubmission] = useState(() => new ComposerSubmission());
   const choiceCompletions = useRef(
@@ -367,6 +395,7 @@ export function ChatScreen({
         if (draftRevision.current === 0) {
           setDraft(saved.draft.text);
           setAttachments(saved.draft.attachmentIds);
+          setAnnotations(saved.draft.annotations);
         }
         if (!agent.messages.length && saved.messages.length)
           agent.setMessages(saved.messages as Message[]);
@@ -379,10 +408,10 @@ export function ChatScreen({
             "id" in event.payload
           ) {
             const request = event.payload as InteractionRequest;
-            if (request.kind === "question" || request.kind === "credential")
-              cards.set(request.id, request);
+            cards.set(request.id, request);
           }
-        setQuestions([...cards.values()]);
+        setQuestions([...cards.values()].filter((r) => r.kind === "question" || r.kind === "credential"));
+        setSuggestions(suggestionsFromRequests([...cards.values()]));
         setLoaded(true);
       })
       .catch((cause) => {
@@ -414,6 +443,7 @@ export function ChatScreen({
           if (active && draftRevision.current === 0) {
             setDraft(saved.draft.text);
             setAttachments(saved.draft.attachmentIds);
+            setAnnotations(saved.draft.annotations);
           }
           if (active && !agent.messages.length && saved.messages.length)
             agent.setMessages(saved.messages as Message[]);
@@ -469,8 +499,10 @@ export function ChatScreen({
   ]);
   useEffect(() => {
     if (!(queue instanceof MessageOutbox) || !queue.getSnapshot().loaded) return;
-    void queue.saveDraft(draft, attachments).catch((cause) => setSaveError(String(cause)));
-  }, [draft, attachments, queue, loaded]);
+    void queue
+      .saveDraft(draft, attachments, annotations)
+      .catch((cause) => setSaveError(String(cause)));
+  }, [draft, attachments, annotations, queue, loaded]);
   useEffect(() => {
     if (!(queue instanceof MessageOutbox)) return;
     const subscription = agent.subscribe({
@@ -501,7 +533,8 @@ export function ChatScreen({
       const cards = await api.request<{ requests: InteractionRequest[] }>(
         `/api/conversations/${threadId}/interactions`,
       );
-      setQuestions(cards.requests);
+      setQuestions(cards.requests.filter((r) => r.kind === "question" || r.kind === "credential"));
+      setSuggestions(suggestionsFromRequests(cards.requests));
       if (replay.events.length && !runLock.current && !agent.isRunning) {
         runLock.current = true;
         // Response streaming may wait for a stored message to retry. Keep journal
@@ -660,12 +693,18 @@ export function ChatScreen({
     void queue.flush(runQueued).catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [agent, isReady, loaded, queue, runQueued]);
   const enqueue = useCallback(
-    async (text: string, attachmentIds: string[] = [], clearDraft = false) => {
+    async (
+      text: string,
+      attachmentIds: string[] = [],
+      clearDraft = false,
+      messageAnnotations: AcceptedMessageInput["annotations"] = [],
+    ) => {
       const message = {
         id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         text,
         attachmentIds,
         clearDraft,
+        ...(queue instanceof MessageOutbox ? { annotations: messageAnnotations } : {}),
         ...(queue instanceof MessageOutbox && directionTarget
           ? { targetTaskId: directionTarget }
           : {}),
@@ -757,6 +796,7 @@ export function ChatScreen({
             : ""),
         queue instanceof MessageOutbox ? attachments : [],
         true,
+        queue instanceof MessageOutbox ? annotations : [],
       );
     } catch (cause) {
       setSaveError(String(cause));
@@ -766,10 +806,78 @@ export function ChatScreen({
       setDraft("");
       setInputHeight(44);
       setAttachments([]);
+      setAnnotations([]);
+      setAnnotationSource(undefined);
       setPicking(false);
       draftRevision.current++;
     }
     setSaveError("");
+  }
+  function annotateMessage(message: Message, content: string) {
+    if (!(queue instanceof MessageOutbox)) return;
+    draftRevision.current++;
+    setAnnotationSource({
+      kind: "message",
+      messageId: String(message.id),
+      quote: content.slice(0, 8000),
+    });
+  }
+  function annotateFile(resource: ConversationFileResource) {
+    draftRevision.current++;
+    setAnnotationSource({ kind: "attachment", resource });
+  }
+  function annotateFrame(frame: ConversationFrame) {
+    draftRevision.current++;
+    setAnnotationSource({ kind: "frame", frame });
+  }
+  async function stageAnnotation(annotation: AcceptedMessageInput["annotations"][number]) {
+    if (!(queue instanceof MessageOutbox)) {
+      setSaveError("Markings require a durable conversation draft.");
+      return;
+    }
+    const current = composerValues.current;
+    if (current.annotations.length >= 20) {
+      setSaveError("A message can contain at most 20 citations or markings.");
+      return;
+    }
+    if (current.annotations.some((item) => JSON.stringify(item) === JSON.stringify(annotation))) {
+      setAnnotationSource(undefined);
+      return;
+    }
+    const nextAnnotations = [...current.annotations, annotation];
+    const nextAttachments =
+      annotation.reference.kind === "attachment"
+        ? Array.from(new Set([...current.attachments, annotation.reference.attachmentId]))
+        : current.attachments;
+    try {
+      await queue.saveDraft(current.draft, nextAttachments, nextAnnotations);
+      if (!composerMounted.current) return;
+      draftRevision.current++;
+      setAttachments(nextAttachments);
+      setAnnotations(nextAnnotations);
+      setAnnotationSource(undefined);
+      setSaveError("");
+    } catch (cause) {
+      setSaveError(String(cause));
+    }
+  }
+  function toggleAttachment(id: string) {
+    const nextAttachments = attachments.includes(id)
+      ? attachments.filter((current) => current !== id)
+      : [...attachments, id];
+    const nextAnnotations = annotations.filter(
+      (item) =>
+        item.reference.kind !== "attachment" ||
+        nextAttachments.includes(item.reference.attachmentId),
+    );
+    draftRevision.current++;
+    setAttachments(nextAttachments);
+    setAnnotations(nextAnnotations);
+    if (
+      annotationSource?.kind === "attachment" &&
+      !nextAttachments.includes(annotationSource.resource.file.id)
+    )
+      setAnnotationSource(undefined);
   }
   const messages = agent.messages || [];
   const latestPanelId = latestJevPanelId(messages, threadId);
@@ -801,6 +909,25 @@ export function ChatScreen({
         }}
         keyboardShouldPersistTaps="handled"
       >
+        {queue instanceof MessageOutbox && (
+          <Button small onPress={() => setShowResourceLibrary((value) => !value)}>
+            {showResourceLibrary ? "Fechar arquivos e sessões" : "Arquivos e sessões"}
+          </Button>
+        )}
+        {showResourceLibrary && queue instanceof MessageOutbox && (
+          <ConversationResourceLibrary
+            threadId={threadId}
+            onAnnotateFile={annotateFile}
+            onAnnotateFrame={annotateFrame}
+          />
+        )}
+        {annotationSource && (
+          <ConversationAnnotationComposer
+            source={annotationSource}
+            onAdd={(annotation) => void stageAnnotation(annotation)}
+            onCancel={() => setAnnotationSource(undefined)}
+          />
+        )}
         {queue instanceof MessageOutbox && (
           <ErrorNotice error={conversationDeliveryError(queue.getSnapshot().events)} />
         )}
@@ -899,6 +1026,11 @@ export function ChatScreen({
                     )}
                   </View>
                 )}
+                {durableChat && !!text && typeof message.content === "string" && (
+                  <Button small onPress={() => annotateMessage(message, message.content as string)}>
+                    Citar texto
+                  </Button>
+                )}
                 <JevInteractionContext.Provider
                   value={{
                     threadId,
@@ -996,6 +1128,16 @@ export function ChatScreen({
           <InteractionCard
             key={request.id}
             request={request}
+            onAnswered={() => {
+              void refreshAgent();
+              void syncReplay();
+            }}
+          />
+        ))}
+        {suggestions.map((suggestion) => (
+          <ProactivityCard
+            key={suggestion.id}
+            suggestion={suggestion}
             onAnswered={() => {
               void refreshAgent();
               void syncReplay();
@@ -1209,39 +1351,68 @@ export function ChatScreen({
                 ))}
             </View>
           )}
-        {picking && (
-          <Card style={{ marginBottom: 12, padding: 15 }}>
-            <Text style={s.heading}>Add a document</Text>
-            <ScrollView style={{ maxHeight: 230 }} keyboardShouldPersistTaps="handled">
-              {w.files.length ? (
-                w.files.map((f) => (
-                  <CheckRow
-                    key={f.id}
-                    checked={attachments.includes(f.id)}
-                    label={f.name}
-                    onPress={() => {
-                      draftRevision.current++;
-                      setAttachments(
-                        attachments.includes(f.id)
-                          ? attachments.filter((id) => id !== f.id)
-                          : [...attachments, f.id],
-                      );
-                    }}
-                  />
-                ))
-              ) : (
-                <Text style={s.muted}>Import a PDF in Files to use it in a conversation.</Text>
-              )}
-            </ScrollView>
-            <Button
-              small
-              onPress={() => setPicking(false)}
-              style={{ alignSelf: "flex-end", marginTop: 8 }}
-            >
-              Done
-            </Button>
-          </Card>
-        )}
+        <Card style={{ marginBottom: 12, padding: 15, display: picking ? "flex" : "none" }}>
+          <Text style={s.heading}>Anexos e voz</Text>
+          {queue instanceof MessageOutbox && (
+            <ChatAttachments
+              key={`${api.identityKey}:${threadId}`}
+              threadId={threadId}
+              active={active && picking}
+              attach={async (id) => {
+                if (!composerMounted.current)
+                  throw new Error("Reabra esta conversa para anexar o arquivo salvo.");
+                const current = composerValues.current;
+                const next = Array.from(new Set([...current.attachments, id]));
+                await queue.saveDraft(current.draft, next);
+                if (!composerMounted.current)
+                  throw new Error("Anexo guardado no rascunho desta conversa.");
+                draftRevision.current++;
+                setAttachments((current) => Array.from(new Set([...current, id])));
+              }}
+              transcript={async (text) => {
+                if (!composerMounted.current)
+                  throw new Error("Reabra esta conversa para usar a transcrição salva.");
+                const current = composerValues.current;
+                if (!text || current.draft.includes(text)) return;
+                const next = [current.draft.trim(), text].filter(Boolean).join("\n\n");
+                if (next.length > 24000)
+                  throw new Error(
+                    "Transcrição longa: abra o resultado em Tarefas ou anexe o áudio ao pedido.",
+                  );
+                await queue.saveDraft(next, current.attachments);
+                if (!composerMounted.current)
+                  throw new Error("Transcrição guardada no rascunho desta conversa.");
+                draftRevision.current++;
+                setDraft((current) =>
+                  current.includes(text)
+                    ? current
+                    : [current.trim(), text].filter(Boolean).join("\n\n"),
+                );
+              }}
+            />
+          )}
+          <ScrollView style={{ maxHeight: 230 }} keyboardShouldPersistTaps="handled">
+            {w.files.length ? (
+              w.files.map((f) => (
+                <CheckRow
+                  key={f.id}
+                  checked={attachments.includes(f.id)}
+                  label={f.name}
+                  onPress={() => toggleAttachment(f.id)}
+                />
+              ))
+            ) : (
+              <Text style={s.muted}>Import a PDF in Files to use it in a conversation.</Text>
+            )}
+          </ScrollView>
+          <Button
+            small
+            onPress={() => setPicking(false)}
+            style={{ alignSelf: "flex-end", marginTop: 8 }}
+          >
+            Done
+          </Button>
+        </Card>
         <View
           style={{
             backgroundColor: "#FFF",
@@ -1265,10 +1436,7 @@ export function ChatScreen({
                     key={f.id}
                     accessibilityRole="button"
                     accessibilityLabel={`Remove attachment: ${f.name}`}
-                    onPress={() => {
-                      draftRevision.current++;
-                      setAttachments((ids) => ids.filter((id) => id !== f.id));
-                    }}
+                    onPress={() => toggleAttachment(f.id)}
                     style={[
                       s.row,
                       {
@@ -1291,6 +1459,36 @@ export function ChatScreen({
                     <X size={13} color={colors.muted} />
                   </Pressable>
                 ))}
+            </View>
+          )}
+          {annotations.length > 0 && (
+            <View style={{ gap: 6, paddingHorizontal: 9, paddingBottom: 8 }}>
+              <Text style={s.small}>
+                {annotations.length} citação(ões)/marcação(ões) neste rascunho
+              </Text>
+              {annotations.map((annotation, index) => (
+                <View key={JSON.stringify(annotation)} style={[s.row, { gap: 8 }]}>
+                  <Text numberOfLines={2} style={[s.muted, { flex: 1 }]}>
+                    {annotation.reference.kind === "message"
+                      ? `Texto: ${annotation.reference.quote ?? "mensagem"}`
+                      : annotation.reference.kind === "attachment"
+                        ? `Arquivo: ${annotation.reference.attachmentId}`
+                        : `Tela: ${annotation.reference.frameId}`}
+                    {` · ${annotation.comment}`}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove citation or marking"
+                    onPress={() => {
+                      const next = annotations.filter((_, itemIndex) => itemIndex !== index);
+                      draftRevision.current++;
+                      setAnnotations(next);
+                    }}
+                  >
+                    <X size={15} color={colors.muted} />
+                  </Pressable>
+                </View>
+              ))}
             </View>
           )}
           <View style={[s.row, { gap: 7, alignItems: "flex-end" }]}>

@@ -17,6 +17,8 @@ The demos follow a request from chat to the agent's inline browser, then show ho
 - [Interaction design and conversation behavior](EXPERIENCE.md)
 - [OpenBot integration contract](OPENBOT-INTEGRATION.md)
 - [Feature inventory](FEATURES.md)
+- [Personal routines, connector coverage and memory](ROUTINES-CONNECTORS-MEMORY.md)
+- [Durable proactive reviews and actionable suggestions](PROACTIVITY.md)
 - [Verification and limitations](VERIFICATION.md)
 - [Demo reproduction](DEMO.md)
 - [Roadmap](../ROADMAP.md)

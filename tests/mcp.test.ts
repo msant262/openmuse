@@ -79,7 +79,11 @@ test("official streamable MCP tools honor allowlists, bind money approval and re
   // Use the public low-level SDK handler to include names inherited by plain JS objects.
   remote.server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
-      { name: "read_agenda", inputSchema: z.toJSONSchema(z.object({ day: z.string() })) },
+      {
+        name: "read_agenda",
+        description: `Calendar ${process.env.OPENMUSE_MCP_TEST_KEY}`,
+        inputSchema: z.toJSONSchema(z.object({ day: z.string() })),
+      },
       {
         name: "buy_ticket",
         inputSchema: z.toJSONSchema(
@@ -132,6 +136,10 @@ test("official streamable MCP tools honor allowlists, bind money approval and re
       "mcp_apps_uncertain_write",
     ]);
     const buy = tools.find((t) => t.name.endsWith("buy_ticket"));
+    assert(!tools.some((tool) => tool.description.includes("private-test-credential")));
+    assert(
+      !JSON.stringify(await db.list("wife", "mcp-catalogues")).includes("private-test-credential"),
+    );
     assert.ok(buy?.execute);
     const intent = {
       event: "Music",
@@ -436,4 +444,181 @@ test("native approved MCP calls remain tracked through success and interrupted r
       },
     );
   }
+});
+
+test("MCP descriptions survive transient discovery failure while newer generations and revocation fence execution", async (t) => {
+  const db = await createStore();
+  const remote = new McpServer({ name: "catalogue-fixture", version: "1" });
+  let calls = 0;
+  remote.registerTool("read_item", { inputSchema: {} }, async () => {
+    calls++;
+    return { content: [{ type: "text", text: "read" }] };
+  });
+  let failure = false;
+  let description = "original";
+  let blockNext = false;
+  let blocked!: () => void;
+  let release!: () => void;
+  const observed = new Promise<void>((resolve) => {
+    blocked = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  remote.server.setRequestHandler(ListToolsRequestSchema, async () => {
+    if (failure) throw new Error("temporary unavailable");
+    const captured = description;
+    if (blockNext) {
+      blockNext = false;
+      blocked();
+      await gate;
+    }
+    return {
+      tools: [
+        {
+          name: "read_item",
+          description: captured,
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+    };
+  });
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID });
+  await remote.connect(transport);
+  const http = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    await transport.handleRequest(
+      req,
+      res,
+      chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined,
+    );
+  });
+  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+  const address = http.address();
+  assert.ok(address && typeof address === "object");
+  const servers = parseMcpConfig([
+    { id: "apps", url: `http://127.0.0.1:${address.port}/mcp`, tools: { read_item: "read" } },
+  ]);
+  const actions = new ActionService(db, {
+    policy: "money",
+    connected: async () => true,
+    execute: async () => "unused",
+  });
+  const service = new McpService(db, actions, servers);
+  t.after(async () => {
+    release();
+    await service.close();
+    await remote.close();
+    http.closeAllConnections();
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+    await db.close();
+  });
+  await service.tools("owner", "first");
+  description = "stale response";
+  blockNext = true;
+  const older = service.tools("owner", "older");
+  await observed;
+  description = "new generation";
+  const newer = await service.tools("owner", "newer");
+  release();
+  const late = await older;
+  assert.match(newer[0].description, /new generation/);
+  assert.match(late[0].description, /new generation/);
+  failure = true;
+  const cached = await service.tools("owner", "outage");
+  assert.match(cached[0].description, /new generation/);
+  await assert.rejects(cached[0].execute!({}), /catalogue|unavailable/);
+  assert.equal(calls, 0);
+  failure = false;
+  const guarded = await service.tools("owner", "revoke", {
+    before: async () => {
+      if (calls === -1) servers[0].tools = {};
+      else calls = -1;
+    },
+  });
+  await assert.rejects(guarded[0].execute!({}), /configuration changed/);
+  assert.equal(calls, -1, "revocation after awaited discovery prevents the remote read");
+  assert.deepEqual(await service.tools("owner", "revoked"), []);
+});
+
+test("MCP revocation after the dispatch barrier remains known not sent", async () => {
+  const db = await createStore();
+  let handler: (...args: any[]) => Promise<unknown> = async () => {};
+  let calls = 0;
+  const actions = {
+    registerExternal: (_: string, value: typeof handler) => {
+      handler = value;
+    },
+  };
+  const [server] = parseMcpConfig([
+    { id: "review", url: "https://example.invalid/mcp", tools: { update_note: "write" } },
+  ]);
+  const service = new McpService(db, actions as unknown as ActionService, [server]);
+  const fixture = service as any;
+  const connection = {
+    client: {
+      callTool: async () => {
+        calls++;
+        return {};
+      },
+    },
+    configFingerprint: fixture.fingerprint(server),
+  };
+  fixture.bound = async () => ({ server, connection });
+  try {
+    await assert.rejects(
+      handler(
+        "owner",
+        { tool: "update_note", args: {} },
+        { id: "action", hash: "fixture" },
+        async () => {
+          server.tools = {};
+        },
+      ),
+      /configuration changed/,
+    );
+    assert.equal(calls, 0);
+    assert.equal(await db.get("owner", "mcp-receipts", "action"), null);
+  } finally {
+    await service.close();
+    await db.close();
+  }
+});
+
+test("MCP catalogue revocation during persistent cache awaits cannot expose stale tools", async (t) => {
+  for (const barrier of ["read", "insert", "replace"] as const)
+    await t.test(barrier, async () => {
+      const db = await createStore();
+      const [server] = parseMcpConfig([
+        { id: "review", url: "https://example.invalid/mcp", tools: { read_note: "read" } },
+      ]);
+      const service = new McpService(db, { registerExternal() {} } as unknown as ActionService, [
+        server,
+      ]);
+      const fixture = service as any;
+      fixture.connection = async () => ({ client: {} });
+      fixture.listAllowed = async () => [
+        { name: "read_note", inputSchema: { type: "object", properties: {} } },
+      ];
+      if (barrier === "replace") await service.tools("owner", "initial");
+      const operation =
+        barrier === "read" ? "get" : barrier === "insert" ? "insertIfAbsent" : "compareAndSwap";
+      const original = (db[operation] as Function).bind(db);
+      (db as any)[operation] = async (...args: any[]) => {
+        const value = await original(...args);
+        if (args[1] === "mcp-catalogues") server.tools = {};
+        return value;
+      };
+      try {
+        const definitions = await service.tools("owner", "revoked");
+        assert(!definitions.some((tool) => tool.name === "mcp_review_read_note"));
+        if (barrier === "read")
+          assert.equal(await db.get("owner", "mcp-catalogues", "review"), null);
+        assert.deepEqual(await service.tools("owner", "after-revocation"), []);
+      } finally {
+        await service.close();
+        await db.close();
+      }
+    });
 });

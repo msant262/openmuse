@@ -52,6 +52,15 @@ export async function initializeDurableConversations(query: (sql: string) => Pro
       INSERT INTO records(owner,kind,id,data) VALUES(mutation_owner,'mutation-receipts',receipt_id,jsonb_build_object('id',receipt_id,'bindingHash',binding_hash,'result',previous));
       RETURN previous;
     END $$`);
+  await query(`CREATE OR REPLACE FUNCTION openmuse_active_durable_mutation(mutation_owner text, receipt_id text, binding_hash text, mutations jsonb, events jsonb)
+    RETURNS jsonb LANGUAGE plpgsql AS $$
+    BEGIN
+      PERFORM pg_advisory_xact_lock(hashtextextended('openmuse-runtime-control',0));
+      IF EXISTS (SELECT 1 FROM records WHERE owner='__runtime__' AND kind='runtime-pause' AND id='global' AND data->>'paused'='true') THEN
+        RETURN jsonb_build_object('status','paused');
+      END IF;
+      RETURN openmuse_durable_mutation(mutation_owner,receipt_id,binding_hash,mutations,events);
+    END $$`);
   await query(`CREATE OR REPLACE FUNCTION openmuse_thread_event(event_owner text, run_token text, event_value jsonb)
     RETURNS jsonb LANGUAGE plpgsql AS $$
     DECLARE saved jsonb; count_events integer;

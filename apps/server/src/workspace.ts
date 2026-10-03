@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import type {
   ActionProposal,
   ActivityEntry,
@@ -13,6 +14,10 @@ import type {
 } from "../../../packages/domain/src/index.ts";
 import { workspaceSourceSchema } from "../../../packages/domain/src/index.ts";
 import { GoogleClient } from "../../../packages/integrations/src/google.ts";
+import {
+  calendarQueryBound,
+  isCalendarTimeZone,
+} from "../../../packages/integrations/src/google-calendar-dates.ts";
 import { createSamplePdf } from "../../../packages/integrations/src/pdf.ts";
 import { ActionLog, auditTarget } from "./action-log.ts";
 import { approvalPolicy } from "./action-policy.ts";
@@ -24,8 +29,10 @@ import { taskOperationId } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 import type { GoogleAuth } from "./google-auth.ts";
+import { mailVersion } from "./proactivity/evidence.ts";
 import { modelProviderConfig, orderedModels } from "./providers/config.ts";
 import { sharedModelRouter } from "./providers/model-router.ts";
+
 export type WorkspaceSection = "essential" | "mail" | "calendar" | "files" | "browser" | "all";
 type CachedRow<T> = T & { connectionId?: string; cachedAt?: string };
 export type WorkspaceSnapshot = Workspace & { sources: WorkspaceSources };
@@ -85,6 +92,130 @@ export class WorkspaceService {
     return this.config.mode === "sample"
       ? (await this.db.get<{ enabled: boolean }>(owner, "settings", "google"))?.enabled !== false
       : Boolean(await this.googleAuth.tokens(owner));
+  }
+  async sourceAuthority(owner: string, source: "mail" | "calendar") {
+    if (this.config.mode === "sample") return this.connection(owner);
+    const tokens = await this.googleAuth.tokens(owner);
+    if (!tokens) return null;
+    const accepted =
+      source === "mail"
+        ? ["gmail.readonly", "gmail.modify", "gmail.metadata", "mail.google.com/"]
+        : [
+            "calendar",
+            "calendar.readonly",
+            "calendar.events",
+            "calendar.events.readonly",
+            "calendar.events.owned",
+            "calendar.events.owned.readonly",
+          ];
+    // Metadata alone cannot read a thread body or establish reply intent.
+    const authorized = tokens.scopes.some((scope) =>
+      accepted.some(
+        (suffix) =>
+          suffix !== "gmail.metadata" &&
+          (scope === `https://www.googleapis.com/auth/${suffix}` || scope === `https://${suffix}`),
+      ),
+    );
+    if (!authorized)
+      throw new AppError(`The connected account has no authorized ${source} read scope`, 403);
+    return { id: tokens.connectionId, account: tokens.account };
+  }
+  async proactivityMailCandidates(owner: string, signal?: AbortSignal) {
+    const authority = await this.sourceAuthority(owner, "mail");
+    if (!authority) throw new AppError("Mail source is disconnected", 409);
+    const result =
+      this.config.mode === "live"
+        ? await this.google(owner, authority.id, signal).listMailWithMetadata(
+            "in:inbox -in:trash -in:spam newer_than:30d",
+          )
+        : { messages: (await this.db.listPage<Mail>(owner, "mail", 30)).values, complete: true };
+    if ((await this.sourceAuthority(owner, "mail"))?.id !== authority.id)
+      throw new AppError("Mail account changed during the read", 409);
+    return { ...result, authority, observedAt: new Date().toISOString() };
+  }
+  async proactivityThread(
+    owner: string,
+    threadId: string,
+    connectionId: string,
+    signal?: AbortSignal,
+  ) {
+    const authority = await this.sourceAuthority(owner, "mail");
+    if (!authority || authority.id !== connectionId)
+      throw new AppError("Mail source changed or is disconnected", 409);
+    const result =
+      this.config.mode === "live"
+        ? await this.google(owner, authority.id, signal).getThreadWithMetadata(threadId)
+        : { messages: await this.thread(owner, threadId), complete: true };
+    if ((await this.sourceAuthority(owner, "mail"))?.id !== connectionId)
+      throw new AppError("Mail account changed during the read", 409);
+    return {
+      ...result,
+      authority,
+      observedAt: new Date().toISOString(),
+      version: mailVersion(result.messages),
+    };
+  }
+  async readCalendar(owner: string, raw: unknown, signal?: AbortSignal) {
+    const input = z
+      .object({
+        calendarId: z.literal("primary").default("primary"),
+        timeMin: z.string().min(1).max(60),
+        timeMax: z.string().min(1).max(60),
+        timeZone: z.string().refine(isCalendarTimeZone, "Use an explicit IANA timezone"),
+      })
+      .strict()
+      .parse(raw);
+    const timeMin = calendarQueryBound(input.timeMin, input.timeZone, "calendar timeMin");
+    const timeMax = calendarQueryBound(input.timeMax, input.timeZone, "calendar timeMax");
+    const duration = Date.parse(timeMax) - Date.parse(timeMin);
+    if (duration <= 0 || duration > 366 * 86400000)
+      throw new AppError("Calendar range must span at most 366 days and end after it starts", 422);
+    const metadata = {
+      timeMin,
+      timeMax,
+      timeMaxExclusive: true as const,
+      timeZone: input.timeZone,
+      timeZoneSource: "explicit" as const,
+      authorizedCalendarIds: [] as string[],
+      coverage: "primary_only" as const,
+      observedAt: new Date().toISOString(),
+      complete: false,
+      truncated: false,
+      unknownTimeZoneEventIds: [] as string[],
+    };
+    try {
+      const authority = await this.sourceAuthority(owner, "calendar");
+      if (!authority) return { status: "disconnected" as const, events: [], metadata };
+      metadata.authorizedCalendarIds.push("primary");
+      const result =
+        this.config.mode === "live"
+          ? await this.google(owner, authority.id, signal).listEventsWithMetadata({
+              ...input,
+              timeMin,
+              timeMax,
+            })
+          : {
+              events: (await this.events(owner, { timeMin, timeMax })).slice(0, 100),
+              metadata: { truncated: false, unknownTimeZoneEventIds: [] as string[] },
+            };
+      if ((await this.sourceAuthority(owner, "calendar"))?.id !== authority.id)
+        throw new AppError("Calendar account changed during the read", 409);
+      const complete =
+        !result.metadata.truncated && !result.metadata.unknownTimeZoneEventIds.length;
+      return {
+        status: complete ? ("fresh" as const) : ("partial" as const),
+        events: result.events,
+        metadata: { ...metadata, ...result.metadata, complete, connectionId: authority.id },
+      };
+    } catch (error) {
+      signal?.throwIfAborted();
+      return {
+        status: "unavailable" as const,
+        events: [],
+        metadata,
+        error: error instanceof Error ? error.message : "Calendar source unavailable",
+      };
+    }
   }
   async calendars(owner: string) {
     const connection = await this.connection(owner);

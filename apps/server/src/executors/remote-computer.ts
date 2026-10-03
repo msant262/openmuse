@@ -13,6 +13,7 @@ import {
   type ComputerBackend,
   type ComputerDispatchOptions,
   commandReceiptSchema,
+  mediaSchema,
 } from "../computer-contract.ts";
 import { AppError } from "../errors.ts";
 import { FileVersions } from "../file-versions.ts";
@@ -118,7 +119,7 @@ export class RemoteComputerBackend implements ComputerBackend {
   private async wait(owner: string, operation: ExecutorOperation, signal?: AbortSignal) {
     const deadline =
       Date.now() +
-      (operation.kind === "command"
+      (["command", "media"].includes(operation.kind)
         ? (this.options.timeoutMs ?? 1800000) + 10000
         : (this.options.fileWaitMs ?? 30000));
     while (Date.now() < deadline) {
@@ -178,7 +179,7 @@ export class RemoteComputerBackend implements ComputerBackend {
       throw new AppError("Native computer belongs to another owner", 403);
     const node = await this.registry.node(this.options.executorId);
     const commands = (await this.registry.deliveries(owner, this.options.executorId))
-      .filter((value) => value.operation.kind === "command")
+      .filter((value) => ["command", "media"].includes(value.operation.kind))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, 100);
     const receipts = [];
@@ -290,21 +291,65 @@ export class RemoteComputerBackend implements ComputerBackend {
     }
     return this.command(owner, operation.id);
   }
+  async media(
+    owner: string,
+    kind: "transcribe" | "preview",
+    raw: unknown,
+    options: ComputerDispatchOptions = {},
+  ): Promise<ComputerCommand> {
+    const {
+      timeoutMs = this.options.timeoutMs ?? 1800000,
+      background,
+      ...parsed
+    } = mediaSchema.parse(raw);
+    if (timeoutMs > (this.options.timeoutMs ?? 1800000))
+      throw new AppError("Media timeout exceeds native maximum", 422);
+    // Stable output names belong to this intention; native helper refuses overwrite.
+    const key = options.idempotencyKey ?? randomUUID();
+    const suffix = this.id(owner, key).slice(0, 20);
+    const parameters = {
+      path: workspacePath(parsed.path),
+      ...(kind === "transcribe"
+        ? {
+            language: parsed.language,
+            textPath: workspacePath(parsed.textPath ?? `/workspace/transcript-${suffix}.txt`),
+            ...(parsed.srtPath ? { srtPath: workspacePath(parsed.srtPath) } : {}),
+          }
+        : { outputPath: workspacePath(parsed.outputPath ?? `/workspace/preview-${suffix}.pdf`) }),
+    };
+    const operation = await this.submit(
+      owner,
+      {
+        kind: "media",
+        capability: kind === "transcribe" ? "transcribe" : "command",
+        capabilityVersion: 1,
+        args: { mediaKind: kind, parameters, timeoutMs, background, cwd: "/workspace" },
+      },
+      { ...options, idempotencyKey: key },
+    );
+    const receipt = await this.command(owner, operation.id);
+    if (background || receipt.status !== "running") return receipt;
+    await this.wait(owner, operation, options.signal);
+    return this.command(owner, operation.id);
+  }
   async command(owner: string, id: string): Promise<ComputerCommand> {
     const delivery = await this.registry.delivery(owner, id);
     if (
       !delivery ||
       delivery.operation.executorId !== this.options.executorId ||
-      delivery.operation.kind !== "command"
+      !["command", "media"].includes(delivery.operation.kind)
     )
       throw new AppError("Native computer command not found", 404);
     const operation = delivery.operation,
       args = operation.args;
     const intent: ComputerCommand = {
       id,
-      command: String(args.command),
+      command: String(args.command ?? args.mediaKind),
       cwd: String(args.cwd ?? "/workspace"),
-      kind: "command",
+      kind:
+        operation.kind === "media"
+          ? z.enum(["transcribe", "preview"]).parse(args.mediaKind)
+          : "command",
       timeoutMs: Number(args.timeoutMs ?? 1800000),
       background: Boolean(args.background),
       status: "running",
@@ -465,7 +510,11 @@ export class RemoteComputerBackend implements ComputerBackend {
       }),
     );
   }
-  async fileBytes(owner: string, path: string) {
+  async fileBytes(
+    owner: string,
+    path: string,
+    options: Pick<ComputerDispatchOptions, "idempotencyKey" | "signal"> = {},
+  ) {
     const raw = z
       .object({
         path: z.string(),
@@ -473,7 +522,18 @@ export class RemoteComputerBackend implements ComputerBackend {
         sha256: z.string(),
         size: z.number().int(),
       })
-      .parse(await this.file(owner, "read_binary", path));
+      .parse(
+        await this.file(
+          owner,
+          "read_binary",
+          path,
+          {},
+          {
+            ...options,
+            idempotencyKey: options.idempotencyKey ?? randomUUID(),
+          },
+        ),
+      );
     const bytes = decodeBase64(raw.base64, attachmentLimit);
     if (
       !bytes ||

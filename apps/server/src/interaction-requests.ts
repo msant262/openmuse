@@ -170,7 +170,7 @@ export class InteractionRequests {
   async status(owner: string, id: string): Promise<InteractionRequest> {
     const request = await this.db.get<InteractionRequest>(owner, "interaction-requests", id);
     if (!request) throw new AppError("Question not found", 404);
-    if (request.status === "waiting") {
+    if (request.status === "waiting" && request.kind !== "proactivity") {
       const task = await this.db.get<AgentTask>(owner, "tasks", request.taskId);
       if (
         !task ||

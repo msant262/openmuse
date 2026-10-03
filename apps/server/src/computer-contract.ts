@@ -84,9 +84,13 @@ type BaseComputerBackend = Pick<
   | "writePdf"
   | "pdfBytes"
   | "writeBytes"
-  | "fileBytes"
 >;
 export type ComputerBackend = Omit<BaseComputerBackend, "execute"> & {
+  fileBytes: (
+    owner: string,
+    path: string,
+    options?: Pick<ComputerDispatchOptions, "idempotencyKey" | "signal">,
+  ) => ReturnType<ComputerService["fileBytes"]>;
   recovery?: FileVersions;
   artifact?: (owner: string, path: string) => Promise<Record<string, unknown>>;
   physicalOperation?: (owner: string, id: string) => Promise<{ cleanupConfirmed: boolean }>;

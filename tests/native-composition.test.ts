@@ -473,3 +473,109 @@ for (const source of ["manual-command", "manual-file", "model-file"] as const)
       assert.equal(await server.db.get("__runtime__", "work-admissions", taskId), null);
     }
   });
+
+test("paired native request status exposes pending separately and returns only its device's retained result", async (t) => {
+  const server = await nativeRuntime(t);
+  const accepted = await server.manualNative!.enqueue(
+    "local-user",
+    server.session.deviceId,
+    "queued-status",
+    {
+      method: "execute",
+      args: { command: "printf queued", background: true, timeoutMs: 1000 },
+    },
+  );
+  const status = (token: string) =>
+    server.app.request(`/api/computer/requests/${accepted.taskId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  const pending = await status(server.session.token);
+  assert.equal(pending.status, 202);
+  assert.deepEqual(await pending.json(), {
+    taskId: accepted.taskId,
+    status: "queued",
+    pending: true,
+  });
+  const other = await server.auth.session();
+  assert.equal((await status(other.token)).status, 404);
+  await server.agent.worker.tick();
+  const response = await status(server.session.token);
+  assert.equal(response.status, 200);
+  const value = await response.json();
+  assert.equal(value.taskId, accepted.taskId);
+  assert.equal(value.result.status, "running");
+  assert.equal(value.result.command, "printf queued");
+  assert.equal(
+    (await server.node("claim", { epoch: server.epoch, waitMs: 0 })).operations.length,
+    1,
+  );
+});
+
+for (const kind of ["preview", "transcribe"] as const)
+  test(`production native ${kind} shares job admission, exact media receipt and replay identity`, async (t) => {
+    const server = await nativeRuntime(t);
+    const mediaHello = {
+      ...hello,
+      capabilities: [...hello.capabilities, { name: "transcribe", version: 1 }],
+    };
+    const { epoch } = await server.node("register", mediaHello);
+    await server.node("reconcile", {
+      epoch,
+      bootId: hello.bootId,
+      operations: [],
+      contained: true,
+    });
+    const body = {
+      path: kind === "preview" ? "/workspace/report.docx" : "/workspace/voice.m4a",
+      background: true,
+      language: "auto",
+    };
+    const response = await server.post(`/${kind}`, body, `media-${kind}`);
+    const running = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(running));
+    assert.equal(running.kind, kind);
+    assert.equal(running.status, "running");
+    const batch = await server.node("claim", { epoch, waitMs: 0 });
+    assert.equal(batch.operations.length, 1);
+    const operation = batch.operations[0];
+    assert.equal(operation.kind, "media");
+    assert.equal(operation.capability, kind === "transcribe" ? "transcribe" : "command");
+    assert.equal(operation.args.parameters.path, body.path);
+    assert.equal(operation.resourceBudget.memoryBytes, 3072 * 1024 ** 2);
+    const result =
+      kind === "transcribe"
+        ? {
+            text: "Olá, hello, guten Tag",
+            language: "pt",
+            textPath: operation.args.parameters.textPath,
+          }
+        : { previewPath: operation.args.parameters.outputPath };
+    await server.node("receipt", {
+      epoch,
+      operationId: operation.id,
+      sequence: 1,
+      receipt: {
+        status: "succeeded",
+        data: {
+          ...running,
+          status: "succeeded",
+          exitCode: 0,
+          cleanupConfirmed: true,
+          completedAt: new Date().toISOString(),
+          result,
+        },
+      },
+    });
+    await server.agent.worker.tick();
+    const replay = await server.post(`/${kind}`, body, `media-${kind}`);
+    const completed = await replay.json();
+    assert.equal(completed.status, "succeeded", JSON.stringify(completed));
+    if (kind === "transcribe") {
+      // A durable command receipt contains output metadata. Complete text is
+      // published from its file; the bounded native stdout is not the document.
+      const { text: _boundedText, ...metadata } = result;
+      assert.deepEqual(completed.result, metadata);
+      assert.equal(completed.stdout, "");
+    } else assert.deepEqual(completed.result, result);
+    assert.equal((await server.node("claim", { epoch, waitMs: 0 })).operations.length, 0);
+  });

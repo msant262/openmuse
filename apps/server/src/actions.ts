@@ -57,6 +57,12 @@ interface Options {
   now?: () => number;
 }
 export class ActionService {
+  private taskEvidence?: (owner: string, task: AgentTask, action: ActionProposal) => Promise<void>;
+  configureTaskEvidence(
+    guard: (owner: string, task: AgentTask, action: ActionProposal) => Promise<void>,
+  ) {
+    this.taskEvidence = guard;
+  }
   private readonly now: () => number;
   private readonly log: ActionLog;
   private readonly external = new Map<string, ExternalExecutor>();
@@ -417,6 +423,12 @@ export class ActionService {
     // Adapter preflight does not dispatch an intention. The concrete outgoing
     // request invokes this callback after catalogue, credential and file waits.
     // The durable action check is last, including approvals without task ALS.
+    const action = await this.db.get<ActionProposal>(owner, "actions", id);
+    if (action?.taskId && this.taskEvidence) {
+      const task = await this.db.get<AgentTask>(owner, "tasks", action.taskId);
+      if (!task) throw new AppError("Task authority was lost before dispatch", 409);
+      await this.taskEvidence(owner, task, action);
+    }
     if (!validateOnly) await authorizeTaskEffect();
     const code = await this.db.guardTaskAction(owner, id, validateOnly);
     if (code === "paused") throw new RuntimePausedError(await new RuntimePause(this.db).get(owner));

@@ -15,7 +15,10 @@ export const routineInput = z
   })
   .strict();
 
-export const routinePatch = routineInput.extend({ enabled: z.boolean() }).partial();
+export const routinePatch = routineInput
+  .extend({ enabled: z.boolean() })
+  .partial()
+  .extend({ expectedRevision: z.number().int().min(1).optional() });
 
 export function nextRoutineRun(cron: string, timezone: string, now: number): string {
   if (cron.trim().split(/\s+/).length !== 5 || !/^[\d*,/\s-]+$/.test(cron))
@@ -45,6 +48,7 @@ export class RoutinesService {
     readonly timezone = "UTC",
     private readonly now = Date.now,
     private readonly onBlocked?: (owner: string, routine: Routine, taskId: string) => Promise<void>,
+    private readonly requireExplicitTimezone = false,
   ) {
     nextRoutineRun("0 8 * * *", timezone, now());
   }
@@ -61,6 +65,8 @@ export class RoutinesService {
   async create(owner: string, raw: unknown, key?: string) {
     const input = routineInput.parse(raw),
       timezone = input.timezone ?? this.timezone;
+    if (this.requireExplicitTimezone && !input.timezone)
+      throw new AppError("Choose the user's or device's explicit timezone for a new routine", 422);
     const now = new Date(this.now()).toISOString();
     const id = key ? createHash("sha256").update(`routine:${key}`).digest("hex") : randomUUID();
     const value: Routine = {
@@ -88,8 +94,12 @@ export class RoutinesService {
   }
 
   async update(owner: string, id: string, raw: unknown) {
-    const patch = routinePatch.parse(raw),
+    const { expectedRevision, ...patch } = routinePatch.parse(raw),
       previous = await this.get(owner, id);
+    if (this.requireExplicitTimezone && expectedRevision === undefined)
+      throw new AppError("Read the routine revision before updating", 409);
+    if (expectedRevision !== undefined && expectedRevision !== previous.revision)
+      throw new AppError("Routine changed; refresh its revision", 409);
     if (previous.pending && patch.enabled !== false)
       throw new AppError("Routine is scheduling a run; retry shortly", 409);
     const merged = { ...previous, ...patch };
@@ -102,16 +112,26 @@ export class RoutinesService {
         ...patch,
         ...(patch.enabled === false ? { pending: null } : {}),
         revision: previous.revision + 1,
-        nextRunAt: nextRoutineRun(merged.cron, merged.timezone, this.now()),
+        nextRunAt:
+          patch.cron !== undefined ||
+          patch.timezone !== undefined ||
+          (patch.enabled === true && !previous.enabled)
+            ? nextRoutineRun(merged.cron, merged.timezone, this.now())
+            : previous.nextRunAt,
         updatedAt: new Date(this.now()).toISOString(),
       },
     );
     if (!saved) throw new AppError("Routine changed; refresh and retry", 409);
     return saved;
   }
-  async remove(owner: string, id: string) {
+  async remove(owner: string, id: string, expectedRevision?: number) {
     // Tombstone prevents a racing scheduler from creating future slots. Queued tasks remain cancellable.
     const value = await this.get(owner, id);
+    if (
+      (this.requireExplicitTimezone && expectedRevision === undefined) ||
+      (expectedRevision !== undefined && expectedRevision !== value.revision)
+    )
+      throw new AppError("Read the current routine revision before deleting", 409);
     if (
       !(await this.db.compareAndSwap(
         owner,

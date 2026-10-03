@@ -58,6 +58,16 @@ export class ConversationInbox {
   /** Scheduler/mailbox adapter: acceptance stays durable if delivery is interrupted. */
   onAccepted?: (owner: string, message: InboxMessage) => void;
   private readonly acceptedListeners = new Set<(owner: string, message: InboxMessage) => void>();
+  private validateAnnotations?: (
+    owner: string,
+    threadId: string,
+    clientMessageId: string,
+    attachmentIds: string[],
+    annotations: NonNullable<AcceptedMessageInput["annotations"]>,
+  ) => Promise<NonNullable<AcceptedMessageInput["annotations"]>>;
+  configureAnnotationValidator(validator: NonNullable<ConversationInbox["validateAnnotations"]>) {
+    this.validateAnnotations = validator;
+  }
   subscribeAccepted(listener: (owner: string, message: InboxMessage) => void) {
     this.acceptedListeners.add(listener);
     return () => this.acceptedListeners.delete(listener);
@@ -90,6 +100,29 @@ export class ConversationInbox {
     }
     for (const attachmentId of input.attachmentIds)
       await this.validateAttachment?.(owner, attachmentId);
+    let targetTask: { id: string; status: string; state: Record<string, unknown> } | undefined;
+    if (input.targetTaskId) {
+      const foundTask = await this.db.get<{
+        id: string;
+        status: string;
+        state: Record<string, unknown>;
+      }>(owner, "tasks", input.targetTaskId);
+      if (!foundTask) throw new AppError("Task not found", 404);
+      targetTask = foundTask;
+      if (
+        expectedRevision !== undefined &&
+        Number(targetTask.state?.desiredRevision ?? 0) !== expectedRevision
+      )
+        throw new AppError("Task direction changed; refresh before sending", 409);
+    }
+    const validatedAnnotations = await this.validateAnnotations?.(
+      owner,
+      input.threadId,
+      input.clientMessageId,
+      input.attachmentIds,
+      input.annotations,
+    );
+    if (validatedAnnotations) input.annotations = validatedAnnotations;
     const message: InboxMessage = {
       ...input,
       id,
@@ -112,17 +145,8 @@ export class ConversationInbox {
       },
     ];
     if (input.targetTaskId) {
-      const task = await this.db.get<{
-        id: string;
-        status: string;
-        state: Record<string, unknown>;
-      }>(owner, "tasks", input.targetTaskId);
+      const task = targetTask;
       if (!task) throw new AppError("Task not found", 404);
-      if (
-        expectedRevision !== undefined &&
-        Number(task.state?.desiredRevision ?? 0) !== expectedRevision
-      )
-        throw new AppError("Task direction changed; refresh before sending", 409);
       const existingMail = (await this.db.list<TaskMailbox>(owner, "task-mailbox")).filter(
         (item) => item.taskId === task.id,
       );

@@ -34,9 +34,9 @@ import { ComputerService } from "../computer.ts";
 import type { ComputerBackend } from "../computer-contract.ts";
 import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Config } from "../config.ts";
-import { ConversationInbox } from "../conversation-inbox.ts";
 import type { CredentialBroker } from "../credentials/broker.ts";
 import type { CredentialLoginService } from "../credentials/login.ts";
+import { bindingHash, ConversationInbox } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import type { DesktopService } from "../desktop-service.ts";
 import { AppError } from "../errors.ts";
@@ -48,6 +48,12 @@ import { MediaService } from "../media-tools.ts";
 import { MemoryService } from "../memory.ts";
 import { modelProviderConfig } from "../providers/config.ts";
 import { sharedModelRouter } from "../providers/model-router.ts";
+import { Playbooks } from "../playbooks.ts";
+import {
+  ProactivityEvidenceChangedError,
+  ProactivitySourceUnavailableError,
+} from "../proactivity/evidence.ts";
+import { ProactivityService } from "../proactivity/service.ts";
 import { nativePushAdapters, PushService } from "../push.ts";
 import { RoutinesService } from "../routines.ts";
 import { BrowserSearchBackend } from "../search.ts";
@@ -58,9 +64,10 @@ import { readComputerCommand, reconcileWaitingComputerTasks } from "./computer-j
 import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
+import { MonitorObservations, type MonitorPage } from "./monitor-observations.ts";
 import { ResourceLeases } from "./resource-leases.ts";
 import { RuntimePause } from "./runtime-pause.ts";
-import { TaskActor } from "./task-actor.ts";
+import { TaskActor, TaskBudgetExhaustedError } from "./task-actor.ts";
 import { TaskJournal, validateTaskEffect } from "./task-journal.ts";
 import { TaskMailbox } from "./task-mailbox.ts";
 import { TaskTiming as TaskTimingService } from "./task-timing.ts";
@@ -72,11 +79,17 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const date = () => new Date().toISOString();
 const terminal = new Set(["succeeded", "failed", "cancelled"]);
 export class AgentService {
+  private get monitorObservations() {
+    return new MonitorObservations(this.db, (owner, title, body, taskId, key) =>
+      this.notify(owner, title, body, taskId, key),
+    );
+  }
   desktop?: DesktopService;
   readonly search: BrowserSearchBackend;
   configureDesktop(desktop: DesktopService) {
     this.desktop = desktop;
   }
+  readonly playbooks: Playbooks;
   readonly profiles: AgentProfile;
   readonly interactions: InteractionRequests;
   readonly worker: TaskWorker;
@@ -84,6 +97,7 @@ export class AgentService {
   readonly resourceLeases: ResourceLeases;
   readonly workAdmission: WorkAdmission;
   readonly routines: RoutinesService;
+  readonly proactivity: ProactivityService;
   readonly memory: MemoryService;
   readonly contextBudget: ContextBudget;
   contextModel?: ContextModelResolver;
@@ -114,6 +128,7 @@ export class AgentService {
   }
   async initialize() {
     await this.push.recover();
+    await this.proactivity.recoverContinuations();
   }
   async routineTick() {
     if (this.routineRefreshing) return;
@@ -122,6 +137,8 @@ export class AgentService {
       if (!(await this.runtimePause.get("__runtime__")).paused) await this.routines.tick();
       await this.push.recover();
       await this.flushPublications();
+      await this.proactivity.recoverContinuations();
+      await this.proactivity.flushPublications();
     } finally {
       this.routineRefreshing = false;
     }
@@ -202,6 +219,7 @@ export class AgentService {
     this.timing = new TaskTimingService(db, config.routineTimezone ?? "Europe/Berlin");
     this.verification = new TaskVerification(db, files, this.journal);
     this.profiles = new AgentProfile(db);
+    this.playbooks = new Playbooks(this);
     this.interactions = new InteractionRequests(db);
     this.runtimePause = new RuntimePause(db);
     this.resourceLeases = new ResourceLeases(db);
@@ -219,6 +237,7 @@ export class AgentService {
           taskId,
           `routine-blocked:${routine.id}:${taskId}`,
         ).then(() => {}),
+      config.mode === "live",
     );
     this.memory = new MemoryService(db);
     this.contextBudget = new ContextBudget(db);
@@ -236,6 +255,11 @@ export class AgentService {
         imageContextTokens: providers.routing?.imageContextTokens ?? 8192,
       });
     }
+    this.proactivity = new ProactivityService(this);
+    this.journal.evidenceBefore = (owner, task) => this.proactivity.revalidateTask(owner, task);
+    this.actions.configureTaskEvidence((owner, task, action) =>
+      this.proactivity.revalidateTask(owner, task, action),
+    );
     this.mcp = new McpService(db, actions, config.mcpServers ?? []);
     this.push = new PushService(
       db,
@@ -313,6 +337,7 @@ export class AgentService {
         );
       }
       await new ActionLog(this.db).reconcile();
+      if (!globallyPaused) await this.monitorObservations.flush();
       // Recover publications if the process exited after committing an outcome.
       for (const { owner, value } of await this.db.scan<AgentTask>("tasks")) {
         if (
@@ -348,7 +373,7 @@ export class AgentService {
       if (!globallyPaused)
         for (const { owner, value } of await this.db.scan<Monitor>("monitors"))
           await this.activateMonitor(owner, value);
-      if (!globallyPaused)
+      if (!globallyPaused && this.config.mode === "sample")
         for (const { owner, value } of await this.db.scan<Idea>("ideas"))
           if (
             value.status === "accepted" &&
@@ -370,6 +395,10 @@ export class AgentService {
           "agent-settings",
         )) {
           if (value.id !== "identity") continue;
+          if (this.config.mode === "live") {
+            await this.proactivity.scheduleDue(owner);
+            continue;
+          }
           if (!value.lastIdeasAt || Date.now() - Date.parse(value.lastIdeasAt) > 15 * 60000)
             await this.refreshIdeas(owner).catch(async () => {
               await this.notify(
@@ -527,9 +556,19 @@ export class AgentService {
     originalUserPrompt?: string,
   ) {
     const input = createTaskSchema.parse(raw);
-    if (input.goalId && !(await this.db.get(owner, "goals", input.goalId)))
-      throw new AppError("Goal not found", 404);
-    const id = idempotencyKey ? hash(`task:${idempotencyKey}`) : randomUUID();
+    const goal = input.goalId ? await this.getGoal(owner, input.goalId) : undefined;
+    const milestone = input.milestoneId
+      ? goal?.milestones.find((m) => m.id === input.milestoneId)
+      : undefined;
+    if (input.milestoneId && !milestone) throw new AppError("Milestone not found", 404);
+    if (goal?.status === "completed" || milestone?.done)
+      throw new AppError("This goal or milestone is already completed", 409);
+    if (milestone?.taskId) return this.getTask(owner, milestone.taskId);
+    const id = milestone
+      ? hash(`task:goal-stage:${goal!.id}:${milestone.id}`)
+      : idempotencyKey
+        ? hash(`task:${idempotencyKey}`)
+        : randomUUID();
     const existing = await this.db.get<AgentTask>(owner, "tasks", id);
     if (existing) return existing;
     if (!held) await this.runtimePause.assertResumed(owner);
@@ -538,6 +577,55 @@ export class AgentService {
         .length >= 100
     )
       throw new AppError("Finish or cancel some tasks before adding more", 409);
+    const task = await this.taskRecord(owner, input, id, held, parent, originalUserPrompt);
+    await this.ensure(owner);
+    if (goal && (milestone || this.config.mode === "live")) {
+      const milestones = milestone
+        ? goal.milestones.map((m) =>
+            m.id === milestone.id ? { ...m, taskId: id, responsible: "agent" as const } : m,
+          )
+        : goal.milestones;
+      const result = await this.db.durableMutation(
+        owner,
+        `goal-delegate:${id}`,
+        bindingHash({ goalId: goal.id, milestoneId: milestone?.id }),
+        [
+          {
+            kind: "goals",
+            id: goal.id,
+            mode: "merge",
+            expected: { revision: goal.revision, milestones: goal.milestones, status: goal.status },
+            value: { milestones, revision: (goal.revision ?? 0) + 1, updatedAt: date() },
+          },
+          { kind: "tasks", id, mode: "insert", value: { ...task } },
+        ],
+        [],
+        !held,
+      );
+      if (result.status === "paused") await this.runtimePause.assertResumed(owner);
+      if (result.status === "revision_conflict") {
+        const linked = milestone
+          ? (await this.getGoal(owner, goal.id)).milestones.find((m) => m.id === milestone.id)
+              ?.taskId
+          : undefined;
+        if (linked) return this.getTask(owner, linked);
+        throw new AppError("Goal progress changed during delegation", 409);
+      }
+      return this.getTask(owner, id);
+    }
+    await this.db.insertIfAbsent(owner, "tasks", task);
+    return (await this.db.get<AgentTask>(owner, "tasks", id)) ?? task;
+  }
+  /** Construct the existing task contract so adapters can commit links and admission intent atomically. */
+  async taskRecord(
+    owner: string,
+    raw: unknown,
+    id: string,
+    held = false,
+    parent?: { id: string; rootTaskId: string },
+    originalUserPrompt?: string,
+  ): Promise<AgentTask> {
+    const input = createTaskSchema.parse(raw);
     const titles =
       input.kind === "document"
         ? [
@@ -558,6 +646,8 @@ export class AgentService {
       prompt: originalUserPrompt ?? input.prompt,
       kind: input.kind,
       goalId: input.goalId,
+      milestoneId: input.milestoneId,
+      responsible: "agent",
       originThreadId: input.originThreadId,
       originMessageId: input.originMessageId,
       status: held ? "paused" : "queued",
@@ -582,9 +672,7 @@ export class AgentService {
       leaseUntil: null,
       artifactIds: [],
     };
-    await this.ensure(owner);
-    await this.db.insertIfAbsent(owner, "tasks", task);
-    return (await this.db.get<AgentTask>(owner, "tasks", id)) ?? task;
+    return task;
   }
   async createChildTask(
     owner: string,
@@ -619,6 +707,12 @@ export class AgentService {
   }
   async control(owner: string, id: string, action: "pause" | "resume" | "cancel" | "retry") {
     const task = await this.getTask(owner, id);
+    const controlledMonitor =
+      task.kind === "monitor"
+        ? await this.db.get<Monitor>(owner, "monitors", String(task.input.monitorId))
+        : null;
+    if (controlledMonitor?.status === "stopped" && action !== "cancel")
+      throw new AppError("Create a new watch to restart this stopped monitor", 409);
     if (action === "cancel" && task.status === "succeeded")
       throw new AppError("This task is already complete", 409);
     if (action === "retry" && task.status !== "failed")
@@ -671,7 +765,7 @@ export class AgentService {
         owner,
         "monitors",
         String(task.input.monitorId),
-        {},
+        controlledMonitor ? { status: controlledMonitor.status } : {},
         {
           status: action === "cancel" ? "stopped" : action === "pause" ? "paused" : "active",
           nextCheckAt: date(),
@@ -741,6 +835,11 @@ export class AgentService {
       description: input.description,
       category: input.category,
       status: "active",
+      revision: 0,
+      responsible: "user",
+      progress: 0,
+      origin: { kind: "user", at: date(), source: "user requested goal" },
+      updatedAt: date(),
       milestones: input.milestones.map((title) => ({ id: randomUUID(), title, done: false })),
       createdAt: date(),
     };
@@ -750,16 +849,76 @@ export class AgentService {
   async updateGoal(
     owner: string,
     id: string,
-    patch: { status?: Goal["status"]; milestones?: Goal["milestones"] },
+    patch: {
+      status?: Goal["status"];
+      milestones?: Goal["milestones"];
+      expectedRevision?: number;
+      milestone?: { id: string; done?: boolean; title?: string; responsible?: "user" | "agent" };
+    },
+    originSource = "goal settings",
   ) {
-    const goal = await this.db.get<Goal>(owner, "goals", id);
-    if (!goal) throw new AppError("Goal not found", 404);
-    const saved = await this.db.put(owner, "goals", { ...goal, ...patch });
+    const goal = await this.getGoal(owner, id);
+    const { expectedRevision, milestone, milestones: replacement, ...changes } = patch;
+    if (this.config.mode === "live" && expectedRevision === undefined)
+      throw new AppError("Read the goal revision before updating progress", 409);
+    if (milestone && !goal.milestones.some((m) => m.id === milestone.id))
+      throw new AppError("Milestone not found", 404);
+    if (replacement && this.config.mode === "live")
+      throw new AppError("Patch a milestone by its stable ID", 422);
+    const origin = { kind: "user" as const, at: date(), source: originSource };
+    const milestones =
+      replacement ??
+      (milestone
+        ? goal.milestones.map((m) => (m.id === milestone.id ? { ...m, ...milestone, origin } : m))
+        : goal.milestones);
+    const saved = await this.db.compareAndSwap<Goal>(
+      owner,
+      "goals",
+      id,
+      { revision: expectedRevision ?? goal.revision, milestones: goal.milestones },
+      {
+        ...changes,
+        milestones,
+        revision: (goal.revision ?? 0) + 1,
+        updatedAt: date(),
+        origin,
+        progress:
+          changes.status === "completed"
+            ? 100
+            : Math.round(
+                (milestones.filter((m) => m.done).length * 100) / Math.max(1, milestones.length),
+              ),
+      },
+    );
+    if (!saved) throw new AppError("Goal changed; refresh its revision before updating", 409);
     if (patch.status === "paused")
       for (const task of await this.db.list<AgentTask>(owner, "tasks"))
         if (task.goalId === id && !terminal.has(task.status) && task.status !== "paused")
           await this.control(owner, task.id, "pause");
     return saved;
+  }
+  async getGoal(owner: string, id: string): Promise<Goal> {
+    let goal = await this.db.get<Goal>(owner, "goals", id);
+    if (!goal) throw new AppError("Goal not found", 404);
+    if (goal.revision === undefined) {
+      goal =
+        (await this.db.compareAndSwap<Goal>(
+          owner,
+          "goals",
+          id,
+          { status: goal.status, milestones: goal.milestones },
+          {
+            revision: 0,
+            responsible: goal.responsible ?? "user",
+            progress: Math.round(
+              (goal.milestones.filter((m) => m.done).length * 100) /
+                Math.max(1, goal.milestones.length),
+            ),
+            origin: goal.origin ?? { kind: "user", at: goal.createdAt, source: "legacy user goal" },
+          },
+        )) ?? (await this.db.get<Goal>(owner, "goals", id));
+    }
+    return goal!;
   }
   async createMonitor(owner: string, raw: unknown, idempotencyKey?: string) {
     const input = monitorInputSchema.parse(raw);
@@ -839,11 +998,14 @@ export class AgentService {
     if (action === "resume" || action === "check") await this.runtimePause.assertResumed(owner);
     if (action === "pause" || action === "stop") {
       const status = action === "pause" ? "paused" : "stopped";
-      const saved = await this.db.put(owner, "monitors", {
-        ...monitor,
-        status,
-        nextCheckAt: date(),
-      });
+      const saved = await this.db.compareAndSwap<Monitor>(
+        owner,
+        "monitors",
+        id,
+        { status: monitor.status },
+        { status, nextCheckAt: date() },
+      );
+      if (!saved) throw new AppError("The watch changed while updating. Try again.", 409);
       const task = await this.getTask(owner, monitor.taskId);
       await this.control(owner, task.id, action === "pause" ? "pause" : "cancel");
       return saved;
@@ -924,6 +1086,30 @@ export class AgentService {
     throw new AppError("The watch changed while updating. Try again.", 409);
   }
   async refreshIdeas(owner: string) {
+    if (this.config.mode === "live") {
+      await this.ensure(owner);
+      await this.proactivity.scheduleDue(owner);
+      return (await this.proactivity.list(owner)).map((s) => ({
+        id: s.id,
+        title: s.title,
+        reason: s.reason,
+        evidence: s.evidence,
+        prompt: s.prompt,
+        kind:
+          s.target.kind === "goal" && !s.target.milestoneId
+            ? ("plan" as const)
+            : ("agent" as const),
+        input: { proactivitySuggestionId: s.id },
+        status:
+          s.status === "pending"
+            ? ("new" as const)
+            : s.status === "accepted"
+              ? ("accepted" as const)
+              : ("dismissed" as const),
+        taskId: s.taskId,
+        createdAt: s.createdAt,
+      }));
+    }
     const w = await this.workspace.snapshot(owner);
     const sentIds = new Set(
       w.mail.filter((mail) => /^Sent\b/i.test(mail.label)).map((mail) => mail.id),
@@ -1008,6 +1194,18 @@ export class AgentService {
     return this.db.list<Idea>(owner, "ideas");
   }
   async decideIdea(owner: string, id: string, action: "accept" | "dismiss", prompt?: string) {
+    if (this.config.mode === "live") {
+      const suggestion = (await this.proactivity.list(owner)).find((s) => s.id === id);
+      if (!suggestion) throw new AppError("Suggestion not found", 404);
+      if (prompt && prompt !== suggestion.prompt)
+        throw new AppError("Use a new authenticated message to change the suggestion's scope", 409);
+      return this.proactivity.respond(owner, id, {
+        requestId: suggestion.requestId,
+        clientResponseId: `legacy-idea-${id}-${action}`,
+        expectedRevision: suggestion.revision,
+        action: action === "accept" ? "start" : "dismiss",
+      });
+    }
     let idea = await this.db.get<Idea>(owner, "ideas", id);
     if (!idea) throw new AppError("Idea not found", 404);
     if (idea.status === "dismissed" || (idea.status === "accepted" && action === "dismiss"))
@@ -1156,6 +1354,14 @@ export class AgentService {
     context: TaskContext,
   ): Promise<Partial<AgentTask>> {
     task = await this.actor.apply(owner, task, context);
+    if (typeof task.input.proactivityCycleId === "string") {
+      try {
+        return await this.proactivity.review(owner, task.input.proactivityCycleId, task, context);
+      } catch (error) {
+        if (!(error instanceof TaskBudgetExhaustedError)) throw error;
+        return this.proactivity.finishPartial(owner, task.input.proactivityCycleId, context);
+      }
+    }
     if (task.state.nativeCleanupPending === true) {
       const physical = (await this.journal.operations(owner, task.id)).filter(
         (op) => op.nativeEnvelope && op.effect,
@@ -1275,6 +1481,25 @@ export class AgentService {
         task = await context.checkpoint({ actionId: null });
       } else return { status: "waiting_approval" };
     }
+    // Reconcile already-dispatched receipts and physical cleanup first. A source
+    // change blocks new work, without stranding an existing native job/hold.
+    try {
+      await this.proactivity.revalidateTask(owner, task);
+    } catch (error) {
+      if (
+        !(
+          error instanceof ProactivityEvidenceChangedError ||
+          error instanceof ProactivitySourceUnavailableError
+        )
+      )
+        throw error;
+      return {
+        status: "waiting_input",
+        state: task.state,
+        question: error.message,
+        completion: { status: "unverified", checks: [], remaining: [error.message] },
+      };
+    }
     if (task.kind === "document") return this.document(owner, task, context);
     if (task.kind === "monitor") {
       try {
@@ -1372,6 +1597,7 @@ export class AgentService {
   }
   private async publishOutcome(owner: string, saved: AgentTask) {
     const task = await this.getTask(owner, saved.id);
+    if (typeof task.input.proactivityCycleId === "string") return;
     if (terminal.has(task.status) && typeof task.state.parentTaskId === "string") {
       const parent = await this.db.get<AgentTask>(owner, "tasks", task.state.parentTaskId);
       const children = (await this.db.list<AgentTask>(owner, "tasks")).filter(
@@ -1447,16 +1673,49 @@ export class AgentService {
         );
       if (task.goalId) {
         for (let attempt = 0; attempt < 8; attempt++) {
-          const goal = await this.db.get<Goal>(owner, "goals", task.goalId);
-          if (!goal || goal.milestones.some((m) => m.id === task.id)) break;
+          const goal = await this.getGoal(owner, task.goalId);
+          const linked = goal.milestones.find(
+            (m) => m.id === task.milestoneId || m.taskId === task.id,
+          );
+          if (
+            task.completion?.status !== "verified" ||
+            linked?.done ||
+            (!linked && goal.milestones.some((m) => m.id === task.id))
+          )
+            break;
+          const origin = {
+            kind: "agent" as const,
+            at: date(),
+            source: "verified task result",
+            taskId: task.id,
+            evidenceIds: task.completion.checks.flatMap((c) => c.evidenceIds),
+          };
+          const milestones = linked
+            ? goal.milestones.map((m) => (m.id === linked.id ? { ...m, done: true, origin } : m))
+            : [
+                ...goal.milestones,
+                {
+                  id: task.id,
+                  taskId: task.id,
+                  title: task.title,
+                  done: true,
+                  responsible: "agent" as const,
+                  origin,
+                },
+              ];
           if (
             await this.db.compareAndSwap(
               owner,
               "goals",
               goal.id,
-              { milestones: goal.milestones },
+              { revision: goal.revision, milestones: goal.milestones },
               {
-                milestones: [...goal.milestones, { id: task.id, title: task.title, done: true }],
+                milestones,
+                revision: (goal.revision ?? 0) + 1,
+                progress: Math.round(
+                  (milestones.filter((m) => m.done).length * 100) / Math.max(1, milestones.length),
+                ),
+                updatedAt: date(),
               },
             )
           )
@@ -1661,7 +1920,8 @@ export class AgentService {
     if (!monitor) throw new Error("Monitor not found");
     if (monitor.status !== "active")
       return { status: monitor.status === "paused" ? "paused" : "cancelled" };
-    let observation: { url: string; title: string; text: string; sessionId?: string };
+    await this.monitorObservations.flush(owner);
+    let observation: MonitorPage;
     if (monitor.url === "sample://availability") {
       if (this.config.mode !== "sample") throw new Error("Sample source unavailable");
       const page = await this.db.get<{ text: string }>(owner, "sample-pages", "availability");
@@ -1680,36 +1940,17 @@ export class AgentService {
         ctx.trackResourceLeases,
       );
     }
-    const text = observation.text.replace(/\s+/g, " ").trim();
-    const currentHash = hash(text);
-    const previousHash =
-      typeof task.state.lastHash === "string" ? task.state.lastHash : monitor.lastHash;
-    const matched =
-      monitor.condition === "change"
-        ? Boolean(previousHash && previousHash !== currentHash)
-        : monitor.condition === "contains"
-          ? text.toLowerCase().includes(monitor.value.toLowerCase())
-          : this.matchesPrice(text, Number(monitor.value));
-    const previouslyMatched = Boolean(task.state.matched);
-    const shouldNotify = matched && (monitor.condition === "change" || !previouslyMatched);
     const nextCheckAt = new Date(Date.now() + monitor.intervalMinutes * 60000).toISOString();
     await ctx.guard();
-    // Worker lease is checked before each publication; monitor control also invalidates that lease.
-    const savedMonitor = await this.db.compareAndSwap(
+    const observed = await this.monitorObservations.commit(
       owner,
-      "monitors",
-      monitor.id,
-      { status: "active" },
-      {
-        checks: monitor.checks + 1,
-        lastCheckedAt: date(),
-        lastHash: currentHash,
-        lastValue: text.slice(0, 1000),
-        nextCheckAt,
-        error: null,
-      },
+      task,
+      monitor,
+      observation,
+      nextCheckAt,
     );
-    if (!savedMonitor) throw new LostLeaseError();
+    const { text, digest: currentHash, matched, alert: shouldNotify } = observed;
+    const previousHash = monitor.lastHash;
     await ctx.event(
       "observation",
       previousHash ? "Checked for changes" : "Saved the first observation",
@@ -1722,9 +1963,11 @@ export class AgentService {
     return {
       status: "scheduled",
       nextRunAt: nextCheckAt,
-      result: shouldNotify
-        ? "Change found. A notification is ready."
-        : "Watching. I'll check again on schedule.",
+      result:
+        observed.uncertain ||
+        (shouldNotify
+          ? "Change found. A notification is ready."
+          : "Watching. I'll check again on schedule."),
       state: {
         ...task.state,
         sessionId: observation.sessionId,
@@ -1732,13 +1975,8 @@ export class AgentService {
         resumingMonitor: false,
         matched,
         failures: 0,
-        notice: shouldNotify
-          ? {
-              title: monitor.title,
-              body: `Condition met at ${observation.url}: ${text.slice(0, 240)}`,
-              key: `monitor:${monitor.id}:${currentHash}`,
-            }
-          : null,
+        // Notifications are backed by occurrence records committed with the baseline.
+        notice: null,
       },
       error: null,
       evidence: [
@@ -1752,9 +1990,5 @@ export class AgentService {
       ],
       plan: task.plan.map((s) => ({ ...s, status: "succeeded" })),
     };
-  }
-  private matchesPrice(text: string, threshold: number) {
-    const matches = [...text.matchAll(/(?:\$|USD\s*)(\d+(?:,\d{3})*(?:\.\d{1,2})?)/g)];
-    return matches.some((m) => Number(m[1].replace(/,/g, "")) < threshold);
   }
 }

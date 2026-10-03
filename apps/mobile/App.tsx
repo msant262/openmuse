@@ -40,6 +40,7 @@ import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
 import { Details } from "./src/details";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
+import { ShareReceiver } from "./src/share-receiver";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
@@ -266,6 +267,7 @@ function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError:
       <AgentWorkspaceProvider>
         <ComputerDraftProvider>
           <ThreadsProvider>
+            <ShareReceiver />
             <WorkspaceShell
               detail={detail}
               toast={toast}

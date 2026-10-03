@@ -29,6 +29,37 @@ interface Database {
 }
 
 export class Store {
+  async chatSource<T>(
+    owner: string,
+    source: { messageId: string; threadId: string; runId: string },
+  ): Promise<T | null> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='conversation-inbox' AND data->>'messageId'=$2 AND data->>'threadId'=$3 AND data->>'runId'=$4 LIMIT 1",
+      [owner, source.messageId, source.threadId, source.runId],
+    );
+    return (result.rows[0]?.data as T) ?? null;
+  }
+  async proactivityBindings<T>(owner: string, taskId: string): Promise<T[]> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='proactivity-suggestions' AND data->>'taskId'=$2 AND data->>'status'='accepted' ORDER BY id LIMIT 100",
+      [owner, taskId],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  /** Two matching roots are enough to diagnose ambiguity without scanning every owner's task. */
+  async goalTaskCandidates<T>(owner: string, goalId: string, milestoneId?: string): Promise<T[]> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='tasks' AND data->>'goalId'=$2 AND data->>'milestoneId' IS NOT DISTINCT FROM $3::text AND data->'state'->>'parentTaskId' IS NULL ORDER BY id LIMIT 2",
+      [owner, goalId, milestoneId ?? null],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  async pendingProactivityContinuations<T>() {
+    const result = await this.db.query(
+      "SELECT jsonb_build_object('owner',owner,'value',data) AS data FROM records WHERE kind='proactivity-suggestions' AND data->>'status'='accepted' AND data->'continuation' IS NOT NULL AND data->'continuation'->>'delivered' IS DISTINCT FROM 'true' ORDER BY id LIMIT 100",
+    );
+    return result.rows.map((row) => row.data as unknown as { owner: string; value: T });
+  }
   async applyTaskMailbox<T>(owner: string, taskId: string, runToken: string): Promise<T | null> {
     const result = await this.write("SELECT openmuse_apply_task_mailbox($1,$2,$3) AS data", [
       owner,
@@ -113,13 +144,16 @@ export class Store {
       mode: "insert" | "merge" | "replace";
     }[],
     events: Omit<ConversationEvent, "seq">[] = [],
+    requireActive = false,
   ) {
     const result = await this.write(
-      "SELECT openmuse_durable_mutation($1,$2,$3,$4::jsonb,$5::jsonb) AS data",
+      requireActive
+        ? "SELECT openmuse_active_durable_mutation($1,$2,$3,$4::jsonb,$5::jsonb) AS data"
+        : "SELECT openmuse_durable_mutation($1,$2,$3,$4::jsonb,$5::jsonb) AS data",
       [owner, receiptId, bindingHash, JSON.stringify(mutations), JSON.stringify(events)],
     );
     return result.rows[0].data as unknown as {
-      status: "applied" | "duplicate" | "binding_conflict" | "revision_conflict";
+      status: "applied" | "duplicate" | "binding_conflict" | "revision_conflict" | "paused";
       values: T[];
       events: ConversationEvent[];
     };
@@ -376,6 +410,20 @@ export class Store {
       .slice(0, limit)
       .map((row) => row.data as unknown as RevisionEntry<T>);
     return { entries, ...(result.rows.length > limit ? { nextCursor: entries.at(-1)?.id } : {}) };
+  }
+  /** Stable, bounded source scan. A cursor never claims coverage of an omitted tail. */
+  async listPage<T>(owner: string, kind: string, limit = 50, after?: string) {
+    const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind=$2 AND ($3::text IS NULL OR id>$3) ORDER BY id LIMIT $4",
+      [owner, kind, after ?? null, bounded + 1],
+    );
+    const values = result.rows.slice(0, bounded).map((row) => row.data as T);
+    return {
+      values,
+      complete: result.rows.length <= bounded,
+      ...(result.rows.length > bounded ? { cursor: (values.at(-1) as { id: string }).id } : {}),
+    };
   }
   async put<T extends { id: string }>(owner: string, kind: string, value: T): Promise<T> {
     await this.write(

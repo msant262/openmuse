@@ -7,6 +7,8 @@ import {
 } from "../../../../packages/domain/src/agent.ts";
 import { AppError } from "../errors.ts";
 import { memoryInput } from "../memory.ts";
+import { playbookRoutes } from "../playbooks.ts";
+import { proactivityRoutes } from "../proactivity/routes.ts";
 import { routineInput } from "../routines.ts";
 import type { AgentService } from "./service.ts";
 import { taskTimingUpdateSchema } from "./task-timing.ts";
@@ -19,6 +21,16 @@ const revisionChange = z
   .object({ expectedRevision: z.number().int().min(0), requestId: z.string().min(1).max(256) })
   .strict();
 const goalPatchSchema = z.object({
+  expectedRevision: z.number().int().min(0).optional(),
+  milestone: z
+    .object({
+      id: z.string().min(1).max(200),
+      title: z.string().min(1).max(200).optional(),
+      done: z.boolean().optional(),
+      responsible: z.enum(["user", "agent"]).optional(),
+    })
+    .strict()
+    .optional(),
   status: z.enum(["active", "paused", "completed"]).optional(),
   milestones: z
     .array(
@@ -34,6 +46,8 @@ const goalPatchSchema = z.object({
 
 export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: string } }> {
   const app = new Hono<{ Variables: { owner: string } }>();
+  app.route("/proactivity", proactivityRoutes(service));
+  app.route("/playbooks", playbookRoutes(service.playbooks));
   app.get("/", async (c) => c.json(await service.snapshot(c.get("owner"))));
   app.get("/profile", async (c) =>
     c.json(await service.profiles.get(c.get("owner"), c.req.query("threadId"))),
@@ -296,7 +310,10 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     c.json(await service.routines.update(c.get("owner"), c.req.param("id"), await c.req.json())),
   );
   app.post("/routines/:id/delete", async (c) => {
-    await service.routines.remove(c.get("owner"), c.req.param("id"));
+    const body = z
+      .object({ expectedRevision: z.number().int().min(1).optional() })
+      .parse(await c.req.json());
+    await service.routines.remove(c.get("owner"), c.req.param("id"), body.expectedRevision);
     return c.json({ deleted: true });
   });
   app.get("/push/devices", async (c) => c.json(await service.push.devices(c.get("owner"))));

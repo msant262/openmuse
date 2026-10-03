@@ -21,6 +21,7 @@ import {
 import { WorkerError } from "./errors.ts";
 import { type NativeBrowserConfig, nativeLaunchOptions } from "./native-config.ts";
 import { validatePublicUrl } from "./network.ts";
+import { observationContent } from "./observation-content.ts";
 import { startEgressProxy } from "./proxy.ts";
 import { ReviewedActions } from "./reviewed-actions.ts";
 import { extractSearch } from "./search.ts";
@@ -707,8 +708,11 @@ export async function createBrowserManager(options: {
           return {
             url: location.href,
             title: document.title.slice(0, 300),
-            text: text.slice(0, 100_000),
-            truncated: text.length > 100_000,
+            text: text.slice(0, 2_000_000),
+            sourceLength: text.length,
+            structured: Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
+              .slice(0, 20)
+              .map((node) => (node.textContent ?? "").slice(0, 100_000)),
           };
         });
         await validatePublicUrl(result.url);
@@ -722,7 +726,7 @@ export async function createBrowserManager(options: {
         };
         sessions.set(id, session);
         await persist(session);
-        return result;
+        return { url: result.url, title: result.title, ...observationContent(result) };
       }),
     refreshProtection: (id: string) =>
       serial(id, async () => {

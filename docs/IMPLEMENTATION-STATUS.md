@@ -271,3 +271,31 @@ suite passed **755/755** (165.2 seconds) on 2026-10-03; composed focus checks pa
 39/39, new source-search/CAPTCHA receipt cases 4/4, and real worker HTTP contracts
 3/3. Server/mobile/worker type checks passed. Earlier delivery Chromium fixtures
 passed 19/19; physical Wi-Fi loss and rejoin remain deployment acceptance.
+
+## Milestone 11
+
+The four-hour proactive review uses the same durable work admission, records
+versioned evidence and suggests continuations for unanswered email, unfinished
+work and plans. Replies recheck current source state before acting. Connected
+resource annotations, result libraries and explicitly saved verified procedures
+remain bound to the owner, task revision and source frame/version.
+
+Phone file/camera/audio/share inputs use a persistent bounded outbox. Native
+transcription runs as a durable job and publishes complete text/subtitle files
+to the VPS, including after disconnect/restart. Failed output reads can retry
+without rerunning transcription; only the exact read-only failed receipt ancestry
+is reconciled. Unknown reads or external mutations still prevent verified
+completion. Local Office/media helpers retain the native workspace and task budget.
+
+MCP transport caching preserves the M8 OAuth binding and checks revocation and
+configuration again at dispatch/cache publication. Cached remote descriptions are
+scrubbed before model context. Google MIME, agenda and timezone regressions are
+covered alongside the proactive workflows.
+
+Root composed both implementer deliveries, corrected MCP revocation races and
+native transcript completion, then ran the complete suite: **841/841 passed**
+(178.3 seconds) on 2026-10-03. Server/mobile/worker types passed; connected Python
+checks passed 58/58 earlier in composition and targeted transcript recovery passed
+3/3. A stale receipt-text assertion was updated to the complete-file contract.
+Physical microphones, Google accounts, installed ASR model and phone UI remain
+milestone 12 acceptance; no such acceptance is implied by fixture tests.

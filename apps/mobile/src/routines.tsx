@@ -28,7 +28,9 @@ export function RoutinesPanel() {
     try {
       await mutate(
         `/routines/${value.id}${remove ? "/delete" : ""}`,
-        remove ? {} : { enabled: !value.enabled },
+        remove
+          ? { expectedRevision: value.revision }
+          : { enabled: !value.enabled, expectedRevision: value.revision },
       );
       await load();
       setError("");
@@ -126,6 +128,7 @@ function RoutineEditor({
         timezone,
         cron: advanced ? cron : dayTimeCron(days, time),
         ...(!value ? { idempotencyKey: key } : {}),
+        ...(value ? { expectedRevision: value.revision } : {}),
       });
       saved();
     } catch (e) {

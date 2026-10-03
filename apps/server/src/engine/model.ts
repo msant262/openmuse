@@ -877,6 +877,16 @@ export async function executeModelTask(
       reason: error instanceof Error ? error.message : "Blocked",
     };
   };
+  const missingProcedureTools = await service.playbooks.missingTools(
+    owner,
+    task.input,
+    tools.map((tool) => tool.name),
+  );
+  if (missingProcedureTools.length)
+    return {
+      status: "waiting_input",
+      question: `Procedure tools unavailable: ${missingProcedureTools.join(", ")}. Reconnect the required tools or revise the procedure.`,
+    };
   const agent = tanstackAgent({
     contextModel: service.contextModel,
     requiredOperationIds: () => service.journal.requiredHistoryIds(owner, task.id),

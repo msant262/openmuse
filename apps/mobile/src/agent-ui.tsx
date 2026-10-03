@@ -41,6 +41,7 @@ import { InteractionCard } from "./interaction-card";
 import { MemorySettings } from "./memory-settings";
 import { NativePushSettings } from "./native-push-settings";
 import { useInlinePreview } from "./preview";
+import { PlaybooksPanel } from "./playbooks";
 import { ProfileSettings } from "./profile-settings";
 import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
@@ -265,6 +266,7 @@ export function AgentActivityScreen() {
         />
       )}
       <RoutinesPanel />
+      <PlaybooksPanel />
       <SectionHeading title="Reviews & receipts" />
       <ActivityScreen />
     </View>
@@ -1443,7 +1445,10 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
     setBusy(true);
     setError("");
     try {
-      await mutate(`/goals/${goal.id}`, body);
+      await mutate(`/goals/${goal.id}`, {
+        ...(body as object),
+        expectedRevision: goal.revision ?? 0,
+      });
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -1489,9 +1494,7 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
           onPress={() => {
             if (!busy)
               void update({
-                milestones: goal.milestones.map((item) =>
-                  item.id === milestone.id ? { ...item, done: !item.done } : item,
-                ),
+                milestone: { id: milestone.id, done: !milestone.done },
               });
           }}
         />
@@ -1529,6 +1532,8 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
   const [url, setUrl] = useState("");
   const [condition, setCondition] = useState<Monitor["condition"]>("change");
   const [value, setValue] = useState("");
+  const [currency, setCurrency] = useState("EUR");
+  const [priceTarget, setPriceTarget] = useState("");
   const [interval, setInterval] = useState("15");
   const [sample, setSample] = useState(false);
   const [error, setError] = useState("");
@@ -1548,6 +1553,7 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
         condition,
         value,
         intervalMinutes: minutes,
+        ...(condition === "price_below" ? { currency, priceTarget } : {}),
       });
       onDone();
     } catch (e) {
@@ -1598,6 +1604,16 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
           value={value}
           onChangeText={setValue}
         />
+      )}
+      {condition === "price_below" && (
+        <>
+          <Field label="Nome exato do produto" value={priceTarget} onChangeText={setPriceTarget} />
+          <Field
+            label="Moeda (EUR, USD, BRL...)"
+            value={currency}
+            onChangeText={(value) => setCurrency(value.toUpperCase())}
+          />
+        </>
       )}
       <Field
         label="Check every (minutes)"
@@ -1681,7 +1697,17 @@ function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: (
           {monitor.lastValue}
         </Text>
       )}
-      <ErrorNotice error={error || monitor.error} />
+      {!!monitor.lastDiff && (
+        <Text selectable style={s.small}>
+          {monitor.lastDiff}
+        </Text>
+      )}
+      {!!monitor.diffTruncated && (
+        <Text style={s.small}>
+          Comparação parcial; consulte a fonte para ver o conteúdo completo.
+        </Text>
+      )}
+      <ErrorNotice error={error || monitor.error || monitor.coverageWarning} />
       {monitor.status !== "stopped" && (
         <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
           <Button
@@ -1822,6 +1848,7 @@ export function AppsScreen() {
     <View style={{ gap: 22 }}>
       <AgentStatus />
       <RoutinesPanel />
+      <PlaybooksPanel />
       <NativePushSettings />
       <Field
         label="Search apps"

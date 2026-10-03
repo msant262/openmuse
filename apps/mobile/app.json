@@ -7,14 +7,53 @@
     "orientation": "default",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "ios": { "supportsTablet": true, "bundleIdentifier": "app.openmuse.mobile" },
-    "android": { "package": "app.openmuse.mobile" },
-    "web": { "bundler": "metro", "name": "OpenMuse — a little room for everything" },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.openmuse.mobile"
+    },
+    "android": {
+      "package": "app.openmuse.mobile"
+    },
+    "web": {
+      "bundler": "metro",
+      "name": "OpenMuse — a little room for everything"
+    },
     "plugins": [
       "expo-document-picker",
       "expo-notifications",
       "@config-plugins/react-native-blob-util",
-      "@config-plugins/react-native-pdf"
+      "@config-plugins/react-native-pdf",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Permitir que OkamiBot grave o áudio escolhido por você?"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permitir escolher imagens para anexar ao chat?",
+          "cameraPermission": "Permitir tirar uma foto para anexar ao chat?",
+          "microphonePermission": "Permitir que OkamiBot grave o áudio escolhido por você?"
+        }
+      ],
+      [
+        "expo-share-intent",
+        {
+          "disableIOS": true,
+          "androidIntentFilters": [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "video/*",
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          ],
+          "androidMultiIntentFilters": ["image/*", "application/pdf"]
+        }
+      ]
     ]
   }
 }

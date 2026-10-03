@@ -269,3 +269,33 @@ test("generated images validate the 8 MiB boundary and malformed padding without
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test("mobile multipart retries preserve one named file and reject reuse with changed content", async (t) => {
+  const { taskRuntime } = await import("./helpers/task-runtime.ts");
+  const server = await taskRuntime(t);
+  const session = await server.auth.session();
+  const upload = (text: string) => {
+    const form = new FormData();
+    form.append("file", new File([text], "private-cache-hash", { type: "text/plain" }));
+    form.append("fileName", "meu-documento.txt");
+    form.append("uploadId", "stable-mobile-id");
+    return server.app.request("/api/files", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.token}` },
+      body: form,
+    });
+  };
+  const first = await upload("durable bytes"),
+    retry = await upload("durable bytes");
+  assert.equal(first.status, 201);
+  assert.equal(retry.status, 201);
+  const saved = await first.json();
+  assert.equal(saved.name, "meu-documento.txt");
+  assert.equal((await retry.json()).id, saved.id);
+  assert.equal((await upload("different bytes")).status, 409);
+  assert.equal(
+    (await server.db.list("local-user", "files")).filter((file: any) => file.id === saved.id)
+      .length,
+    1,
+  );
+});

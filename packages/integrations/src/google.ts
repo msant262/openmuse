@@ -9,6 +9,25 @@ import {
   eventDraftSchema,
   type Mail,
 } from "../../domain/src/index.ts";
+import {
+  addCalendarCivilDays,
+  assertCalendarRange,
+  CALENDAR_DAY_MS,
+  calendarCivilDayStart,
+  calendarDefaultWindow,
+  calendarQueryBound,
+  isCalendarCivilDate,
+  isCalendarTimeZone,
+  calendarTimeZone as normalizedCalendarTimeZone,
+  parseCalendarInstant,
+} from "./google-calendar-dates.ts";
+import {
+  decodeMailSnippet,
+  decodeMimeHeader,
+  decodeMimeText,
+  parseAddressList,
+  unfoldHeaderValue,
+} from "./google-parser.ts";
 
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const CALENDAR = "https://www.googleapis.com/calendar/v3";
@@ -80,6 +99,14 @@ export class RecurringEventError extends Error {
   }
 }
 
+export class CalendarTimeZoneUnknownError extends Error {
+  readonly code = "GOOGLE_TIMEZONE_UNKNOWN";
+  constructor() {
+    super("Google did not provide a valid time zone for this all-day event");
+    this.name = "CalendarTimeZoneUnknownError";
+  }
+}
+
 export interface CalendarListEntry {
   id: string;
   name: string;
@@ -90,7 +117,25 @@ export interface ListEventsOptions {
   calendarId?: string;
   timeMin?: string;
   timeMax?: string;
+  /** IANA zone used to resolve date-only boundaries and the default window. */
+  timeZone?: string;
 }
+export interface CalendarEventsRead {
+  events: CalendarEvent[];
+  metadata: {
+    timeMin: string;
+    timeMax: string;
+    timeMaxExclusive: true;
+    timeZone: string;
+    timeZoneSource: "explicit" | "host-default";
+    maxResults: 100;
+    returnedCount: number;
+    truncated: boolean;
+    unknownTimeZoneEventIds: string[];
+  };
+}
+type EventTimeZoneSource = "event" | "calendar" | "query" | "unknown";
+const MAX_CALENDAR_EVENTS = 100;
 
 interface GmailPart {
   mimeType?: string;
@@ -176,56 +221,9 @@ function decodeBase64url(encoded: string, limit = MAX_ATTACHMENT_BYTES): Buffer 
   return bytes;
 }
 function headers(part?: GmailPart): Map<string, string> {
-  return new Map((part?.headers ?? []).map(({ name, value }) => [name.toLowerCase(), value]));
-}
-function decodeHeader(value: string): string {
-  return value
-    .replace(/(\?=)[ \t]+(?==\?)/g, "$1")
-    .replace(
-      /=\?([^?]+)\?([bq])\?([^?]*)\?=/gi,
-      (original, charset: string, encoding: string, text: string) => {
-        try {
-          const bytes =
-            encoding.toLowerCase() === "b"
-              ? Buffer.from(text, "base64")
-              : Buffer.from(
-                  text
-                    .replace(/_/g, " ")
-                    .replace(/=([0-9a-f]{2})/gi, (_, code: string) =>
-                      String.fromCharCode(Number.parseInt(code, 16)),
-                    ),
-                  "latin1",
-                );
-          return new TextDecoder(charset).decode(bytes);
-        } catch {
-          return original;
-        }
-      },
-    );
-}
-function decodeSnippet(value: string): string {
-  const entities: Record<string, string> = {
-    amp: "&",
-    lt: "<",
-    gt: ">",
-    quot: '"',
-    apos: "'",
-    nbsp: " ",
-  };
-  return value.replace(
-    /&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi,
-    (original, entity: string) => {
-      if (!entity.startsWith("#")) return entities[entity.toLowerCase()] ?? original;
-      const code =
-        entity[1].toLowerCase() === "x"
-          ? Number.parseInt(entity.slice(2), 16)
-          : Number.parseInt(entity.slice(1), 10);
-      return code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : original;
-    },
+  return new Map(
+    (part?.headers ?? []).map(({ name, value }) => [name.toLowerCase(), unfoldHeaderValue(value)]),
   );
-}
-function addresses(value: string): string[] {
-  return value.match(/[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+/g) ?? [];
 }
 /** Extract text from a parsed HTML tree. Nothing is rendered or fetched. */
 function htmlToPlainText(html: string): string {
@@ -311,6 +309,14 @@ function mapMessage(message: z.infer<typeof messageSchema>): Mail {
   const attachments: string[] = [];
   const visit = (part: GmailPart, depth: number) => {
     if (depth > 30) throw new Error("Gmail message MIME nesting exceeds the limit");
+    if (part.mimeType?.toLowerCase() === "message/rfc822") {
+      if (part.body?.attachmentId) {
+        attachments.push(
+          `${message.id}:${part.body.attachmentId}:${encodeURIComponent(part.filename || "Attached message.eml")}`,
+        );
+      }
+      return;
+    }
     if (part.filename && part.body?.attachmentId)
       attachments.push(
         `${message.id}:${part.body.attachmentId}:${encodeURIComponent(part.filename)}`,
@@ -324,18 +330,16 @@ function mapMessage(message: z.infer<typeof messageSchema>): Mail {
         headers(part)
           .get("content-type")
           ?.match(/charset=["']?([^;"'\s]+)/i)?.[1] ?? "utf-8";
-      const text = new TextDecoder(charset).decode(decodeBase64url(part.body.data, 1024 * 1024));
+      const text = decodeMimeText(decodeBase64url(part.body.data, 1024 * 1024), charset);
       if (part.mimeType === "text/plain") plain.push(text);
       else html.push(htmlToPlainText(text));
     }
     for (const child of part.parts ?? []) visit(child, depth + 1);
   };
   if (message.payload) visit(message.payload, 0);
-  const from = decodeHeader(metadata.get("from") ?? "");
-  const address = addresses(from)[0] ?? from;
-  const sender = from.includes("<")
-    ? from.slice(0, from.indexOf("<")).trim().replace(/^"|"$/g, "")
-    : address;
+  const from = parseAddressList(metadata.get("from") ?? "")[0];
+  const address = from?.email ?? metadata.get("from") ?? "";
+  const sender = from?.name ?? address;
   const time = message.internalDate
     ? Number(message.internalDate)
     : Date.parse(metadata.get("date") ?? "");
@@ -343,15 +347,15 @@ function mapMessage(message: z.infer<typeof messageSchema>): Mail {
     ? plain.join("\n\n")
     : html.length
       ? html.join("\n\n")
-      : decodeSnippet(message.snippet);
+      : decodeMailSnippet(message.snippet);
   if (body.length > 1024 * 1024) throw new Error("Gmail message text exceeds the 1 MiB limit");
   return {
     id: message.id,
     threadId: message.threadId,
     from: address,
     sender,
-    to: addresses(metadata.get("to") ?? ""),
-    subject: decodeHeader(metadata.get("subject") ?? "(No subject)"),
+    to: parseAddressList(metadata.get("to") ?? "").map(({ email }) => email),
+    subject: decodeMimeHeader(metadata.get("subject") ?? "(No subject)"),
     body,
     date: Number.isFinite(time) ? new Date(time).toISOString() : "",
     unread: message.labelIds.includes("UNREAD"),
@@ -363,25 +367,60 @@ function mapMessage(message: z.infer<typeof messageSchema>): Mail {
     attachments,
   };
 }
-function mapEvent(value: unknown, calendarId: string, calendarTimeZone = "UTC"): CalendarEvent {
+function mapEventWithMetadata(
+  value: unknown,
+  calendarId: string,
+  providerTimeZone?: string,
+  queryTimeZone?: string,
+): { event: CalendarEvent; timeZoneSource: EventTimeZoneSource } {
   const event = googleEventSchema.parse(value);
-  const allDay = Boolean(event.start.date);
+  const hasDate = Boolean(event.start.date || event.end.date);
+  const allDay = hasDate;
+  if (
+    (allDay &&
+      (!event.start.date || !event.end.date || event.start.dateTime || event.end.dateTime)) ||
+    (!allDay &&
+      (!event.start.dateTime || !event.end.dateTime || event.start.date || event.end.date))
+  )
+    throw new Error("Google event must have matching date-only or date-time boundaries");
   const start = allDay ? event.start.date : event.start.dateTime;
   const end = allDay ? event.end.date : event.end.dateTime;
-  if (!start || !end || !Number.isFinite(Date.parse(start)) || !Number.isFinite(Date.parse(end)))
-    throw new Error("Invalid Google event time range");
+  if (!start || !end) throw new Error("Invalid Google event time range");
+  assertCalendarRange(start, end, allDay);
+  const eventTimeZone = isCalendarTimeZone(event.start.timeZone) ? event.start.timeZone : undefined;
+  const calendarTimeZone = isCalendarTimeZone(providerTimeZone) ? providerTimeZone : undefined;
+  const requestedTimeZone = isCalendarTimeZone(queryTimeZone) ? queryTimeZone : undefined;
+  const timeZone = eventTimeZone ?? calendarTimeZone ?? requestedTimeZone;
+  if (allDay && !timeZone) throw new CalendarTimeZoneUnknownError();
   return {
-    id: event.id,
-    calendarId,
-    title: event.summary,
-    start,
-    end,
-    allDay,
-    timeZone: event.start.timeZone ?? calendarTimeZone,
-    location: event.location,
-    description: event.description,
-    attendees: event.attendees.map((attendee) => attendee.email),
+    event: {
+      id: event.id,
+      calendarId,
+      title: event.summary,
+      start,
+      end,
+      allDay,
+      timeZone: timeZone ?? normalizedCalendarTimeZone(),
+      location: event.location,
+      description: event.description,
+      attendees: event.attendees.map((attendee) => attendee.email),
+    },
+    timeZoneSource: eventTimeZone
+      ? "event"
+      : calendarTimeZone
+        ? "calendar"
+        : requestedTimeZone
+          ? "query"
+          : "unknown",
   };
+}
+function mapEvent(
+  value: unknown,
+  calendarId: string,
+  providerTimeZone?: string,
+  queryTimeZone?: string,
+): CalendarEvent {
+  return mapEventWithMetadata(value, calendarId, providerTimeZone, queryTimeZone).event;
 }
 function eventBody(draft: EventDraft, patch = false) {
   return {
@@ -489,6 +528,7 @@ export class GoogleClient {
       if (depth > 30) throw new Error("Gmail message MIME nesting exceeds the limit");
       if (
         !part.filename &&
+        part.mimeType?.toLowerCase() !== "message/rfc822" &&
         (part.mimeType === "text/plain" || part.mimeType === "text/html") &&
         part.body?.data === undefined &&
         part.body?.attachmentId
@@ -500,7 +540,8 @@ export class GoogleClient {
           throw new Error("Gmail message text exceeds the 1 MiB limit");
         part.body.data = Buffer.from(bytes).toString("base64url");
       }
-      for (const child of part.parts ?? []) await hydrate(child, depth + 1);
+      if (part.mimeType?.toLowerCase() !== "message/rfc822")
+        for (const child of part.parts ?? []) await hydrate(child, depth + 1);
     };
     if (message.payload) await hydrate(message.payload, 0);
     return mapMessage(message);
@@ -513,6 +554,24 @@ export class GoogleClient {
     if (thread.id !== threadId || thread.messages.some((message) => message.threadId !== threadId))
       throw new Error("Google returned messages from a different thread");
     return Promise.all(thread.messages.map((message) => this.mapMessage(message)));
+  }
+
+  async getThreadWithMetadata(threadId: string) {
+    const thread = z
+      .object({ id: z.string(), messages: z.array(messageSchema).default([]) })
+      .parse(await this.request(`${GMAIL}/threads/${idPath(threadId)}?format=full`));
+    if (thread.id !== threadId || thread.messages.some((message) => message.threadId !== threadId))
+      throw new Error("Google returned messages from a different thread");
+    // An oversized thread is explicitly partial; it cannot prove an unanswered request.
+    return {
+      messages: await Promise.all(
+        thread.messages.slice(-100).map(async (message) => ({
+          ...(await this.mapMessage(message)),
+          systemLabels: message.labelIds,
+        })),
+      ),
+      complete: thread.messages.length <= 100,
+    };
   }
 
   async listCalendars(): Promise<CalendarListEntry[]> {
@@ -580,7 +639,7 @@ export class GoogleClient {
     const current = await this.readSingleEvent(calendarId, eventId);
     const version = this.eventVersion(current);
     const timeZone =
-      current.start.timeZone ??
+      (isCalendarTimeZone(current.start.timeZone) ? current.start.timeZone : undefined) ??
       z
         .object({ timeZone: z.string().min(1) })
         .parse(
@@ -737,11 +796,18 @@ export class GoogleClient {
 
   /** The latest 30 matching messages. Permission/read failures propagate visibly. */
   async listMail(query = "in:inbox"): Promise<Mail[]> {
+    return (await this.listMailWithMetadata(query)).messages;
+  }
+
+  async listMailWithMetadata(query = "in:inbox") {
     const params = new URLSearchParams({ maxResults: "30", q: query });
     const list = z
-      .object({ messages: z.array(z.object({ id: z.string() })).default([]) })
+      .object({
+        messages: z.array(z.object({ id: z.string() })).default([]),
+        nextPageToken: z.string().optional(),
+      })
       .parse(await this.request(`${GMAIL}/messages?${params}`));
-    return Promise.all(
+    const messages = await Promise.all(
       list.messages
         .slice(0, 30)
         .map(async ({ id }) =>
@@ -750,36 +816,76 @@ export class GoogleClient {
           ),
         ),
     );
+    return { messages, complete: !list.nextPageToken && list.messages.length <= 30 };
   }
 
-  /** At most 100 occurrences in a bounded window, beginning at local midnight by default. */
+  /** At most 100 occurrences in a bounded window, beginning at the local civil day by default. */
   async listEvents(options: ListEventsOptions = {}): Promise<CalendarEvent[]> {
+    return (await this.listEventsWithMetadata(options)).events;
+  }
+
+  /** One bounded page plus coverage and timezone provenance for model-facing tools. */
+  async listEventsWithMetadata(options: ListEventsOptions = {}): Promise<CalendarEventsRead> {
     const calendarId = options.calendarId ?? "primary";
     const path = calendarPath(calendarId);
-    const midnight = new Date();
-    midnight.setHours(0, 0, 0, 0);
-    const timeMin = options.timeMin ?? midnight.toISOString();
-    const timestamp = z.iso.datetime({ offset: true });
-    if (!timestamp.safeParse(timeMin).success)
-      throw new Error("Invalid calendar timeMin: use a date-time with an explicit offset");
+    const hasCivilBoundary =
+      (options.timeMin !== undefined && isCalendarCivilDate(options.timeMin)) ||
+      (options.timeMax !== undefined && isCalendarCivilDate(options.timeMax));
+    if (hasCivilBoundary && !options.timeZone)
+      throw new Error("Calendar civil-date bounds require an explicit IANA timeZone");
+    const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    const timeZone = options.timeZone ?? localZone;
+    if (!isCalendarTimeZone(timeZone)) throw new Error("Invalid calendar time zone");
+    const [defaultMin, defaultMax] = calendarDefaultWindow(timeZone);
+    const timeMin =
+      options.timeMin !== undefined
+        ? calendarQueryBound(options.timeMin, timeZone, "calendar timeMin")
+        : defaultMin;
     const timeMax =
-      options.timeMax ?? new Date(Date.parse(timeMin) + 31 * 24 * 60 * 60 * 1000).toISOString();
-    if (!timestamp.safeParse(timeMax).success)
-      throw new Error("Invalid calendar timeMax: use a date-time with an explicit offset");
-    const duration = Date.parse(timeMax) - Date.parse(timeMin);
+      options.timeMax !== undefined
+        ? calendarQueryBound(options.timeMax, timeZone, "calendar timeMax")
+        : options.timeMin !== undefined && isCalendarCivilDate(options.timeMin)
+          ? calendarCivilDayStart(addCalendarCivilDays(options.timeMin, 31), timeZone)
+          : options.timeMin !== undefined
+            ? new Date(parseCalendarInstant(timeMin) + 31 * CALENDAR_DAY_MS).toISOString()
+            : defaultMax;
+    const duration = parseCalendarInstant(timeMax) - parseCalendarInstant(timeMin);
     if (duration <= 0 || duration > 366 * 24 * 60 * 60 * 1000)
       throw new Error("Calendar range must end after it starts and span at most 366 days");
     const params = new URLSearchParams({
-      maxResults: "100",
+      maxResults: String(MAX_CALENDAR_EVENTS),
       singleEvents: "true",
       orderBy: "startTime",
       timeMin,
       timeMax,
     });
     const result = z
-      .object({ items: z.array(z.unknown()).default([]), timeZone: z.string().default("UTC") })
+      .object({
+        items: z.array(z.unknown()).default([]),
+        timeZone: z.string().optional(),
+        nextPageToken: z.string().min(1).optional(),
+      })
       .parse(await this.request(`${path}?${params}`));
-    return result.items.slice(0, 100).map((item) => mapEvent(item, calendarId, result.timeZone));
+    const mapped = result.items
+      .slice(0, MAX_CALENDAR_EVENTS)
+      .map((item) => mapEventWithMetadata(item, calendarId, result.timeZone, options.timeZone));
+    const events = mapped.map(({ event }) => event);
+    return {
+      events,
+      metadata: {
+        timeMin,
+        timeMax,
+        timeMaxExclusive: true,
+        timeZone,
+        timeZoneSource: options.timeZone ? "explicit" : "host-default",
+        maxResults: MAX_CALENDAR_EVENTS,
+        returnedCount: events.length,
+        truncated: result.items.length > MAX_CALENDAR_EVENTS || result.nextPageToken !== undefined,
+        unknownTimeZoneEventIds: mapped
+          .filter(({ timeZoneSource }) => timeZoneSource === "unknown")
+          .map(({ event }) => event.id),
+      },
+    };
   }
 
   async getAttachment(messageId: string, attachmentId: string): Promise<Uint8Array> {
@@ -826,7 +932,7 @@ export class GoogleClient {
       if (!/^<[^<>\s]+@[^<>\s]+>$/.test(messageId))
         throw new Error("Source message has no valid Message-ID for reply threading");
       const normalizedSubject = (subject: string) =>
-        decodeHeader(subject)
+        decodeMimeHeader(subject)
           .replace(/^(?:\s*re:\s*)+/i, "")
           .trim();
       if (normalizedSubject(draft.subject) !== normalizedSubject(metadata.get("subject") ?? ""))

@@ -146,6 +146,7 @@ const terminal = new Set<OperationStatus>([
   "superseded",
 ]);
 export class TaskJournal {
+  evidenceBefore?: (owner: string, task: AgentTask) => Promise<void>;
   constructor(readonly db: Store) {}
   async operations(owner: string, taskId: string) {
     return (await this.db.list<JournalOperation>(owner, "task-operations"))
@@ -272,6 +273,15 @@ export class TaskJournal {
     if (saved.status === "superseded") throw new TaskSupersededError();
     if (saved.status === "rejected_not_dispatched" && saved.rejection === "expired")
       throw new TaskValidityExpiredError();
+    if (
+      saved.effect &&
+      ["queued", "dispatching", "running"].includes(saved.status) &&
+      this.evidenceBefore
+    ) {
+      const task = await this.db.get<AgentTask>(owner, "tasks", saved.taskId);
+      if (!task) throw new LostLeaseError();
+      await this.evidenceBefore(owner, task);
+    }
     const handles =
       resources ?? (await this.db.resourceLeasesForTask(saved.resourceHoldTaskId ?? saved.taskId));
     const result = await this.db.authorizeTaskOperation<JournalOperation>(

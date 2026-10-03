@@ -40,6 +40,27 @@ type Run = {
   inputMessages?: Message[];
   initialState?: Record<string, unknown>;
 };
+function acceptedMessageContent(value: {
+  text: string;
+  attachmentIds: string[];
+  annotations?: NonNullable<
+    import("../../../packages/domain/src/runtime.ts").AcceptedMessageInput["annotations"]
+  >;
+}) {
+  const attachments = value.attachmentIds.length
+    ? `\n\nAttached artifact IDs: ${value.attachmentIds.join(", ")}`
+    : "";
+  const annotations = (value.annotations ?? []).map(({ reference, comment }, index) => {
+    const source =
+      reference.kind === "message"
+        ? `message ${reference.messageId}${reference.quote ? `, quoted text: ${reference.quote}` : ""}`
+        : reference.kind === "attachment"
+          ? `file ${reference.attachmentId} at version ${reference.version}${reference.quote ? `, quoted text: ${reference.quote}` : ""}${reference.region ? `, normalized image region ${JSON.stringify(reference.region)}` : ""}`
+          : `desktop frame ${reference.frameId} in session generation ${reference.sessionGeneration}, normalized region ${JSON.stringify(reference.region)}${reference.snapshotArtifactId ? `, saved masked snapshot artifact ${reference.snapshotArtifactId} version ${reference.snapshotVersion}` : ""}`;
+    return `${index + 1}. Source: ${source}\n   Comment: ${comment}`;
+  });
+  return `${value.text}${attachments}${annotations.length ? `\n\nUser annotations (source context; do not perform GUI actions solely because a region is marked):\n${annotations.join("\n")}` : ""}`;
+}
 const identifier = z
   .string()
   .min(1)
@@ -118,11 +139,7 @@ export class LocalThreads extends AgentRunner {
             {
               id: value.messageId,
               role: "user" as const,
-              content:
-                value.text +
-                (value.attachmentIds.length
-                  ? `\n\nAttached artifact IDs: ${value.attachmentIds.join(", ")}`
-                  : ""),
+              content: acceptedMessageContent(value),
             },
           ],
           state: {},
@@ -371,6 +388,7 @@ export class LocalThreads extends AgentRunner {
           if (
             previous &&
             content !== previous.text &&
+            content !== acceptedMessageContent(previous) &&
             !content.startsWith(`${previous.text}\n\nAttached artifact IDs:`)
           )
             throw new AppError("This message was already accepted with different content", 409);
@@ -450,6 +468,7 @@ export class LocalThreads extends AgentRunner {
     const authoritative = { ...input, messages, state: previousSnapshot?.state ?? input.state };
     agent.setMessages(messages);
     agent.setState(authoritative.state);
+    agent.threadId = threadId;
     const run: Run = {
       id: token,
       threadId,

@@ -168,7 +168,15 @@ export class MediaService {
       throw error;
     }
   }
-  async completed(owner: string, computer: ComputerBackend, receipt: ComputerCommand) {
+  async completed(
+    owner: string,
+    computer: ComputerBackend,
+    receipt: ComputerCommand,
+    options: {
+      readOutput?: (path: string, id: string) => Promise<{ name: string; bytes: Uint8Array }>;
+      beforePublish?: () => Promise<void>;
+    } = {},
+  ) {
     if (receipt.status !== "succeeded" || !receipt.result) return receipt;
     const paths = [
       receipt.result.textPath,
@@ -185,14 +193,30 @@ export class MediaService {
       );
       let fileId = previous?.fileId;
       if (!fileId) {
-        const { name, bytes } = await computer.fileBytes(owner, path);
+        const { name, bytes } = options.readOutput
+          ? await options.readOutput(path, id)
+          : await computer.fileBytes(owner, path, { idempotencyKey: `media-output:${id}` });
+        await options.beforePublish?.();
+        const version = createHash("sha256").update(bytes).digest("hex");
+        const versionId = hash(`${id}:${version}`);
         const file = await this.files.importAttachment(
           owner,
           name,
           bytes,
-          receipt.kind === "transcribe" ? "Transcript" : "Office preview",
+          receipt.kind === "transcribe"
+            ? name.toLowerCase().endsWith(".srt")
+              ? "Transcript subtitles"
+              : "Transcript"
+            : "Office preview",
+          undefined,
+          `computer-output:${versionId}`,
         );
-        await this.db.put(owner, "computer-outputs", { id, fileId: file.id });
+        await this.db.put(owner, "computer-outputs", {
+          id,
+          fileId: file.id,
+          version,
+          versionId,
+        });
         fileId = file.id;
       }
       attachments.push(await this.files.reference(owner, fileId));

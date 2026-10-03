@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { ActionLog } from "../apps/server/src/action-log.ts";
 import {
@@ -517,6 +518,69 @@ test("manual provenance callback receives the exact parsed defaults used by the 
       ),
       /binding/i,
     );
+  } finally {
+    await db.close();
+  }
+});
+
+test("ordinary native file reads get fresh receipts while explicit output reads remain idempotent", async () => {
+  const db = await createStore();
+  try {
+    const registry = new ExecutorRegistry(db, {
+      registrations: [registration],
+      authority: authority(db),
+    });
+    const { epoch } = await registry.register(hello);
+    await registry.reconcile("lenovo-okami", {
+      epoch,
+      bootId: "boot-a",
+      operations: [],
+      contained: true,
+    });
+    const native = new RemoteComputerBackend(registry, {
+      executorId: "lenovo-okami",
+      context: async () => context,
+      pollMs: 1,
+    });
+    const read = async (content: string, options: { idempotencyKey?: string } = {}) => {
+      const pending = native.fileBytes("owner", "/workspace/transcript.txt", options);
+      const claimed = await registry.claimOperations("lenovo-okami", epoch, { waitMs: 1000 });
+      const [operation] = claimed.operations;
+      assert.ok(operation);
+      assert.equal(operation.args.operation, "read_binary");
+      assert.equal(operation.args.path, "/workspace/transcript.txt");
+      const bytes = Buffer.from(content);
+      await registry.submitReceipt("lenovo-okami", epoch, operation.id, 1, {
+        status: "succeeded",
+        data: {
+          path: "/workspace/transcript.txt",
+          base64: bytes.toString("base64"),
+          size: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+      });
+      return { operationId: operation.id, result: await pending };
+    };
+
+    const first = await read("old transcript");
+    const second = await read("edited transcript");
+    assert.notEqual(first.operationId, second.operationId);
+    assert.equal(Buffer.from(first.result.bytes).toString(), "old transcript");
+    assert.equal(Buffer.from(second.result.bytes).toString(), "edited transcript");
+
+    const stable = await read("published output", { idempotencyKey: "media-output:text-id" });
+    const replay = await native.fileBytes("owner", "/workspace/transcript.txt", {
+      idempotencyKey: "media-output:text-id",
+    });
+    assert.equal(
+      (await registry.claimOperations("lenovo-okami", epoch, { waitMs: 0 })).operations.length,
+      0,
+    );
+    assert.equal(
+      stable.operationId,
+      createHash("sha256").update("owner:media-output:text-id").digest("hex"),
+    );
+    assert.equal(Buffer.from(replay.bytes).toString(), "published output");
   } finally {
     await db.close();
   }
