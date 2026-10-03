@@ -14,14 +14,14 @@
     "android": {
       "package": "app.openmuse.mobile",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/capybara.png",
-        "backgroundColor": "#ECF5FA"
+        "foregroundImage": "./assets/companions/okami-poster.png",
+        "backgroundColor": "#FFFFFF"
       }
     },
     "web": {
       "bundler": "metro",
       "name": "OkamiBot — a little room for everything",
-      "favicon": "./assets/capybara.png"
+      "favicon": "./assets/companions/okami-idle-poster.png"
     },
     "plugins": [
       "expo-document-picker",
@@ -60,6 +60,6 @@
         }
       ]
     ],
-    "icon": "./assets/capybara.png"
+    "icon": "./assets/companions/okami-idle-poster.png"
   }
 }
