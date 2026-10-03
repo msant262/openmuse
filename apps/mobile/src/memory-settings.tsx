@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import type { AgentMemory, RevisionEntry } from "../../../packages/domain/src/agent";
+import { useI18n } from "./i18n";
 import { useAgentWorkspace } from "./agent-workspace";
 import { Button, Card, ErrorNotice, Field, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type Page<T> = { entries: T[]; nextCursor?: string };
 export function MemorySettings() {
+  const { t } = useI18n();
   const { api } = useWorkspace();
   const { refresh } = useAgentWorkspace();
   const [page, setPage] = useState<Page<AgentMemory>>({ entries: [] });
@@ -46,9 +48,9 @@ export function MemorySettings() {
   }
   return (
     <Card style={{ gap: 12 }}>
-      <Text style={s.heading}>Memory</Text>
+      <Text style={s.heading}>{t("Memory")}</Text>
       <Text style={s.muted}>
-        Inspect facts, corrections and forgotten entries. Restoring creates a new revision.
+        {t("Inspect facts, corrections and forgotten entries. Restoring creates a new revision.")}
       </Text>
       {page.entries.map((memory) => (
         <MemoryRow
@@ -65,29 +67,30 @@ export function MemorySettings() {
           small
           onPress={() => void load(page.nextCursor).catch((cause) => setError(String(cause)))}
         >
-          More facts
+          {t("More facts")}
         </Button>
       )}
       <Field
-        label="Remember something about me"
+        label={t("Remember something about me")}
         value={text}
         onChangeText={setText}
-        placeholder="I prefer morning meetings"
+        placeholder={t("I prefer morning meetings")}
       />
       <Field
-        label="Valid until (optional, include UTC offset)"
+        label={t("Valid until (optional, include UTC offset)")}
         value={validUntil}
         onChangeText={setValidUntil}
         placeholder="2026-10-25T18:00:00+01:00"
       />
       <Button busy={busy} disabled={!text.trim()} onPress={() => void remember()}>
-        Remember
+        {t("Remember")}
       </Button>
       <ErrorNotice error={error} />
     </Card>
   );
 }
 function MemoryRow({ memory, changed }: { memory: AgentMemory; changed: () => Promise<void> }) {
+  const { t, locale } = useI18n();
   const { api } = useWorkspace();
   const [text, setText] = useState(memory.text);
   const [editing, setEditing] = useState(false);
@@ -139,22 +142,33 @@ function MemoryRow({ memory, changed }: { memory: AgentMemory; changed: () => Pr
   return (
     <View style={{ gap: 8, paddingBottom: 16 }}>
       {editing ? (
-        <Field label="Memory correction" value={text} onChangeText={setText} />
+        <Field label={t("Memory correction")} value={text} onChangeText={setText} />
       ) : (
         <Text style={s.text}>{memory.text}</Text>
       )}
       <Text style={s.small}>
-        {memory.source} · acquired {memory.createdAt} · revision {memory.revision ?? 0} ·{" "}
-        {memory.origin?.kind ?? "legacy"}
+        {t("{source} · acquired {date} · revision {revision} · {origin}", {
+          source: t(memory.source),
+          date: new Date(memory.createdAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US"),
+          revision: memory.revision ?? 0,
+          origin: t(memory.origin?.kind ?? "legacy"),
+        })}
       </Text>
-      {!!memory.updatedAt && <Text style={s.small}>Changed {memory.updatedAt}</Text>}
+      {!!memory.updatedAt && (
+        <Text style={s.small}>
+          {t("Changed {date}", { date: new Date(memory.updatedAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US") })}
+        </Text>
+      )}
       {!!memory.validUntil && (
         <Text style={s.small}>
-          Valid until {memory.validUntil} · {memory.timezone ?? "explicit offset"}
+          {t("Valid until {date} · {timezone}", {
+            date: new Date(memory.validUntil).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US"),
+            timezone: memory.timezone ?? t("explicit offset"),
+          })}
         </Text>
       )}
       {memory.status === "forgotten" && (
-        <Text style={s.muted}>Forgotten · excluded from automatic recall</Text>
+        <Text style={s.muted}>{t("Forgotten · excluded from automatic recall")}</Text>
       )}
       <View style={[s.row, { gap: 8 }]}>
         {memory.status !== "forgotten" && (
@@ -165,26 +179,30 @@ function MemoryRow({ memory, changed }: { memory: AgentMemory; changed: () => Pr
               disabled={editing && !text.trim()}
               onPress={() => (editing ? void act("edit") : setEditing(true))}
             >
-              {editing ? "Save correction" : "Edit"}
+              {editing ? t("Save correction") : t("Edit")}
             </Button>
             <Button small danger busy={busy} onPress={() => void act("forget")}>
-              Forget
+              {t("Forget")}
             </Button>
           </>
         )}
         <Button small onPress={() => void loadHistory().catch((cause) => setError(String(cause)))}>
-          History
+          {t("History")}
         </Button>
       </View>
       {history?.entries.map((entry) => (
         <View key={entry.id} style={{ gap: 4 }}>
           <Text style={s.small}>
-            Revision {entry.revision} · {entry.action} · {entry.changedAt}
+            {t("Revision {revision} · {action} · {date}", {
+              revision: entry.revision,
+              action: t(entry.action),
+              date: new Date(entry.changedAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US"),
+            })}
           </Text>
           <Text style={s.text}>{entry.value.text}</Text>
           {entry.value.status !== "forgotten" && entry.revision !== memory.revision && (
             <Button small busy={busy} onPress={() => void act("restore", entry.revision)}>
-              Restore revision {entry.revision}
+              {t("Restore revision {revision}", { revision: entry.revision })}
             </Button>
           )}
         </View>
@@ -196,12 +214,12 @@ function MemoryRow({ memory, changed }: { memory: AgentMemory; changed: () => Pr
             void loadHistory(history.nextCursor).catch((cause) => setError(String(cause)))
           }
         >
-          Older changes
+          {t("Older changes")}
         </Button>
       )}
       {!!error && (
         <Button small onPress={() => void changed().catch((cause) => setError(String(cause)))}>
-          Reload current fact
+          {t("Reload current fact")}
         </Button>
       )}
       <ErrorNotice error={error} />

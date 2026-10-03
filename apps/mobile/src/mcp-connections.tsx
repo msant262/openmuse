@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Linking, Text, View } from "react-native";
+import { useI18n } from "./i18n";
 import { Button, Card, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -13,6 +14,7 @@ type Connection = {
   status: string;
 };
 export function McpConnections({ query = "" }: { query?: string }) {
+  const { t } = useI18n();
   const { api, notify } = useWorkspace();
   const [rows, setRows] = useState<Connection[]>([]),
     [error, setError] = useState(""),
@@ -40,11 +42,11 @@ export function McpConnections({ query = "" }: { query?: string }) {
       );
       if (result.url) {
         await Linking.openURL(result.url);
-        notify("Conclua a autorização no navegador e volte para atualizar a conexão.");
+        notify(t("Finish authorization in your browser, then refresh the connection."));
       }
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Não foi possível conectar o aplicativo.");
+      setError(cause instanceof Error ? cause.message : t("Could not connect the app."));
     } finally {
       setBusy(undefined);
     }
@@ -55,7 +57,7 @@ export function McpConnections({ query = "" }: { query?: string }) {
   if (!visible.length) return null;
   return (
     <View style={{ gap: 12 }}>
-      <Text style={s.heading}>Aplicativos conectados</Text>
+      <Text style={s.heading}>{t("Connected apps")}</Text>
       {error ? <ErrorNotice error={error} /> : null}
       {visible.map((row) => (
         <Card key={row.id} style={{ gap: 8 }}>
@@ -65,15 +67,15 @@ export function McpConnections({ query = "" }: { query?: string }) {
           </Text>
           <Text style={s.muted}>
             {row.status === "configured"
-              ? "Configurado no servidor"
+              ? t("Configured on server")
               : row.status === "connected"
-                ? "Conectado"
+                ? t("Connected")
                 : row.status === "connecting"
-                  ? "Aguardando autorização"
-                  : "Precisa conectar"}
+                  ? t("Waiting for authorization")
+                  : t("Needs connection")}
           </Text>
           <Text style={s.small}>
-            {row.tools.length} ferramentas permitidas: {row.tools.join(", ")}
+            {t("{count} allowed tools: {tools}", { count: row.tools.length, tools: row.tools.join(", ") })}
           </Text>
           {row.oauth ? (
             <Button
@@ -83,7 +85,7 @@ export function McpConnections({ query = "" }: { query?: string }) {
                 void change(row, row.status === "connected" ? "disconnect" : "connect")
               }
             >
-              {row.status === "connected" ? "Desconectar" : "Conectar conta"}
+              {row.status === "connected" ? t("Disconnect") : t("Connect account")}
             </Button>
           ) : null}
         </Card>
@@ -92,11 +94,11 @@ export function McpConnections({ query = "" }: { query?: string }) {
         disabled={Boolean(busy)}
         onPress={() =>
           void load().catch((cause) =>
-            setError(cause instanceof Error ? cause.message : "Falha ao atualizar"),
+            setError(cause instanceof Error ? cause.message : t("Could not refresh")),
           )
         }
       >
-        Atualizar conexões
+        {t("Refresh connections")}
       </Button>
     </View>
   );

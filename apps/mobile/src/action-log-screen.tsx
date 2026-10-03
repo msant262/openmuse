@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import type { ActionLogEntry } from "../../../packages/domain/src";
+import { useI18n } from "./i18n";
 import { Button, Card, Chip, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function ActionLogScreen() {
+  const { t, locale } = useI18n();
   const { api } = useWorkspace();
   const [entries, setEntries] = useState<ActionLogEntry[]>([]);
   const [cursor, setCursor] = useState<string>();
@@ -27,7 +29,7 @@ export function ActionLogScreen() {
       );
       setCursor(page.nextCursor);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Action log is unavailable");
+      setError(failure instanceof Error ? failure.message : t("Action log is unavailable"));
     } finally {
       setBusy(false);
     }
@@ -38,34 +40,33 @@ export function ActionLogScreen() {
   return (
     <Card style={{ gap: 16 }}>
       <View style={[s.row, { justifyContent: "space-between" }]}>
-        <Text style={s.heading}>Action log</Text>
+        <Text style={s.heading}>{t("Action log")}</Text>
         <Button small busy={busy} onPress={() => void load()}>
-          Refresh
+          {t("Refresh")}
         </Button>
       </View>
       <Text style={s.small}>
-        A permanent record of tool calls and outcomes. Command contents, passwords and message
-        bodies are omitted.
+        {t("A permanent record of tool calls and outcomes. Command contents, passwords and message bodies are omitted.")}
       </Text>
       <ErrorNotice error={error} />
       {entries.map((entry) => (
         <View key={entry.id} style={{ gap: 5, borderTopWidth: 1, paddingTop: 14 }}>
           <View style={[s.row, { gap: 8 }]}>
             <Text style={[s.text, { flex: 1 }]}>{entry.summary}</Text>
-            <Chip>{entry.result.replaceAll("_", " ")}</Chip>
+            <Chip>{t(entry.result.replaceAll("_", " "))}</Chip>
           </View>
           <Text selectable style={s.muted}>
             {entry.tool} · {entry.target}
           </Text>
           <Text style={s.small}>
-            {new Date(entry.time).toLocaleString()} · {entry.actor}
+            {new Date(entry.time).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US")} · {entry.actor}
           </Text>
         </View>
       ))}
-      {!busy && !entries.length && <Text style={s.muted}>External actions will appear here.</Text>}
+      {!busy && !entries.length && <Text style={s.muted}>{t("External actions will appear here.")}</Text>}
       {cursor && (
         <Button busy={busy} onPress={() => void load(cursor)}>
-          Load earlier actions
+          {t("Load earlier actions")}
         </Button>
       )}
     </Card>

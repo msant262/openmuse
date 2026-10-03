@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import type { Routine } from "../../../packages/domain/src/agent";
+import { useI18n } from "./i18n";
 import { useAgentWorkspace } from "./agent-workspace";
 import { cronDayTime, dayTimeCron } from "./routine-schedule";
 import { Button, Card, ErrorNotice, Field, s } from "./ui";
@@ -8,6 +9,7 @@ import { useWorkspace } from "./workspace";
 
 const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export function RoutinesPanel() {
+  const { t, locale } = useI18n();
   const { api, ask } = useWorkspace(),
     { mutate } = useAgentWorkspace();
   const [routines, setRoutines] = useState<Routine[]>([]),
@@ -40,21 +42,21 @@ export function RoutinesPanel() {
   }
   return (
     <Card style={{ gap: 12 }}>
-      <Text style={s.heading}>Routines</Text>
+      <Text style={s.heading}>{t("Routines")}</Text>
       <Text style={s.muted}>
-        Regular help, even when the app is closed. Results arrive in your main chat.
+        {t("Regular help, even when the app is closed. Results arrive in your main chat.")}
       </Text>
       <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
         <Button small onPress={() => setEditing("new")}>
-          Add routine
+          {t("Add routine")}
         </Button>
         <Button
           small
           onPress={() =>
-            ask("Help me create a recurring routine. Ask what I want and when it should run.")
+            ask(t("Help me create a recurring routine. Ask what I want and when it should run."))
           }
         >
-          Plan in chat
+          {t("Plan in chat")}
         </Button>
       </View>
       {routines.map((value) => (
@@ -62,20 +64,20 @@ export function RoutinesPanel() {
           <Text style={s.heading}>{value.title}</Text>
           <Text style={s.small}>
             {value.enabled
-              ? `Next: ${new Date(value.nextRunAt).toLocaleString(undefined, { timeZone: value.timezone })}`
-              : "Paused"}{" "}
+              ? t("Next: {date}", { date: new Date(value.nextRunAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US", { timeZone: value.timezone }) })
+              : t("Paused")}{" "}
             · {value.timezone}
           </Text>
           <Text style={s.muted}>{value.prompt}</Text>
           <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
             <Button small onPress={() => setEditing(value)}>
-              Edit
+              {t("Edit")}
             </Button>
             <Button small onPress={() => void control(value)}>
-              {value.enabled ? "Pause" : "Resume"}
+              {value.enabled ? t("Pause") : t("Resume")}
             </Button>
             <Button small onPress={() => void control(value, true)}>
-              Delete
+              {t("Delete")}
             </Button>
           </View>
         </View>
@@ -107,6 +109,7 @@ function RoutineEditor({
   saved: () => void;
   cancel: () => void;
 }) {
+  const { t } = useI18n();
   const { mutate } = useAgentWorkspace(),
     parsed = value ? cronDayTime(value.cron) : undefined;
   const [title, setTitle] = useState(value?.title ?? ""),
@@ -139,12 +142,12 @@ function RoutineEditor({
   }
   return (
     <View style={{ gap: 10 }}>
-      <Field label="Name" value={title} onChangeText={setTitle} />
+      <Field label={t("Name")} value={title} onChangeText={setTitle} />
       <Field
-        label="What should I do?"
+        label={t("What should I do?")}
         value={prompt}
         onChangeText={setPrompt}
-        placeholder="Read my calendar and send today's agenda here"
+        placeholder={t("Read my calendar and send today's agenda here")}
       />
       {!advanced && (
         <>
@@ -158,28 +161,28 @@ function RoutineEditor({
                   setDays(days.includes(day) ? days.filter((d) => d !== day) : [...days, day])
                 }
               >
-                {label}
+                {t(label)}
               </Button>
             ))}
           </View>
-          <Field label="Time (24-hour)" value={time} onChangeText={setTime} placeholder="08:00" />
+          <Field label={t("Time (24-hour)")} value={time} onChangeText={setTime} placeholder="08:00" />
         </>
       )}
       <Field
-        label="Timezone"
+        label={t("Timezone")}
         value={timezone}
         onChangeText={setTimezone}
         placeholder="Europe/Berlin"
       />
       <Button small onPress={() => setAdvanced(!advanced)}>
-        {advanced ? "Day and time" : "Advanced schedule"}
+        {advanced ? t("Day and time") : t("Advanced schedule")}
       </Button>
-      {advanced && <Field label="Cron schedule" value={cron} onChangeText={setCron} />}
+      {advanced && <Field label={t("Cron schedule")} value={cron} onChangeText={setCron} />}
       <View style={[s.row, { gap: 8 }]}>
         <Button disabled={!title.trim() || !prompt.trim()} busy={busy} onPress={() => void save()}>
-          Save routine
+          {t("Save routine")}
         </Button>
-        <Button onPress={cancel}>Cancel</Button>
+        <Button onPress={cancel}>{t("Cancel")}</Button>
       </View>
       <ErrorNotice error={error} />
     </View>

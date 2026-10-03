@@ -14,6 +14,7 @@ import type {
   CreateTaskInput,
 } from "../../../packages/domain/src/agent";
 import { setDisplayLocale } from "./display-date";
+import { useI18n } from "./i18n";
 import { startNativePush } from "./native-push";
 import { useWorkspace } from "./workspace";
 
@@ -27,12 +28,13 @@ interface AgentContextValue {
 const AgentContext = createContext<AgentContextValue | null>(null);
 export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
   const { api, open, navigate } = useWorkspace();
+  const { locale } = useI18n();
   const [data, setData] = useState<AgentWorkspace>();
   const [error, setError] = useState("");
   const requestVersion = useRef(0);
   useEffect(() => {
-    if (data?.identity.profile) setDisplayLocale(data.identity.profile.fields.language);
-  }, [data?.identity.profile?.fields.language]);
+    setDisplayLocale(locale === "pt-BR" ? "pt-BR" : "en-US");
+  }, [locale]);
   const refresh = useCallback(async () => {
     const version = ++requestVersion.current;
     try {

@@ -2,6 +2,7 @@ import * as Crypto from "expo-crypto";
 import { useEffect, useMemo, useState } from "react";
 import { Text, TextInput, View } from "react-native";
 import type { CredentialInteractionRequest } from "../../../packages/domain/src/runtime";
+import { useI18n } from "./i18n";
 import {
   CredentialSubmission,
   type CredentialValues,
@@ -21,6 +22,7 @@ export function CredentialRequestCard({
   request: CredentialInteractionRequest;
   onSaved?: () => void;
 }) {
+  const { t } = useI18n();
   const { api } = useWorkspace();
   const [current, setCurrent] = useState(request);
   const [values, setValues] = useState<CredentialValues>({});
@@ -57,7 +59,7 @@ export function CredentialRequestCard({
         onSaved?.();
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The credential could not be saved.");
+      setError(cause instanceof Error ? cause.message : t("The credential could not be saved."));
       const latest = await api
         .request<CredentialInteractionRequest>(`/api/credential-requests/${request.id}`)
         .catch(() => undefined);
@@ -83,7 +85,7 @@ export function CredentialRequestCard({
       setCurrent((previous) => ({ ...previous, status: "connecting" }));
       onSaved?.();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The verification code could not be sent.");
+      setError(cause instanceof Error ? cause.message : t("The verification code could not be sent."));
       setChallengeValue("");
     } finally {
       setChallengeBusy(false);
@@ -92,24 +94,24 @@ export function CredentialRequestCard({
 
   const statusLabel =
     current.status === "saved"
-      ? "Credential saved. Login still needs confirmation."
+      ? t("Credential saved. Login still needs confirmation.")
       : current.status === "connected"
-        ? "Account connected."
+        ? t("Account connected.")
         : current.status === "needs_challenge"
           ? current.challengeKind === "otp" || current.challengeKind === "totp"
-            ? "Enter the verification code from the site in this secure card."
-            : "O bot tenta resolver a verificação. Se precisar de ajuda, pedirá para você assumir o navegador."
+            ? t("Enter the verification code from the site in this secure card.")
+            : t("The bot will try to complete verification. If it needs help, it will ask you to take control of the browser.")
           : current.status === "invalid_credentials"
-            ? "The site rejected these credentials. Reopen the request to try again."
+            ? t("The site rejected these credentials. Reopen the request to try again.")
             : current.status === "expired"
-              ? "This request expired. The task can request a fresh form."
+              ? t("This request expired. The task can request a fresh form.")
               : current.status === "superseded"
-                ? "This task changed. Reopen the latest connection request."
+                ? t("This task changed. Reopen the latest connection request.")
                 : current.status === "outcome_unknown"
-                  ? "The vault could not confirm the save. The request needs reconciliation."
+                  ? t("The vault could not confirm the save. The request needs reconciliation.")
                   : current.status === "saving"
-                    ? "Saving securely to the credential vault…"
-                    : "Your values go directly to the credential vault; the conversation stores only connection status.";
+                    ? t("Saving securely to the credential vault…")
+                    : t("Your values go directly to the credential vault; the conversation stores only connection status.");
 
   return (
     <Card style={{ gap: 14 }}>
@@ -117,7 +119,7 @@ export function CredentialRequestCard({
         {current.schema.title}
       </Text>
       <View style={{ gap: 3 }}>
-        <Text style={s.small}>Destination: {current.schema.origin}</Text>
+        <Text style={s.small}>{t("Destination: {origin}", { origin: current.schema.origin })}</Text>
         <Text style={s.muted}>{current.schema.purpose}</Text>
       </View>
       {(current.status === "waiting" || current.status === "outcome_unknown") &&
@@ -153,9 +155,9 @@ export function CredentialRequestCard({
         current.challengeId &&
         (current.challengeKind === "otp" || current.challengeKind === "totp") && (
           <View style={{ gap: 7 }}>
-            <Text style={s.text}>Verification code</Text>
+            <Text style={s.text}>{t("Verification code")}</Text>
             <TextInput
-              accessibilityLabel="Verification code"
+              accessibilityLabel={t("Verification code")}
               accessibilityState={{ disabled: challengeBusy }}
               autoCapitalize="none"
               autoCorrect={false}
@@ -177,7 +179,7 @@ export function CredentialRequestCard({
             disabled={disabled || !!validation}
             onPress={() => void submit()}
           >
-            {current.status === "outcome_unknown" ? "Retry secure save" : "Save and continue"}
+            {current.status === "outcome_unknown" ? t("Retry secure save") : t("Save and continue")}
           </Button>
         </>
       ) : (
@@ -196,18 +198,17 @@ export function CredentialRequestCard({
               disabled={challengeBusy || !challengeValue.trim()}
               onPress={() => void submitChallenge()}
             >
-              Submit verification code
+              {t("Submit verification code")}
             </Button>
           </>
         )}
       {current.status === "needs_challenge" &&
         !["otp", "totp"].includes(current.challengeKind ?? "") && (
           <Text style={s.small}>
-            Se o bot pedir ajuda, use Assumir controle no navegador e conclua a verificação. Ao
-            devolver o controle, a tarefa retoma e confere o resultado.
+            {t("If the bot asks for help, take control in the browser and finish verification. When you hand control back, the task resumes and checks the result.")}
           </Text>
         )}
-      <Text style={s.small}>Task {current.taskId} · Chat and other tasks remain available.</Text>
+      <Text style={s.small}>{t("Task {taskId} · Chat and other tasks remain available.", { taskId: current.taskId })}</Text>
     </Card>
   );
 }

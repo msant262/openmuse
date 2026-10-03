@@ -8,6 +8,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { AppState, Platform, Text, View } from "react-native";
 import type { PickedAttachment } from "./attachment-cache";
+import { useI18n } from "./i18n";
 import { Button, ErrorNotice, s } from "./ui";
 export function VoiceInput({
   save,
@@ -16,6 +17,7 @@ export function VoiceInput({
   active: boolean;
   save: (file: PickedAttachment, transcribe?: boolean, includeSubtitles?: boolean) => Promise<void>;
 }) {
+  const { t } = useI18n();
   const recorder = useAudioRecorder({
     ...RecordingPresets.HIGH_QUALITY,
     sampleRate: 16000,
@@ -32,7 +34,7 @@ export function VoiceInput({
     setBusy(true);
     try {
       await recorder.stop();
-      if (!recorder.uri) throw new Error("A gravação não ficou disponível. Tente novamente.");
+      if (!recorder.uri) throw new Error(t("The recording is unavailable. Try again."));
       await save(
         {
           uri: recorder.uri,
@@ -57,7 +59,7 @@ export function VoiceInput({
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted)
         throw new Error(
-          "Sem acesso ao microfone. Você pode continuar digitando ou anexar um áudio.",
+          t("Microphone access is unavailable. You can keep typing or attach audio."),
         );
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
       await recorder.prepareToRecordAsync();
@@ -83,10 +85,10 @@ export function VoiceInput({
   return (
     <View style={{ gap: 6 }}>
       <Button small busy={busy} onPress={() => void (state.isRecording ? stop() : start())}>
-        {state.isRecording ? "Parar e transcrever" : "Gravar áudio"}
+        {state.isRecording ? t("Stop and transcribe") : t("Record audio")}
       </Button>
       {state.isRecording && (
-        <Text style={s.small}>Gravando · {Math.floor(state.durationMillis / 1000)} s</Text>
+        <Text style={s.small}>{t("Recording · {seconds} s", { seconds: Math.floor(state.durationMillis / 1000) })}</Text>
       )}
       <ErrorNotice error={error} />
     </View>

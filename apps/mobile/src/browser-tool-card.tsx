@@ -2,6 +2,7 @@ import { Check, Globe2, Hand, RotateCw } from "lucide-react-native";
 import { createContext, useContext, useEffect, useState } from "react";
 import { ActivityIndicator, AppState, Image, Text, View } from "react-native";
 import { z } from "zod";
+import { useI18n } from "./i18n";
 import type { ActionProposal, BrowserSession } from "../../../packages/domain/src";
 import { useInlinePreview } from "./preview";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
@@ -26,12 +27,12 @@ function resultValue(result: unknown) {
   }
 }
 
-function siteLabel(url: unknown) {
-  if (typeof url !== "string") return "Opening a page";
+function siteLabel(url: unknown, t: (key: string) => string) {
+  if (typeof url !== "string") return t("Opening a page");
   try {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
-    return "Opening a page";
+    return t("Opening a page");
   }
 }
 
@@ -45,6 +46,7 @@ export function BrowserToolCard({
   result: unknown;
   loading: boolean;
 }) {
+  const { t } = useI18n();
   const { api, workspace, open } = useWorkspace();
   const { active } = useContext(BrowserRunContext);
   const previewVisible = useInlinePreview(active);
@@ -96,7 +98,7 @@ export function BrowserToolCard({
   const failure = toolError.success
     ? toolError.data.error
     : !loading && !visited
-      ? "The browser did not return a page. Try your request again."
+      ? t("The browser did not return a page. Try your request again.")
       : "";
   return (
     <Card
@@ -107,26 +109,26 @@ export function BrowserToolCard({
           <Globe2 size={21} color={colors.blueDark} />
         </View>
         <View style={{ flex: 1, gap: 1 }}>
-          <Text style={[s.text, { fontWeight: "600" }]}>Browser</Text>
+          <Text style={[s.text, { fontWeight: "600" }]}>{t("Browser")}</Text>
           <Text numberOfLines={1} style={[s.small, { fontSize: 12 }]}>
             {working
-              ? "Reading the page…"
+              ? t("Reading the page…")
               : loading
-                ? "Browsing paused"
+                ? t("Browsing paused")
                 : failure
-                  ? "Couldn’t read the page"
-                  : siteLabel(visited?.url)}
+                  ? t("Couldn’t read the page")
+                  : siteLabel(visited?.url, t)}
           </Text>
         </View>
         {working ? (
           <ActivityIndicator size="small" color={colors.blueDark} />
         ) : visited ? (
-          <Check size={17} color="#47896C" accessibilityLabel="Page read" />
+          <Check size={17} color="#47896C" accessibilityLabel={t("Page read")} />
         ) : null}
       </View>
       {preview ? (
         <Image
-          accessibilityLabel={`Browser preview: ${visited?.title}`}
+          accessibilityLabel={t("Browser preview: {title}", { title: visited?.title ?? "" })}
           source={{ uri: api.url(preview) }}
           style={{ width: "100%", aspectRatio: 1.7, borderRadius: 12, backgroundColor: "#FFF" }}
           resizeMode="contain"
@@ -135,7 +137,7 @@ export function BrowserToolCard({
       ) : (
         <View style={{ backgroundColor: "#FAFAFB", borderRadius: 12, padding: 21, gap: 12 }}>
           <Text numberOfLines={2} style={[s.text, { fontSize: 14 }]}>
-            {visited?.title || siteLabel(url)}
+            {visited?.title || siteLabel(url, t)}
           </Text>
           {working ? (
             <View style={{ gap: 8 }}>
@@ -149,14 +151,14 @@ export function BrowserToolCard({
           ) : visited ? (
             <Text style={s.small}>
               {browser && browser.url !== visited.url
-                ? "Page visited. The browser has moved on."
+                ? t("Page visited. The browser has moved on.")
                 : browser?.status === "closed"
-                  ? "Session saved. Take control to reopen it."
+                  ? t("Session saved. Take control to reopen it.")
                   : browser?.status === "error"
-                    ? "Session needs attention. Take control to reconnect."
+                    ? t("Session needs attention. Take control to reconnect.")
                     : previewFailed
-                      ? "Preview unavailable. You can still take control."
-                      : "Connecting to the saved session…"}
+                      ? t("Preview unavailable. You can still take control.")
+                      : t("Connecting to the saved session…")}
             </Text>
           ) : null}
         </View>

@@ -9,6 +9,7 @@ import type {
 } from "../../../packages/domain/src/agent";
 import { DEFAULT_AGENT_PROFILE } from "../../../packages/domain/src/brand";
 import { useAgentWorkspace } from "./agent-workspace";
+import { useI18n } from "./i18n";
 import { useMuseThread } from "./threads";
 import { Button, Card, CheckRow, ErrorNotice, Field, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -25,6 +26,7 @@ type HistoryPage = { entries: HistoryEntry[]; nextCursor?: string };
 type ScopedHistory = HistoryPage & { target: Target; profile: EffectiveAgentProfile };
 
 export function ProfileSettings() {
+  const { t, locale } = useI18n();
   const { api } = useWorkspace();
   const { selection, enabled } = useMuseThread();
   const { data, refresh } = useAgentWorkspace();
@@ -232,7 +234,7 @@ export function ProfileSettings() {
   }
   return (
     <Card style={{ gap: 12 }}>
-      <Text style={s.heading}>How we talk</Text>
+      <Text style={s.heading}>{t("How we talk")}</Text>
       {enabled && (
         <View style={[s.row, { gap: 8 }]}>
           {(["global", "conversation"] as const).map((item) => (
@@ -249,28 +251,52 @@ export function ProfileSettings() {
                 setHistory(undefined);
               }}
             >
-              {item === "global" ? "Every conversation" : "Current conversation"}
+              {item === "global" ? t("Every conversation") : t("Current conversation")}
             </Button>
           ))}
         </View>
       )}
       <Field
-        label="Assistant name"
+        label={t("Assistant name")}
         value={fields.assistantName}
         onChangeText={(value) => edit("assistantName", value)}
       />
       <Field
-        label="What should I call you?"
+        label={t("What should I call you?")}
         value={fields.preferredUserName}
         onChangeText={(value) => edit("preferredUserName", value)}
       />
       <Field
-        label="Language / locale"
+        label={t("Personality and preferences")}
+        value={fields.personality}
+        onChangeText={(value) => edit("personality", value)}
+        placeholder={t("For example: warm, direct, curious; explain things with everyday examples.")}
+        maxLength={1500}
+        multiline
+      />
+      <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+        {([
+          ["en-US", "English"],
+          ["pt-BR", "Portuguese (Brazil)"],
+          ["de-DE", "German"],
+        ] as const).map(([language, label]) => (
+          <Button
+            key={language}
+            small
+            primary={fields.language === language}
+            onPress={() => edit("language", language)}
+          >
+            {t(label)}
+          </Button>
+        ))}
+      </View>
+      <Field
+        label={t("Reply language")}
         value={fields.language}
         onChangeText={(value) => edit("language", value)}
-        placeholder="pt-BR"
+        placeholder={t("en-US or pt-BR")}
       />
-      <Text style={s.text}>Tone</Text>
+      <Text style={s.text}>{t("Tone")}</Text>
       <View style={[s.row, { gap: 8 }]}>
         {(["warm", "concise", "thoughtful"] as const).map((value) => (
           <Button
@@ -279,11 +305,11 @@ export function ProfileSettings() {
             primary={fields.tone === value}
             onPress={() => edit("tone", value)}
           >
-            {value}
+            {t(value)}
           </Button>
         ))}
       </View>
-      <Text style={s.text}>Formality</Text>
+      <Text style={s.text}>{t("Formality")}</Text>
       <View style={[s.row, { gap: 8 }]}>
         {(["casual", "neutral", "formal"] as const).map((value) => (
           <Button
@@ -292,11 +318,11 @@ export function ProfileSettings() {
             primary={fields.formality === value}
             onPress={() => edit("formality", value)}
           >
-            {value}
+            {t(value)}
           </Button>
         ))}
       </View>
-      <Text style={s.text}>Reply length</Text>
+      <Text style={s.text}>{t("Reply length")}</Text>
       <View style={[s.row, { gap: 8 }]}>
         {(["concise", "balanced", "detailed"] as const).map((value) => (
           <Button
@@ -305,22 +331,22 @@ export function ProfileSettings() {
             primary={fields.responseLength === value}
             onPress={() => edit("responseLength", value)}
           >
-            {value}
+            {t(value)}
           </Button>
         ))}
       </View>
       <CheckRow
-        label="Light humor"
+        label={t("Light humor")}
         checked={fields.humor === "light"}
         onPress={() => edit("humor", fields.humor === "light" ? "none" : "light")}
       />
       <CheckRow
-        label="Use emojis"
+        label={t("Use emojis")}
         checked={fields.emojis}
         onPress={() => edit("emojis", !fields.emojis)}
       />
       <CheckRow
-        label="Structured replies"
+        label={t("Structured replies")}
         checked={fields.textStyle === "structured"}
         onPress={() =>
           edit("textStyle", fields.textStyle === "structured" ? "plain" : "structured")
@@ -333,23 +359,31 @@ export function ProfileSettings() {
         disabled={!profile || !Object.keys(patch).length}
         onPress={() => void save()}
       >
-        Save conversation preferences
+        {t("Save conversation preferences")}
       </Button>
       <Button disabled={busy || !profile} onPress={() => void save(true)}>
-        {scope === "global" ? "Restore product defaults" : "Remove this conversation override"}
+        {scope === "global"
+          ? t("Restore product defaults")
+          : t("Remove this conversation override")}
       </Button>
       <Text style={s.small}>
-        Saved from {profile?.origin?.kind ?? "product defaults"} · revision{" "}
-        {profile?.revisions[scope] ?? 0}
+        {t("Saved from {origin} · revision {revision}", {
+          origin: t(profile?.origin?.kind ?? "product defaults"),
+          revision: profile?.revisions[scope] ?? 0,
+        })}
       </Text>
       <Button small disabled={!profile || busy} onPress={() => void loadHistory()}>
-        Preference history
+        {t("Preference history")}
       </Button>
       {history?.entries.map((entry) => (
         <View key={entry.id} style={{ gap: 4 }}>
           <Text style={s.small}>
-            Revision {entry.revision} · {entry.action} · {entry.value.origin?.kind ?? "migration"} ·{" "}
-            {entry.changedAt}
+            {t("Revision {revision} · {action} · {origin} · {date}", {
+              revision: entry.revision,
+              action: t(entry.action),
+              origin: t(entry.value.origin?.kind ?? "migration"),
+              date: new Date(entry.changedAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US"),
+            })}
           </Text>
           <Text style={s.small}>{JSON.stringify(entry.value.fields)}</Text>
           {entry.revision !== profile?.revisions[scope] && (
@@ -358,14 +392,14 @@ export function ProfileSettings() {
               disabled={busy || !profile}
               onPress={() => history && void restore(entry, history)}
             >
-              Restore revision {entry.revision}
+              {t("Restore revision {revision}", { revision: entry.revision })}
             </Button>
           )}
         </View>
       ))}
       {!!history?.nextCursor && (
         <Button small onPress={() => void loadHistory(history.nextCursor)}>
-          Older preferences
+          {t("Older preferences")}
         </Button>
       )}
       {!!error && (
@@ -376,7 +410,7 @@ export function ProfileSettings() {
             void loadProfile(currentTarget);
           }}
         >
-          Reload saved preferences
+          {t("Reload saved preferences")}
         </Button>
       )}
     </Card>

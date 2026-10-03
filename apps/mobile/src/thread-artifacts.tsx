@@ -3,18 +3,20 @@ import { useEffect, useState } from "react";
 import { Image, Pressable, Text, View } from "react-native";
 import type { Artifact, BrowserSession } from "../../../packages/domain/src";
 import type { AgentArtifact, AgentTask } from "../../../packages/domain/src/agent";
-import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { ArtifactCard, TaskCard } from "./agent-ui";
+import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { BrowserThreadCard } from "./computer";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
+import { useI18n } from "./i18n";
 import { useWorkspace } from "./workspace";
 
 export function FileThreadCard({ file }: { file: Artifact }) {
+  const { t } = useI18n();
   const { open, api } = useWorkspace();
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Open attachment: ${file.name}`}
+      accessibilityLabel={t("Open attachment: {name}", { name: file.name })}
       onPress={() => open({ type: "file", file })}
       style={{ width: "100%", maxWidth: 440 }}
     >
@@ -45,7 +47,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
               </View>
             ))
           ) : (
-            <Text style={s.muted}>{attachmentLabel(file)} · Tap to open or download</Text>
+            <Text style={s.muted}>{t("{fileType} · Tap to open or download", { fileType: localizedAttachmentLabel(file, t) })}</Text>
           )}
         </View>
         <View style={[s.row, { gap: 13 }]}>
@@ -56,7 +58,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
             <Text numberOfLines={2} style={s.heading}>
               {file.name}
             </Text>
-            <Text style={s.muted}>{attachmentLabel(file)}</Text>
+            <Text style={s.muted}>{localizedAttachmentLabel(file, t)}</Text>
           </View>
           <ChevronRight size={18} color={colors.muted} />
         </View>
@@ -66,6 +68,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
 }
 /** Hydrates task-linked artifacts by ID on replay; signed URLs are never stored in messages. */
 export function TaskThreadCard({ task }: { task: AgentTask }) {
+  const { t } = useI18n();
   const { api } = useWorkspace();
   const [detail, setDetail] = useState<{
     artifacts: AgentArtifact[];
@@ -111,7 +114,7 @@ export function TaskThreadCard({ task }: { task: AgentTask }) {
       <ErrorNotice error={error} />
       {!!error && (
         <Button small onPress={() => setAttempt((value) => value + 1)}>
-          Reload task results
+          {t("Reload task results")}
         </Button>
       )}
     </View>

@@ -7,6 +7,7 @@ import {
 } from "../../../packages/domain/src/runtime";
 import { QuestionSubmission, questionAnswerError, questionOptionSpace } from "./interaction-state";
 import { CredentialRequestCard } from "./credential-request";
+import { useI18n } from "./i18n";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -17,6 +18,7 @@ export function InteractionCard({
   request: InteractionRequest;
   onAnswered?: () => void;
 }) {
+  const { t } = useI18n();
   const { api } = useWorkspace();
   const [current, setCurrent] = useState(request);
   const [values, setValues] = useState<QuestionAnswer>(() =>
@@ -66,7 +68,7 @@ export function InteractionCard({
   if (!questionSchema.safeParse(current.schema).success)
     return (
       <Card>
-        <ErrorNotice error="Use the trusted connection form for this request." />
+        <ErrorNotice error={t("Use the trusted connection form for this request.")} />
       </Card>
     );
   return (
@@ -179,12 +181,12 @@ export function InteractionCard({
         onPress={() => void submit()}
       >
         {current.status === "answered"
-          ? "Answer saved"
+          ? t("Answer saved")
           : current.status === "superseded"
-            ? "Question closed"
-            : "Send answer"}
+            ? t("Question closed")
+            : t("Send answer")}
       </Button>
-      <Text style={s.small}>Task {current.taskId} · Other tasks and chat remain available.</Text>
+      <Text style={s.small}>{t("Task {taskId} · Other tasks and chat remain available.", { taskId: current.taskId })}</Text>
     </Card>
   );
 }

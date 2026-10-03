@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, AppState, Text, View } from "react-native";
 import type { Artifact } from "../../../packages/domain/src";
+import { useI18n } from "./i18n";
 import { FileThreadCard } from "./thread-artifacts";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -35,6 +36,7 @@ export function resultFileIds(value: Record<string, unknown> | undefined): strin
 }
 /** Replay resolves by owner-bound ID; expiring signed URLs are never trusted from history. */
 export function FileToolCard({ result, loading }: { result: unknown; loading: boolean }) {
+  const { t } = useI18n();
   const { api } = useWorkspace();
   const value = mediaResult(result);
   const ids = resultFileIds(value).join(",");
@@ -76,21 +78,21 @@ export function FileToolCard({ result, loading }: { result: unknown; loading: bo
           {loading ? <ActivityIndicator color={colors.blueDark} /> : null}
           <Text style={s.heading}>
             {loading
-              ? "Working in your computer…"
+              ? t("Working on your computer…")
               : value?.status === "running"
-                ? "Job running"
+                ? t("Job running")
                 : value?.disabled
-                  ? "Tool unavailable"
+                  ? t("Tool unavailable")
                   : value?.error
-                    ? "Needs attention"
-                    : "Computer result"}
+                    ? t("Needs attention")
+                    : t("Computer result")}
           </Text>
           <Text selectable style={s.muted}>
             {String(
               value?.message ??
                 value?.error ??
                 value?.status ??
-                (ids ? "Loading your attachment…" : "Result saved in your workspace."),
+                (ids ? t("Loading your attachment…") : t("Result saved in your workspace.")),
             )}
           </Text>
           {typeof value?.stdout === "string" && !!value.stdout && (
@@ -108,7 +110,7 @@ export function FileToolCard({ result, loading }: { result: unknown; loading: bo
       <ErrorNotice error={error} />
       {!!error && (
         <Button small onPress={() => setRetry((value) => value + 1)}>
-          Reload attachment
+          {t("Reload attachment")}
         </Button>
       )}
     </View>

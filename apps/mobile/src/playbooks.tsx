@@ -2,11 +2,13 @@ import * as Crypto from "expo-crypto";
 import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import type { ProcedureVersion } from "../../../packages/domain/src/playbooks";
+import { useI18n } from "./i18n";
 import { messageStorage } from "./message-storage";
 import { Button, Card, ErrorNotice, Field, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function PlaybooksPanel() {
+  const { t } = useI18n();
   const { api, ask } = useWorkspace();
   const [values, setValues] = useState<ProcedureVersion[]>([]);
   const [selected, setSelected] = useState<ProcedureVersion>();
@@ -46,7 +48,10 @@ export function PlaybooksPanel() {
       );
       await messageStorage.write(key, "null");
       setStatus(
-        `${result.status === "queued" ? "Na fila" : result.status}: ${result.id}. Acompanhe em Tarefas.`,
+        t("{status}: {id}. Follow it in Tasks.", {
+          status: t(result.status),
+          id: result.id,
+        }),
       );
     } catch (error) {
       setError(String(error));
@@ -56,16 +61,15 @@ export function PlaybooksPanel() {
   }
   return (
     <Card style={{ gap: 10 }}>
-      <Text style={s.heading}>Procedimentos salvos</Text>
+      <Text style={s.heading}>{t("Saved procedures")}</Text>
       <Text style={s.muted}>
-        Depois de uma tarefa concluída, peça no chat: “guarde esse jeito de fazer como
-        procedimento”.
+        {t('After a task is done, ask in chat: "save this way of doing it as a procedure."')}
       </Text>
       <Button
         small
-        onPress={() => ask("Mostre meus procedimentos salvos e me ajude a escolher um.")}
+        onPress={() => ask(t("Show my saved procedures and help me choose one."))}
       >
-        Ver no chat
+        {t("Open in chat")}
       </Button>
       {values.map((value) => (
         <Button
@@ -99,7 +103,7 @@ export function PlaybooksPanel() {
             />
           ))}
           <Button busy={busy} onPress={() => void run()}>
-            Executar ou consultar pedido pendente
+            {t("Run or check pending request")}
           </Button>
         </View>
       )}

@@ -38,11 +38,12 @@ import type {
   CalendarEvent,
   EmailDraft,
 } from "../../../packages/domain/src";
-import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { ActionLogScreen } from "./action-log-screen";
+import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { API_URL } from "./api";
 import { localDateTime, zonedInstant } from "./date-time";
 import { McpConnections } from "./mcp-connections";
+import { useI18n } from "./i18n";
 import { useInlinePreview } from "./preview";
 import {
   Button,
@@ -72,6 +73,7 @@ function eventDate(event: CalendarEvent) {
   return event.allDay ? event.start : localDateTime(event.start, event.timeZone).date;
 }
 export function TodayScreen() {
+  const { t } = useI18n();
   const { workspace: w, navigate, open, ask } = useWorkspace();
   const wide = useWindowDimensions().width > 1180;
   const pending = w.actions.filter((a) => a.status === "awaiting_review");
@@ -97,7 +99,7 @@ export function TodayScreen() {
         <View style={{ flex: 1, gap: 15, zIndex: 1 }}>
           <View style={[s.row, { gap: 7 }]}>
             <Sparkles size={13} color={colors.blueDark} />
-            <Text style={[s.label, { color: colors.blueDark }]}>A little clarity, every day</Text>
+            <Text style={[s.label, { color: colors.blueDark }]}>{t("A little clarity, every day")}</Text>
           </View>
           <Text
             style={{
@@ -108,20 +110,22 @@ export function TodayScreen() {
               color: colors.text,
             }}
           >
-            Your day, with a little{"\n"}more room to breathe.
+            {t("Your day, with a little more room to breathe.")}
           </Text>
           <Text style={[s.muted, { maxWidth: 420, color: "#617680" }]}>
-            {events.length ? `${events.length} things on your calendar` : "Your calendar has room"}
-            {unread.length ? `, ${unread.length} unread emails` : ""}.{"\n"}Let’s make space for
-            what matters.
+            {events.length
+              ? t("{count} things on your calendar", { count: events.length })
+              : t("Your calendar has room")}
+            {unread.length ? `, ${t("{count} unread emails", { count: unread.length })}` : ""}.{"\n"}
+            {t("Let’s make space for what matters.")}
           </Text>
           <Button
-            onPress={() => ask("Help me plan my day")}
+            onPress={() => ask(t("Help me plan my day"))}
             icon={Sparkles}
             primary
             style={{ alignSelf: "flex-start", marginTop: 5 }}
           >
-            Plan my day
+            {t("Plan my day")}
           </Button>
         </View>
         {wide && (
@@ -162,7 +166,7 @@ export function TodayScreen() {
               ]}
             >
               <Check size={14} color="#739174" />
-              <Text style={s.small}>A lighter day</Text>
+              <Text style={s.small}>{t("A lighter day")}</Text>
             </View>
             <View
               style={[
@@ -180,7 +184,7 @@ export function TodayScreen() {
               ]}
             >
               <CalendarDays size={17} color={colors.blueDark} />
-              <Text style={s.small}>Everything, together</Text>
+              <Text style={s.small}>{t("Everything, together")}</Text>
             </View>
           </View>
         )}
@@ -188,7 +192,7 @@ export function TodayScreen() {
       <View style={{ flexDirection: "row", gap: 13, flexWrap: "wrap" }}>
         {[
           {
-            label: "UNREAD EMAILS",
+            label: "Unread emails",
             value: unread.length,
             note: "A fresh look at your inbox",
             icon: Mail,
@@ -196,7 +200,7 @@ export function TodayScreen() {
             tint: colors.sky,
           },
           {
-            label: "ON THE CALENDAR",
+            label: "On the calendar",
             value: events.length,
             note: "Make room for your priorities",
             icon: CalendarDays,
@@ -204,7 +208,7 @@ export function TodayScreen() {
             tint: colors.green,
           },
           {
-            label: "WAITING FOR YOU",
+            label: "Waiting for you",
             value: pending.length,
             note: "Your review keeps things moving",
             icon: ShieldCheck,
@@ -220,7 +224,7 @@ export function TodayScreen() {
           >
             <Card style={{ padding: 21, height: 126 }}>
               <View style={s.between}>
-                <Text style={[s.label, { fontSize: 9, letterSpacing: 1 }]}>{item.label}</Text>
+                <Text style={[s.label, { fontSize: 9, letterSpacing: 1 }]}>{t(item.label)}</Text>
                 <View
                   style={[
                     s.iconBox,
@@ -233,7 +237,7 @@ export function TodayScreen() {
               <Text style={{ fontSize: 29, color: colors.text, letterSpacing: -1, marginTop: -2 }}>
                 {String(item.value).padStart(2, "0")}
               </Text>
-              <Text style={[s.small, { fontSize: 10, marginTop: 3 }]}>{item.note}</Text>
+              <Text style={[s.small, { fontSize: 10, marginTop: 3 }]}>{t(item.note)}</Text>
             </Card>
           </Pressable>
         ))}
@@ -241,8 +245,8 @@ export function TodayScreen() {
       <View style={{ flexDirection: wide ? "row" : "column", gap: 22 }}>
         <Card style={{ flex: 1 }}>
           <SectionHeading
-            title="On your calendar"
-            action="Full calendar"
+            title={t("On your calendar")}
+            action={t("Full calendar")}
             onPress={() => navigate("calendar")}
           />
           {events.length ? (
@@ -250,8 +254,8 @@ export function TodayScreen() {
           ) : (
             <Empty
               icon={CalendarDays}
-              title="Some breathing room"
-              detail="No events scheduled today."
+              title={t("Some breathing room")}
+              detail={t("No events scheduled today.")}
             />
           )}
           <Pressable
@@ -268,13 +272,13 @@ export function TodayScreen() {
             ]}
           >
             <Plus size={15} color={colors.muted} />
-            <Text style={s.small}>Make time for something</Text>
+            <Text style={s.small}>{t("Make time for something")}</Text>
           </Pressable>
         </Card>
         <Card style={{ flex: 1 }}>
           <SectionHeading
-            title="From your inbox"
-            action="Open mail"
+            title={t("From your inbox")}
+            action={t("Open mail")}
             onPress={() => navigate("mail")}
           />
           {w.mail.length ? (
@@ -315,17 +319,17 @@ export function TodayScreen() {
           ) : (
             <Empty
               icon={Inbox}
-              title="Inbox is quiet"
-              detail="Connect Google to bring your messages here."
+              title={t("Inbox is quiet")}
+              detail={t("Connect Google to bring your messages here.")}
             />
           )}
         </Card>
       </View>
       <View style={{ flexDirection: wide ? "row" : "column", gap: 22 }}>
         <Card style={{ flex: 1, backgroundColor: "#F0F0E7" }}>
-          <SectionHeading title="A hand with the little things" />
+          <SectionHeading title={t("A hand with the little things")} />
           <Text style={[s.muted, { marginBottom: 15 }]}>
-            Start with a thought. We’ll take it from there.
+            {t("Start with a thought. We’ll take it from there.")}
           </Text>
           {[
             "What needs my attention today?",
@@ -334,21 +338,21 @@ export function TodayScreen() {
           ].map((prompt) => (
             <Pressable
               key={prompt}
-              onPress={() => ask(prompt)}
+              onPress={() => ask(t(prompt))}
               style={[
                 s.between,
                 { borderTopWidth: 1, borderTopColor: "#E1E2D9", paddingVertical: 13 },
               ]}
             >
-              <Text style={[s.text, { fontSize: 12 }]}>{prompt}</Text>
+              <Text style={[s.text, { fontSize: 12 }]}>{t(prompt)}</Text>
               <ArrowUpRight size={15} color={colors.muted} />
             </Pressable>
           ))}
         </Card>
         <Card style={{ flex: 1 }}>
           <SectionHeading
-            title={pending.length ? "Ready for your review" : "Recent activity"}
-            action="View all"
+            title={pending.length ? t("Ready for your review") : t("Recent activity")}
+            action={t("View all")}
             onPress={() => navigate("activity")}
           />
           {pending.length
@@ -358,7 +362,7 @@ export function TodayScreen() {
                   <LinkRow
                     key={a.id}
                     title={a.title}
-                    detail="Prepared · waiting for your approval"
+                    detail={t("Prepared · waiting for your approval")}
                     onPress={() => open({ type: "review", action: a })}
                     icon={ShieldCheck}
                     tint={colors.lavender}
@@ -379,7 +383,7 @@ export function TodayScreen() {
               ))}
           {!pending.length && !w.activity.length && (
             <Text style={s.muted}>
-              Your workspace is ready. Things you do here will appear in your activity.
+              {t("Your workspace is ready. Things you do here will appear in your activity.")}
             </Text>
           )}
         </Card>
@@ -418,6 +422,7 @@ export function AgendaRow({
   index?: number;
   neighbors?: CalendarEvent[];
 }) {
+  const { t } = useI18n();
   const { open } = useWorkspace();
   return (
     <Pressable
@@ -426,7 +431,7 @@ export function AgendaRow({
     >
       <View style={{ width: 65 }}>
         <Text style={[s.text, { fontSize: 11 }]}>
-          {e.allDay ? "All day" : timeLabel(e.start, e.timeZone)}
+          {e.allDay ? t("All day") : timeLabel(e.start, e.timeZone)}
         </Text>
         {!e.allDay && (
           <Text style={[s.small, { fontSize: 10 }]}>{timeLabel(e.end, e.timeZone)}</Text>
@@ -445,12 +450,12 @@ export function AgendaRow({
         {e.cache?.freshness !== "fresh" && e.cache && (
           <Text style={[s.small, { fontSize: 11 }]}>
             {e.cache.provenance === "unknown"
-              ? "Saved event · Google account unknown · verify before using"
-              : "Cached event · refresh needed"}
+              ? t("Saved event · Google account unknown · verify before using")
+              : t("Cached event · refresh needed")}
           </Text>
         )}
         <Text numberOfLines={1} style={[s.small, { fontSize: 11 }]}>
-          {e.location || (e.attendees.length ? `${e.attendees.length} attendees` : "Time for you")}
+          {e.location || (e.attendees.length ? t("{count} attendees", { count: e.attendees.length }) : t("Time for you"))}
         </Text>
       </View>
       <ChevronRight size={14} color={colors.muted} />
@@ -458,6 +463,7 @@ export function AgendaRow({
   );
 }
 export function MailScreen() {
+  const { t } = useI18n();
   const { workspace: w, api, open } = useWorkspace();
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState("all");
@@ -497,8 +503,8 @@ export function MailScreen() {
         >
           <Search size={16} color={colors.muted} />
           <TextInput
-            accessibilityLabel="Search mail"
-            placeholder="Search your inbox"
+            accessibilityLabel={t("Search mail")}
+            placeholder={t("Search your inbox")}
             placeholderTextColor={colors.muted}
             value={query}
             onChangeText={setQuery}
@@ -506,20 +512,20 @@ export function MailScreen() {
           />
         </View>
         <Button onPress={() => open({ type: "email" })} primary icon={Plus}>
-          Compose
+          {t("Compose")}
         </Button>
       </View>
       <ErrorNotice error={error} />
       <Card>
         <View style={[s.row, { gap: 10, marginBottom: 15, flexWrap: "wrap" }]}>
           <Button small primary={tab === "all"} onPress={() => setTab("all")}>
-            All messages
+            {t("All messages")}
           </Button>
           <Button small primary={tab === "unread"} onPress={() => setTab("unread")}>
-            Unread · {w.mail.filter((m) => m.unread).length}
+            {t("Unread · {count}", { count: w.mail.filter((m) => m.unread).length })}
           </Button>
           <Button small primary={tab === "drafts"} onPress={() => setTab("drafts")}>
-            Drafts · {drafts.length}
+            {t("Drafts · {count}", { count: drafts.length })}
           </Button>
         </View>
         {tab === "drafts" ? (
@@ -529,15 +535,15 @@ export function MailScreen() {
                 key={d.id}
                 icon={Mail}
                 title={d.subject}
-                detail={`To: ${d.to.join(", ")} · saved ${dateLabel(d.createdAt)}`}
+                detail={t("To: {recipients} · saved {date}", { recipients: d.to.join(", "), date: dateLabel(d.createdAt) })}
                 onPress={() => open({ type: "email", draft: d })}
               />
             ))
           ) : (
             <Empty
               icon={Mail}
-              title="A fresh page"
-              detail="Messages you save as drafts will be here when you’re ready."
+              title={t("A fresh page")}
+              detail={t("Messages you save as drafts will be here when you’re ready.")}
             />
           )
         ) : items.length ? (
@@ -564,7 +570,7 @@ export function MailScreen() {
                   <View style={[s.row, { gap: 4, marginTop: 2 }]}>
                     <FileText size={12} color={colors.muted} />
                     <Text style={s.small}>
-                      {m.attachments.length} attachment{m.attachments.length > 1 ? "s" : ""}
+                      {t("{count} attachments", { count: m.attachments.length })}
                     </Text>
                   </View>
                 )}
@@ -579,11 +585,11 @@ export function MailScreen() {
         ) : (
           <Empty
             icon={Inbox}
-            title={query ? "No matching messages" : "Nothing in your inbox"}
+            title={query ? t("No matching messages") : t("Nothing in your inbox")}
             detail={
               query
-                ? "Try a different name or subject."
-                : "Connect Google in Connections to read your mail here."
+                ? t("Try a different name or subject.")
+                : t("Connect Google in Connections to read your mail here.")
             }
           />
         )}
@@ -603,6 +609,7 @@ function plusDays(date: string, days: number) {
   return value.toISOString().slice(0, 10);
 }
 export function CalendarScreen() {
+  const { t, locale } = useI18n();
   const { workspace: w, api, open } = useWorkspace();
   const [date, setDate] = useState(todayDate());
   const [all, setAll] = useState(false);
@@ -708,26 +715,26 @@ export function CalendarScreen() {
       <View style={[s.between, { gap: 12, flexWrap: "wrap" }]}>
         <View style={[s.row, { gap: 8 }]}>
           <Text style={s.title}>
-            {anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+            {anchor.toLocaleDateString(locale === "pt-BR" ? "pt-BR" : "en-US", { month: "long", year: "numeric" })}
           </Text>
           <IconButton
             icon={ChevronLeft}
-            label="Previous week"
+            label={t("Previous week")}
             onPress={() => setDate(plusDays(date, -7))}
           />
           <IconButton
             icon={ChevronRight}
-            label="Next week"
+            label={t("Next week")}
             onPress={() => setDate(plusDays(date, 7))}
           />
         </View>
         <Button primary icon={Plus} disabled={!writable} onPress={newEvent}>
-          New event
+          {t("New event")}
         </Button>
       </View>
       {calendars.length > 0 && (
         <View style={{ gap: 9 }}>
-          <Text style={s.label}>Your calendars</Text>
+          <Text style={s.label}>{t("Your calendars")}</Text>
           <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
             {calendars.map((c) => (
               <Button
@@ -766,7 +773,7 @@ export function CalendarScreen() {
                   backgroundColor: key === date ? colors.sky : "transparent",
                 }}
               >
-                <Text style={s.small}>{day.toLocaleDateString("en-US", { weekday: "short" })}</Text>
+                <Text style={s.small}>{day.toLocaleDateString(locale === "pt-BR" ? "pt-BR" : "en-US", { weekday: "short" })}</Text>
                 <Text
                   style={[
                     s.title,
@@ -796,26 +803,26 @@ export function CalendarScreen() {
         <View style={[s.between, { gap: 10, flexWrap: "wrap" }]}>
           <Text style={s.heading}>
             {all
-              ? "The next 30 days"
+              ? t("The next 30 days")
               : dateLabel(`${date}T12:00:00`, { weekday: "long", month: "long", day: "numeric" })}
           </Text>
           <Button small onPress={() => setAll(!all)}>
-            {all ? "Selected day" : "Next 30 days"}
+            {all ? t("Selected day") : t("Next 30 days")}
           </Button>
         </View>
         <Text style={[s.small, { marginTop: 7, marginBottom: 13 }]}>
-          {selected?.name || "Your calendar"} · {zone}. Events show their own time zone.
+          {t("{calendar} · {zone}. Events show their own time zone.", { calendar: selected?.name || t("Your calendar"), zone })}
         </Text>
         <ErrorNotice error={error} />
         {!!error && (
           <Button small onPress={() => setRetry(retry + 1)}>
-            Try again
+            {t("Try again")}
           </Button>
         )}
         {loading ? (
           <View style={[s.row, { gap: 10, paddingVertical: 35, justifyContent: "center" }]}>
             <ActivityIndicator size="small" color={colors.blueDark} />
-            <Text style={s.muted}>Checking your calendar…</Text>
+            <Text style={s.muted}>{t("Checking your calendar…")}</Text>
           </View>
         ) : events.length ? (
           events.map((e, i) => (
@@ -829,16 +836,16 @@ export function CalendarScreen() {
           !error && (
             <Empty
               icon={CalendarDays}
-              title="A little open space"
+              title={t("A little open space")}
               detail={
                 all
-                  ? "There’s nothing scheduled for the next 30 days."
-                  : "There’s nothing on the calendar for this day."
+                  ? t("There’s nothing scheduled for the next 30 days.")
+                  : t("There’s nothing on the calendar for this day.")
               }
             >
               {writable && (
                 <Button icon={Plus} onPress={newEvent}>
-                  Add an event
+                  {t("Add an event")}
                 </Button>
               )}
             </Empty>
@@ -849,6 +856,7 @@ export function CalendarScreen() {
   );
 }
 export function BrowserScreen() {
+  const { t } = useI18n();
   const previewVisible = useInlinePreview();
   const { workspace: w, api, refresh, open } = useWorkspace();
   const [url, setUrl] = useState("");
@@ -874,13 +882,13 @@ export function BrowserScreen() {
         <View style={[s.row, { gap: 12, marginBottom: 15 }]}>
           <Globe2 size={22} color={colors.blueDark} />
           <View>
-            <Text style={s.heading}>A place for your open tabs</Text>
-            <Text style={s.muted}>Browse in a private, persistent workspace session.</Text>
+            <Text style={s.heading}>{t("A place for your open tabs")}</Text>
+            <Text style={s.muted}>{t("Browse in a private, persistent workspace session.")}</Text>
           </View>
         </View>
         <View style={[s.row, { gap: 10 }]}>
           <TextInput
-            accessibilityLabel="Website address"
+            accessibilityLabel={t("Website address")}
             value={url}
             onChangeText={setUrl}
             onSubmitEditing={() => void create()}
@@ -896,13 +904,13 @@ export function BrowserScreen() {
             disabled={!url.trim()}
             onPress={() => void create()}
           >
-            Open session
+            {t("Open session")}
           </Button>
         </View>
         <ErrorNotice error={error} />
       </Card>
       <Card>
-        <SectionHeading title="Browser sessions" />
+        <SectionHeading title={t("Browser sessions")} />
         {w.browsers.length ? (
           w.browsers.map((b) => (
             <Pressable
@@ -920,12 +928,12 @@ export function BrowserScreen() {
                   <Globe2 size={20} color={colors.blueDark} />
                 </View>
                 <View style={{ flex: 1, gap: 4 }}>
-                  <Text style={s.heading}>{b.title || "Browser session"}</Text>
+                  <Text style={s.heading}>{b.title || t("Browser session")}</Text>
                   <Text style={s.muted} numberOfLines={1}>
                     {b.url}
                   </Text>
                 </View>
-                <Chip tint={b.status === "active" ? colors.green : colors.canvas}>{b.status}</Chip>
+                <Chip tint={b.status === "active" ? colors.green : colors.canvas}>{t(b.status)}</Chip>
                 <ArrowUpRight size={17} color={colors.muted} />
               </View>
               {previewVisible && !!b.previewUrl && (
@@ -945,8 +953,8 @@ export function BrowserScreen() {
         ) : (
           <Empty
             icon={Globe2}
-            title="Start with a website"
-            detail="Open a session above to keep your browsing together. Live previews appear when the browser worker is configured."
+            title={t("Start with a website")}
+            detail={t("Open a session above to keep your browsing together. Live previews appear when the browser worker is configured.")}
           />
         )}
       </Card>
@@ -954,6 +962,7 @@ export function BrowserScreen() {
   );
 }
 export function FilesScreen() {
+  const { t } = useI18n();
   const { workspace: w, api, refresh, open } = useWorkspace();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -971,7 +980,7 @@ export function FilesScreen() {
       if (Platform.OS === "web") {
         const form = new FormData();
         if (!file.file)
-          throw new Error("The selected file could not be read. Please choose it again.");
+          throw new Error(t("The selected file could not be read. Please choose it again."));
         form.append("file", file.file, file.name);
         artifact = await api.request<Artifact>("/api/files", form);
       } else {
@@ -997,10 +1006,10 @@ export function FilesScreen() {
     <View style={{ gap: 20 }}>
       <View style={s.between}>
         <Text style={[s.muted, { flex: 1, marginRight: 15 }]}>
-          Documents, with a little room to work.
+          {t("Documents, with a little room to work.")}
         </Text>
         <Button primary icon={Upload} busy={busy} onPress={() => void upload()}>
-          Import file
+          {t("Import file")}
         </Button>
       </View>
       <ErrorNotice error={error} />
@@ -1034,7 +1043,7 @@ export function FilesScreen() {
                 >
                   <View style={[s.row, { gap: 5, marginBottom: 15 }]}>
                     <FileText size={13} color={colors.blueDark} />
-                    <Text style={{ fontSize: 7, color: colors.blueDark }}>DOCUMENT</Text>
+                    <Text style={{ fontSize: 7, color: colors.blueDark }}>{t("DOCUMENT")}</Text>
                   </View>
                   {[100, 75, 90, 95, 60].map((width, i) => (
                     <View
@@ -1050,7 +1059,7 @@ export function FilesScreen() {
                   ))}
                 </View>
                 <View style={{ position: "absolute", bottom: 12, right: 14 }}>
-                  <Chip>{f.name.split(".").at(-1)?.toUpperCase() || "FILE"}</Chip>
+                  <Chip>{f.name.split(".").at(-1)?.toUpperCase() || t("FILE")}</Chip>
                 </View>
               </View>
               <View style={{ padding: 21, gap: 6 }}>
@@ -1058,10 +1067,10 @@ export function FilesScreen() {
                   {f.name}
                 </Text>
                 <Text style={s.small}>
-                  {attachmentLabel(f)} · {Math.max(1, Math.round(f.size / 1024))} KB
+                  {localizedAttachmentLabel(f, t)}
                 </Text>
                 <View style={[s.between, { marginTop: 9 }]}>
-                  <Chip>{f.source}</Chip>
+                  <Chip>{t(f.source)}</Chip>
                   <Text style={s.small}>{dateLabel(f.createdAt)}</Text>
                 </View>
               </View>
@@ -1073,8 +1082,8 @@ export function FilesScreen() {
         <Card>
           <Empty
             icon={FileText}
-            title="Your documents live here"
-            detail="Import an Office document, PDF, image, audio or video. Read supported previews and save or share a copy."
+            title={t("Your documents live here")}
+            detail={t("Import an Office document, PDF, image, audio or video. Read supported previews and save or share a copy.")}
           />
         </Card>
       )}
@@ -1082,6 +1091,7 @@ export function FilesScreen() {
   );
 }
 export function ActivityScreen() {
+  const { t } = useI18n();
   const { workspace: w, open } = useWorkspace();
   const [filter, setFilter] = useState("all");
   const pending = w.actions.filter((a) => a.status === "awaiting_review");
@@ -1090,19 +1100,19 @@ export function ActivityScreen() {
     <View style={{ gap: 20 }}>
       <View style={[s.row, { gap: 10 }]}>
         <Button small primary={filter === "all"} onPress={() => setFilter("all")}>
-          All activity
+          {t("All activity")}
         </Button>
         <Button small primary={filter === "review"} onPress={() => setFilter("review")}>
-          Needs review · {pending.length}
+          {t("Needs review · {count}", { count: pending.length })}
         </Button>
         <Button small primary={filter === "log"} onPress={() => setFilter("log")}>
-          Action log
+          {t("Action log")}
         </Button>
       </View>
       {filter === "log" && <ActionLogScreen />}
       {filter !== "log" && actions.length > 0 && (
         <Card>
-          <SectionHeading title="Your actions" />
+          <SectionHeading title={t("Your actions")} />
           {actions.map((a) => (
             <Pressable
               key={a.id}
@@ -1140,7 +1150,7 @@ export function ActivityScreen() {
                       : colors.canvas
                 }
               >
-                {a.status.replace(/_/g, " ")}
+                {t(a.status.replace(/_/g, " "))}
               </Chip>
               <ChevronRight size={16} color={colors.muted} />
             </Pressable>
@@ -1149,7 +1159,7 @@ export function ActivityScreen() {
       )}
       {filter === "all" && (
         <Card>
-          <SectionHeading title="Workspace timeline" />
+          <SectionHeading title={t("Workspace timeline")} />
           {w.activity.length ? (
             w.activity.map((a, i) => (
               <View
@@ -1177,14 +1187,14 @@ export function ActivityScreen() {
                     {dateLabel(a.date)} · {timeLabel(a.date)}
                   </Text>
                 </View>
-                <Chip>{a.status}</Chip>
+              <Chip>{t(a.status)}</Chip>
               </View>
             ))
           ) : (
             <Empty
               icon={Clock3}
-              title="The beginning of something lighter"
-              detail="Your actions and their results will be recorded here."
+              title={t("The beginning of something lighter")}
+              detail={t("Your actions and their results will be recorded here.")}
             />
           )}
         </Card>
@@ -1193,8 +1203,8 @@ export function ActivityScreen() {
         <Card>
           <Empty
             icon={ShieldCheck}
-            title="You’re all caught up"
-            detail="When an email or calendar change needs your approval, it will appear here."
+            title={t("You’re all caught up")}
+            detail={t("When an email or calendar change needs your approval, it will appear here.")}
           />
         </Card>
       )}
@@ -1202,6 +1212,7 @@ export function ActivityScreen() {
   );
 }
 export function ConnectionsScreen({ query = "" }: { query?: string }) {
+  const { t } = useI18n();
   const { workspace: w, api, refresh, notify, open } = useWorkspace();
   const [selected, setSelected] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -1216,10 +1227,10 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
       );
       if (result.url) {
         await Linking.openURL(result.url);
-        notify("Finish connecting in your browser, then refresh your workspace.");
+        notify(t("Finish connecting in your browser, then refresh your workspace."));
       } else {
         await refresh();
-        notify("Local Google data is ready.");
+        notify(t("Local Google data is ready."));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1233,7 +1244,7 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
     try {
       await api.request("/api/google/disconnect", {});
       await refresh();
-      notify("Google disconnected.");
+      notify(t("Google disconnected."));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1268,7 +1279,7 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
       connected: false,
       group: "openbot",
     },
-  ].filter((row) => `${row.name} ${row.group}`.toLowerCase().includes(query.toLowerCase()));
+  ].filter((row) => `${row.name} ${t(row.name)} ${row.group}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <View style={{ gap: 22 }}>
       <McpConnections query={query} />
@@ -1280,16 +1291,16 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
             <Text style={[s.small, { marginLeft: 12 }]}>
               {isConnected
                 ? w.mode === "sample"
-                  ? "Your connections"
-                  : "Connected"
-                : "Available integrations"}
+                  ? t("Your connections")
+                  : t("Connected")
+                : t("Available integrations")}
             </Text>
             <View style={{ paddingHorizontal: 16, borderRadius: 23, backgroundColor: "#F3F4F5" }}>
               {group.map((row, index) => (
                 <Pressable
                   key={row.id}
                   accessibilityRole="button"
-                  accessibilityLabel={`Manage ${row.name}`}
+                  accessibilityLabel={t("Manage {name}", { name: t(row.name) })}
                   onPress={() =>
                     row.group === "browser" ? open({ type: "computer" }) : setSelected(row.group)
                   }
@@ -1315,9 +1326,9 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                   >
                     <row.icon size={23} color={row.color} />
                   </View>
-                  <Text style={[s.text, { flex: 1 }]}>{row.name}</Text>
+                  <Text style={[s.text, { flex: 1 }]}>{t(row.name)}</Text>
                   {row.connected && row.group === "google" && w.mode === "sample" && (
-                    <Text style={s.small}>Local data</Text>
+                    <Text style={s.small}>{t("Local data")}</Text>
                   )}
                   {row.connected ? (
                     <ChevronRight size={18} color="#A4A7AA" />
@@ -1328,7 +1339,7 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                         color: row.group === "google" ? colors.blueDark : colors.muted,
                       }}
                     >
-                      {row.group === "google" ? "Connect" : "Setup"}
+                      {row.group === "google" ? t("Connect") : t("Setup")}
                     </Text>
                   )}
                 </Pressable>
@@ -1337,71 +1348,70 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
           </View>
         );
       })}
-      {!rows.length && <Text style={s.muted}>No matching connectors.</Text>}
+      {!rows.length && <Text style={s.muted}>{t("No matching connectors.")}</Text>}
       {selected && (
         <Sheet
-          title={selected === "google" ? "Google connections" : "OpenBot"}
-          subtitle={selected === "google" ? google?.account : "A computer for your agent"}
+          title={selected === "google" ? t("Google connections") : t("OpenBot")}
+          subtitle={selected === "google" ? google?.account : t("A computer for your agent")}
           onClose={() => setSelected(undefined)}
         >
           {selected === "google" ? (
             <View style={{ gap: 18 }}>
               <Text style={s.muted}>
-                Bring Gmail and Google Calendar into your conversations. Choose read access, then
-                enable sending and editing when you need it.
+                {t("Bring Gmail and Google Calendar into your conversations. Choose read access, then enable sending and editing when you need it.")}
               </Text>
               <View style={[s.row, { gap: 7, flexWrap: "wrap" }]}>
                 {google?.capabilities.map((cap) => (
-                  <Chip key={cap}>{capabilityLabel(cap)}</Chip>
+                  <Chip key={cap}>{t(capabilityLabel(cap))}</Chip>
                 ))}
               </View>
               <ErrorNotice error={error} />
               <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
-                Connect Google
+                {t("Connect Google")}
               </Button>
               <Button busy={busy} onPress={() => void connect("write")}>
-                Enable sending & editing
+                {t("Enable sending & editing")}
               </Button>
               {connected && (
                 <Button busy={busy} danger onPress={() => void disconnect()}>
-                  Disconnect Google
+                  {t("Disconnect Google")}
                 </Button>
               )}
               <SettingsLine
-                label="Environment"
-                value={w.mode === "sample" ? "Local · example data" : "Live workspace"}
+                label={t("Environment")}
+                value={w.mode === "sample" ? t("Local · example data") : t("Live workspace")}
               />
               <SettingsLine
-                label="Assistant"
+                label={t("Assistant")}
                 value={
                   w.runtime.provider === "sample"
-                    ? "Guided workflows"
+                    ? t("Guided workflows")
                     : w.runtime.configured
-                      ? "Model connected"
-                      : "Model not configured"
+                      ? t("Model connected")
+                      : t("Model not configured")
                 }
               />
               <SettingsLine
-                label="Rich Threads"
+                label={t("Rich Threads")}
                 value={
                   w.runtime.threadStorage === "intelligence"
                     ? "CopilotKit Intelligence"
                     : w.runtime.richThreads
-                      ? "Saved on your server"
-                      : "Not connected"
+                      ? t("Saved on your server")
+                      : t("Not connected")
                 }
               />
               {w.runtime.modelRouting?.active && (
                 <SettingsLine
-                  label="Provedor ativo"
-                  value={`${w.runtime.modelRouting.active.provider} · ${w.runtime.modelRouting.active.model}${w.runtime.modelRouting.active.fallback ? " · alternativo" : ""}`}
+                  label={t("Active provider")}
+                  value={`${w.runtime.modelRouting.active.provider} · ${w.runtime.modelRouting.active.model}${w.runtime.modelRouting.active.fallback ? ` · ${t("fallback")}` : ""}`}
                 />
               )}
               {w.runtime.modelRouting?.models
                 .filter((model) => model.failures > 0 && model.message)
                 .map((model) => (
                   <Text key={model.model} style={s.small}>
-                    Último aviso · {model.model}: {model.message}
+                    {t("Last notice · {model}: {message}", { model: model.model, message: model.message ?? "" })}
                   </Text>
                 ))}
               <Button
@@ -1409,18 +1419,16 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                 icon={ArrowDownToLine}
                 onPress={() => void refresh().catch((e) => setError(String(e)))}
               >
-                Refresh connections
+                {t("Refresh connections")}
               </Button>
             </View>
           ) : (
             <View style={{ gap: 14 }}>
               <Text style={s.text}>
-                The OpenBot adapter is available in this open-source project. A live OpenBot backend
-                has not been configured.
+                {t("The OpenBot adapter is available in this open-source project. A live OpenBot backend has not been configured.")}
               </Text>
               <Text style={s.muted}>
-                Your current computer uses OkamiBot’s persistent Chromium worker. OpenBot
-                integration will expand the execution backend while keeping this interface.
+                {t("Your current computer uses OkamiBot’s persistent Chromium worker. OpenBot integration will expand the execution backend while keeping this interface.")}
               </Text>
             </View>
           )}

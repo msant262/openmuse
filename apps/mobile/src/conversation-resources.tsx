@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import type { Artifact, BrowserSession } from "../../../packages/domain/src";
+import { useI18n } from "./i18n";
 import { FileThreadCard } from "./thread-artifacts";
 import { Button, Card, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -43,6 +44,7 @@ export function ConversationResourceLibrary({
   onAnnotateFile: (resource: ConversationFileResource) => void;
   onAnnotateFrame: (frame: ConversationFrame) => void;
 }) {
+  const { t } = useI18n();
   const { api } = useWorkspace();
   const [library, setLibrary] = useState<Library>();
   const [error, setError] = useState("");
@@ -77,9 +79,9 @@ export function ConversationResourceLibrary({
   return (
     <Card style={{ gap: 12, padding: 14 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-        <Text style={[s.heading, { flex: 1 }]}>Arquivos e sessões</Text>
+        <Text style={[s.heading, { flex: 1 }]}>{t("Files and sessions")}</Text>
         <Button small disabled={loading} onPress={() => void reload()}>
-          Atualizar
+          {t("Refresh")}
         </Button>
       </View>
       <ErrorNotice error={error} />
@@ -88,8 +90,8 @@ export function ConversationResourceLibrary({
           <FileThreadCard file={resource.file} />
           <Text style={s.small}>
             {resource.availableOffline
-              ? "Publicado no VPS · disponível offline"
-              : "Conteúdo indisponível"}
+              ? t("Published on VPS · available offline")
+              : t("Content unavailable")}
             {resource.version ? ` · versão ${resource.version.slice(0, 12)}` : ""}
           </Text>
           {resource.origins.map((origin) => (
@@ -98,10 +100,10 @@ export function ConversationResourceLibrary({
               style={s.muted}
             >
               {origin.kind === "conversation"
-                ? `Anexado na conversa · ${origin.text.slice(0, 100)}`
+                ? t("Attached in conversation · {text}", { text: origin.text.slice(0, 100) })
                 : origin.kind === "task"
-                  ? `Resultado da tarefa · ${origin.title}`
-                  : `Captura marcada na mensagem · ${origin.comment}`}
+                  ? t("Task result · {title}", { title: origin.title })
+                  : t("Capture marked in message · {comment}", { comment: origin.comment })}
             </Text>
           ))}
           <Button
@@ -110,13 +112,13 @@ export function ConversationResourceLibrary({
             onPress={() => onAnnotateFile(resource)}
           >
             {resource.file.mimeType.startsWith("image/")
-              ? "Marcar região da imagem"
-              : "Citar arquivo"}
+              ? t("Mark an image region")
+              : t("Quote file")}
           </Button>
         </View>
       ))}
       {library && !library.files.length && (
-        <Text style={s.muted}>Nenhum arquivo ligado a esta conversa ainda.</Text>
+        <Text style={s.muted}>{t("No files are linked to this conversation yet.")}</Text>
       )}
       {library?.sessions.map(({ browser, state, taskTitle, taskId }) => (
         <View key={`${taskId}:${browser.id}`} style={{ gap: 4, paddingVertical: 7 }}>
@@ -126,25 +128,25 @@ export function ConversationResourceLibrary({
           </Text>
           <Text style={s.small}>
             {state === "expired"
-              ? "Sessão expirada · abra uma nova sessão para continuar"
+              ? t("Session expired · open a new session to continue")
               : state === "offline"
-                ? "Lenovo offline · arquivos publicados no VPS continuam disponíveis"
+                ? t("Lenovo offline · files published on the VPS remain available")
                 : state === "active"
-                  ? "Sessão ativa"
-                  : "Sessão em pausa"}
+                  ? t("Active session")
+                  : t("Session paused")}
             {` · ${taskTitle}`}
           </Text>
         </View>
       ))}
       {library?.frameAvailable && (
         <Button small disabled={loading} onPress={() => void markDesktopFrame()}>
-          Marcar região da tela atual
+          {t("Mark a region of the current screen")}
         </Button>
       )}
       {library && !library.sessions.length && !library.frameAvailable && (
-        <Text style={s.muted}>Nenhuma sessão de navegador ativa ou desktop conectado.</Text>
+        <Text style={s.muted}>{t("No active browser session or connected desktop.")}</Text>
       )}
-      {loading && <Text style={s.muted}>Atualizando arquivos e sessões…</Text>}
+      {loading && <Text style={s.muted}>{t("Refreshing files and sessions…")}</Text>}
     </Card>
   );
 }
