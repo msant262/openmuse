@@ -48,7 +48,7 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
   const [visited, setVisited] = useState<Selection[]>([]);
   const [mainId, setMainId] = useState("local");
   const [loading, setLoading] = useState(enabled);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string | { key: string; detail: string }>("");
   const [attempt, setAttempt] = useState(0);
   const selectionVersion = useRef(0);
   useEffect(() => {
@@ -69,7 +69,8 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
         }
       })
       .catch((cause) => {
-        if (active) setError(`${t("Conversation drafts could not be restored:")} ${String(cause)}`);
+        if (active)
+          setError({ key: "Conversation drafts could not be restored:", detail: String(cause) });
       });
     // Restore the device's choice before a fast server response can persist a default.
     void restoration
@@ -90,7 +91,7 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
     };
-  }, [api, enabled, attempt, t]);
+  }, [api, enabled, attempt]);
   function select(next: Selection) {
     selectionVersion.current++;
     setSelection(next);
@@ -102,9 +103,9 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
     void messageStorage
       .write(`${api.identityKey}\nthread-selection`, JSON.stringify({ mainId, selection, visited }))
       .catch((cause) =>
-        setError(`${t("Conversation selection could not be saved:")} ${String(cause)}`),
+        setError({ key: "Conversation selection could not be saved:", detail: String(cause) }),
       );
-  }, [api, enabled, loading, mainId, selection, visited, t]);
+  }, [api, enabled, loading, mainId, selection, visited]);
   return (
     <ThreadContext.Provider
       value={{
@@ -117,7 +118,7 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
         mainId,
         visited,
         loading,
-        error,
+        error: typeof error === "string" ? error : `${t(error.key)} ${error.detail}`,
         retry: () => setAttempt((n) => n + 1),
         selection,
         select,
