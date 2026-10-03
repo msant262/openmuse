@@ -281,3 +281,27 @@ test("a directive recovers a delivered text plan as an artifact owned by the new
   );
   assert.equal((await server.db.list("owner", "actions")).length, 0);
 });
+
+test("a completed direct model response delivers an explicitly requested text plan without a finish tool call", async (t) => {
+  await modelFixture(t, () => undefined, { text: () => textPlan });
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await server.agent.createTask("owner", { kind: "plan", prompt: textPlanPrompt });
+  await server.agent.worker.tick();
+  const detail = await server.agent.detail("owner", task.id);
+  assert.equal(detail.task.status, "succeeded", detail.task.question);
+  assert.equal(detail.task.completion?.status, "verified");
+  assert.equal(detail.artifacts.length, 1);
+  assert.equal(detail.artifacts[0].data.text, textPlan);
+  assert.equal(detail.artifacts[0].revision, 0);
+  assert.equal(detail.operations.length, 0);
+});
+
+test("a late transport failure cannot publish a direct model text plan as a completed delivery", async (t) => {
+  await modelFixture(t, () => undefined, { text: () => textPlan, lateFailure: () => true });
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await server.agent.createTask("owner", { kind: "plan", prompt: textPlanPrompt });
+  await server.agent.worker.tick();
+  const detail = await server.agent.detail("owner", task.id);
+  assert.notEqual(detail.task.status, "succeeded");
+  assert.equal(detail.artifacts.length, 0);
+});

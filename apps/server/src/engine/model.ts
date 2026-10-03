@@ -31,6 +31,7 @@ import {
   taskOperationId,
 } from "./task-journal.ts";
 import { TaskValidityExpiredError } from "./task-timing.ts";
+import { textPlanDelivery } from "./task-verification.ts";
 import type { TaskContext } from "./worker.ts";
 
 export async function executeModelTask(
@@ -1084,6 +1085,10 @@ export async function executeModelTask(
       ...(providerCheckpoint.retryAt ? { nextRunAt: providerCheckpoint.retryAt } : {}),
     };
   if (runError && !outcome) throw new Error(runError);
+  // A complete text response can itself be the requested plan delivery. Use
+  // the same owned artifact and evidence checks as an explicit finish call.
+  if (!outcome && !reachedStepLimit && textPlanDelivery(task, text))
+    outcome = await service.finish(task, ctx, text, owner);
   if (outcome)
     return { ...outcome, state: { ...task.state, ...outcome.state, providerCheckpoint: null } };
   if (text) await ctx.event("step", "Agent update", text.slice(0, 12000));
