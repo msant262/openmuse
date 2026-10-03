@@ -9,6 +9,7 @@ export const avatarCharacterPtBR: Record<string, string> = {
   "Preview your choice": "Prévia da sua escolha",
   "A familiar face, made for you": "Um rosto familiar, feito para você",
   Responding: "Respondendo",
+  Working: "Trabalhando",
   "Your companion is applied. Its portrait stays visible while animations are created.":
     "Seu companheiro já está aplicado. O retrato continua visível enquanto as animações são criadas.",
   "Describe your companion": "Descreva seu companheiro",
