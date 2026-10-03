@@ -8,7 +8,7 @@ resultados observados, sem equiparar testes com fixtures a contas reais.
 **Acesso ao produto:** [primeira entrada pelo navegador e Android](FIRST-ACCESS.md).
 A raiz HTTPS agora serve a interface web; `/api` e `/executor` preservam o backend.
 O export web foi reconstruído com cache limpo e URL HTTPS de produção. A revisão
-atual também atualizou a API para oferecer criação persistente de companheiros.
+visual atual preserva a API que já oferece criação persistente de companheiros.
 
 Atualização após o primeiro aceite real: o domínio público
 `https://app.okamibot.cloud` está acessível via Cloudflare Tunnel, sem Tailscale no
@@ -30,8 +30,8 @@ atendiam ao acabamento, movimento nem à criação livre exigidos. O
 [registro anterior](superpowers/plans/2026-10-03-muse-experience.md) é histórico;
 não representa aceite visual.
 
-A correção atual usa **web e Android `360b60d`**, com web em
-`/opt/okami-web/releases/360b60d-public`, e **API `32a1ae5`**, imagem
+A correção dos avatares usou **web e Android `360b60d`**, com web preservada para
+rollback em `/opt/okami-web/releases/360b60d-public`, e **API `32a1ae5`**, imagem
 `openmuse-server:product-32a1ae5`. O novo estúdio transforma uma descrição livre
 em quatro imagens reais, aplica a opção escolhida e gera vídeos de repouso,
 trabalho e resposta. A direção de arte de pelúcia vale para qualquer personagem;
@@ -56,8 +56,46 @@ dos arquivos privados de credenciais. Referências, limites e evidências:
 [plano da correção](superpowers/plans/2026-10-03-muse-fidelity-correction.md),
 `artifacts/muse-fidelity/` e `artifacts/android/muse-fidelity-release/evidence/`.
 
-As verificações Node foram executadas em dois lotes: 431/432 e 519/519. A única
-falha era o harness do visualizador desktop, que precisava reconhecer imports
+O usuário **aprovou os avatares**, mas rejeitou a interface da revisão anterior.
+A nova interface usa **web e Android `f4eec06`**, publicada em
+`/opt/okami-web/releases/f4eec06-public`; a **API continua em `32a1ae5`**, sem
+reinício ou alteração do pipeline de geração. Arte, renderizador, animações e
+seleção salva do companheiro foram preservados.
+
+A [auditoria de referências](superpowers/research/2026-10-03-muse-interface-reference.md)
+e o [plano da interface](superpowers/plans/2026-10-03-muse-interface-correction.md)
+registram as telas observadas e as adaptações. A implementação inclui janela de
+configurações desktop de 760×570 com categorias, navegação móvel por categoria,
+biblioteca com prévias reais, Feed, Ideias, Metas, menus de mensagem e detalhes
+de tarefa com histórico lateral. O painel móvel do agente ocupa a tela inteira.
+O diálogo separado de personalização é uma adaptação do app: a referência do
+Muse cria personagens pela conversa. Tema escuro e controles específicos de
+conta/cobrança da Meta não foram implementados nesta revisão.
+
+A verificação integrada passou **139/139 testes de interface/comportamento**,
+incluindo o teste real Playwright do visualizador, além de TypeScript e Biome
+sem erros em 508 arquivos. A correção final da altura do compositor foi
+conferida no navegador, inclusive após apagar um rascunho longo. Capturas desktop
+e móvel, geometria, ausência de overflow, preservação do rascunho e reprodução
+dos três estados estão em `artifacts/muse-interface/verification/`.
+A galeria local `artifacts/muse-interface/comparison.html` coloca referência e
+implementação lado a lado. Esses resultados não equivalem à aprovação visual
+do usuário nem comprovam identidade pixel a pixel.
+
+A publicação pública da web entregou o bundle `index-37ad71ba810714e90ac1bcf8f5987304.js`
+com SHA256 `ffa4466701dbc97b73c6556c94b2df93913a513bd17423006ac39308d8c507f2`,
+idêntico ao build local. Health respondeu 200, API sem sessão 401 e executor e
+manutenção 404. Recibos: `artifacts/muse-interface/web-build.json` e
+`artifacts/muse-interface/public-web-checks.json`.
+O ensaio autenticado no domínio público abriu configurações, conectores,
+personalização e biblioteca em desktop/móvel, com reprodução do companheiro
+atual, zero erros de página e nenhum pedido de alteração de conteúdo. As sessões
+temporárias próprias foram revogadas ao terminar.
+Recibo final: `artifacts/muse-interface/verification/public-ui-checks.json`.
+
+As verificações Node da correção anterior dos avatares foram executadas em dois
+lotes: 431/432 e 519/519. A única falha era o harness do visualizador desktop, que
+precisava reconhecer imports
 MP4 e a URL Expo; foi corrigida e o ensaio real com Playwright passou. Após as
 últimas alterações, geração/renderização/visualizador passaram 19/19, estúdio
 11/11, idioma 4/4 e branding 1/1. TypeScript mobile/servidor, builds web/servidor
@@ -200,36 +238,40 @@ prolongada dos testes curtos nem latência de chat a partir do healthcheck.
 
 ## Android
 
-Fonte mobile final: `360b60d`; identificador técnico `app.openmuse.mobile` e scheme
+Fonte mobile final: `f4eec06`; identificador técnico `app.openmuse.mobile` e scheme
 `openmuse` preservados. Os APKs usam a chave persistente privada do projeto,
 assinatura verificada, release não debuggable e certificado SHA256
 `e6d8e6aeb25f3c1603efd369b9898dbb865343f4148a1969cd85383331053f8a`.
 Ambos usam `https://app.okamibot.cloud`, sem Tailscale no aparelho.
 
-- [ARM64 para o telefone](https://app.okamibot.cloud/downloads/okamibot.apk?v=360b60d):
-  58.499.825 bytes; SHA256
-  `a7f56342c0072751977f29e2bc8cfd184afce1463eb36f7b323ed5018b0ed23d`.
-  O download público foi comparado ao build local assinado.
-- [x86_64 para o emulador](../artifacts/android/muse-fidelity-release/okamibot-release-x86_64.apk):
-  60.244.664 bytes; SHA256
-  `25d8286fc8803c095967a3e4d65348cb3d120a20576f9500a8addc989c457578`.
+- [ARM64 para o telefone](https://app.okamibot.cloud/downloads/okamibot.apk?v=f4eec06):
+  58.889.561 bytes; SHA256
+  `0d84d1e4ddf8fd1d526af8f8ece8d77772ecdd1a0ad7d6b80fa8f9f6f55076c8`.
+  O download público foi comparado ao build local assinado; recibo em
+  `artifacts/muse-interface/public-apk-checks.json`.
+- [x86_64 para o emulador](../artifacts/android/muse-interface-release/okamibot-release-x86_64.apk):
+  60.638.496 bytes; SHA256
+  `534a43f1664d764724cc1ca9045685c1a0cf30ceac43fc41d424b4f60a6d0000`.
 - Recibos de assinatura/proveniência ficam junto dos APKs em
-  `artifacts/android/muse-fidelity-release/`. Evidências de interface ficam em
-  `artifacts/android/muse-fidelity-release/evidence/`. Esses artefatos são locais e
+  `artifacts/android/muse-interface-release/`. Evidências de interface ficam em
+  `artifacts/android/muse-interface-release/evidence/`. Esses artefatos são locais e
   ignorados pelo Git.
 
 A atualização final no emulador API 34 preservou pareamento e rascunho e acessou
-o workspace real por HTTPS público. O novo ícone, os rótulos em português e a
-retomada após HOME foram conferidos, com zero erros no logcat filtrado. Os três
-vídeos do padrão, reprodução offline e retrato estático com movimento reduzido
-foram observados no build `32a1ae5`, cujo renderer é idêntico ao final. A pausa em
-segundo plano está implementada por AppState/player.pause(); o release não expõe
-telemetria direta que comprove seu estado, e a alocação do codec permaneceu no
-dump. O recibo `evidence/native-acceptance.json` registra esse limite.
+o workspace real por HTTPS público. Configurações (categorias, Geral e
+Conectores), Voltar do Android, painel do agente em tela inteira, Aprovações,
+personalização com abas Aparência/Personalidade, Feed, Ideias, Metas, Biblioteca
+e um arquivo existente, além dos detalhes de uma tarefa real, foram conferidos.
+Navegar e fechar diálogos manteve o rascunho. Português foi verificado na web;
+esta rodada nativa não concluiu uma verificação específica de PT-BR. A reprodução dos três vídeos padrão, modo offline e movimento reduzido
+foi verificada na correção anterior (`32a1ae5`); o renderizador não mudou nesta
+revisão. O ensaio atual não repete nem amplia essa prova de mídia.
 
 O ensaio Android não alterou a identidade global: carregou e preservou a criação
-mais recente do usuário. Idioma, rede e escalas foram restaurados, somente o
-rascunho de teste foi removido, e o AVD foi encerrado. Não houve teste em telefone
+mais recente do usuário, inclusive mudanças de nome/avatar feitas em outra
+sessão durante o ensaio. Idioma, rede e escalas locais coincidiram com o estado
+inicial; somente o rascunho de teste foi removido. O logcat de erros ficou vazio.
+Recibos em `evidence/native-acceptance.json` e `evidence/local-cleanup.json`. Não houve teste em telefone
 físico; esse aceite permanece necessário.
 
 Instale o ARM64 como atualização se já houver app compatível, preservando dados.

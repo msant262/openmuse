@@ -19,12 +19,16 @@ ou executar o projeto na sua máquina.
 4. O app abre em **Chat / Conversa**. Experimente: “Olá, me explique o que você
    consegue fazer”. O modelo padrão é GPT-6 Luna pela assinatura ChatGPT; Grok
    está conectado como fallback. MiMo ainda depende de uma chave.
-5. No computador, a barra lateral mostra conversas, atividade, aplicativos e
-   configurações. No celular, use o botão de menu. O botão do computador do
-   agente abre a tela remota; **Assumir controle** habilita entrada e **Devolver
-   ao agente** encerra o controle manual.
-6. Em **Settings / Configurações**, ajuste o idioma da interface, nome,
-   personalidade e idioma das respostas. No estúdio do companheiro, descreva o
+5. No computador, use a barra lateral para Conversa, Feed, Ideias, Metas e
+   Biblioteca. O menu no canto inferior esquerdo abre **Settings / Configurações**.
+   No celular, abra o menu de conversas, toque em **Mais opções** e depois em
+   **Configurações**. O botão do computador do agente abre a tela remota;
+   **Assumir controle** habilita entrada e **Devolver ao agente** encerra o
+   controle manual.
+6. As configurações têm categorias para idioma, conectores, personalização,
+   permissões, memória e notificações. Toque no lápis junto ao avatar ou em
+   **Personalizar seu companheiro**, dentro de **Geral**, para abrir aparência
+   e personalidade. No estúdio do companheiro, descreva o
    personagem que quiser, incluindo cores e acessórios. A criação gera quatro
    opções com acabamento de pelúcia; escolha uma para aplicar o retrato e gerar
    as animações de repouso, trabalho com notebook e resposta. O progresso aparece
@@ -37,14 +41,14 @@ janela anônima se quiser manter o acesso; apagar cookies exige novo pareamento.
 Se abriu a versão anterior, use **Ctrl+Shift+R**. O endereço `/api/health` é apenas
 diagnóstico, não a interface.
 
-**Android:** baixe o [APK ARM64 assinado](https://app.okamibot.cloud/downloads/okamibot.apk?v=360b60d)
+**Android:** baixe o [APK ARM64 assinado](https://app.okamibot.cloud/downloads/okamibot.apk?v=f4eec06)
 no telefone e instale. Ele usa o mesmo domínio público e não exige Tailscale.
 Se já tiver o app, instale como atualização para preservar os dados. Caso o
 Android recuse por assinatura diferente, não desinstale nem apague os dados para
 contornar a recusa. Use a mesma chave na primeira entrada.
 
-O APK tem 58.499.825 bytes e SHA256
-`a7f56342c0072751977f29e2bc8cfd184afce1463eb36f7b323ed5018b0ed23d`.
+O APK tem 58.889.561 bytes e SHA256
+`0d84d1e4ddf8fd1d526af8f8ece8d77772ecdd1a0ad7d6b80fa8f9f6f55076c8`.
 O parâmetro da versão no link evita que o cache entregue o APK anterior.
 Gmail/Calendar e push ainda precisam da configuração das contas correspondentes;
 não são necessários para abrir o chat.
@@ -72,8 +76,8 @@ Rotas da instalação atual (comandos na VPS):
 ```bash
 sudo tailscale serve --bg --yes --set-path=/api http://100.113.59.40:8787/api
 sudo tailscale serve --bg --yes --set-path=/executor http://100.113.59.40:8787/executor
-sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/360b60d-public
-sudo tailscale serve --bg --yes --set-path=/downloads/okamibot.apk /opt/okami-web/downloads/okamibot-360b60d-arm64-v8a.apk
+sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/f4eec06-public
+sudo tailscale serve --bg --yes --set-path=/downloads/okamibot.apk /opt/okami-web/downloads/okamibot-f4eec06-arm64-v8a.apk
 ```
 
 Mantenha os sufixos `/api` e `/executor` nos destinos: o Serve remove o prefixo
