@@ -19,12 +19,22 @@ O retrabalho de produto está descrito no
 [plano de implementação](superpowers/plans/2026-10-03-product-rework.md) e no
 [registro da retomada](superpowers/plans/2026-10-03-product-rework-resume.md).
 
-A web e os APKs usam a fonte mobile `40390aa`: navegação desktop, EN/PT-BR,
+A versão anterior da web e dos APKs usava a fonte mobile `40390aa`: navegação desktop, EN/PT-BR,
 configurações de nome/personalidade, cinco avatares 3D animados e editor de
 aparência. O visualizador mantém a imagem durante polling e entrada manual.
-O build web publicado está em `/opt/okami-web/releases/40390aa-public`.
-A API final usa a imagem `openmuse-server:product-d6fa127`, com fonte registrada
-em `/root/okami-deployment/source-pin`. A publicação drenou o trabalho ativo e
+O build anterior permanece em `/opt/okami-web/releases/40390aa-public` para rollback.
+
+A revisão visual inspirada no Muse usa a fonte mobile `abb6f84` e o build web
+`/opt/okami-web/releases/abb6f84-public`. Refez os cinco personagens locais,
+poses de trabalho/resposta, retrato na conversa, personalização visual, previews
+sem despejo de JSON, histórico de navegador e recibos compactos com detalhes
+preservados. A suíte no pin passou **928/928 testes**, além de TypeScript,
+build web/servidor e verificações focais de interface. O backend permaneceu
+na mesma imagem durante essa publicação. Evidências e referências estão no
+[registro da revisão Muse](superpowers/plans/2026-10-03-muse-experience.md) e
+em `artifacts/muse-rework/` e `artifacts/android/muse-release-evidence/`.
+A API continua na imagem `openmuse-server:product-d6fa127`, com fonte registrada
+em `/root/okami-deployment/source-pin`. A publicação anterior dessa imagem drenou o trabalho ativo e
 preservou a pausa na revisão 16, desativada; ao terminar, manutenção encerrada e
 contadores de tarefas, admissões, recursos, operações, entregas e HTTP zerados.
 

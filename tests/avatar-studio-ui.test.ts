@@ -47,6 +47,23 @@ function fixture(request: (path: string, body?: unknown) => Promise<unknown>) {
   return { view, api, notifications };
 }
 
+test("avatar studio describes actual renderer readiness instead of the loaded profile", async () => {
+  const { view } = fixture(async () => ({ identity: { avatarDesign: AVATAR_PRESETS[0] } }));
+  try {
+    view.render();
+    await view.flush();
+    assert.match(view.text(), /Loading your companion…/);
+    const renderer = view.nodes().find((node) => node.type === "AvatarRenderer");
+    assert.ok(renderer);
+    (renderer.props.onReady as (kind: string) => void)("webgl");
+    view.render();
+    assert.match(view.text(), /Your companion, in motion/);
+    assert.doesNotMatch(view.text(), /Loading your companion…/);
+  } finally {
+    view.close();
+  }
+});
+
 test("avatar studio saves actual custom parameters and ignores a delayed save after pairing changes", async () => {
   const oldSave = deferred<unknown>();
   const calls: { path: string; body?: unknown }[] = [];

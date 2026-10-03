@@ -210,7 +210,7 @@ export function AvatarStudio({
             <Text style={styles.previewLabel}>
               {rendererKind === "fallback"
                 ? t("Static preview · 3D unavailable on this device")
-                : savedDesign
+                : savedDesign && rendererKind === "webgl"
                   ? t("Your companion, in motion")
                   : t("Loading your companion…")}
             </Text>

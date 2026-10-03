@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { resolveAvatarDesign } from "../../../packages/domain/src/avatar";
 import type { AvatarSceneController } from "./avatar/scene";
 import { mountAvatarScene } from "./avatar/scene";
@@ -27,6 +27,7 @@ export function AvatarRenderer({
   const host = useRef<HTMLDivElement | null>(null);
   const controller = useRef<AvatarSceneController | undefined>(undefined);
   const [fallback, setFallback] = useState(false);
+  const [renderReady, setRenderReady] = useState(false);
   const ready = useRef(onReady);
   ready.current = onReady;
   const options = useRef({ design, state, active, reducedMotion, interactive, framing });
@@ -41,6 +42,7 @@ export function AvatarRenderer({
     }
     try {
       controller.current = mountAvatarScene(host.current, { ...options.current, onFailure: fail });
+      setRenderReady(true);
       ready.current?.("webgl");
     } catch {
       fail();
@@ -57,8 +59,14 @@ export function AvatarRenderer({
   return (
     <View
       style={[{ width: size, height: size }, style]}
-      accessibilityLabel={accessibilityLabel ?? t("Animated 3D companion")}
+      accessibilityLabel={
+        !renderReady && !fallback
+          ? t("Loading your companion…")
+          : (accessibilityLabel ?? t("Animated 3D companion"))
+      }
       accessibilityRole="image"
+      accessibilityState={{ busy: !renderReady && !fallback }}
+      aria-busy={!renderReady && !fallback}
     >
       <div
         ref={host}
@@ -80,6 +88,16 @@ export function AvatarRenderer({
           >
             {fallbackLabel ?? t("Static preview · 3D unavailable on this device")}
           </Text>
+        </View>
+      )}
+      {!renderReady && !fallback && (
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <AvatarThumbnail species={design.species} size={size} />
+          <ActivityIndicator
+            size="small"
+            color="#8C8296"
+            style={{ position: "absolute", bottom: size > 120 ? 8 : 0, alignSelf: "center" }}
+          />
         </View>
       )}
     </View>

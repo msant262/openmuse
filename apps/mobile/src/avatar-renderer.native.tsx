@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { AccessibilityInfo, AppState, Dimensions, StyleSheet, Text, View } from "react-native";
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  AppState,
+  Dimensions,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { WebView } from "react-native-webview";
 import { resolveAvatarDesign } from "../../../packages/domain/src/avatar";
 import { avatarNativeDocument, avatarUpdateScript } from "./avatar/native-document";
@@ -107,7 +115,13 @@ export function AvatarRenderer({
       collapsable={false}
       style={[{ width: size, height: size }, style]}
       accessibilityRole="image"
-      accessibilityLabel={accessibilityLabel ?? t("Animated 3D companion")}
+      accessibilityLabel={
+        !ready && !fallback
+          ? t("Loading your companion…")
+          : (accessibilityLabel ?? t("Animated 3D companion"))
+      }
+      accessibilityState={{ busy: !ready && !fallback }}
+      aria-busy={!ready && !fallback}
     >
       {fallback ? (
         <View style={StyleSheet.absoluteFill}>
@@ -159,6 +173,16 @@ export function AvatarRenderer({
             } catch {}
           }}
         />
+      )}
+      {!ready && !fallback && (
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <AvatarThumbnail species={design.species} size={size} />
+          <ActivityIndicator
+            size="small"
+            color="#8C8296"
+            style={{ position: "absolute", bottom: size > 120 ? 8 : 0, alignSelf: "center" }}
+          />
+        </View>
       )}
     </View>
   );

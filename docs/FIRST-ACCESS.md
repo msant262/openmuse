@@ -25,7 +25,8 @@ ou executar o projeto na sua máquina.
    ao agente** encerra o controle manual.
 6. Em **Settings / Configurações**, ajuste o idioma da interface, nome,
    personalidade e idioma das respostas. Escolha entre cinco avatares 3D
-   animados ou personalize espécie, corpo, cores e acessórios. Salve as mudanças;
+   com acabamento de pelúcia (e um robô), ou personalize espécie, corpo, cores e
+   acessórios. A prévia mostra repouso, trabalho com notebook e resposta. Salve as mudanças;
    preferências podem valer para todas as conversas ou apenas para a atual.
 
 O navegador guarda o pareamento em cookie seguro e renova a sessão. Não use
@@ -68,7 +69,7 @@ Rotas da instalação atual (comandos na VPS):
 ```bash
 sudo tailscale serve --bg --yes --set-path=/api http://100.113.59.40:8787/api
 sudo tailscale serve --bg --yes --set-path=/executor http://100.113.59.40:8787/executor
-sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/40390aa-public
+sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/abb6f84-public
 ```
 
 Mantenha os sufixos `/api` e `/executor` nos destinos: o Serve remove o prefixo
