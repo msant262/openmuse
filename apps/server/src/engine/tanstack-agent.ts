@@ -102,7 +102,7 @@ export function tanstackAgent(options: {
     factory: ({ input, abortController }) => {
       const converted = convertInputToTanStackAI(input);
       // Build the system prompt like the classic mode. It does not forward system messages.
-      let system = options.prompt;
+      let system = `Current UTC date and time: ${new Date().toISOString()}\n${options.prompt}`;
       if (input.context.length) {
         system += "\n## Context from the application\n";
         for (const ctx of input.context) system += `${ctx.description}:\n${ctx.value}\n`;

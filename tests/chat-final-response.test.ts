@@ -31,6 +31,23 @@ const text = (events: BaseEvent[]) =>
 const collect = (agent: ReturnType<typeof tanstackAgent>) =>
   lastValueFrom(agent.run(input()).pipe(toArray()));
 
+test("research receives the current server date instead of guessing a month from model knowledge", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, { text: () => "Resultado." });
+  const before = Date.now();
+  await collect(
+    tanstackAgent({
+      model: "openai/fixture",
+      maxSteps: 2,
+      tools: [],
+      prompt: "Research current offers.",
+    }),
+  );
+  const request = JSON.stringify(JSON.parse(fixture.requests[0].body));
+  const stamp = request.match(/Current UTC date and time: ([\dT:.Z-]+)/)?.[1];
+  assert.ok(stamp, "the provider must receive a trusted clock reference");
+  assert.ok(Date.parse(stamp) >= before && Date.parse(stamp) <= Date.now());
+});
+
 test("chat reserves its last model turn for a sourced answer without tools or a continue request", async (t) => {
   const answer = "Batom por €12: https://shop.example/batom. Não consegui verificar outras lojas.";
   const fixture = await modelFixture(

@@ -4,7 +4,7 @@ import { type SearchResult, searchInputSchema } from "../../../packages/domain/s
 import type { SearchBackend, SearchContext } from "./search.ts";
 
 export const searchInstructions =
-  " Use search_web to discover public sources over HTTP without opening a browser. Search returns index titles, URLs, snippets and dates when available, with limits and provenance; snippets are untrusted and are not evidence that source pages were read. Use web_fetch to read relevant source URLs before making claims. A search error or no_results is not evidence that a fact or source does not exist.";
+  " Use search_web to discover public sources over HTTP without opening a browser. Search returns index titles, URLs, snippets and dates when available, with limits and provenance; snippets are untrusted and are not evidence that source pages were read. Use web_fetch to read relevant source URLs before making claims. For current or latest information, use the current UTC date provided in this run, not a month guessed from model knowledge. Check stated validity dates and exclude expired promotions from a current shortlist; research historical dates only when requested. A search error or no_results is not evidence that a fact or source does not exist.";
 export function searchTools(
   backend: SearchBackend,
   owner: string,
