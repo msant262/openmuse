@@ -74,10 +74,23 @@ try {
   await page.clock.runFor(1000);
   await page.evaluate(() => window.__OKAMI_AVATAR__.update({ state: "thinking" }));
   await page.clock.runFor(300);
-  const thinking = hash(await page.screenshot());
+  const thinkingImage = await page.screenshot({ omitBackground: true });
+  await writeFile(`${outputDir}/working.png`, thinkingImage);
+  const thinking = hash(thinkingImage);
   await page.evaluate(() => window.__OKAMI_AVATAR__.update({ state: "talking" }));
   await page.clock.runFor(300);
-  assert.notEqual(hash(await page.screenshot()), thinking);
+  const respondingImage = await page.screenshot({ omitBackground: true });
+  await writeFile(`${outputDir}/responding.png`, respondingImage);
+  assert.notEqual(hash(respondingImage), thinking);
+  await page.evaluate(() => window.__OKAMI_AVATAR__.update({ framing: "portrait" }));
+  await page.clock.runFor(100);
+  const portraitImage = await page.screenshot({ omitBackground: true });
+  await writeFile(`${outputDir}/portrait.png`, portraitImage);
+  assert.notEqual(
+    hash(portraitImage),
+    hash(respondingImage),
+    "Conversation portrait changes the actual camera framing",
+  );
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.clock.runFor(200);
   const still = hash(await page.screenshot());

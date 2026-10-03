@@ -1,6 +1,8 @@
+import { AlertCircle, FileText } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, AppState, Text, View } from "react-native";
+import { ActivityIndicator, AppState, ScrollView, Text, View } from "react-native";
 import type { Artifact } from "../../../packages/domain/src";
+import { fileResultPresentation } from "./file-result-presentation";
 import { useI18n } from "./i18n";
 import { FileThreadCard } from "./thread-artifacts";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
@@ -40,12 +42,16 @@ export function FileToolCard({ result, loading }: { result: unknown; loading: bo
   const { api } = useWorkspace();
   const value = mediaResult(result);
   const ids = resultFileIds(value).join(",");
-  const [files, setFiles] = useState<Artifact[]>([]);
+  const [fileState, setFileState] = useState<{ owner: string; ids: string; files: Artifact[] }>();
+  const files =
+    fileState?.owner === api.identityKey && fileState.ids === ids ? fileState.files : [];
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
+  const [expanded, setExpanded] = useState(false);
+  const presentation = fileResultPresentation(value, loading);
   useEffect(() => {
     let active = true;
-    setFiles([]);
+    setFileState(undefined);
     setError("");
     const hydrate = () => {
       if (ids)
@@ -53,7 +59,7 @@ export function FileToolCard({ result, loading }: { result: unknown; loading: bo
           ids.split(",").map((id) => api.request<Artifact>(`/api/files/${encodeURIComponent(id)}`)),
         )
           .then((files) => {
-            if (active) setFiles(files);
+            if (active) setFileState({ owner: api.identityKey, ids, files });
           })
           .catch((error) => {
             if (active) setError(error instanceof Error ? error.message : String(error));
@@ -73,37 +79,79 @@ export function FileToolCard({ result, loading }: { result: unknown; loading: bo
       {files.map((file) => (
         <FileThreadCard key={file.id} file={file} />
       ))}
-      {!files.length && (
-        <Card style={{ gap: 10 }}>
-          {loading ? <ActivityIndicator color={colors.blueDark} /> : null}
-          <Text style={s.heading}>
-            {loading
-              ? t("Working on your computer…")
-              : value?.status === "running"
-                ? t("Job running")
-                : value?.disabled
-                  ? t("Tool unavailable")
-                  : value?.error
-                    ? t("Needs attention")
-                    : t("Computer result")}
-          </Text>
-          <Text selectable style={s.muted}>
-            {String(
-              value?.message ??
-                value?.error ??
-                value?.status ??
-                (ids ? t("Loading your attachment…") : t("Result saved in your workspace.")),
+      {(!files.length || presentation.failure) && (
+        <Card
+          style={{
+            gap: 10,
+            padding: 14,
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: colors.line,
+            maxWidth: 560,
+            width: "100%",
+          }}
+        >
+          <View style={[s.row, { gap: 10 }]}>
+            {loading ? (
+              <ActivityIndicator size="small" color={colors.blueDark} />
+            ) : presentation.failure ? (
+              <AlertCircle size={18} color={colors.danger} />
+            ) : (
+              <FileText size={18} color={colors.muted} />
             )}
-          </Text>
-          {typeof value?.stdout === "string" && !!value.stdout && (
-            <Text selectable style={s.small}>
-              {value.stdout.slice(0, 3000)}
+            <Text style={[s.heading, { flex: 1, fontSize: 14 }]}>{t(presentation.title)}</Text>
+          </View>
+          {!!presentation.message && (
+            <Text selectable numberOfLines={expanded ? undefined : 3} style={s.muted}>
+              {presentation.message}
             </Text>
           )}
-          {typeof value?.stderr === "string" && !!value.stderr && (
-            <Text selectable style={s.small}>
-              {value.stderr.slice(0, 3000)}
-            </Text>
+          {!!ids && !files.length && !error && (
+            <Text style={s.small}>{t("Loading your attachment…")}</Text>
+          )}
+          {(!!presentation.stdout ||
+            !!presentation.stderr ||
+            !!presentation.command ||
+            presentation.exitCode !== undefined ||
+            presentation.message.length > 180) && (
+            <Button small expanded={expanded} onPress={() => setExpanded(!expanded)}>
+              {t(expanded ? "Hide output" : "Show output")}
+            </Button>
+          )}
+          {expanded && (
+            <ScrollView
+              style={{ maxHeight: 320 }}
+              contentContainerStyle={{
+                gap: 12,
+                padding: 12,
+                backgroundColor: "#F5F6F7",
+                borderRadius: 12,
+              }}
+            >
+              {!!presentation.command && (
+                <Text selectable style={s.small}>
+                  {presentation.command}
+                </Text>
+              )}
+              {!!presentation.stdout && (
+                <Text selectable style={s.text}>
+                  {presentation.stdout}
+                </Text>
+              )}
+              {!!presentation.stderr && (
+                <Text
+                  selectable
+                  style={[s.text, presentation.failure ? { color: colors.danger } : null]}
+                >
+                  {presentation.stderr}
+                </Text>
+              )}
+              {presentation.exitCode !== undefined && (
+                <Text style={s.small}>
+                  {t("Exit code: {code}", { code: presentation.exitCode })}
+                </Text>
+              )}
+            </ScrollView>
           )}
         </Card>
       )}

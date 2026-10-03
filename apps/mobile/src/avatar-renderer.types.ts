@@ -8,6 +8,7 @@ export type AvatarRendererProps = {
   active?: boolean;
   reducedMotion?: boolean;
   interactive?: boolean;
+  framing?: "full" | "portrait";
   size?: number;
   style?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;

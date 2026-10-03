@@ -19,7 +19,7 @@ OpenMuse keeps conversation, ongoing work, and user control together in a shared
 
 ## Visual language
 
-An airy canvas, distinct gray and sky-blue message bubbles, large touch targets, rounded input and navigation pills, and restrained artifact frames keep attention on the work. Email, browser and PDF previews show actual tool results. OpenMuse uses an original warm tan capybara, bundled locally; sky, sand and lilac backgrounds preserve the avatar color preference. See [artwork provenance](../apps/mobile/assets/README.md).
+An airy canvas, distinct gray and sky-blue message bubbles, large touch targets, rounded input and navigation pills, and restrained artifact frames keep attention on the work. Email, browser and PDF previews show actual tool results. OpenMuse uses five original locally rendered 3D companions: a plush capybara, wolf, fox and cat, plus a ceramic robot. A compact portrait remains in the conversation; working, responding and idle poses follow real activity. Appearance customization provides live color, shape and accessory previews with explicit saving. Reduced motion and background pausing are respected. See [artwork provenance](../apps/mobile/assets/README.md).
 
 ## Boundaries
 

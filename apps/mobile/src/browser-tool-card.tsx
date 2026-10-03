@@ -1,11 +1,13 @@
-import { Check, Globe2, Hand, RotateCw } from "lucide-react-native";
-import { createContext, useContext, useEffect, useState } from "react";
-import { ActivityIndicator, AppState, Image, Text, View } from "react-native";
+import { ArrowUpRight, Check, Globe2, RotateCw } from "lucide-react-native";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, AppState, Image, Linking, Pressable, Text, View } from "react-native";
 import { z } from "zod";
 import type { ActionProposal, BrowserSession } from "../../../packages/domain/src";
+import { resultSourceUrl } from "./artifact-presentation";
 import { useI18n } from "./i18n";
 import { useInlinePreview } from "./preview";
-import { Button, Card, colors, ErrorNotice, s } from "./ui";
+import { ResultCardFrame } from "./result-card-frame";
+import { Button, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export const BrowserRunContext = createContext({ running: false, active: false });
@@ -59,10 +61,24 @@ export function BrowserToolCard({
   const toolError = z.object({ error: z.string() }).safeParse(value);
   const sessionId = observation.success ? observation.data.sessionId : undefined;
   const current = workspace.browsers.find((browser) => browser.id === sessionId);
-  const [browser, setBrowser] = useState<BrowserSession>();
+  const [browserState, setBrowserState] = useState<{ owner: string; session: BrowserSession }>();
+  const browser =
+    browserState?.owner === api.identityKey && browserState.session.id === sessionId
+      ? browserState.session
+      : undefined;
   const [error, setError] = useState("");
   const [previewFailed, setPreviewFailed] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [opening, setOpening] = useState(false);
+  const scope = useRef<{ api: typeof api; sessionId?: string } | null>({ api, sessionId });
+  scope.current = { api, sessionId };
+  useEffect(() => {
+    scope.current = { api, sessionId };
+    setOpening(false);
+    return () => {
+      scope.current = null;
+    };
+  }, [api, sessionId]);
 
   useEffect(() => {
     if (!sessionId || !previewVisible) return;
@@ -74,7 +90,7 @@ export function BrowserToolCard({
         const session = await api.request<BrowserSession>(
           `/api/browsers/${encodeURIComponent(sessionId || "")}`,
         );
-        if (active) setBrowser(session);
+        if (active) setBrowserState({ owner: api.identityKey, session });
       } catch (e) {
         if (active) setError(e instanceof Error ? e.message : String(e));
       }
@@ -92,32 +108,59 @@ export function BrowserToolCard({
   const visited = observation.success ? observation.data : undefined;
   // A later turn can reuse the same browser. Never label that new page as an old source.
   const preview =
-    previewVisible && browser?.status === "active" && browser.url === visited?.url && !previewFailed
+    previewVisible &&
+    browser?.status === "active" &&
+    browser.url === visited?.url &&
+    (!current || current.url === visited?.url) &&
+    !previewFailed
       ? browser.previewUrl
       : undefined;
   const failure = toolError.success
     ? toolError.data.error
-    : !loading && !visited
+    : !loading && !visited && !approval.success
       ? t("The browser did not return a page. Try your request again.")
       : "";
+  const source = resultSourceUrl(visited?.url);
+  async function openBrowser() {
+    const stillCurrent = () => scope.current?.api === api && scope.current.sessionId === sessionId;
+    if (!sessionId || opening || !stillCurrent()) return;
+    setOpening(true);
+    setError("");
+    try {
+      // Opening saved history is explicit; background previews remain paused.
+      const session = await api.request<BrowserSession>(
+        `/api/browsers/${encodeURIComponent(sessionId)}`,
+      );
+      if (stillCurrent()) {
+        setBrowserState({ owner: api.identityKey, session });
+        open({ type: "browser", browser: session });
+      }
+    } catch (cause) {
+      if (stillCurrent()) setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (stillCurrent()) setOpening(false);
+    }
+  }
   return (
-    <Card
-      style={{ padding: 13, backgroundColor: "#EEEEF0", gap: 12, width: "100%", maxWidth: 440 }}
-    >
-      <View style={[s.row, { gap: 10 }]}>
-        <View style={[s.iconBox, { width: 36, height: 36, borderRadius: 10 }]}>
-          <Globe2 size={21} color={colors.blueDark} />
+    <ResultCardFrame>
+      <View style={[s.row, { gap: 11, padding: 16 }]}>
+        <View style={[s.iconBox, { width: 38, height: 38, borderRadius: 12 }]}>
+          <Globe2 size={20} color={colors.blueDark} />
         </View>
-        <View style={{ flex: 1, gap: 1 }}>
-          <Text style={[s.text, { fontWeight: "600" }]}>{t("Browser")}</Text>
-          <Text numberOfLines={1} style={[s.small, { fontSize: 12 }]}>
+        <View style={{ flex: 1, gap: 3 }}>
+          <Text numberOfLines={2} style={[s.heading, { fontSize: 15, lineHeight: 21 }]}>
+            {visited?.title || t("Browser")}
+          </Text>
+          <Text numberOfLines={1} style={s.small}>
             {working
               ? t("Reading the page…")
               : loading
                 ? t("Browsing paused")
-                : failure
-                  ? t("Couldn’t read the page")
-                  : siteLabel(visited?.url, t)}
+                : approval.success
+                  ? t("Waiting for approval")
+                  : failure
+                    ? t("Couldn’t read the page")
+                    : siteLabel(visited?.url ?? url, t)}
           </Text>
         </View>
         {working ? (
@@ -126,74 +169,79 @@ export function BrowserToolCard({
           <Check size={17} color="#47896C" accessibilityLabel={t("Page read")} />
         ) : null}
       </View>
-      {preview ? (
-        <Image
-          accessibilityLabel={t("Browser preview: {title}", { title: visited?.title ?? "" })}
-          source={{ uri: api.url(preview) }}
-          style={{ width: "100%", aspectRatio: 1.7, borderRadius: 12, backgroundColor: "#FFF" }}
-          resizeMode="contain"
-          onError={() => setPreviewFailed(true)}
-        />
-      ) : (
-        <View style={{ backgroundColor: "#FAFAFB", borderRadius: 12, padding: 21, gap: 12 }}>
-          <Text numberOfLines={2} style={[s.text, { fontSize: 14 }]}>
-            {visited?.title || siteLabel(url, t)}
-          </Text>
-          {working ? (
-            <View style={{ gap: 8 }}>
-              {(["90%", "74%", "84%"] as const).map((width) => (
-                <View
-                  key={width}
-                  style={{ height: 7, width, borderRadius: 4, backgroundColor: "#E3E9ED" }}
-                />
-              ))}
-            </View>
-          ) : visited ? (
-            <Text style={s.small}>
-              {browser && browser.url !== visited.url
-                ? t("Page visited. The browser has moved on.")
-                : browser?.status === "closed"
-                  ? t("Session saved. Take control to reopen it.")
-                  : browser?.status === "error"
-                    ? t("Session needs attention. Take control to reconnect.")
-                    : previewFailed
-                      ? t("Preview unavailable. You can still take control.")
+      {preview && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("Open browser")}
+          onPress={openBrowser}
+        >
+          <Image
+            accessibilityLabel={t("Browser preview: {title}", { title: visited?.title ?? "" })}
+            source={{ uri: api.url(preview) }}
+            style={{ width: "100%", aspectRatio: 1.7, backgroundColor: "#F5F6F7" }}
+            resizeMode="contain"
+            onError={() => setPreviewFailed(true)}
+          />
+        </Pressable>
+      )}
+      <View style={{ padding: 16, paddingTop: preview ? 14 : 0, gap: 10 }}>
+        {!preview && visited && (
+          <Text style={s.small}>
+            {(browser && browser.url !== visited.url) || (current && current.url !== visited.url)
+              ? t("Page visited. The browser has moved on.")
+              : browser?.status === "closed"
+                ? t("Session saved. Take control to reopen it.")
+                : browser?.status === "error"
+                  ? t("Session needs attention. Take control to reconnect.")
+                  : previewFailed
+                    ? t("Preview unavailable. You can still take control.")
+                    : !previewVisible || browser
+                      ? t("Page read")
                       : t("Connecting to the saved session…")}
-            </Text>
-          ) : null}
-        </View>
-      )}
-      {approval.success && (
-        <Button
-          primary
-          onPress={() => {
-            void api
-              .request<ActionProposal>(`/api/actions/${approval.data.actionId}`)
-              .then((action) => open({ type: "review", action }))
-              .catch((failure) =>
-                setError(failure instanceof Error ? failure.message : "Review unavailable"),
-              );
-          }}
-        >
-          Review action
-        </Button>
-      )}
-      <ErrorNotice error={failure || error} />
-      {visited && (
-        <Button
-          icon={Hand}
-          disabled={!browser}
-          onPress={() => browser && open({ type: "browser", browser })}
-          style={{ backgroundColor: "#F9F9FA", minHeight: 38, paddingVertical: 8 }}
-        >
-          Watch / take control
-        </Button>
-      )}
-      {!!error && (
-        <Button small icon={RotateCw} onPress={() => setRetry((attempt) => attempt + 1)}>
-          Reconnect preview
-        </Button>
-      )}
-    </Card>
+          </Text>
+        )}
+        {approval.success && (
+          <Button
+            primary
+            onPress={() => {
+              void api
+                .request<ActionProposal>(`/api/actions/${approval.data.actionId}`)
+                .then((action) => open({ type: "review", action }))
+                .catch((failure) =>
+                  setError(failure instanceof Error ? failure.message : t("Review unavailable")),
+                );
+            }}
+          >
+            {t("Review action")}
+          </Button>
+        )}
+        <ErrorNotice error={failure || error} />
+        {visited && (
+          <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+            <Button small busy={opening} disabled={opening} onPress={() => void openBrowser()}>
+              {t("Open browser")}
+            </Button>
+            {source && (
+              <Button
+                small
+                icon={ArrowUpRight}
+                onPress={() =>
+                  void Linking.openURL(source).catch((cause) =>
+                    setError(cause instanceof Error ? cause.message : String(cause)),
+                  )
+                }
+              >
+                {t("View source")}
+              </Button>
+            )}
+          </View>
+        )}
+        {!!error && (
+          <Button small icon={RotateCw} onPress={() => setRetry((attempt) => attempt + 1)}>
+            {t("Reconnect preview")}
+          </Button>
+        )}
+      </View>
+    </ResultCardFrame>
   );
 }

@@ -36,7 +36,7 @@ function fixture(request: (path: string, body?: unknown) => Promise<unknown>) {
     new URL("../apps/mobile/src/profile-settings.tsx", import.meta.url),
     "ProfileSettings",
     {
-      "react-native": { Text: "Text", View: "View" },
+      "react-native": { Text: "Text", View: "View", Pressable: "Button" },
       "../../../packages/domain/src/brand": { DEFAULT_AGENT_PROFILE },
       "./agent-workspace": {
         useAgentWorkspace: () => ({
@@ -84,6 +84,8 @@ test("ProfileSettings discards delayed history across scope and binds restore to
   try {
     view.render();
     await view.flush();
+    view.button("More preferences").onPress();
+    view.render();
     view.button("Preference history").onPress();
     view.button("Current conversation").onPress();
     view.render();
@@ -124,6 +126,8 @@ test("ProfileSettings discards history and captured restore actions after thread
     try {
       view.render();
       await view.flush();
+      view.button("More preferences").onPress();
+      view.render();
       view.button("Current conversation").onPress();
       view.render();
       await view.flush();
@@ -161,6 +165,8 @@ test("ProfileSettings ignores in-flight restore responses when scope, thread or 
     try {
       view.render();
       await view.flush();
+      view.button("More preferences").onPress();
+      view.render();
       if (changed !== "scope") {
         view.button("Current conversation").onPress();
         view.render();
@@ -181,5 +187,54 @@ test("ProfileSettings ignores in-flight restore responses when scope, thread or 
     } finally {
       view.close();
     }
+  }
+});
+
+test("collapsing preferences preserves edits without overwriting hidden saved values", async () => {
+  const calls: { path: string; body?: unknown }[] = [];
+  const { view } = fixture(async (path, body) => {
+    calls.push({ path, body });
+    return {
+      ...profile("pt-BR"),
+      fields: { ...profile("pt-BR").fields, formality: "formal", emojis: false },
+    };
+  });
+  try {
+    view.render();
+    await view.flush();
+    assert.equal(view.field("Reply language"), undefined);
+    view.button("More preferences").onPress();
+    view.render();
+    assert.equal(view.field("Reply language"), "pt-BR");
+    view.button("English").onPress();
+    view.render();
+    view.button("Fewer preferences").onPress();
+    view.render();
+    view.button("Save conversation preferences").onPress();
+    await view.flush();
+    const saved = calls.find((entry) => !!entry.body);
+    assert.ok(saved);
+    assert.deepEqual(JSON.parse(JSON.stringify((saved.body as { patch: unknown }).patch)), {
+      language: "en-US",
+    });
+  } finally {
+    view.close();
+  }
+});
+
+test("the active conversation scope stays visible when advanced preferences are closed", async () => {
+  const { view } = fixture(async () => profile("pt-BR"));
+  try {
+    view.render();
+    await view.flush();
+    view.button("More preferences").onPress();
+    view.render();
+    view.button("Current conversation").onPress();
+    await view.flush();
+    view.button("Fewer preferences").onPress();
+    view.render();
+    assert.match(view.text(), /Current conversation/);
+  } finally {
+    view.close();
   }
 });

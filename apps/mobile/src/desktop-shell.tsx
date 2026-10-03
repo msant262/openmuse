@@ -24,10 +24,14 @@ import {
 } from "react-native";
 import type { Section } from "../../../packages/domain/src";
 import { useAgentWorkspace } from "./agent-workspace";
+import { useAvatarPresentation } from "./avatar-presentation";
+import { AvatarThumbnail } from "./avatar-thumbnail";
 import { ComputerEntry } from "./computer";
+import { cachedConversationTitle, isEmptyConversationCache } from "./conversation-label";
 import { desktopStyles as d } from "./desktop-shell-styles";
 import { useI18n } from "./i18n";
 import { MemorySettings } from "./memory-settings";
+import { messageStorage } from "./message-storage";
 import { ProfileSettings } from "./profile-settings";
 import { type Selection, useMuseThread } from "./threads";
 import { Button, Card, CheckRow, colors, ErrorNotice, IconButton, Mascot, s } from "./ui";
@@ -137,9 +141,10 @@ export function DesktopShell({
   onThreads: () => void;
   pending: number;
 }) {
-  const { t } = useI18n();
-  const { workspace, section, open } = useWorkspace();
+  const { t, locale } = useI18n();
+  const { api, workspace, section, open } = useWorkspace();
   const { data } = useAgentWorkspace();
+  const { state: companionState } = useAvatarPresentation();
   const { selection, visited, mainId, enabled, loading, select, start } = useMuseThread();
   const threads = useThreads({
     agentId: "default",
@@ -153,6 +158,50 @@ export function DesktopShell({
   const drafts = visited.filter(
     (thread) => thread.id !== mainId && !threads.threads.some((item) => item.id === thread.id),
   );
+  const identityKey = api.identityKey;
+  const [labels, setLabels] = useState<{
+    identityKey: string;
+    values: Record<string, string>;
+    emptyDrafts: string[];
+  }>();
+  const labelsKey = JSON.stringify(
+    [
+      ...drafts.map((thread) => [thread.id, thread.existing]),
+      ...saved.map((thread) => [thread.id, thread.lastRunAt ?? thread.updatedAt]),
+    ].slice(0, 8),
+  );
+  useEffect(() => {
+    if (!desktop || !enabled) return;
+    let current = true;
+    const entries = JSON.parse(labelsKey) as [string, unknown][];
+    void Promise.all(
+      entries.map(async ([id]) => {
+        const raw = await messageStorage.read(`${identityKey}\n${id}`).catch(() => null);
+        return { id, title: cachedConversationTitle(raw), empty: isEmptyConversationCache(raw) };
+      }),
+    ).then((values) => {
+      if (current && api.identityKey === identityKey)
+        setLabels({
+          identityKey,
+          values: Object.fromEntries(
+            values.flatMap((item) => (item.title ? [[item.id, item.title]] : [])),
+          ),
+          emptyDrafts: values.filter((item) => item.empty).map((item) => item.id),
+        });
+    });
+    return () => {
+      current = false;
+    };
+  }, [api, desktop, enabled, identityKey, labelsKey, selection.id]);
+  const localLabels = labels?.identityKey === identityKey ? labels.values : {};
+  const emptyDrafts = labels?.identityKey === identityKey ? labels.emptyDrafts : [];
+  const chatOpen = !settingsOpen && section === "chat";
+  const companionStatus =
+    companionState === "talking"
+      ? t("Writing to you…")
+      : companionState === "thinking" && subtitle === t("Here when you need me")
+        ? t("Thinking it through…")
+        : subtitle;
   function openThread(next: Selection) {
     onNavigate("chat");
     select(next);
@@ -167,7 +216,10 @@ export function DesktopShell({
           showsVerticalScrollIndicator={false}
         >
           <View style={d.brand}>
-            <Mascot size={56} variant={data?.identity.avatar} />
+            <AvatarThumbnail
+              size={36}
+              species={data?.identity.avatarDesign?.species ?? "capybara"}
+            />
             <View style={{ flex: 1 }}>
               <Text numberOfLines={1} style={d.brandName}>
                 {agentName}
@@ -187,7 +239,7 @@ export function DesktopShell({
             }}
             style={({ pressed }) => [d.newChat, (pressed || loading) && { opacity: 0.75 }]}
           >
-            <Plus size={17} color="#FFFFFF" />
+            <Plus size={17} color="#344A5D" />
             <Text style={d.newChatText}>{t(desktopCopy.newConversation)}</Text>
           </Pressable>
           <View style={d.navigation}>
@@ -242,14 +294,35 @@ export function DesktopShell({
               </Pressable>
               {loading && <ActivityIndicator color={colors.blueDark} style={{ marginTop: 10 }} />}
               {[
-                ...drafts.map((thread) => ({
-                  ...thread,
-                  name: t(desktopCopy.newConversationTitle),
-                })),
-                ...saved.map((thread) => ({
+                ...drafts
+                  .filter(
+                    (thread) =>
+                      thread.existing ||
+                      thread.id === selection.id ||
+                      !emptyDrafts.includes(thread.id),
+                  )
+                  .map((thread, index) => ({
+                    ...thread,
+                    name:
+                      localLabels[thread.id] ??
+                      (thread.existing
+                        ? t("Earlier conversation {number}", { number: index + 1 })
+                        : t("Draft conversation {number}", { number: index + 1 })),
+                    detail: thread.existing ? t("Saved conversation") : t("Draft"),
+                  })),
+                ...saved.map((thread, index) => ({
                   ...thread,
                   existing: true,
-                  name: thread.name || t(desktopCopy.untitledConversation),
+                  name:
+                    thread.name ||
+                    localLabels[thread.id] ||
+                    t("Conversation {number}", { number: index + 1 }),
+                  detail: Number.isFinite(new Date(thread.lastRunAt ?? thread.updatedAt).getTime())
+                    ? new Date(thread.lastRunAt ?? thread.updatedAt).toLocaleDateString(
+                        locale === "pt-BR" ? "pt-BR" : "en-US",
+                        { month: "short", day: "numeric" },
+                      )
+                    : t("Saved conversation"),
                 })),
               ]
                 .slice(0, 8)
@@ -267,9 +340,12 @@ export function DesktopShell({
                     ]}
                   >
                     <MessageCircle size={14} color="#78848F" />
-                    <Text numberOfLines={1} style={d.conversationLabel}>
-                      {thread.name}
-                    </Text>
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <Text numberOfLines={1} style={d.conversationLabel}>
+                        {thread.name}
+                      </Text>
+                      <Text style={{ color: "#92999E", fontSize: 10 }}>{thread.detail}</Text>
+                    </View>
                   </Pressable>
                 ))}
             </ScrollView>
@@ -301,16 +377,35 @@ export function DesktopShell({
         }
       >
         {desktop ? (
-          <View style={d.header}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={d.headerTitle}>
-                {title}
-              </Text>
-              <Text numberOfLines={1} style={d.headerSubtitle}>
-                {subtitle}
-              </Text>
-            </View>
-            <View style={d.headerActions}>
+          <View style={[d.header, chatOpen && d.chatHeader]}>
+            {chatOpen ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("Open {name} activity and approvals", { name: agentName })}
+                onPress={() => onNavigate("activity")}
+                style={d.companionHeading}
+              >
+                <Mascot size={72} variant={data?.identity.avatar} />
+                <View style={d.companionName}>
+                  <Text numberOfLines={1} style={d.headerTitle}>
+                    {title}
+                  </Text>
+                  <Text numberOfLines={1} style={d.companionStatus}>
+                    {companionStatus}
+                  </Text>
+                </View>
+              </Pressable>
+            ) : (
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text numberOfLines={1} style={d.headerTitle}>
+                  {title}
+                </Text>
+                <Text numberOfLines={1} style={d.headerSubtitle}>
+                  {subtitle}
+                </Text>
+              </View>
+            )}
+            <View style={[d.headerActions, chatOpen && d.chatHeaderActions]}>
               <ComputerEntry />
               <View style={d.notification}>
                 <IconButton
@@ -401,25 +496,13 @@ export function AppLanguagePicker({ compact = false }: { compact?: boolean } = {
 
 /** The appearance slot can be replaced by the animated avatar creator. */
 export function DesktopSettings({ appearance }: { appearance?: ReactNode } = {}) {
-  const { width } = useWindowDimensions();
-  const columns = width >= 1280;
-  const appearancePanel = (
-    <View style={{ gap: 22 }}>
-      {appearance ?? <AssistantAppearance />}
-      <AssistantChatPreferences />
-    </View>
-  );
   return (
     <View style={{ gap: 24, width: "100%" }}>
+      {appearance ?? <AssistantAppearance />}
+      <ProfileSettings />
       <AppLanguagePicker />
-      <View style={[d.settings, { flexDirection: columns ? "row" : "column" }]}>
-        <View style={[d.settingsProfile, !columns && { width: "100%", flex: undefined }]}>
-          <ProfileSettings />
-          {!columns && <View style={{ width: "100%" }}>{appearancePanel}</View>}
-          <MemorySettings />
-        </View>
-        {columns && <View style={[d.settingsAside, { width: 360 }]}>{appearancePanel}</View>}
-      </View>
+      <AssistantChatPreferences />
+      <MemorySettings />
     </View>
   );
 }

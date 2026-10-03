@@ -1,73 +1,89 @@
-import { ChevronRight, FileText } from "lucide-react-native";
+import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { Image, Pressable, Text, View } from "react-native";
+import { Image, Pressable, Text, useWindowDimensions, View } from "react-native";
 import type { Artifact, BrowserSession } from "../../../packages/domain/src";
 import type { AgentArtifact, AgentTask } from "../../../packages/domain/src/agent";
 import { ArtifactCard, TaskCard } from "./agent-ui";
 import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { BrowserThreadCard } from "./computer";
 import { useI18n } from "./i18n";
-import { Button, Card, colors, ErrorNotice, s } from "./ui";
+import { ResultCardFooter, ResultCardFrame } from "./result-card-frame";
+import { Button, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function FileThreadCard({ file }: { file: Artifact }) {
   const { t } = useI18n();
   const { open, api } = useWorkspace();
+  const { width } = useWindowDimensions();
+  const [imageState, setImageState] = useState({ url: file.url, ratio: 1.5, failed: false });
+  const state =
+    imageState.url === file.url ? imageState : { url: file.url, ratio: 1.5, failed: false };
+  const isImage = file.mimeType.startsWith("image/");
+  const isVideo = file.mimeType.startsWith("video/");
+  const isAudio = file.mimeType.startsWith("audio/");
+  const fields = file.fields?.filter((field) => field.value.trim()).slice(0, 3) ?? [];
+  const Icon = isImage ? ImageIcon : isVideo ? Video : isAudio ? Music2 : FileText;
+  const action = t(
+    isImage ? "View image" : isVideo || isAudio ? "Open attachment" : "Open document",
+  );
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={t("Open attachment: {name}", { name: file.name })}
-      onPress={() => open({ type: "file", file })}
-      style={{ width: "100%", maxWidth: 440 }}
-    >
-      <Card style={{ padding: 18, backgroundColor: "#F0F1F2", gap: 18 }}>
-        <View style={{ borderRadius: 12, padding: 22, backgroundColor: "#FFF", gap: 14 }}>
-          <Text style={[s.heading, { fontSize: 18 }]}>{file.name.replace(/\.pdf$/i, "")}</Text>
-          {file.mimeType.startsWith("image/") ? (
-            <Image
-              source={{ uri: api.url(file.url) }}
-              style={{ width: "100%", aspectRatio: 1, borderRadius: 8 }}
-              resizeMode="contain"
-            />
-          ) : file.fields?.length ? (
-            file.fields.slice(0, 4).map((field) => (
-              <View
-                key={field.name}
-                style={{
-                  gap: 5,
-                  borderBottomWidth: 1,
-                  borderBottomColor: colors.line,
-                  paddingBottom: 9,
-                }}
-              >
-                <Text style={[s.small, { fontSize: 9 }]}>
-                  {field.name.replace(/_/g, " ").toUpperCase()}
-                </Text>
-                <Text style={[s.text, { fontSize: 12 }]}>{field.value || "—"}</Text>
-              </View>
-            ))
-          ) : (
-            <Text style={s.muted}>
-              {t("{fileType} · Tap to open or download", {
-                fileType: localizedAttachmentLabel(file, t),
-              })}
-            </Text>
+    <ResultCardFrame>
+      {isImage && !state.failed ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${action}: ${file.name}`}
+          onPress={() => open({ type: "file", file })}
+        >
+          <Image
+            accessible
+            accessibilityLabel={file.name}
+            source={{ uri: api.url(file.url) }}
+            style={{
+              width: "100%",
+              height: Math.min(300, Math.max(96, Math.min(558, width - 56) / state.ratio)),
+              backgroundColor: "#F5F6F7",
+            }}
+            resizeMode="contain"
+            onLoad={(event) => {
+              const source = event.nativeEvent.source;
+              if (source?.width > 0 && source?.height > 0)
+                setImageState({
+                  url: file.url,
+                  ratio: source.width / source.height,
+                  failed: false,
+                });
+            }}
+            onError={() => setImageState({ ...state, failed: true })}
+          />
+        </Pressable>
+      ) : fields.length ? (
+        <View style={{ padding: 22, gap: 15, backgroundColor: "#F8F6F1" }}>
+          {fields.map((field) => (
+            <View key={field.name} style={{ gap: 4 }}>
+              <Text style={s.small}>{field.name.replace(/_/g, " ")}</Text>
+              <Text numberOfLines={2} selectable style={s.text}>
+                {field.value}
+              </Text>
+            </View>
+          ))}
+          {(file.fields?.length ?? 0) > fields.length && (
+            <Text style={s.small}>{t("Open the document to see all fields.")}</Text>
           )}
         </View>
-        <View style={[s.row, { gap: 13 }]}>
-          <View style={{ backgroundColor: "#FC2359", padding: 9, borderRadius: 9 }}>
-            <FileText size={23} color="#FFF" />
-          </View>
-          <View style={{ flex: 1, gap: 3 }}>
-            <Text numberOfLines={2} style={s.heading}>
-              {file.name}
-            </Text>
-            <Text style={s.muted}>{localizedAttachmentLabel(file, t)}</Text>
-          </View>
-          <ChevronRight size={18} color={colors.muted} />
-        </View>
-      </Card>
-    </Pressable>
+      ) : null}
+      {isImage && state.failed && (
+        <Text style={[s.small, { padding: 16, paddingBottom: 0 }]}>
+          {t("Preview unavailable. Open the attachment to view it.")}
+        </Text>
+      )}
+      <ResultCardFooter
+        title={file.name}
+        subtitle={localizedAttachmentLabel(file, t)}
+        action={action}
+        icon={Icon}
+        onPress={() => open({ type: "file", file })}
+      />
+    </ResultCardFrame>
   );
 }
 /** Hydrates task-linked artifacts by ID on replay; signed URLs are never stored in messages. */
@@ -75,21 +91,26 @@ export function TaskThreadCard({ task }: { task: AgentTask }) {
   const { t } = useI18n();
   const { api } = useWorkspace();
   const [detail, setDetail] = useState<{
+    owner: string;
+    taskId: string;
     artifacts: AgentArtifact[];
     files: Artifact[];
     browsers: BrowserSession[];
   }>();
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const [showFiles, setShowFiles] = useState(false);
   useEffect(() => {
     let active = true;
+    setDetail(undefined);
+    setError("");
     void api
       .request<{ artifacts: AgentArtifact[]; files: Artifact[]; browsers: BrowserSession[] }>(
         `/api/agent/tasks/${task.id}`,
       )
       .then((result) => {
         if (active) {
-          setDetail(result);
+          setDetail({ ...result, owner: api.identityKey, taskId: task.id });
           setError("");
         }
       })
@@ -100,19 +121,28 @@ export function TaskThreadCard({ task }: { task: AgentTask }) {
       active = false;
     };
   }, [api, task.id, task.updatedAt, attempt]);
+  const visibleDetail =
+    detail?.owner === api.identityKey && detail.taskId === task.id ? detail : undefined;
+  const files = [...(visibleDetail?.files || [])].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
   return (
     <View style={{ gap: 12 }}>
       <TaskCard task={task} compact />
-      {detail?.browsers.map((browser) => (
+      {visibleDetail?.browsers.map((browser) => (
         <BrowserThreadCard key={browser.id} browser={browser} />
       ))}
-      {[...(detail?.files || [])]
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, 1)
-        .map((file) => (
-          <FileThreadCard key={file.id} file={file} />
-        ))}
-      {detail?.artifacts.map((artifact) => (
+      {files.slice(0, showFiles ? undefined : 1).map((file) => (
+        <FileThreadCard key={file.id} file={file} />
+      ))}
+      {files.length > 1 && (
+        <Button small expanded={showFiles} onPress={() => setShowFiles(!showFiles)}>
+          {showFiles
+            ? t("Hide additional files")
+            : t("View all {count} files", { count: files.length })}
+        </Button>
+      )}
+      {visibleDetail?.artifacts.map((artifact) => (
         <ArtifactCard key={artifact.id} artifact={artifact} />
       ))}
       <ErrorNotice error={error} />

@@ -122,6 +122,7 @@ export function Button({
   busy,
   small,
   danger,
+  expanded,
   style,
 }: {
   children: ReactNode;
@@ -132,6 +133,7 @@ export function Button({
   busy?: boolean;
   small?: boolean;
   danger?: boolean;
+  expanded?: boolean;
   style?: ViewStyle;
 }) {
   const color = danger ? colors.danger : colors.text;
@@ -139,7 +141,8 @@ export function Button({
     <Pressable
       accessibilityRole="button"
       disabled={disabled || busy}
-      accessibilityState={{ disabled: !!(disabled || busy), busy: !!busy }}
+      accessibilityState={{ disabled: !!(disabled || busy), busy: !!busy, expanded }}
+      aria-expanded={expanded}
       onPress={onPress}
       style={({ pressed }) => [
         s.button,
@@ -415,7 +418,7 @@ export function Mascot({
     lilac: "#F1ECF9",
   }[variant];
   return (
-    <View style={{ width: size, height: size }}>
+    <View style={{ width: size, height: size, borderRadius: size / 2, overflow: "hidden" }}>
       <View
         style={{
           position: "absolute",
@@ -432,6 +435,7 @@ export function Mascot({
         design={presentation.design}
         state={presentation.state}
         active={presentation.active}
+        framing="portrait"
       />
     </View>
   );

@@ -37,7 +37,7 @@ import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace
 import { API_URL, ApiError, authManager, MuseApi } from "./src/api";
 import type { AuthManager } from "./src/auth-manager";
 import { installRuntimeAuthFetch } from "./src/auth-transport";
-import { AvatarPresentationProvider } from "./src/avatar-presentation";
+import { AvatarPresentationProvider, useAvatarPresentation } from "./src/avatar-presentation";
 import { AvatarStudio } from "./src/avatar-studio";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { ComputerEntry } from "./src/computer";
@@ -324,6 +324,56 @@ function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError:
     </WorkspaceContext.Provider>
   );
 }
+function CompanionHeading({
+  name,
+  status,
+  variant,
+  onPress,
+}: {
+  name: string;
+  status: string;
+  variant?: "sky" | "sand" | "lilac";
+  onPress: () => void;
+}) {
+  const { t } = useI18n();
+  const { state } = useAvatarPresentation();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={t("Open {name} activity and approvals", { name })}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        alignItems: "center",
+        maxWidth: "70%",
+        opacity: pressed ? 0.65 : 1,
+      })}
+    >
+      <Mascot size={64} variant={variant} />
+      <View
+        style={{
+          paddingHorizontal: 13,
+          paddingVertical: 5,
+          borderRadius: 18,
+          backgroundColor: "#F1F2F3",
+          alignItems: "center",
+          maxWidth: "100%",
+        }}
+      >
+        <Text style={{ fontSize: 15, fontWeight: "600", color: colors.text, letterSpacing: -0.4 }}>
+          {name}
+        </Text>
+        <Text numberOfLines={1} style={{ fontSize: 10, color: colors.muted, marginTop: 2 }}>
+          {state === "talking"
+            ? t("Writing to you…")
+            : state === "thinking" && status === t("Here when you need me")
+              ? t("Thinking it through…")
+              : status}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function WorkspaceShell({
   detail,
   toast,
@@ -338,7 +388,7 @@ function WorkspaceShell({
   prompt?: { id: number; text: string };
 }) {
   const { t } = useI18n();
-  const { workspace, section, navigate, open } = useWorkspace();
+  const { api, workspace, section, navigate, open } = useWorkspace();
   const { data } = useAgentWorkspace();
   const {
     selection,
@@ -409,12 +459,12 @@ function WorkspaceShell({
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={desktop ? d.page : { paddingHorizontal: 22, paddingBottom: 28 }}
         >
-          <Text style={desktop ? d.pageTitle : [s.title, { marginBottom: 8 }]}>
-            {t(desktopCopy.settingsTitle)}
-          </Text>
-          <Text style={desktop ? d.pageSubtitle : [s.muted, { marginBottom: 22 }]}>
-            {t(desktopCopy.settingsSubtitle)}
-          </Text>
+          {desktop && (
+            <>
+              <Text style={d.pageTitle}>{t(desktopCopy.settingsTitle)}</Text>
+              <Text style={d.pageSubtitle}>{t(desktopCopy.settingsSubtitle)}</Text>
+            </>
+          )}
           <ErrorNotice error={t(error)} />
           <DesktopSettings appearance={<AvatarStudio />} />
         </ScrollView>
@@ -486,7 +536,7 @@ function WorkspaceShell({
   const mobileHeader = (
     <View
       style={{
-        height: 122,
+        height: settingsOpen ? 72 : 132,
         paddingTop: 2,
         marginHorizontal: 20,
       }}
@@ -495,31 +545,20 @@ function WorkspaceShell({
         <IconButton icon={Menu} label={t(desktopCopy.conversationMenu)} onPress={openThreads} />
       </View>
       <View pointerEvents="box-none" style={{ alignItems: "center", gap: 1 }}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t("Open {name} activity and approvals", { name: agentName })}
-          onPress={() => navigateSection("activity")}
-          style={({ pressed }) => ({
-            alignItems: "center",
-            maxWidth: "70%",
-            opacity: pressed ? 0.65 : 1,
-          })}
-        >
-          <Mascot size={49} variant={data?.identity.avatar} />
-          <Text
-            style={{
-              fontSize: 16,
-              fontWeight: "600",
-              color: colors.text,
-              letterSpacing: -0.4,
-            }}
-          >
-            {agentName}
-          </Text>
-          <Text numberOfLines={1} style={{ fontSize: 11, color: colors.muted, marginBottom: 6 }}>
-            {status}
-          </Text>
-        </Pressable>
+        {settingsOpen ? (
+          <View style={{ height: 68, justifyContent: "center", maxWidth: "58%" }}>
+            <Text numberOfLines={1} style={[s.heading, { textAlign: "center" }]}>
+              {t(desktopCopy.customize)}
+            </Text>
+          </View>
+        ) : (
+          <CompanionHeading
+            name={agentName}
+            status={status}
+            variant={data?.identity.avatar}
+            onPress={() => navigateSection("activity")}
+          />
+        )}
         {!settingsOpen && section === "chat" && <ComputerEntry />}
       </View>
       <View style={{ position: "absolute", right: 0, top: 16, flexDirection: "row", gap: 2 }}>
@@ -606,6 +645,11 @@ function WorkspaceShell({
       design={data?.identity.avatarDesign}
       state={activeTask?.status === "running" ? "thinking" : "idle"}
       active={!settingsOpen && !detail}
+      conversationKey={
+        !settingsOpen && section === "chat"
+          ? `${api.identityKey}\n${richThreads ? selection.id : "local-main"}`
+          : undefined
+      }
     >
       <WorkspaceTools />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>

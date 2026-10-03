@@ -15,6 +15,7 @@ export function AvatarRenderer({
   active = true,
   reducedMotion,
   interactive = false,
+  framing = "full",
   size = 180,
   style,
   accessibilityLabel,
@@ -28,8 +29,8 @@ export function AvatarRenderer({
   const [fallback, setFallback] = useState(false);
   const ready = useRef(onReady);
   ready.current = onReady;
-  const options = useRef({ design, state, active, reducedMotion, interactive });
-  options.current = { design, state, active, reducedMotion, interactive };
+  const options = useRef({ design, state, active, reducedMotion, interactive, framing });
+  options.current = { design, state, active, reducedMotion, interactive, framing };
   useEffect(() => {
     if (!host.current) return;
     let mounted = true;
@@ -51,8 +52,8 @@ export function AvatarRenderer({
     };
   }, []);
   useEffect(() => {
-    controller.current?.update({ design, state, active, reducedMotion, interactive });
-  }, [JSON.stringify(design), state, active, reducedMotion, interactive]);
+    controller.current?.update({ design, state, active, reducedMotion, interactive, framing });
+  }, [JSON.stringify(design), state, active, reducedMotion, interactive, framing]);
   return (
     <View
       style={[{ width: size, height: size }, style]}

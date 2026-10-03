@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import type {
   AgentProfileFields,
   AgentProfilePatch,
@@ -31,6 +31,8 @@ export function ProfileSettings() {
   const { selection, enabled } = useMuseThread();
   const { data, refresh } = useAgentWorkspace();
   const [scope, setScope] = useState<"global" | "conversation">("global");
+  const [advanced, setAdvanced] = useState(false);
+  const [savedTarget, setSavedTarget] = useState<Target>();
   const [savedProfile, setProfile] = useState<{ target: Target; value: EffectiveAgentProfile }>();
   const [draft, setDraft] = useState<{ target: Target; value: AgentProfileFields }>();
   const [pending, setPending] = useState<{ target: Target }>();
@@ -123,6 +125,7 @@ export function ProfileSettings() {
   function edit<K extends keyof AgentProfileFields>(key: K, value: AgentProfileFields[K]) {
     if (!profile || !isCurrent(currentTarget)) return;
     dirty.current = true;
+    setSavedTarget(undefined);
     setDraft((previous) => ({
       target: currentTarget,
       value: { ...(previous?.target === currentTarget ? previous.value : fields), [key]: value },
@@ -195,6 +198,7 @@ export function ProfileSettings() {
       dirty.current = false;
       receipt.current = undefined;
       apply(saved, requestTarget);
+      setSavedTarget(requestTarget);
       if (reloadHistory) await loadHistory(undefined, requestTarget, saved);
       if (isCurrent(requestTarget)) await refresh().catch(() => {});
     } catch (cause) {
@@ -235,7 +239,8 @@ export function ProfileSettings() {
   return (
     <Card style={{ gap: 12 }}>
       <Text style={s.heading}>{t("How we talk")}</Text>
-      {enabled && (
+      <Text style={s.muted}>{t("A name and a personality that feel right for you.")}</Text>
+      {enabled && advanced && (
         <View style={[s.row, { gap: 8 }]}>
           {(["global", "conversation"] as const).map((item) => (
             <Button
@@ -276,87 +281,107 @@ export function ProfileSettings() {
         maxLength={1500}
         multiline
       />
-      <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
-        {(
-          [
-            ["en-US", "English"],
-            ["pt-BR", "Portuguese (Brazil)"],
-            ["de-DE", "German"],
-          ] as const
-        ).map(([language, label]) => (
-          <Button
-            key={language}
-            small
-            primary={fields.language === language}
-            onPress={() => edit("language", language)}
-          >
-            {t(label)}
-          </Button>
-        ))}
-      </View>
-      <Field
-        label={t("Reply language")}
-        value={fields.language}
-        onChangeText={(value) => edit("language", value)}
-        placeholder={t("en-US or pt-BR")}
-      />
-      <Text style={s.text}>{t("Tone")}</Text>
-      <View style={[s.row, { gap: 8 }]}>
-        {(["warm", "concise", "thoughtful"] as const).map((value) => (
-          <Button
-            key={value}
-            small
-            primary={fields.tone === value}
-            onPress={() => edit("tone", value)}
-          >
-            {t(value)}
-          </Button>
-        ))}
-      </View>
-      <Text style={s.text}>{t("Formality")}</Text>
-      <View style={[s.row, { gap: 8 }]}>
-        {(["casual", "neutral", "formal"] as const).map((value) => (
-          <Button
-            key={value}
-            small
-            primary={fields.formality === value}
-            onPress={() => edit("formality", value)}
-          >
-            {t(value)}
-          </Button>
-        ))}
-      </View>
-      <Text style={s.text}>{t("Reply length")}</Text>
-      <View style={[s.row, { gap: 8 }]}>
-        {(["concise", "balanced", "detailed"] as const).map((value) => (
-          <Button
-            key={value}
-            small
-            primary={fields.responseLength === value}
-            onPress={() => edit("responseLength", value)}
-          >
-            {t(value)}
-          </Button>
-        ))}
-      </View>
-      <CheckRow
-        label={t("Light humor")}
-        checked={fields.humor === "light"}
-        onPress={() => edit("humor", fields.humor === "light" ? "none" : "light")}
-      />
-      <CheckRow
-        label={t("Use emojis")}
-        checked={fields.emojis}
-        onPress={() => edit("emojis", !fields.emojis)}
-      />
-      <CheckRow
-        label={t("Structured replies")}
-        checked={fields.textStyle === "structured"}
-        onPress={() =>
-          edit("textStyle", fields.textStyle === "structured" ? "plain" : "structured")
-        }
-      />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: advanced }}
+        aria-expanded={advanced}
+        onPress={() => setAdvanced((value) => !value)}
+        style={[s.button, s.secondary, { alignSelf: "flex-start", minHeight: 44 }]}
+      >
+        <Text style={s.buttonText}>
+          {advanced ? t("Fewer preferences") : t("More preferences")}
+        </Text>
+      </Pressable>
+      {advanced && (
+        <View style={{ gap: 12 }}>
+          <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+            {(
+              [
+                ["en-US", "English"],
+                ["pt-BR", "Portuguese (Brazil)"],
+                ["de-DE", "German"],
+              ] as const
+            ).map(([language, label]) => (
+              <Button
+                key={language}
+                small
+                primary={fields.language === language}
+                onPress={() => edit("language", language)}
+              >
+                {t(label)}
+              </Button>
+            ))}
+          </View>
+          <Field
+            label={t("Reply language")}
+            value={fields.language}
+            onChangeText={(value) => edit("language", value)}
+            placeholder={t("en-US or pt-BR")}
+          />
+          <Text style={s.text}>{t("Tone")}</Text>
+          <View style={[s.row, { gap: 8 }]}>
+            {(["warm", "concise", "thoughtful"] as const).map((value) => (
+              <Button
+                key={value}
+                small
+                primary={fields.tone === value}
+                onPress={() => edit("tone", value)}
+              >
+                {t(value)}
+              </Button>
+            ))}
+          </View>
+          <Text style={s.text}>{t("Formality")}</Text>
+          <View style={[s.row, { gap: 8 }]}>
+            {(["casual", "neutral", "formal"] as const).map((value) => (
+              <Button
+                key={value}
+                small
+                primary={fields.formality === value}
+                onPress={() => edit("formality", value)}
+              >
+                {t(value)}
+              </Button>
+            ))}
+          </View>
+          <Text style={s.text}>{t("Reply length")}</Text>
+          <View style={[s.row, { gap: 8 }]}>
+            {(["concise", "balanced", "detailed"] as const).map((value) => (
+              <Button
+                key={value}
+                small
+                primary={fields.responseLength === value}
+                onPress={() => edit("responseLength", value)}
+              >
+                {t(value)}
+              </Button>
+            ))}
+          </View>
+          <CheckRow
+            label={t("Light humor")}
+            checked={fields.humor === "light"}
+            onPress={() => edit("humor", fields.humor === "light" ? "none" : "light")}
+          />
+          <CheckRow
+            label={t("Use emojis")}
+            checked={fields.emojis}
+            onPress={() => edit("emojis", !fields.emojis)}
+          />
+          <CheckRow
+            label={t("Structured replies")}
+            checked={fields.textStyle === "structured"}
+            onPress={() =>
+              edit("textStyle", fields.textStyle === "structured" ? "plain" : "structured")
+            }
+          />
+        </View>
+      )}
       <ErrorNotice error={error} />
+      {enabled && (
+        <Text style={s.small}>
+          {scope === "global" ? t("Every conversation") : t("Current conversation")}
+        </Text>
+      )}
       <Button
         primary
         busy={busy}
@@ -365,48 +390,75 @@ export function ProfileSettings() {
       >
         {t("Save conversation preferences")}
       </Button>
-      <Button disabled={busy || !profile} onPress={() => void save(true)}>
-        {scope === "global"
-          ? t("Restore product defaults")
-          : t("Remove this conversation override")}
-      </Button>
-      <Text style={s.small}>
-        {t("Saved from {origin} · revision {revision}", {
-          origin: t(profile?.origin?.kind ?? "product defaults"),
-          revision: profile?.revisions[scope] ?? 0,
-        })}
-      </Text>
-      <Button small disabled={!profile || busy} onPress={() => void loadHistory()}>
-        {t("Preference history")}
-      </Button>
-      {history?.entries.map((entry) => (
-        <View key={entry.id} style={{ gap: 4 }}>
+      {savedTarget === currentTarget && !Object.keys(patch).length && (
+        <Text style={s.small}>{t("Conversation preferences saved")}</Text>
+      )}
+      {advanced && (
+        <>
+          <Button disabled={busy || !profile} onPress={() => void save(true)}>
+            {scope === "global"
+              ? t("Restore product defaults")
+              : t("Remove this conversation override")}
+          </Button>
           <Text style={s.small}>
-            {t("Revision {revision} · {action} · {origin} · {date}", {
-              revision: entry.revision,
-              action: t(entry.action),
-              origin: t(entry.value.origin?.kind ?? "migration"),
-              date: new Date(entry.changedAt).toLocaleString(
-                locale === "pt-BR" ? "pt-BR" : "en-US",
-              ),
+            {t("Saved from {origin} · revision {revision}", {
+              origin: t(profile?.origin?.kind ?? "product defaults"),
+              revision: profile?.revisions[scope] ?? 0,
             })}
           </Text>
-          <Text style={s.small}>{JSON.stringify(entry.value.fields)}</Text>
-          {entry.revision !== profile?.revisions[scope] && (
-            <Button
-              small
-              disabled={busy || !profile}
-              onPress={() => history && void restore(entry, history)}
-            >
-              {t("Restore revision {revision}", { revision: entry.revision })}
+          <Button small disabled={!profile || busy} onPress={() => void loadHistory()}>
+            {t("Preference history")}
+          </Button>
+          {history?.entries.map((entry) => (
+            <View key={entry.id} style={{ gap: 4 }}>
+              <Text style={s.small}>
+                {t("Revision {revision} · {action} · {origin} · {date}", {
+                  revision: entry.revision,
+                  action: t(entry.action),
+                  origin: t(entry.value.origin?.kind ?? "migration"),
+                  date: new Date(entry.changedAt).toLocaleString(
+                    locale === "pt-BR" ? "pt-BR" : "en-US",
+                  ),
+                })}
+              </Text>
+              {Object.entries(entry.value.fields).map(([key, value]) => (
+                <Text key={key} style={s.small}>
+                  {t(
+                    (
+                      {
+                        assistantName: "Assistant name",
+                        preferredUserName: "What should I call you?",
+                        personality: "Personality and preferences",
+                        language: "Reply language",
+                        tone: "Tone",
+                        formality: "Formality",
+                        responseLength: "Reply length",
+                        humor: "Light humor",
+                        emojis: "Use emojis",
+                        textStyle: "Structured replies",
+                      } as Record<string, string>
+                    )[key] ?? key,
+                  )}
+                  : {typeof value === "boolean" ? t(value ? "On" : "Off") : t(String(value))}
+                </Text>
+              ))}
+              {entry.revision !== profile?.revisions[scope] && (
+                <Button
+                  small
+                  disabled={busy || !profile}
+                  onPress={() => history && void restore(entry, history)}
+                >
+                  {t("Restore revision {revision}", { revision: entry.revision })}
+                </Button>
+              )}
+            </View>
+          ))}
+          {!!history?.nextCursor && (
+            <Button small onPress={() => void loadHistory(history.nextCursor)}>
+              {t("Older preferences")}
             </Button>
           )}
-        </View>
-      ))}
-      {!!history?.nextCursor && (
-        <Button small onPress={() => void loadHistory(history.nextCursor)}>
-          {t("Older preferences")}
-        </Button>
+        </>
       )}
       {!!error && (
         <Button

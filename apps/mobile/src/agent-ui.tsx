@@ -37,6 +37,7 @@ import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import type { FileRecoverySnapshot } from "../../../packages/domain/src/file-versions";
 import type { InteractionRequest } from "../../../packages/domain/src/runtime";
 import { useAgentWorkspace } from "./agent-workspace";
+import { ArtifactResultCard } from "./artifact-result-card";
 import { InteractionCard } from "./interaction-card";
 import { MemorySettings } from "./memory-settings";
 import { NativePushSettings } from "./native-push-settings";
@@ -720,65 +721,13 @@ function display(value: unknown): string {
         : JSON.stringify(value, null, 2) || "";
 }
 export function ArtifactCard({ artifact }: { artifact: AgentArtifact }) {
-  const [expanded, setExpanded] = useState(false);
-  if (artifact.kind === "finance") return <FinanceArtifact artifact={artifact} />;
-  const rows = Object.entries(artifact.data);
-  return (
-    <Card style={{ gap: 13, backgroundColor: colors.card }}>
-      <View style={s.between}>
-        <Text style={s.heading}>{artifact.title}</Text>
-        <Chip>{statusLabel(artifact.kind)}</Chip>
-      </View>
-      <Text selectable style={s.muted}>
-        {artifact.summary}
-      </Text>
-      {(expanded ? rows : rows.slice(0, 4)).map(([key, value]) => (
-        <View key={key} style={{ gap: 6 }}>
-          <Text style={s.label}>{key.replace(/_/g, " ")}</Text>
-          {Array.isArray(value) ? (
-            value.slice(0, expanded ? 100 : 5).map((item) => {
-              const row = record(item);
-              return (
-                <View
-                  key={`${key}-${display(row?.id ?? item)}`}
-                  style={{
-                    paddingVertical: 8,
-                    borderBottomWidth: 1,
-                    borderBottomColor: colors.line,
-                  }}
-                >
-                  <Text selectable style={s.text}>
-                    {row
-                      ? Object.entries(row)
-                          .map(([name, val]) => `${name}: ${display(val)}`)
-                          .join(" · ")
-                      : display(item)}
-                  </Text>
-                </View>
-              );
-            })
-          ) : record(value) ? (
-            Object.entries(record(value) || {}).map(([name, val]) => (
-              <View key={name} style={s.between}>
-                <Text style={s.muted}>{name}</Text>
-                <Text selectable style={s.text}>
-                  {display(val)}
-                </Text>
-              </View>
-            ))
-          ) : (
-            <Text selectable style={[s.text, { fontSize: typeof value === "number" ? 24 : 14 }]}>
-              {display(value)}
-            </Text>
-          )}
-        </View>
-      ))}
-      <Button small onPress={() => setExpanded(!expanded)}>
-        {expanded ? "Show summary" : "Explore full result"}
-      </Button>
-    </Card>
+  return artifact.kind === "finance" ? (
+    <FinanceArtifact artifact={artifact} />
+  ) : (
+    <ArtifactResultCard key={artifact.id} artifact={artifact} />
   );
 }
+
 function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
   const [details, setDetails] = useState(false);
   const [expanded, setExpanded] = useState(false);

@@ -7,7 +7,19 @@ import {
   useRenderTool,
   useRenderToolCall,
 } from "@copilotkit/react-native/headless";
-import { ArrowDown, ArrowUp, FileText, Quote, RotateCcw, Square, X } from "lucide-react-native";
+import {
+  ArrowDown,
+  ArrowUp,
+  CalendarDays,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  FolderOpen,
+  Monitor,
+  RotateCcw,
+  Square,
+  X,
+} from "lucide-react-native";
 import {
   type ReactNode,
   useCallback,
@@ -40,6 +52,7 @@ import type {
 import { ArtifactCard } from "./agent-ui";
 import { useAgentWorkspace } from "./agent-workspace";
 import { AssistantResponse } from "./assistant-response";
+import { useAvatarPresentation } from "./avatar-presentation";
 import { BackgroundUpdates } from "./background-updates";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
 import { ChatAttachments } from "./chat-attachments";
@@ -61,6 +74,7 @@ import { InteractionCard } from "./interaction-card";
 import { confirmedJevSelection, displayJevUserMessage, latestJevPanelId } from "./jev-actions";
 import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
 import { MailToolCard } from "./mail-tool-card";
+import { MessageBubble } from "./message-bubble";
 import {
   ComposerSubmission,
   composerKeyIsSubmit,
@@ -287,7 +301,7 @@ function ServerToolCard({
           {loading
             ? t("Waiting for the server.")
             : taskId
-              ? `Task ${taskId} is saved and will continue on the server.`
+              ? t("Your task will continue in the background.")
               : t("Open the workspace to see the saved result.")}
         </Text>
       )}
@@ -305,8 +319,7 @@ function ServerToolCard({
               )
         }
       >
-        {t("View")}
-        {name.toLowerCase()}
+        {taskId ? t("View task") : t("View")}
       </Button>
     </Card>
   );
@@ -324,6 +337,7 @@ export function ChatScreen({
 }) {
   const { t } = useI18n();
   const { api, workspace: w, refresh, open } = useWorkspace();
+  const { reportActivity } = useAvatarPresentation();
   const { data: agentWorkspace, refresh: refreshAgent } = useAgentWorkspace();
   const { enabled: richThreads, mainId, claimPrompt, markAccepted } = useMuseThread();
   const selection = thread || { id: "local", existing: false };
@@ -353,6 +367,8 @@ export function ChatScreen({
   const [focused, setFocused] = useState(false);
   const [inputHeight, setInputHeight] = useState(44);
   const [showResults, setShowResults] = useState(false);
+  const [showDirections, setShowDirections] = useState(false);
+  const [streamingText, setStreamingText] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [modelNotice, setModelNotice] = useState<string>();
@@ -901,6 +917,26 @@ export function ChatScreen({
       : null;
   const visible = messages.filter((m) => m.role === "user" || m.role === "assistant");
   const replying = busy || agent.isRunning;
+  const conversationKey = `${api.identityKey}\n${threadId}`;
+  const motion = replying ? (streamingText ? "talking" : "thinking") : "idle";
+  useEffect(() => {
+    const subscription = agent.subscribe({
+      onRunStartedEvent: () => setStreamingText(false),
+      onTextMessageContentEvent: () => setStreamingText(true),
+      onTextMessageEndEvent: () => setStreamingText(false),
+      onToolCallStartEvent: () => setStreamingText(false),
+      onRunFinishedEvent: () => setStreamingText(false),
+      onRunErrorEvent: () => setStreamingText(false),
+    });
+    return () => subscription.unsubscribe();
+  }, [agent]);
+  useEffect(() => {
+    if (active) reportActivity({ key: conversationKey, state: motion });
+  }, [active, conversationKey, motion, reportActivity]);
+  useEffect(
+    () => () => reportActivity({ key: conversationKey, state: "idle" }),
+    [conversationKey, active, reportActivity],
+  );
   return (
     <View style={{ flex: 1 }}>
       <ScrollView
@@ -919,17 +955,21 @@ export function ChatScreen({
         }}
         keyboardShouldPersistTaps="handled"
       >
-        {queue instanceof MessageOutbox && (
-          <Button small onPress={() => setShowResourceLibrary((value) => !value)}>
-            {showResourceLibrary ? t("Close files and sessions") : t("Files and sessions")}
-          </Button>
-        )}
         {showResourceLibrary && queue instanceof MessageOutbox && (
-          <ConversationResourceLibrary
-            threadId={threadId}
-            onAnnotateFile={annotateFile}
-            onAnnotateFrame={annotateFrame}
-          />
+          <View style={{ gap: 10 }}>
+            <Button
+              small
+              onPress={() => setShowResourceLibrary(false)}
+              style={{ alignSelf: "flex-end" }}
+            >
+              {t("Close files and sessions")}
+            </Button>
+            <ConversationResourceLibrary
+              threadId={threadId}
+              onAnnotateFile={annotateFile}
+              onAnnotateFrame={annotateFrame}
+            />
+          </View>
         )}
         {annotationSource && (
           <ConversationAnnotationComposer
@@ -956,27 +996,26 @@ export function ChatScreen({
               flexShrink: 0,
               justifyContent: "center",
               alignItems: "center",
-              paddingVertical: 34,
-              gap: 15,
+              paddingVertical: wide ? 44 : 26,
+              gap: 14,
             }}
           >
             <Text
               style={{
-                fontSize: wide ? 36 : 28,
-                letterSpacing: -1,
+                fontSize: wide ? 34 : 28,
+                fontWeight: "500",
+                letterSpacing: -1.1,
                 color: colors.text,
                 textAlign: "center",
                 maxWidth: wide ? 580 : 350,
               }}
             >
-              {t("A little help. A lot more room for life.")}
+              {t("What would you like to make room for?")}
             </Text>
             <Text
               style={[s.muted, { maxWidth: wide ? 500 : 320, textAlign: "center", lineHeight: 23 }]}
             >
-              {t(
-                "Tell me what’s on your mind. I can make a plan, work with your apps, and use my computer to help.",
-              )}
+              {t("A plan for your day, something to create, or a little help getting it done.")}
             </Text>
             <View
               style={{
@@ -992,33 +1031,61 @@ export function ChatScreen({
               {[
                 {
                   text: t("Plan my day"),
+                  detail: t("Find a little breathing room"),
+                  icon: CalendarDays,
+                  tint: "#EFF3EC",
                   action: () => enqueue(t("Help me plan my day. Ask what you need to know.")),
                 },
                 {
                   text: t("Create a document"),
+                  detail: t("Turn an idea into something real"),
+                  icon: FileText,
+                  tint: "#F3EEF8",
                   action: () =>
                     enqueue(t("Help me create a document. Let's choose its topic and format.")),
                 },
-                { text: t("Open my computer"), action: () => open({ type: "computer" }) },
+                {
+                  text: t("Open my computer"),
+                  detail: t("Pick up where we left off"),
+                  icon: Monitor,
+                  tint: "#EDF4F8",
+                  action: () => open({ type: "computer" }),
+                },
               ].map((item) => (
-                <Button
+                <Pressable
                   key={item.text}
-                  onPress={item.action}
-                  style={
-                    wide
-                      ? {
-                          flexGrow: 1,
-                          minHeight: 56,
-                          borderRadius: 14,
-                          backgroundColor: "#F3F6FA",
-                          borderWidth: 1,
-                          borderColor: "#E7EDF3",
-                        }
-                      : undefined
-                  }
+                  accessibilityRole="button"
+                  onPress={() => void item.action()}
+                  style={({ pressed }) => ({
+                    flex: wide ? 1 : undefined,
+                    minWidth: wide ? 175 : undefined,
+                    padding: 17,
+                    borderRadius: 22,
+                    backgroundColor: pressed ? item.tint : "#FFFFFF",
+                    borderWidth: 1,
+                    borderColor: "#E9EBEE",
+                    gap: 12,
+                    flexDirection: wide ? "column" : "row",
+                    alignItems: wide ? "flex-start" : "center",
+                  })}
                 >
-                  {item.text}
-                </Button>
+                  <View
+                    style={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: 13,
+                      backgroundColor: item.tint,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <item.icon size={20} strokeWidth={1.6} color="#59646A" />
+                  </View>
+                  <View style={{ gap: 4, flexShrink: 1 }}>
+                    <Text style={[s.text, { fontWeight: "600", fontSize: 14 }]}>{item.text}</Text>
+                    <Text style={[s.small, { fontSize: 12 }]}>{item.detail}</Text>
+                  </View>
+                </Pressable>
               ))}
             </View>
           </View>
@@ -1046,15 +1113,14 @@ export function ChatScreen({
                 }}
               >
                 {!!text && (
-                  <View
-                    style={{
-                      paddingHorizontal: 16,
-                      paddingVertical: 13,
-                      borderRadius: 22,
-                      borderBottomRightRadius: user ? 7 : 22,
-                      borderBottomLeftRadius: user ? 22 : 7,
-                      backgroundColor: user ? colors.blue : "#EEEEF0",
-                    }}
+                  <MessageBubble
+                    user={user}
+                    contextual={wide}
+                    onQuote={
+                      durableChat && typeof message.content === "string"
+                        ? () => annotateMessage(message, message.content as string)
+                        : undefined
+                    }
                   >
                     {user ? (
                       <Text selectable style={[s.text, { fontSize: 16, lineHeight: 24 }]}>
@@ -1063,27 +1129,7 @@ export function ChatScreen({
                     ) : (
                       <AssistantResponse content={text} />
                     )}
-                  </View>
-                )}
-                {durableChat && !!text && typeof message.content === "string" && (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={t("Quote text")}
-                    onPress={() => annotateMessage(message, message.content as string)}
-                    style={({ pressed }) => ({
-                      alignSelf: user ? "flex-end" : "flex-start",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 5,
-                      minHeight: wide ? 30 : 40,
-                      paddingHorizontal: 9,
-                      borderRadius: 8,
-                      opacity: pressed ? 0.55 : 1,
-                    })}
-                  >
-                    <Quote size={13} color={colors.muted} />
-                    <Text style={s.small}>{t("Quote text")}</Text>
-                  </Pressable>
+                  </MessageBubble>
                 )}
                 <JevInteractionContext.Provider
                   value={{
@@ -1381,34 +1427,64 @@ export function ChatScreen({
         )}
         {queue instanceof MessageOutbox &&
           queue.getSnapshot().events.some((event) => event.kind === "directive") && (
-            <View style={{ padding: 12, gap: 4 }}>
-              {Array.from(
-                new Map(
-                  queue
-                    .getSnapshot()
-                    .events.filter((event) => event.kind === "directive")
-                    .map((event) => [
-                      (event.payload as TaskMailbox).id,
-                      event.payload as TaskMailbox,
-                    ]),
-                ).values(),
-              )
-                .slice(-3)
-                .map((receipt) => (
-                  <Text key={receipt.id} style={s.small}>
-                    {t("Direction")}{" "}
-                    {receipt.status === "received"
-                      ? t("received; waiting to apply")
-                      : receipt.status === "applied"
-                        ? t("applied")
-                        : t("arrived after the task completed")}
-                    : {receipt.text}
-                  </Text>
-                ))}
+            <View style={{ paddingHorizontal: 12, paddingBottom: 8, gap: 4 }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: showDirections }}
+                aria-expanded={showDirections}
+                onPress={() => setShowDirections((value) => !value)}
+                style={[s.row, { minHeight: 36, gap: 6 }]}
+              >
+                {showDirections ? (
+                  <ChevronDown size={13} color={colors.muted} />
+                ) : (
+                  <ChevronRight size={13} color={colors.muted} />
+                )}
+                <Text style={s.small}>{t("Your task directions")}</Text>
+              </Pressable>
+              {showDirections && (
+                <View style={{ gap: 8 }}>
+                  {Array.from(
+                    new Map(
+                      queue
+                        .getSnapshot()
+                        .events.filter((event) => event.kind === "directive")
+                        .map((event) => [
+                          (event.payload as TaskMailbox).id,
+                          event.payload as TaskMailbox,
+                        ]),
+                    ).values(),
+                  )
+                    .slice(-3)
+                    .map((receipt) => (
+                      <Text key={receipt.id} style={s.small}>
+                        {t("Direction")}{" "}
+                        {receipt.status === "received"
+                          ? t("received; waiting to apply")
+                          : receipt.status === "applied"
+                            ? t("applied")
+                            : t("arrived after the task completed")}
+                        : {receipt.text}
+                      </Text>
+                    ))}
+                </View>
+              )}
             </View>
           )}
         <Card style={{ marginBottom: 12, padding: 15, display: picking ? "flex" : "none" }}>
           <Text style={s.heading}>{t("Attachments and voice")}</Text>
+          {queue instanceof MessageOutbox && (
+            <Button
+              small
+              icon={FolderOpen}
+              onPress={() => {
+                setPicking(false);
+                setShowResourceLibrary((value) => !value);
+              }}
+            >
+              {showResourceLibrary ? t("Close files and sessions") : t("Files and sessions")}
+            </Button>
+          )}
           {queue instanceof MessageOutbox && (
             <ChatAttachments
               key={`${api.identityKey}:${threadId}`}
@@ -1554,6 +1630,7 @@ export function ChatScreen({
               accessibilityRole="button"
               accessibilityLabel={t("Attach a document")}
               accessibilityState={{ expanded: picking }}
+              aria-expanded={picking}
               onPress={() => setPicking(!picking)}
               style={({ pressed }) => ({
                 width: 44,

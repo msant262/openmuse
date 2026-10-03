@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+  type ViewStyle,
+} from "react-native";
 import type { AgentIdentity, AgentWorkspace } from "../../../packages/domain/src/agent";
 import {
   AVATAR_PRESETS,
@@ -48,6 +56,9 @@ export function AvatarStudio({
   const { api, notify } = useWorkspace();
   const { refresh } = useAgentWorkspace();
   const { t } = useI18n();
+  const { width } = useWindowDimensions();
+  const columns = Platform.OS === "web" && width >= 1180;
+  const [advanced, setAdvanced] = useState(false);
   const [saved, setSaved] = useState<ScopedDesign>();
   const [draft, setDraft] = useState<ScopedDesign>();
   const [pending, setPending] = useState<Target>();
@@ -163,6 +174,7 @@ export function AvatarStudio({
         accessibilityRole="radio"
         accessibilityLabel={t("Choose {name}", { name: t(label) })}
         accessibilityState={{ checked: selected, disabled: busy || !savedDesign }}
+        aria-checked={selected}
         disabled={busy || !savedDesign}
         onPress={onPress}
         style={[styles.option, selected && styles.selected]}
@@ -175,215 +187,289 @@ export function AvatarStudio({
     <View style={styles.studio}>
       <View style={{ gap: 6 }}>
         <Text style={styles.title}>{t("Your companion")}</Text>
-        <Text style={styles.description}>
-          {t("Choose a 3D companion or create your own. The live preview reacts as you edit.")}
-        </Text>
+        <Text style={styles.description}>{t("Choose a familiar face. Make it your own.")}</Text>
       </View>
-      <View style={styles.preview}>
-        <AvatarRenderer
-          design={design}
-          state={motion}
-          interactive
-          size={250}
-          accessibilityLabel={t("3D companion preview")}
-          fallbackLabel={t("Static preview · 3D unavailable on this device")}
-          onReady={setRendererKind}
-        />
-        <Text style={styles.previewLabel}>
-          {rendererKind === "fallback"
-            ? t("Static preview · 3D unavailable on this device")
-            : savedDesign
-              ? t("Live 3D preview")
-              : t("Loading your companion…")}
-        </Text>
-        <Text style={styles.hint}>{t("Motion follows your device’s accessibility settings.")}</Text>
-      </View>
-      {errorMessage && <ErrorNotice error={t(errorMessage)} />}
-      {!savedDesign && errorMessage && (
-        <Button onPress={() => void load()}>{t("Try again")}</Button>
-      )}
-      <Text style={styles.label}>{t("Ready-made companions")}</Text>
-      <View style={styles.presetRow}>
-        {AVATAR_PRESETS.map((preset) => (
-          <Pressable
-            key={preset.species}
-            accessibilityRole="radio"
-            accessibilityLabel={t("Choose {name}", { name: t(speciesNames[preset.species]) })}
-            accessibilityState={{
-              checked: design.preset === preset.preset,
-              disabled: busy || !savedDesign,
-            }}
-            disabled={busy || !savedDesign}
-            onPress={() => choose({ ...preset })}
-            style={[styles.preset, design.preset === preset.preset && styles.selected]}
-          >
-            <AvatarThumbnail species={preset.species} size={78} />
-            <Text
-              style={[styles.optionText, design.preset === preset.preset && styles.selectedText]}
+      <View style={[styles.layout, { flexDirection: columns ? "row" : "column" }]}>
+        <View
+          style={[
+            styles.portraitColumn,
+            columns && ({ width: 324, position: "sticky", top: 12 } as unknown as ViewStyle),
+          ]}
+        >
+          <View style={styles.preview}>
+            <AvatarRenderer
+              design={design}
+              state={motion}
+              interactive
+              size={Math.min(290, width - 88)}
+              accessibilityLabel={t("3D companion preview")}
+              fallbackLabel={t("Static preview · 3D unavailable on this device")}
+              onReady={setRendererKind}
+            />
+            <Text style={styles.characterName}>{t(speciesNames[design.species])}</Text>
+            <Text style={styles.previewLabel}>
+              {rendererKind === "fallback"
+                ? t("Static preview · 3D unavailable on this device")
+                : savedDesign
+                  ? t("Your companion, in motion")
+                  : t("Loading your companion…")}
+            </Text>
+            <View style={[styles.options, { justifyContent: "center", marginTop: 10 }]}>
+              {Object.entries(motionNames).map(([key, label]) =>
+                option(label, motion === key, () => setMotion(key as AvatarMotionState)),
+              )}
+            </View>
+          </View>
+          <View style={styles.saveBar}>
+            <Button
+              primary
+              busy={busy}
+              disabled={
+                !savedDesign ||
+                !changed ||
+                !!(colorText && !/^#[0-9a-fA-F]{6}$/.test(colorText.value))
+              }
+              onPress={() => void save()}
             >
-              {t(speciesNames[preset.species])}
+              {t("Save companion")}
+            </Button>
+            <Text style={[styles.hint, { textAlign: "center" }]}>
+              {t(changed ? "Changes are not saved yet" : "Your saved companion")}
+            </Text>
+          </View>
+        </View>
+        <View
+          style={{
+            flex: columns ? 1 : undefined,
+            width: columns ? undefined : "100%",
+            minWidth: 0,
+            gap: 18,
+          }}
+        >
+          {errorMessage && <ErrorNotice error={t(errorMessage)} />}
+          {!savedDesign && errorMessage && (
+            <Button onPress={() => void load()}>{t("Try again")}</Button>
+          )}
+          <Text style={styles.label}>{t("Ready-made companions")}</Text>
+          <View style={styles.presetRow}>
+            {AVATAR_PRESETS.map((preset) => (
+              <Pressable
+                key={preset.species}
+                accessibilityRole="radio"
+                accessibilityLabel={t("Choose {name}", { name: t(speciesNames[preset.species]) })}
+                accessibilityState={{
+                  checked: design.preset === preset.preset,
+                  disabled: busy || !savedDesign,
+                }}
+                aria-checked={design.preset === preset.preset}
+                disabled={busy || !savedDesign}
+                onPress={() => choose({ ...preset })}
+                style={[styles.preset, design.preset === preset.preset && styles.selected]}
+              >
+                <AvatarThumbnail species={preset.species} size={78} />
+                <Text
+                  style={[
+                    styles.optionText,
+                    design.preset === preset.preset && styles.selectedText,
+                  ]}
+                >
+                  {t(speciesNames[preset.species])}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: design.preset === "custom" }}
+            aria-expanded={design.preset === "custom"}
+            disabled={busy || !savedDesign}
+            onPress={() => choose({ ...design, preset: "custom" })}
+            style={[styles.custom, design.preset === "custom" && styles.selected]}
+          >
+            <Text style={styles.customTitle}>{t("Create your own")}</Text>
+            <Text style={styles.description}>
+              {t("Start from the current companion and make it yours.")}
             </Text>
           </Pressable>
-        ))}
-      </View>
-      <Pressable
-        accessibilityRole="button"
-        disabled={busy || !savedDesign}
-        onPress={() => choose({ ...design, preset: "custom" })}
-        style={[styles.custom, design.preset === "custom" && styles.selected]}
-      >
-        <Text style={styles.customTitle}>{t("Create your own")}</Text>
-        <Text style={styles.description}>
-          {t("Start from the current companion and make it yours.")}
-        </Text>
-      </Pressable>
-      {design.preset === "custom" && (
-        <View style={styles.controls}>
-          <Text style={styles.label}>{t("Species")}</Text>
-          <View style={styles.options}>
-            {Object.entries(speciesNames).map(([key, label]) =>
-              option(label, design.species === key, () =>
-                edit("species", key as AvatarDesign["species"]),
-              ),
-            )}
-          </View>
-          <Text style={styles.label}>{t("Body shape")}</Text>
-          <View style={styles.options}>
-            {Object.entries(shapeNames).map(([key, label]) =>
-              option(label, design.bodyShape === key, () =>
-                edit("bodyShape", key as AvatarDesign["bodyShape"]),
-              ),
-            )}
-          </View>
-          {(["bodyColor", "accentColor", "eyeColor"] as const).map((key) => {
-            const label =
-              key === "bodyColor"
-                ? "Body color"
-                : key === "accentColor"
-                  ? "Accent color"
-                  : "Eye color";
-            const fieldLabel =
-              key === "bodyColor"
-                ? "Custom body color"
-                : key === "accentColor"
-                  ? "Custom accent color"
-                  : "Custom eye color";
-            const raw = colorText?.key === key ? colorText.value : design[key];
-            const invalid = !/^#[0-9a-fA-F]{6}$/.test(raw);
-            return (
-              <View key={key} style={{ gap: 10 }}>
-                <Text style={styles.label}>{t(label)}</Text>
-                <View style={styles.options}>
-                  {colorChoices.map((choice) => (
-                    <Pressable
-                      key={choice.color}
-                      accessibilityRole="radio"
-                      accessibilityLabel={t("Choose {name} color", { name: t(choice.name) })}
-                      accessibilityState={{
-                        checked: design[key].toLowerCase() === choice.color.toLowerCase(),
-                        disabled: busy,
-                      }}
-                      disabled={busy}
-                      onPress={() => edit(key, choice.color)}
-                      style={[
-                        styles.swatchRing,
-                        design[key].toLowerCase() === choice.color.toLowerCase() && styles.selected,
-                      ]}
-                    >
-                      <View style={[styles.swatch, { backgroundColor: choice.color }]} />
-                    </Pressable>
-                  ))}
-                </View>
-                <Field
-                  label={t(fieldLabel)}
-                  value={raw}
-                  maxLength={7}
-                  autoCapitalize="characters"
-                  editable={!busy}
-                  onChangeText={(value) => {
-                    setColorText({ key, value });
-                    if (/^#[0-9a-fA-F]{6}$/.test(value))
-                      setDraft({ target: currentTarget, design: { ...design, [key]: value } });
-                  }}
-                />
-                {invalid && (
-                  <Text style={styles.hint}>
-                    {t("Use a six-digit hex color, such as #8299AC.")}
-                  </Text>
+          {design.preset === "custom" && (
+            <View style={styles.controls}>
+              {advanced && (
+                <>
+                  <Text style={styles.label}>{t("Species")}</Text>
+                  <View style={styles.options}>
+                    {Object.entries(speciesNames).map(([key, label]) =>
+                      option(label, design.species === key, () =>
+                        edit("species", key as AvatarDesign["species"]),
+                      ),
+                    )}
+                  </View>
+                  <Text style={styles.label}>{t("Body shape")}</Text>
+                  <View style={styles.options}>
+                    {Object.entries(shapeNames).map(([key, label]) =>
+                      option(label, design.bodyShape === key, () =>
+                        edit("bodyShape", key as AvatarDesign["bodyShape"]),
+                      ),
+                    )}
+                  </View>
+                </>
+              )}
+              {(advanced
+                ? (["bodyColor", "accentColor", "eyeColor"] as const)
+                : (["bodyColor"] as const)
+              ).map((key) => {
+                const label =
+                  key === "bodyColor"
+                    ? "Body color"
+                    : key === "accentColor"
+                      ? "Accent color"
+                      : "Eye color";
+                const fieldLabel =
+                  key === "bodyColor"
+                    ? "Custom body color"
+                    : key === "accentColor"
+                      ? "Custom accent color"
+                      : "Custom eye color";
+                const raw = colorText?.key === key ? colorText.value : design[key];
+                const invalid = !/^#[0-9a-fA-F]{6}$/.test(raw);
+                return (
+                  <View key={key} style={{ gap: 10 }}>
+                    <Text style={styles.label}>{t(label)}</Text>
+                    <View style={styles.options}>
+                      {colorChoices.map((choice) => (
+                        <Pressable
+                          key={choice.color}
+                          accessibilityRole="radio"
+                          accessibilityLabel={t("Choose {name} color", { name: t(choice.name) })}
+                          accessibilityState={{
+                            checked: design[key].toLowerCase() === choice.color.toLowerCase(),
+                            disabled: busy,
+                          }}
+                          aria-checked={design[key].toLowerCase() === choice.color.toLowerCase()}
+                          disabled={busy}
+                          onPress={() => edit(key, choice.color)}
+                          style={[
+                            styles.swatchRing,
+                            design[key].toLowerCase() === choice.color.toLowerCase() &&
+                              styles.selected,
+                          ]}
+                        >
+                          <View style={[styles.swatch, { backgroundColor: choice.color }]} />
+                        </Pressable>
+                      ))}
+                    </View>
+                    {advanced && (
+                      <Field
+                        label={t(fieldLabel)}
+                        value={raw}
+                        maxLength={7}
+                        autoCapitalize="characters"
+                        editable={!busy}
+                        onChangeText={(value) => {
+                          setColorText({ key, value });
+                          if (/^#[0-9a-fA-F]{6}$/.test(value))
+                            setDraft({
+                              target: currentTarget,
+                              design: { ...design, [key]: value },
+                            });
+                        }}
+                      />
+                    )}
+                    {invalid && (
+                      <Text style={styles.hint}>
+                        {t("Use a six-digit hex color, such as #8299AC.")}
+                      </Text>
+                    )}
+                  </View>
+                );
+              })}
+              <Text style={styles.label}>{t("Accessory")}</Text>
+              <View style={styles.options}>
+                {Object.entries(accessoryNames).map(([key, label]) =>
+                  option(label, design.accessory === key, () =>
+                    edit("accessory", key as AvatarDesign["accessory"]),
+                  ),
                 )}
               </View>
-            );
-          })}
-          <Text style={styles.label}>{t("Accessory")}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: advanced }}
+                aria-expanded={advanced}
+                onPress={() => setAdvanced((value) => !value)}
+                style={[styles.option, { alignSelf: "flex-start", minHeight: 44 }]}
+              >
+                <Text style={styles.optionText}>
+                  {advanced ? t("Fewer appearance options") : t("Fine-tune appearance")}
+                </Text>
+              </Pressable>
+            </View>
+          )}
           <View style={styles.options}>
-            {Object.entries(accessoryNames).map(([key, label]) =>
-              option(label, design.accessory === key, () =>
-                edit("accessory", key as AvatarDesign["accessory"]),
-              ),
+            {!columns && (
+              <Button
+                primary
+                busy={busy}
+                disabled={
+                  !savedDesign ||
+                  !changed ||
+                  !!(colorText && !/^#[0-9a-fA-F]{6}$/.test(colorText.value))
+                }
+                onPress={() => void save()}
+              >
+                {t("Save companion")}
+              </Button>
+            )}
+            {changed && (
+              <Button disabled={busy} onPress={() => choose({ ...savedDesign })}>
+                {t("Restore saved design")}
+              </Button>
             )}
           </View>
-        </View>
-      )}
-      <View style={{ gap: 10 }}>
-        <Text style={styles.label}>{t("Preview animation")}</Text>
-        <View style={styles.options}>
-          {Object.entries(motionNames).map(([key, label]) =>
-            option(label, motion === key, () => setMotion(key as AvatarMotionState)),
-          )}
+          <Text style={styles.hint}>
+            {t("Motion follows your device’s accessibility settings.")}
+          </Text>
         </View>
       </View>
-      <View style={styles.options}>
-        <Button
-          primary
-          busy={busy}
-          disabled={
-            !savedDesign || !changed || !!(colorText && !/^#[0-9a-fA-F]{6}$/.test(colorText.value))
-          }
-          onPress={() => void save()}
-        >
-          {t("Save companion")}
-        </Button>
-        {changed && (
-          <Button disabled={busy} onPress={() => choose({ ...savedDesign })}>
-            {t("Restore saved design")}
-          </Button>
-        )}
-      </View>
-      <Text style={styles.hint}>
-        {t(changed ? "Changes are not saved yet" : "Your saved companion")}
-      </Text>
-      <Text style={styles.hint}>
-        {t("The avatar changes appearance only. Edit name and personality in settings.")}
-      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  studio: { gap: 18, width: "100%" },
+  studio: {
+    gap: 20,
+    width: "100%",
+    padding: 20,
+    borderRadius: 28,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#EAEBED",
+  },
+  layout: { gap: 28, alignItems: "flex-start" },
+  portraitColumn: { width: "100%", gap: 14 },
+  saveBar: { gap: 9 },
+  characterName: { color: "#332E3C", fontSize: 20, fontWeight: "600", letterSpacing: -0.5 },
   title: { color: "#332E3C", fontSize: 22, fontWeight: "600" },
   description: { color: "#736C7B", fontSize: 13, lineHeight: 20 },
   label: { color: "#51495F", fontSize: 12, fontWeight: "600", letterSpacing: 0.3 },
   hint: { color: "#82798B", fontSize: 11, lineHeight: 17 },
   preview: {
-    backgroundColor: "#F7F3ED",
+    backgroundColor: "#F6F4F1",
     borderRadius: 22,
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: "#E9E1D8",
     alignItems: "center",
     paddingBottom: 18,
     gap: 5,
   },
-  previewLabel: { color: "#625570", fontSize: 12, fontWeight: "500" },
+  previewLabel: { color: "#82798B", fontSize: 11 },
   presetRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   preset: {
-    width: 94,
+    width: 96,
     paddingVertical: 8,
     alignItems: "center",
     backgroundColor: "#FAF8F5",
     borderWidth: 1,
     borderColor: "#E6E0E9",
-    borderRadius: 16,
+    borderRadius: 22,
     gap: 3,
   },
   selected: { borderColor: "#8D78B2", backgroundColor: "#F1ECF7" },

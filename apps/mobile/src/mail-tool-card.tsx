@@ -4,7 +4,8 @@ import { ActivityIndicator, Text, View } from "react-native";
 import { z } from "zod";
 import { BrowserRunContext } from "./browser-tool-card";
 import { useI18n } from "./i18n";
-import { Button, Card, colors, ErrorNotice, s } from "./ui";
+import { ResultCardFrame } from "./result-card-frame";
+import { Button, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 const messageSchema = z.object({
@@ -89,9 +90,7 @@ export function MailToolCard({
   const message = parsed.data.messages.at(-1);
   if (!message) return <Text style={s.muted}>{t("No messages in this thread.")}</Text>;
   return (
-    <Card
-      style={{ padding: 18, gap: 14, backgroundColor: "#F0EFF2", maxWidth: 440, width: "100%" }}
-    >
+    <ResultCardFrame style={{ padding: 18, gap: 14 }}>
       <View style={[s.row, { gap: 10 }]}>
         <View style={[s.iconBox, { backgroundColor: "#E9F5FC" }]}>
           <Mail size={20} color={colors.blueDark} />
@@ -106,7 +105,9 @@ export function MailToolCard({
           </Text>
         </View>
       </View>
-      <Text style={s.heading}>{message.subject}</Text>
+      <Text numberOfLines={2} style={[s.heading, { fontSize: 18, lineHeight: 24 }]}>
+        {message.subject}
+      </Text>
       <Text style={s.muted} numberOfLines={3}>
         {message.body}
       </Text>
@@ -116,6 +117,6 @@ export function MailToolCard({
       <Button small icon={Mail} onPress={() => open({ type: "mail", mail: message })}>
         {t("Open email")}
       </Button>
-    </Card>
+    </ResultCardFrame>
   );
 }

@@ -15,6 +15,7 @@ export function AvatarRenderer({
   active = true,
   reducedMotion,
   interactive = false,
+  framing = "full",
   size = 180,
   style,
   accessibilityLabel,
@@ -38,6 +39,7 @@ export function AvatarRenderer({
     active: active && foreground && visible,
     reducedMotion: reducedMotion ?? systemReducedMotion,
     interactive,
+    framing,
   };
   const latest = useRef(settings);
   latest.current = settings;
@@ -93,6 +95,7 @@ export function AvatarRenderer({
     reducedMotion,
     systemReducedMotion,
     interactive,
+    framing,
   ]);
   function fail() {
     setFallback(true);

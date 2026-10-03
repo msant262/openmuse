@@ -7,7 +7,12 @@ type Node = { type: unknown; props: Record<string, unknown> };
 type Cell = { value?: unknown; current?: unknown; deps?: readonly unknown[]; cleanup?: () => void };
 
 /** Deterministic hooks/JSX harness for actual rendered handlers, without React Native runtime. */
-export function componentHarness(source: URL, name: string, dependencies: Record<string, unknown>) {
+export function componentHarness(
+  source: URL,
+  name: string,
+  dependencies: Record<string, unknown>,
+  props: Record<string, unknown> = {},
+) {
   const cells: Cell[] = [];
   let index = 0;
   let effects: (() => void)[] = [];
@@ -23,6 +28,19 @@ export function componentHarness(source: URL, name: string, dependencies: Record
           cells[slot].value = typeof next === "function" ? next(cells[slot].value) : next;
         },
       ];
+    },
+    useMemo(create: () => unknown, deps: readonly unknown[]) {
+      const slot = index++;
+      const before = cells[slot];
+      if (!before || deps.some((value, n) => value !== before.deps?.[n]))
+        cells[slot] = { deps, value: create() };
+      return cells[slot].value;
+    },
+    createContext(value: unknown) {
+      return { value };
+    },
+    useContext(context: { value: unknown }) {
+      return context.value;
     },
     useRef(initial: unknown) {
       const slot = index++;
@@ -51,7 +69,7 @@ export function componentHarness(source: URL, name: string, dependencies: Record
     },
   }).outputText;
   const module = { exports: {} as Record<string, unknown> };
-  const factory = runInNewContext(`(function(require,module,exports){${js}})`);
+  const factory = runInNewContext(`(function(require,module,exports){${js}})`, { Error, URL });
   factory(
     (key: string) => {
       assert.ok(key in modules, `Unknown component dependency: ${key}`);
@@ -62,10 +80,11 @@ export function componentHarness(source: URL, name: string, dependencies: Record
   );
   const component = module.exports[name];
   assert.equal(typeof component, "function");
-  const render = () => {
+  const render = (nextProps?: Record<string, unknown>) => {
+    if (nextProps) props = nextProps;
     index = 0;
     effects = [];
-    tree = (component as () => unknown)();
+    tree = (component as (props: Record<string, unknown>) => unknown)(props);
     for (const run of effects) run();
   };
   function nodes(value: unknown): Node[] {
@@ -87,6 +106,7 @@ export function componentHarness(source: URL, name: string, dependencies: Record
       render();
     },
     text: () => text(tree),
+    nodes: () => nodes(tree),
     field(label: string) {
       return nodes(tree).find((node) => node.type === "Field" && node.props.label === label)?.props
         .value;

@@ -23,6 +23,8 @@ function fixture(request: (path: string, body?: unknown) => Promise<unknown>) {
     {
       "react-native": {
         Text: "Text",
+        Platform: { OS: "web" },
+        useWindowDimensions: () => ({ width: 1440 }),
         View: "View",
         Pressable: "Button",
         StyleSheet: { create: (value: unknown) => value },
@@ -61,6 +63,8 @@ test("avatar studio saves actual custom parameters and ignores a delayed save af
     view.render();
     await view.flush();
     view.button("Create your ownStart from the current companion and make it yours.").onPress();
+    view.render();
+    view.button("Fine-tune appearance").onPress();
     view.render();
     view.button("Slender").onPress();
     view.render();
@@ -114,6 +118,25 @@ test("avatar studio keeps edits when saving fails and a retry saves the same des
     assert.equal(saveCalls, 2);
     assert.equal(view.button("Save companion").disabled, true);
     assert.deepEqual(notifications, ["Companion saved"]);
+  } finally {
+    view.close();
+  }
+});
+
+test("avatar selection and motion expose their checked state to web accessibility", async () => {
+  const { view } = fixture(async () => ({ identity: { avatarDesign: AVATAR_PRESETS[0] } }));
+  try {
+    view.render();
+    await view.flush();
+    assert.equal(Reflect.get(view.button("Fox"), "aria-checked"), false);
+    view.button("Fox").onPress();
+    view.render();
+    assert.equal(Reflect.get(view.button("Fox"), "aria-checked"), true);
+    assert.equal(Reflect.get(view.button("Capybara"), "aria-checked"), false);
+    view.button("Thinking").onPress();
+    view.render();
+    assert.equal(Reflect.get(view.button("Thinking"), "aria-checked"), true);
+    assert.equal(Reflect.get(view.button("Idle"), "aria-checked"), false);
   } finally {
     view.close();
   }
