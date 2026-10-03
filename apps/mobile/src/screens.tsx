@@ -1419,7 +1419,7 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                 has not been configured.
               </Text>
               <Text style={s.muted}>
-                Your current computer uses OpenMuse’s persistent Chromium worker. OpenBot
+                Your current computer uses OkamiBot’s persistent Chromium worker. OpenBot
                 integration will expand the execution backend while keeping this interface.
               </Text>
             </View>

@@ -1,0 +1,14 @@
+[Unit]
+Description=Renew scoped Okami vault service credentials
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+WorkingDirectory=/opt/openmuse
+ExecStart=/usr/bin/python3 /opt/openmuse/scripts/renew_openbao_tokens.py
+TimeoutStartSec=3min
+NoNewPrivileges=yes
+PrivateTmp=yes

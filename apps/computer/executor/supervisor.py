@@ -386,6 +386,7 @@ class Supervisor:
         account = sessions.account(config["executorId"])
         self.gate = Gate(journal, self.contain, clock, account["trustMode"])
         self.stop_event = threading.Event()
+        self.flush_lock = threading.Lock()
         self.boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
         self.instance_id = str(uuid.uuid4())
         self.threads = {}
@@ -474,7 +475,8 @@ class Supervisor:
                  "osAccountId":str(self.sessions.account(self.config["executorId"])["uid"]), "bootId":self.boot_id,
                  "instanceId":self.instance_id,
                  "minProtocolVersion":1, "maxProtocolVersion":1,
-                 "capabilities":[{"name":"command", "version":1}, {"name":"files", "version":1}]+(
+                 "capabilities":[{"name":"command", "version":1}, {"name":"files", "version":1},
+                                 {"name":"transcribe", "version":1}]+(
                     [{"name":name,"version":1} for name in ("desktop","browser.dom","browser.screenshot","browser.pointer","browser.drag")] if self.desktop else []),
                  "readiness":self.readiness()}
         response = self.transport.request("register", hello)
@@ -500,13 +502,24 @@ class Supervisor:
                 self.helper.resume_session(self.config["executorId"])
                 if hasattr(self.helper, "resume_account"):
                     self.helper.resume_account(self.config["executorId"])
+                # Keep watchdog/readiness on cached IPC until the newly thawed
+                # broker has actually accepted its first permit. Its socket may
+                # not exist yet after boot or a coordinated stopped-writer backup.
+                if self.desktop:
+                    getattr(self.desktop,"resume_gate",self.desktop.gate)(self.gate)
                 self.desktop_frozen=False
-                if self.desktop:self.desktop.gate(self.gate)
                 self.helper.gate(self.config["executorId"], False)
                 if self.gate.clock() >= self.gate.deadline:
                     self.gate.close("watchdog")
 
     def flush(self):
+        # Graphical work finishes outside the claim loop. Serialize its immediate
+        # durable outbox delivery with the normal loop so a long poll cannot add
+        # fifteen seconds to every frame/input acknowledgement.
+        with self.flush_lock:
+            self._flush()
+
+    def _flush(self):
         for value in self.journal.unacknowledged():
             operation = self.journal.get(value["operationId"])["operation"]
             if operation["executorEpoch"] != self.gate.epoch:
@@ -670,6 +683,14 @@ class Supervisor:
         if self.budget and resource_budget:
             self.budget.release(operation_id,self.config["executorId"],resource_budget["memoryBytes"],resource_budget["heavy"])
 
+    def perform_graphical(self, operation):
+        try:
+            self.perform(operation)
+            self.flush()
+        except Exception:
+            # The receipt remains on disk for reconciliation; never rerun input.
+            self.gate.close("receipt-transport-lost")
+
     def tick(self):
         self.flush()
         for operation_id in list(self.runtime.active):
@@ -699,7 +720,7 @@ class Supervisor:
             return
         for operation in response.get("operations", []):
             if operation["kind"] in ("desktop","browser"):
-                thread=threading.Thread(target=self.perform,args=(operation,),daemon=True)
+                thread=threading.Thread(target=self.perform_graphical,args=(operation,),daemon=True)
                 self.threads[operation["id"]]=thread;thread.start()
             else:self.perform(operation)
 

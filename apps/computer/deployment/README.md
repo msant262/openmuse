@@ -8,6 +8,13 @@ catalog of fixed executable arguments; node requests cannot choose another user,
 root shell, package recipe, or root environment. Keep the existing OpenMuse
 package IDs and MIT notices.
 
+For the final hybrid composition, use the reviewed `scripts/install_native.py`
+plan/prepare/activate workflow in [the deployment guide](../../../deploy/HYBRID.md).
+It installs fixed runtime dependencies, the Playwright-matching Chromium cache
+and optional pinned small ASR model without replacing the existing account,
+sudo/groups, GNOME/RDP or OS Python. Its full-trust service/job properties preserve
+existing authorized sudo; they do not assert account-wide containment.
+
 The physical machines are the VPS and Lenovo. Aoostar is a development/backup
 machine. Lenovo's existing `okami-bot` is UID 1003/GID 1004 with broad sudo and
 privileged groups. Register it as `full-trust`: the API and pause ACK then explicitly
@@ -199,8 +206,9 @@ cannot be retracted, and this policy does not promise containment of orphan
 sockets or the existing full-sudo account.
 Explicit resolvers and exception IP/port pairs belong to the root catalog. Root
 supervisor/control credentials remain outside bot homes and workload mounts;
-privileged sockets and other homes are inaccessible to managed services. Broad
-native sudo/groups invalidate an account-wide network/IPC containment guarantee.
+restricted-mode services keep privileged sockets and other homes inaccessible.
+The authorized full-trust service preserves sudo/groups and therefore invalidates
+an account-wide network/IPC containment guarantee.
 
 Install reviewed units only after host preflight. Keep current RDP and personal
 sessions active throughout. Add the generated `sleep-target.conf` under

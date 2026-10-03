@@ -1,0 +1,21 @@
+{
+  "projectDir": "/opt/openmuse",
+  "envFile": "/opt/openmuse/.env",
+  "backupDir": "/var/backups/okami/local",
+  "restoreDir": "/var/lib/okami-restore",
+  "recipient": "REPLACE_WITH_OFFLINE_OPERATOR_PUBLIC_AGE_RECIPIENT",
+  "apiOrigin": "http://100.113.59.40:8787",
+  "apiBearerFile": "/etc/okami-backup/api-bearer",
+  "vaultBackupTokenFile": "/etc/okami-backup/bao-snapshot-token",
+  "ageBinary": "/usr/bin/age",
+  "requirePeerSnapshot": true,
+  "nativeBackupPeer": {
+    "tailscaleIP": "100.91.96.14",
+    "sshIdentityFile": "/etc/okami-backup/lenovo-snapshot-ssh"
+  },
+  "peer": {
+    "host": "lenovo",
+    "tailscaleIP": "100.91.96.14",
+    "sshIdentityFile": "/etc/okami-backup/lenovo-receiver-ssh"
+  }
+}

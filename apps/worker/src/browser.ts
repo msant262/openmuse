@@ -80,7 +80,7 @@ export async function createBrowserManager(options: {
   const closeFailures = new Map<string, Error>();
   let closing = false;
   let closePromise: Promise<void> | undefined;
-  const proxy = await startEgressProxy();
+  const proxy = await startEgressProxy(options.native?.proxyPort);
   for (const id of await readdir(dataDir)) {
     if (!SESSION_ID.test(id)) continue;
     try {

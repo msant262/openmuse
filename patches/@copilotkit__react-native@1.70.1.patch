@@ -1,0 +1,36 @@
+diff --git a/src/streaming-fetch.ts b/src/streaming-fetch.ts
+--- a/src/streaming-fetch.ts
++++ b/src/streaming-fetch.ts
+@@ -266,7 +266,7 @@
+         setTimeout(() => {
+           // Safety net: if XHR completed but we never resolved/rejected, fail explicitly.
+           // This can happen when status === 0 and onerror doesn't fire (some RN networking impls).
+-          if (readyState === 4 && !settled && !resp) {
++          if (readyState === 4 && xhrStatus === 0 && !settled && !resp) {
+             fail(
+               new TypeError(
+                 `Network request to ${url} completed with status ${xhrStatus} but no response was produced. ` +
+diff --git a/dist/streaming-fetch-BTESzLKX.cjs b/dist/streaming-fetch-BTESzLKX.cjs
+--- a/dist/streaming-fetch-BTESzLKX.cjs
++++ b/dist/streaming-fetch-BTESzLKX.cjs
+@@ -135,7 +135,7 @@
+ 				const xhrStatusText = xhr.statusText;
+ 				const rawHeaders = xhr.getAllResponseHeaders() || "";
+ 				setTimeout(() => {
+-					if (readyState === 4 && !settled && !resp) {
++					if (readyState === 4 && xhrStatus === 0 && !settled && !resp) {
+ 						fail(/* @__PURE__ */ new TypeError(`Network request to ${url} completed with status ${xhrStatus} but no response was produced. This may indicate a CORS failure, DNS error, or React Native networking issue.`));
+ 						return;
+ 					}
+diff --git a/dist/streaming-fetch-BnQh3vBz.mjs b/dist/streaming-fetch-BnQh3vBz.mjs
+--- a/dist/streaming-fetch-BnQh3vBz.mjs
++++ b/dist/streaming-fetch-BnQh3vBz.mjs
+@@ -134,7 +134,7 @@
+ 				const xhrStatusText = xhr.statusText;
+ 				const rawHeaders = xhr.getAllResponseHeaders() || "";
+ 				setTimeout(() => {
+-					if (readyState === 4 && !settled && !resp) {
++					if (readyState === 4 && xhrStatus === 0 && !settled && !resp) {
+ 						fail(/* @__PURE__ */ new TypeError(`Network request to ${url} completed with status ${xhrStatus} but no response was produced. This may indicate a CORS failure, DNS error, or React Native networking issue.`));
+ 						return;
+ 					}

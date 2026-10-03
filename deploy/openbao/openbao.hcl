@@ -1,5 +1,4 @@
 ui = false
-disable_mlock = false
 
 api_addr = "http://openbao:8200"
 cluster_addr = "http://openbao:8201"

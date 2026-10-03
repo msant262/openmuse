@@ -1,6 +1,8 @@
-# OpenMuse mobile
+# OkamiBot mobile
 
 A shared React Native workspace for iOS, Android, and the web preview. The client uses native primitives and the CopilotKit headless hooks; the web preview renders those same screens through React Native Web.
+
+The display name is OkamiBot. Existing `app.openmuse.mobile` identifiers, the `openmuse` scheme, paired storage and notification channel IDs are preserved. The MIT capybara artwork and historical OpenMuse demos retain their upstream attribution. See [local Android APK builds](../../docs/ANDROID-RELEASE.md) for release variants, signature limits and verification.
 
 ## Demos
 
@@ -20,7 +22,7 @@ pnpm --dir apps/mobile ios
 pnpm --dir apps/mobile android
 ```
 
-The default API is `http://localhost:8787`, or `http://10.0.2.2:8787` on the Android emulator. Set `EXPO_PUBLIC_API_URL` to your reachable server URL for a physical device or deployment. Live mode asks for the server access key; local mode opens the fictional workspace automatically. Tokens stay in memory.
+The default API is `http://localhost:8787`, or `http://10.0.2.2:8787` on the Android emulator. Set `EXPO_PUBLIC_API_URL` to your reachable server URL for a physical device or deployment. Live mode asks for the server access key; local mode opens the fictional workspace automatically. Device pairing persists in private platform storage, while short-lived access tokens stay in memory and renew silently.
 
 PDFs use `react-native-pdf` and `react-native-blob-util` in an Expo **development build**. Expo Go does not include these native modules. The config plugins in `app.json` configure the native projects. Web uses the browser’s real PDF reader, with page/zoom controls and download/print access. PDF form fields save a new server artifact.
 
@@ -39,7 +41,7 @@ The `build:ios` and `build:android` commands validate and export platform JavaSc
 ## Behavior
 
 - Chat, Activity, Ideas, Goals and Apps are the primary navigation. Tasks, timelines and notifications refresh from the durable server state. Apps contains Mail, Calendar, Browser, Files and Connections.
-- Drafts are saved in OpenMuse and can be reopened from Mail. Mail attachments import into Files before reading.
+- Drafts are saved in OkamiBot and can be reopened from Mail. Mail attachments import into Files before reading.
 - Calendar edits preserve named time zones. Date entry rejects nonexistent times at daylight-saving transitions.
 - Sending mail and creating, changing, or deleting events require a stored proposal and an explicit review decision. Editing a proposal declines the previous version, then opens a new draft.
 - Chat restores/saves AG-UI conversation messages, renders frontend tool cards, and supports interruption, retry, and document references.

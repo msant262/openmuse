@@ -1,0 +1,17 @@
+{
+  "executorId": "lenovo-okami",
+  "nativeCode": "/opt/okami-computer",
+  "nativeConfig": "/etc/okami-executor",
+  "nativeState": "/var/lib/okami-executor",
+  "backupDir": "/var/backups/okami/local",
+  "restoreDir": "/var/lib/okami-restore",
+  "recipient": "REPLACE_WITH_OFFLINE_OPERATOR_PUBLIC_AGE_RECIPIENT",
+  "apiOrigin": "http://100.113.59.40:8787",
+  "apiBearerFile": "/etc/okami-backup/api-bearer",
+  "ageBinary": "/usr/bin/age",
+  "peer": {
+    "host": "vps",
+    "tailscaleIP": "100.113.59.40",
+    "sshIdentityFile": "/etc/okami-backup/vps-receiver-ssh"
+  }
+}

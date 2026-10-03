@@ -271,7 +271,7 @@ function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } 
           ...(draft?.id ? { id: draft.id } : {}),
         });
         await refresh();
-        notify("Draft saved in OpenMuse.");
+        notify("Draft saved in OkamiBot.");
         close();
       }
     } catch (e) {
@@ -283,7 +283,7 @@ function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } 
   return (
     <Sheet
       title={draft?.threadId ? "Write a reply" : "A new message"}
-      subtitle={`From ${w.profile.email} · saved privately in OpenMuse`}
+      subtitle={`From ${w.profile.email} · saved privately in OkamiBot`}
       onClose={close}
     >
       <Field

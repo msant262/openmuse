@@ -50,8 +50,10 @@ class UserSession:
             if desktop:
                 if not SAFE_EXECUTOR.fullmatch(account.get("hostId","lenovo")):
                     raise ValueError("Invalid trusted desktop host identity")
-                if set(desktop)-{"sessionId","display","profileId","width","height"}:
+                if set(desktop)-{"sessionId","display","profileId","width","height","proxyPort"}:
                     raise ValueError("Unexpected trusted desktop registration fields")
+                if "proxyPort" in desktop and (type(desktop["proxyPort"]) is not int or not 1024<=desktop["proxyPort"]<=65535):
+                    raise ValueError("Invalid trusted native browser proxy port")
                 uuid.UUID(desktop["sessionId"])
                 if type(desktop.get("display")) is not int or not 60<=desktop["display"]<=199 or not SAFE_EXECUTOR.fullmatch(desktop.get("profileId","personal")):
                     raise ValueError("Invalid trusted desktop display/profile")
@@ -59,6 +61,8 @@ class UserSession:
                     raise ValueError("Invalid trusted desktop dimensions")
         displays=[account["desktop"]["display"] for account in registry.values() if account.get("desktop")]
         if len(set(displays))!=len(displays):raise ValueError("Registered native desktops need distinct X displays")
+        ports=[account["desktop"]["proxyPort"] for account in registry.values() if account.get("desktop",{}).get("proxyPort")]
+        if len(set(ports))!=len(ports):raise ValueError("Registered native browsers need distinct proxy ports")
         for executor_id,account in registry.items():
             home, workspace = Path(account["home"]), Path(account["workspace"])
             if (not home.is_absolute() or home == Path("/") or home not in workspace.parents

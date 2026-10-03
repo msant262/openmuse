@@ -1,7 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { trackNativeComputerOperation } from "../computer-resource-scope.ts";
 import type { Store } from "../db.ts";
-import { AppError } from "../errors.ts";
+import { currentTaskScope } from "../engine/task-journal.ts";
+import { AppError, NativePreflightRejection } from "../errors.ts";
 import { nativeGraphicalReset, nativeInspection } from "./graphical-policy.ts";
 import {
   type ArtifactPublication,
@@ -64,6 +65,12 @@ function canonical(value: unknown): string {
 export class ExecutorRegistry {
   readonly registrations: ExecutorRegistration[];
   private readonly waiters = new Map<string, Set<() => void>>();
+  private stopping = false;
+  /** Wake idle polls and stop fresh dispatch; receipt handlers must still drain. */
+  stopDispatch() {
+    this.stopping = true;
+    for (const executorId of this.waiters.keys()) this.wake(executorId);
+  }
   constructor(
     readonly db: Store,
     private readonly options: {
@@ -344,7 +351,19 @@ export class ExecutorRegistry {
     const prior = await this.delivery(owner, request.id);
     const node = await this.node(request.executorId);
     if (!node && !prior) throw new AppError("Native executor has not registered/preflighted", 503);
-    if (!prior && node) this.supports(node, request);
+    if (!prior && node) {
+      try {
+        this.supports(node, request);
+      } catch (error) {
+        if (!(error instanceof AppError)) throw error;
+        const scope = currentTaskScope();
+        throw new NativePreflightRejection(
+          error.message,
+          scope?.operation.id,
+          scope?.primitive?.id,
+        );
+      }
+    }
     const epoch = prior?.operation.executorEpoch ?? node?.epoch;
     if (!epoch) throw new AppError("Native executor epoch is unavailable", 503);
     const operation = executorOperationSchema.parse(
@@ -409,12 +428,14 @@ export class ExecutorRegistry {
       node = await this.epoch(executorId, epoch),
       pause = await this.pause();
     const operations: ExecutorOperation[] = [];
-    if (!authority || !node.connected || !node.reconciled) return { epoch, pause, operations };
+    if (this.stopping || !authority || !node.connected || !node.reconciled)
+      return { epoch, pause, operations };
     const owner = this.registration(executorId).owner;
     const deliveries = (await this.deliveries(owner, executorId)).sort((a, b) =>
       a.createdAt.localeCompare(b.createdAt),
     );
     for (const delivery of deliveries) {
+      if (this.stopping) break;
       const operation = delivery.operation;
       const containment =
         operation.kind === "cancel" ||
@@ -443,8 +464,10 @@ export class ExecutorRegistry {
       );
       if (!claimed) continue;
       try {
+        if (this.stopping) throw new AppError("Server is shutting down", 503);
         await authority.beforeDispatch(owner, operation);
         const current = await this.epoch(executorId, epoch);
+        if (this.stopping) throw new AppError("Server is shutting down", 503);
         if (!current.connected || !current.reconciled)
           throw new AppError("Native dispatch epoch/readiness changed", 409);
         operations.push(operation);
@@ -485,6 +508,7 @@ export class ExecutorRegistry {
       try {
         const result = await this.claim(executorId, epoch);
         if (
+          this.stopping ||
           result.operations.length ||
           Date.now() >= deadline ||
           options.signal?.aborted ||

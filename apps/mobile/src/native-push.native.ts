@@ -67,7 +67,7 @@ export async function enableNativePush(api: MuseApi, enabled: boolean): Promise<
   }
   if (Platform.OS === "android")
     await Notifications.setNotificationChannelAsync("openmuse", {
-      name: "OpenMuse",
+      name: "OkamiBot",
       importance: Notifications.AndroidImportance.DEFAULT,
     });
   if (version !== generation) return "Notification setting changed.";

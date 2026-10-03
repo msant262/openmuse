@@ -67,12 +67,13 @@ export class OpenBaoSecretStore implements SecretStore {
           "Content-Type": "application/json",
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        redirect: "error",
         signal: AbortSignal.timeout(this.options.timeoutMs ?? 8000),
       });
     } catch {
       throw new AppError("The credential vault is unavailable", 503, "VAULT_UNAVAILABLE");
     }
-    if (response.status === 404) return null;
+    if (response.status === 404 || (method === "DELETE" && response.status === 204)) return null;
     if (!response.ok) {
       const status = response.status === 400 || response.status === 409 ? 409 : 503;
       throw new AppError(

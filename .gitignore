@@ -19,3 +19,6 @@ __pycache__/
 apps/mobile/google-services.json
 *.p8
 .worktrees/
+
+# Native worker JS compiled for distro Node builds without TS support.
+/native-dist/

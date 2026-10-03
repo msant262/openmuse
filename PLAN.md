@@ -1,6 +1,6 @@
 # OkamiBot pessoal: VPS + Lenovo
 
-Plano revisado em 2026-10-02, sobre o código `a9fe722`. **Planejamento; implementação ainda não iniciada.**
+Plano aprovado em 2026-10-02, sobre o código `a9fe722`. A execução e suas evidências estão no [status dos marcos](docs/IMPLEMENTATION-STATUS.md) e no [aceite da instalação real](docs/DEPLOYMENT-ACCEPTANCE.md). Os cenários físicos e de contas ainda pendentes são registrados separadamente do código implementado.
 
 Versão consolidada com revisão dos **65 PRs abertos** no upstream nessa data, incluindo diffs, comentários/reviews disponíveis e estado de CI. Main upstream observado: `9ec439f`, apenas uma alteração de link no README acima da base `6c56494`. PR aberto/CI verde não significa validação no nosso fork; incorporar correções seletivas e regressões dentro dos marcos abaixo.
 
@@ -63,4 +63,4 @@ Revisão de produto aceita: verificar entregas, respeitar prazos, recuperar arqu
 - [Revisão dos PRs upstream e decisões de integração](docs/plans/2026-10-02-upstream-pr-review.md)
 - [Plano anterior concluído e evidências históricas](docs/plans/2026-10-02-vps-milestones-completed.md)
 
-Não houve acesso ao notebook, provisionamento, alteração de permissões/Tailscale ou validação de contas reais nesta revisão. A disponibilidade 24/7 por Wi-Fi foi confirmada pelo usuário. RAM utilizável, GPU, sessões simultâneas, espaço livre e recuperação após energia serão verificados na instalação. KVM só é relevante se um futuro emulador Android precisar dele; não haverá VM hospedando o bot.
+Na revisão inicial não houve provisionamento. A instalação posterior preservou a conta `okami-bot` e seus privilégios amplos existentes: é um ambiente de confiança total, sem garantia de isolamento entre usuários privilegiados. O [registro de aceite](docs/DEPLOYMENT-ACCEPTANCE.md) distingue as medições reais dos ensaios ainda pendentes. KVM só é relevante se um futuro emulador Android precisar dele; não há VM hospedando o bot.

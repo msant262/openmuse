@@ -12,6 +12,7 @@ import { ActionLog } from "./action-log.ts";
 import { approvalPolicy } from "./action-policy.ts";
 import { ActionService } from "./actions.ts";
 import { agentConfigured, conversationAgentFactory, makeRuntime } from "./agent.ts";
+import { ApiQuotas, apiQuotaClass } from "./api-quotas.ts";
 import { auditedComputer, currentComputerResourceScope } from "./audited-computer.ts";
 import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
@@ -30,6 +31,9 @@ import { credentialRoutes } from "./credentials/routes.ts";
 import { createConversationAnnotationValidator } from "./conversation-annotations.ts";
 import { conversationResources, currentConversationFrame } from "./conversation-resources.ts";
 import type { Store } from "./db.ts";
+import { DeploymentMaintenance } from "./deployment-maintenance.ts";
+import { deploymentOperator } from "./deployment-operator.ts";
+import { deploymentStatus } from "./deployment-status.ts";
 import { desktopRoutes } from "./desktop-routes.ts";
 import { DesktopService, nativeDesktopTransport } from "./desktop-service.ts";
 import { currentDesktopViewerScope, DesktopViewers } from "./desktop-viewers.ts";
@@ -72,6 +76,7 @@ export async function createApp(
     docker?: DockerRunner;
     credentialSecretStore?: SecretStore;
     credentialAdapters?: CredentialAdapter[];
+    apiQuotas?: ApiQuotas;
     nativeAuthority?: ExecutorAuthority;
     nativeContext?: (
       owner: string,
@@ -409,6 +414,8 @@ export async function createApp(
   if (threads instanceof LocalThreads) await threads.initializeInbox();
   const runtime = makeRuntime(config, agent, auth, threads);
   const app = new Hono<{ Variables: { owner: string } }>();
+  const apiQuotas = options.apiQuotas ?? new ApiQuotas();
+  const deploymentMaintenance = new DeploymentMaintenance(db);
   const origins = new Set([...config.allowedOrigins, new URL(config.publicUrl).origin]);
   app.use("*", async (c, next) => {
     const origin = c.req.header("origin");
@@ -418,6 +425,16 @@ export async function createApp(
     c.header("Cache-Control", "no-store");
     await next();
   });
+  app.use(
+    "*",
+    deploymentOperator({
+      db,
+      tokenSha256: config.deploymentOperatorTokenSha256,
+      quotas: apiQuotas,
+      maintenance: deploymentMaintenance,
+      pause: (input) => agent.setRuntimePause("__deployment_operator__", input),
+    }),
+  );
   app.use(
     "*",
     cors({
@@ -574,19 +591,76 @@ export async function createApp(
       /^\/api\/files\/[^/]+\/content$|^\/api\/browsers\/[^/]+\/(?:preview|console)$/.test(
         c.req.path,
       );
+    const authorization = c.req.header("authorization");
+    const identity = authorization?.startsWith("Bearer om1.")
+      ? await auth.devices.identity(authorization.slice(7))
+      : undefined;
     const owner =
       signedRoute && c.req.query("signature")
         ? auth.verify(new URL(c.req.url))
-        : await auth.owner(c.req.header("authorization"));
+        : (identity?.owner ?? (await auth.owner(authorization)));
     c.set("owner", owner);
-    const authorization = c.req.header("authorization");
-    if (config.computerBackend === "native" && authorization?.startsWith("Bearer om1.")) {
-      const identity = await auth.devices.identity(authorization.slice(7));
-      return nativeDeviceRequests.run(identity, next);
+    if (config.apiQuotasEnabled !== false) {
+      const device =
+        identity?.owner === owner
+          ? identity.deviceId
+          : signedRoute && c.req.query("signature")
+            ? "signed-link"
+            : createHash("sha256")
+                .update(authorization ?? "")
+                .digest("hex");
+      const retry = apiQuotas.take(owner, device, apiQuotaClass(c.req.method, c.req.path));
+      if (retry) {
+        c.header("Retry-After", String(retry));
+        return c.json(
+          { error: "Too many requests. Try again shortly.", code: "API_QUOTA_EXCEEDED" },
+          429,
+        );
+      }
     }
-    await next();
+    if (
+      !["GET", "HEAD", "OPTIONS"].includes(c.req.method) &&
+      c.req.path !== "/api/deployment/maintenance" &&
+      apiQuotaClass(c.req.method, c.req.path) !== "control" &&
+      (await deploymentMaintenance.current())
+    )
+      return c.json(
+        {
+          error: "Maintenance is draining work. Try again shortly.",
+          code: "DEPLOYMENT_MAINTENANCE",
+        },
+        503,
+      );
+    const mutation =
+      !["GET", "HEAD", "OPTIONS"].includes(c.req.method) &&
+      !["/api/deployment/maintenance", "/api/agent/runtime-pause"].includes(c.req.path);
+    const finished = mutation ? deploymentMaintenance.request() : undefined;
+    try {
+      if (config.computerBackend === "native" && identity) {
+        return await nativeDeviceRequests.run(identity, next);
+      }
+      await next();
+    } finally {
+      finished?.();
+    }
   });
   app.get("/api/devices", async (c) => c.json(await auth.devices.list(c.get("owner"))));
+  app.get("/api/deployment/status", async (c) =>
+    c.json(await deploymentStatus(db, Date.now(), () => deploymentMaintenance.activeRequests)),
+  );
+  app.post("/api/deployment/maintenance", async (c) => {
+    const body = z
+      .object({
+        id: z.uuid(),
+        operation: z.enum(["begin", "renew", "finish"]),
+        ttlMs: z.number().int().min(10_000).max(120_000).optional(),
+      })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(
+      await deploymentMaintenance.update(c.get("owner"), body.id, body.operation, body.ttlMs),
+    );
+  });
   app.post("/api/devices/:id/revoke", async (c) => {
     await auth.devices.revoke(c.get("owner"), z.uuid().parse(c.req.param("id")));
     return c.json({ revoked: true });

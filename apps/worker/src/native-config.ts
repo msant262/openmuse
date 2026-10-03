@@ -13,6 +13,7 @@ export type NativeBrowserConfig = {
   runtime: string;
   dbus?: string;
   channel: "chrome" | "chromium";
+  proxyPort?: number;
   width?: number;
   height?: number;
 };

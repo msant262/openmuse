@@ -91,7 +91,7 @@ export class MuseApi {
 
 export async function createSession(
   accessKey?: string,
-  deviceLabel = "OpenMuse mobile",
+  deviceLabel = "OkamiBot mobile",
 ): Promise<Session & { refreshToken?: string }> {
   const operation = async () => {
     const response = await fetch(`${API_URL}/api/session`, {

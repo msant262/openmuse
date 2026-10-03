@@ -1,0 +1,11 @@
+[Unit]
+Description=Attempt a daily coordinated Okami backup without killing active work
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Europe/Berlin
+RandomizedDelaySec=15m
+Persistent=true
+Unit=okami-hybrid-backup.service
+
+[Install]
+WantedBy=timers.target

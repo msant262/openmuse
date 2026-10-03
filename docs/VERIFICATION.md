@@ -1,5 +1,89 @@
 # Release verification
 
+## Current hybrid acceptance · October 3, 2026
+
+The [deployment acceptance record](DEPLOYMENT-ACCEPTANCE.md) supersedes historical
+deployment/Android limitations below where it reports an actual completed check.
+Final server shutdown/recovery source `993e611` passed **867/867** Node tests (182.8 seconds)
+and server TypeScript. Native twenty-second HTTP polls close promptly on shutdown;
+queued delivery and authorization-race tests preserve durable state. Mobile/worker types and the native executor's **92/92** Python
+tests passed at `985b51d`, including bounded cold desktop startup after thaw. The subsequent backup-only
+`7c899ec` passed **49/49** script tests, including authenticated real-age encryption,
+frozen-session shutdown, validated SIGTERM receipts, partial-stop recovery and
+preservation of user pause after restoration failure. A real container probe also
+confirmed a private 24,601-byte Raft snapshot streamed from the OpenBao tmpfs;
+Docker archive/cp cannot read that mount. The final stream contract tests both
+success and cleanup after a partial-copy failure.
+
+The real VPS runs API/PGlite, Chromium and OpenBao; the native Lenovo runs the
+registered graphical executor. Take control/capture/input/handback, native command,
+Unicode file read/write, Office generation/PDF preview and four downloadable Office/PDF
+exports passed. A real API/read/file-write/Store restart fixture also verifies
+post-write export recovery without another Lenovo read; an unrelated unknown mutation
+remains unresolved. This models a crash boundary rather than sending SIGKILL.
+A real coordinated encrypted backup, peer checksum verification and isolated restore
+also passed: PGlite, native SQLite journals/workspace and an actual OpenBao 2.7.1
+Raft snapshot (scoped tokens, revoked bootstrap root, restart and wrong-key checks).
+The daily backup timer is enabled for Europe/Berlin. Metadata-only 24-hour
+collectors started October 3 at 06:25:09 UTC (VPS) and 06:25:59 UTC (Lenovo);
+the complete observation remains pending.
+Whisper small CPU/int8 processed a two-second silent WAV; spoken
+language accuracy was not measured. The Android release was installed and exercised
+on a disposable emulator. Private HTTPS now passes with a trusted certificate;
+a physical phone and live model/Google/push accounts remain
+unverified. The following preparation/release sections retain historical evidence.
+
+## Hybrid deployment preparation · October 3, 2026
+
+This is preparation evidence, separate from installation and physical acceptance.
+No production services, accounts, packages, models, RDP or network policies were
+changed by the deployment implementation task. The operator independently
+provisioned the VPS 4 GiB swap and verified the real Lenovo Python 3.14 wheel
+resolution in a temporary venv; those are separate host actions.
+
+- Connected API/SQL focal tests pass: quotas use verified owner/device identities,
+  reject spoofed XFF as a quota identity, and keep two viewers/four task requests,
+  uploads, Take control and Stop separate from exhausted polling. Maintenance
+  uses the real WorkAdmission SQL lock, drains an actual TaskWorker without abort,
+  closes new requests/claims, retains cleanup authority, expires and preserves
+  a user pause revision.
+- The real API also accepts the dedicated root backup operator after paired and
+  legacy sessions expire. Only the three exact maintenance/status/pause routes
+  work; public pairing, owner chat/files/tasks, signed links, executor routes,
+  wrong methods/queries/encoded paths, extra JSON fields and large bodies are
+  rejected. Changing/removing the configured digest revokes the token while
+  ordinary paired-device authentication remains unchanged. The bootstrap stores
+  only a digest in server env and an exclusive private token file on each host.
+- Native installer/selective backup/receiver/budget contracts pass, including
+  Python-wheel failure before apt, root-owned scoped imports/Playwright cache,
+  full-trust sudo properties, measured Hermes + OS reserve under decimal 7 GB,
+  exact 4 GiB swap header tolerance, warm/cold headroom, dirty-stop/encryption/peer
+  failures, private archive paths and owned pause CAS. Host-control fixtures use
+  actual files/GNU tar but do not claim Docker/systemd installation acceptance.
+- **Actual age 1.2.1 encryption/decryption passes** with a generated local recovery
+  identity: ciphertext hides the fixture, authenticated isolated restore succeeds,
+  and tampered ciphertext fails even with a recomputed external checksum. No
+  production volume or service is started by restore.
+- **Actual official OpenBao 2.7.1 proof passes**, with independently verified release
+  binary digest: single-node Raft/static seal, auto-unseal after restart, real
+  snapshot restore confirmed by the original saved value, and incorrect seal key
+  blocking access. The fixture uses loopback/temp state and no dev mode or live
+  credential. The official gog 0.43.0 binary and separate tagged license digests
+  were verified; no Google authentication was attempted.
+- Server, worker and mobile TypeScript checks and the server build pass. The
+  focused Node tests and 18 native desktop Python contracts pass. Biome passes
+  the new modules/tests; the existing `desktopViewers!` non-null assertion in
+  `app.ts` remains an unchanged warning. Broad tests on the final composed source
+  must be coordinated separately with concurrency 4; no fresh full-suite claim
+  is made by this preparation report.
+- The collector/report tests distinguish complete 24-hour sampling from short,
+  interrupted and gapped captures. The local collector is prepared but **the
+  physical 24-hour soak is pending**, as are actual managed Chromium/ASR startup,
+  cross-host live backup/restore, production OpenBao restart/sealed behavior,
+  five light sessions, >8 GiB workload, desktop ACK/chat/provider latency and
+  phone/push/Wi-Fi/restart journeys. Brand/platform exports remain a separate
+  release task. Follow [the hybrid procedure](../deploy/HYBRID.md).
+
 ## Personal VPS integration · October 2, 2026
 
 - **385 tests pass**, with zero failures or skipped tests, including the existing sample/demo contracts. Server/mobile/browser-worker TypeScript checks, server build and Biome checks of tracked/new source pass. During implementation, the broad `pnpm lint` command scanned ignored research and encountered a historical `.superpowers` JSON formatting error; four existing model-provider test warnings remain.

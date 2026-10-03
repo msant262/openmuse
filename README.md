@@ -1,11 +1,13 @@
   <div align="center">
 
-# OpenMuse
+# OkamiBot
 
 **A personal agent with a browser, terminal, files, and work that keeps going. Compatible with any agent harness.**
 
 Ask for an outcome. Follow the plan, review actions, and come back to the result.
 Built with CopilotKit React Native for iOS, Android, and web.
+
+OkamiBot is this personal-agent fork of [OpenMuse](https://github.com/CopilotKit/OpenMuse). Upstream MIT notices, technical identifiers and the historical demo recordings are preserved. [Local Android release builds](docs/ANDROID-RELEASE.md) use the existing SDK without a paid cloud build service.
 
 [Quick start](#quick-start) · [Demo](#demo) · [Features](#features) · [Architecture](#architecture) · [Docs](docs/README.md) · [Contributing](CONTRIBUTING.md)
 
@@ -42,7 +44,7 @@ The [Jev aquarium-trip demo](docs/demos/jev-generative-ui.md) walks through a fi
 
 ## What it is
 
-OpenMuse is a personal-agent application with an agent computer, visible work, and rich results. It runs its own server, task worker, and browser worker. You can inspect and change the source under the MIT license.
+OkamiBot is a personal-agent application with an agent computer, visible work, and rich results. It runs its own server, task worker, and browser worker. You can inspect and change the source under the MIT license.
 
 The computer combines **persistent Chromium and an optional Linux workspace**. The agent can browse public pages, run commands, work with files, and move PDFs between the computer and the app. The native executor shares its own X11 desktop and headed browser with a trusted mobile viewer; **Take control** reserves GUI and DOM input together, and handback resumes the same task. See [native desktop setup and acceptance limits](docs/NATIVE-DESKTOP.md). The guarded open profile adds Office/media files and background jobs. Payment controls use native review before execution.
 

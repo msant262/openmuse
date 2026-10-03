@@ -42,6 +42,9 @@ const preflightDirectory = await mkdtemp(join(tmpdir(), "okami-browser-preflight
 try {
   const context = await chromium.launchPersistentContext(preflightDirectory, {
     ...nativeLaunchOptions(config.native),
+    // Chromium exposes Browser.getBrowserCommandLine only with this switch.
+    // Pin it in the isolated preflight instead of relying on Playwright defaults.
+    args: ["--enable-automation"],
     timeout: 25_000,
   });
   try {

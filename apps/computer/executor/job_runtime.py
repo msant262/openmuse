@@ -191,16 +191,15 @@ class JobRuntime:
                 "--property=KillMode=control-group", "--property=OOMPolicy=kill",
                 "--property=BindsTo=okami-executor@" + operation["executorId"] + ".service",
                 "--property=After=okami-executor@" + operation["executorId"] + ".service",
-                "--property=NoNewPrivileges=true", "--property=CPUWeight=100", "--property=IOWeight=100",
+                "--property=CPUWeight=100", "--property=IOWeight=100",
                 "--property=TasksMax=512", "--property=RuntimeMaxSec=" + str(timeout / 1000),
                 "--property=TimeoutStopSec=5", "--property=SendSIGKILL=yes",
-                "--property=ProtectSystem=strict", "--property=ReadWritePaths=/workspace " + account["home"],
-                "--property=ProtectHome=tmpfs",
-                "--property=CapabilityBoundingSet=", "--property=ProtectControlGroups=true",
-                "--property=InaccessiblePaths=/root -/var/lib/okami-executor -/etc/okami-executor -/run/docker.sock -/run/lxd -/run/okami-executor",
-                "--property=PrivateTmp=true", "--property=RestrictSUIDSGID=true",
+                "--property=ReadWritePaths=/workspace " + account["home"],
+                "--property=PrivateTmp=true",
                 "--property=Environment=PATH=/usr/local/bin:/usr/bin:/bin HOME=" + account["home"] + " LANG=C.UTF-8",
                 *executable]
+        from .trust_policy import service_privileges
+        argv[-len(executable):-len(executable)]=["--property="+key+"="+value for key,value in service_privileges(account).items()]
         memory = args.get("memoryMaxBytes")
         if memory is not None:
             if not isinstance(memory, int) or memory < 16 * 1024**2:

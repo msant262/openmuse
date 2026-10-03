@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "OpenMuse",
+    "name": "OkamiBot",
     "slug": "openmuse",
     "scheme": "openmuse",
     "version": "0.1.0",
@@ -12,11 +12,16 @@
       "bundleIdentifier": "app.openmuse.mobile"
     },
     "android": {
-      "package": "app.openmuse.mobile"
+      "package": "app.openmuse.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/capybara.png",
+        "backgroundColor": "#ECF5FA"
+      }
     },
     "web": {
       "bundler": "metro",
-      "name": "OpenMuse — a little room for everything"
+      "name": "OkamiBot — a little room for everything",
+      "favicon": "./assets/capybara.png"
     },
     "plugins": [
       "expo-document-picker",
@@ -54,6 +59,7 @@
           "androidMultiIntentFilters": ["image/*", "application/pdf"]
         }
       ]
-    ]
+    ],
+    "icon": "./assets/capybara.png"
   }
 }

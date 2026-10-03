@@ -2,6 +2,26 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { browserWorkerUrl, shadowedEnvKeys } from "../apps/server/src/config.ts";
 
+test("backup operator configuration accepts only a digest and disabling it requires no device secret", async () => {
+  const { readConfig } = await import("../apps/server/src/config.ts");
+  const old = process.env.DEPLOYMENT_OPERATOR_TOKEN_SHA256;
+  try {
+    delete process.env.DEPLOYMENT_OPERATOR_TOKEN_SHA256;
+    assert.equal(readConfig().deploymentOperatorTokenSha256, undefined);
+    process.env.DEPLOYMENT_OPERATOR_TOKEN_SHA256 = `  ${"a".repeat(64)}  `;
+    assert.equal(readConfig().deploymentOperatorTokenSha256, "a".repeat(64));
+    process.env.DEPLOYMENT_OPERATOR_TOKEN_SHA256 = "";
+    assert.equal(readConfig().deploymentOperatorTokenSha256, undefined);
+    for (const malformed of [`odb1.${"a".repeat(43)}`, "om1.device.session", "Z".repeat(64)]) {
+      process.env.DEPLOYMENT_OPERATOR_TOKEN_SHA256 = malformed;
+      assert.throws(() => readConfig());
+    }
+  } finally {
+    if (old === undefined) delete process.env.DEPLOYMENT_OPERATOR_TOKEN_SHA256;
+    else process.env.DEPLOYMENT_OPERATOR_TOKEN_SHA256 = old;
+  }
+});
+
 test("local thread storage needs no Intelligence key; nonblank keys remain optional", async () => {
   const { readConfig } = await import("../apps/server/src/config.ts");
   const old = process.env.CPK_INTELLIGENCE_API_KEY;

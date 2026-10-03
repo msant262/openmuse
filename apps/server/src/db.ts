@@ -529,6 +529,19 @@ export class Store {
     );
     return (result.rows[0] as unknown as { admitted?: boolean } | undefined)?.admitted === true;
   }
+  async updateDeploymentMaintenance<T>(
+    owner: string,
+    id: string,
+    operation: "begin" | "renew" | "finish",
+    now: string,
+    expiresAt: string,
+  ): Promise<T | null> {
+    const result = await this.write(
+      "SELECT openmuse_deployment_maintenance($1::text,$2::text,$3::text,$4::timestamptz,$5::text) AS data",
+      [owner, id, operation, now, expiresAt],
+    );
+    return (result.rows[0]?.data as T | undefined) ?? null;
+  }
   async renewWorkAdmission(
     taskId: string,
     claimant: string,
@@ -1112,6 +1125,11 @@ export async function createStore(
         END IF;
         IF existing->>'hold'='true' OR (existing->>'expiresAt')::timestamptz>now_at THEN RETURN false; END IF;
       END IF;
+      -- New admissions are closed during the operator's bounded drain lease.
+      -- Existing held jobs above can still reconcile/finish without being killed.
+      IF EXISTS (SELECT 1 FROM records WHERE owner='__runtime__' AND kind='deployment-maintenance'
+        AND id='global' AND data->>'active'='true' AND (data->>'expiresAt')::timestamptz>now_at)
+        THEN RETURN false; END IF;
       SELECT count(*) INTO occupied FROM records
         WHERE owner='__runtime__' AND kind='work-admissions'
           AND (data->>'hold'='true' OR (data->>'expiresAt')::timestamptz>now_at)
@@ -1123,6 +1141,30 @@ export async function createStore(
           'claimant',claimant,'hold',false,'expiresAt',expires_at))
         ON CONFLICT(owner,kind,id) DO UPDATE SET data=excluded.data,updated_at=now();
       RETURN true;
+    END $$`);
+  await database.query(`
+    CREATE OR REPLACE FUNCTION openmuse_deployment_maintenance(request_owner text, request_id text, operation text, now_at timestamptz, expires_at text)
+    RETURNS jsonb LANGUAGE plpgsql AS $$
+    DECLARE existing jsonb; value jsonb;
+    BEGIN
+      PERFORM pg_advisory_xact_lock(hashtextextended('openmuse-runtime-control',0));
+      SELECT data INTO existing FROM records WHERE owner='__runtime__' AND kind='deployment-maintenance' AND id='global' FOR UPDATE;
+      IF operation='begin' THEN
+        IF existing->>'active'='true' AND (existing->>'expiresAt')::timestamptz>now_at
+          AND (existing->>'id'<>request_id OR existing->>'owner'<>request_owner) THEN RETURN NULL; END IF;
+        value=jsonb_build_object('id',request_id,'owner',request_owner,'active',true,'expiresAt',expires_at);
+      ELSE
+        IF existing IS NULL OR existing->>'id'<>request_id OR existing->>'owner'<>request_owner THEN RETURN NULL; END IF;
+        IF operation='renew' THEN
+          IF existing->>'active'<>'true' OR (existing->>'expiresAt')::timestamptz<=now_at THEN RETURN NULL; END IF;
+          value=existing || jsonb_build_object('expiresAt',expires_at);
+        ELSIF operation='finish' THEN
+          value=existing || jsonb_build_object('active',false,'expiresAt',now_at::text);
+        ELSE RETURN NULL; END IF;
+      END IF;
+      INSERT INTO records(owner,kind,id,data) VALUES('__runtime__','deployment-maintenance','global',value)
+        ON CONFLICT(owner,kind,id) DO UPDATE SET data=excluded.data,updated_at=now();
+      RETURN value;
     END $$`);
   await database.query(`
     CREATE OR REPLACE FUNCTION openmuse_acquire_resource_leases(request_owner text, task_id text, requests jsonb, now_at timestamptz, expires_at text)

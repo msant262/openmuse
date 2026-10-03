@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
+import type { ApiQuotas } from "../../apps/server/src/api-quotas.ts";
 import { createApp } from "../../apps/server/src/app.ts";
 import { browserTools } from "../../apps/server/src/browser-tools.ts";
 import type { SecretStore } from "../../apps/server/src/credentials/contracts.ts";
@@ -22,7 +23,10 @@ type BrowserResult = {
 
 /** Real app, task authority, resource leases and both transport protocols. Only
  * site observations are supplied by fixtures; no physical machine is claimed. */
-export async function browserFallbackFixture(t: TestContext) {
+export async function browserFallbackFixture(
+  t: TestContext,
+  options: { apiQuotas?: ApiQuotas; deploymentOperatorTokenSha256?: string } = {},
+) {
   const cleanup: (() => Promise<void>)[] = [];
   const vpsCalls: { path: string; body: Record<string, unknown> }[] = [];
   const profiles = new Map<string, string>();
@@ -182,8 +186,9 @@ export async function browserFallbackFixture(t: TestContext) {
       nativeExecutorId: registration.executorId,
       nativeExecutors: [{ ...registration, owner: "local-user" }],
       taskWorkerEnabled: false,
+      deploymentOperatorTokenSha256: options.deploymentOperatorTokenSha256,
     },
-    { credentialSecretStore: secretStore, credentialAdapters: [adapter] },
+    { ...options, credentialSecretStore: secretStore, credentialAdapters: [adapter] },
   );
   const session = {
     id: randomUUID(),

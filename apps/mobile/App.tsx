@@ -89,8 +89,7 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      await authManager.restore();
-      if (authManager.snapshot.status === "missing") await authManager.pair();
+      await authManager.restoreOrPair();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -142,7 +141,7 @@ export default function App() {
             <Text
               style={{ fontSize: 32, color: colors.text, letterSpacing: -1, fontWeight: "500" }}
             >
-              Welcome to OpenMuse.
+              Welcome to OkamiBot.
             </Text>
             <Text style={[s.muted, { textAlign: "center" }]}>A little room for your day.</Text>
             {busy ? (
@@ -169,7 +168,7 @@ export default function App() {
                   </>
                 )}
                 <Text style={[s.small, { marginTop: 15 }]}>
-                  Local workspaces open without a key. Make sure your OpenMuse server is running at{" "}
+                  Local workspaces open without a key. Make sure your OkamiBot server is running at{" "}
                   {API_URL}.
                 </Text>
               </Card>
@@ -315,7 +314,7 @@ function WorkspaceShell({
     data?.tasks.find(
       (task) => task.status === "waiting_approval" || task.status === "waiting_input",
     ) || data?.tasks.find((task) => task.status === "running");
-  const agentName = data?.identity.name || "OpenMuse";
+  const agentName = data?.identity.name || "OkamiBot";
   const status = activeTask
     ? activeTask.status === "waiting_approval"
       ? `Ready to review · ${activeTask.title}`

@@ -86,6 +86,8 @@ export interface Config {
   fileVersionMaxBytes?: number;
   allowedOrigins: string[];
   sessionDeviceIdleDays?: number;
+  apiQuotasEnabled?: boolean;
+  deploymentOperatorTokenSha256?: string;
   credentialsOpenBaoAddress?: string;
   credentialsOpenBaoToken?: string;
   credentialsOpenBaoMount?: string;
@@ -251,6 +253,12 @@ export function readConfig(): Config {
     browserFallbackEnabled: process.env.BROWSER_FALLBACK_ENABLED === "true",
     browserFallbackExecutorId: process.env.BROWSER_EXECUTOR_ID?.trim() || "openmuse-server",
     taskWorkerEnabled: process.env.TASK_WORKER_ENABLED !== "false",
+    apiQuotasEnabled: process.env.API_QUOTAS_ENABLED !== "false",
+    deploymentOperatorTokenSha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional()
+      .parse(process.env.DEPLOYMENT_OPERATOR_TOKEN_SHA256?.trim() || undefined),
     computerEnabled: process.env.COMPUTER_ENABLED === "true",
     computerImage: process.env.COMPUTER_IMAGE ?? "openmuse-computer:local",
     computerDeploymentId: process.env.COMPUTER_DEPLOYMENT_ID,

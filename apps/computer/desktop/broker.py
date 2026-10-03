@@ -219,22 +219,29 @@ class BrokerServer(socketserver.ThreadingUnixStreamServer):
 
 
 class NativeBrowser:
-    def __init__(self, session, runtime, home, env, worker):
+    def __init__(self, session, runtime, home, env, worker, channel="chrome", proxy_port=None):
         self.session,self.runtime,self.home,self.env,self.worker=session,runtime,home,env,worker
         self.process=None;self.token=secrets.token_hex(32);self.lock=threading.RLock()
+        if channel not in ("chrome","chromium"):raise ValueError("Invalid trusted browser channel")
+        self.channel=channel
+        if proxy_port is not None and (type(proxy_port) is not int or not 1024<=proxy_port<=65535):
+            raise ValueError("Invalid trusted browser proxy port")
+        self.proxy_port=proxy_port
         self.socket=Path(runtime)/"browser.sock"
         self.last_gate=None
     def start(self):
         with self.lock:
             if self.process and self.process.poll() is None:return
             self.socket.unlink(missing_ok=True)
-            self.process=subprocess.Popen(["/usr/bin/node","--experimental-transform-types",str(self.worker)],stdin=subprocess.PIPE,
+            argv=["/usr/bin/node",*(["--experimental-transform-types"] if Path(self.worker).suffix==".ts" else []),str(self.worker)]
+            self.process=subprocess.Popen(argv,stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env=self.env,start_new_session=True)
             config={"token":self.token,"socket":str(self.socket),"dataDir":str(self.home/".okami/browser"),
                     "native":{"sessionId":self.session["browserSessionId"],"sessionGeneration":self.session["sessionGeneration"],
                     "profileId":self.session["profileId"],"display":self.env["DISPLAY"],"authority":self.env["XAUTHORITY"],"home":str(self.home),
-                    "runtime":str(self.runtime),"dbus":self.env.get("DBUS_SESSION_BUS_ADDRESS"),"channel":"chrome"}}
+                    "runtime":str(self.runtime),"dbus":self.env.get("DBUS_SESSION_BUS_ADDRESS"),"channel":self.channel}}
             config["native"].update({"width":self.session["width"],"height":self.session["height"]})
+            if self.proxy_port is not None:config["native"]["proxyPort"]=self.proxy_port
             self.process.stdin.write(json.dumps(config).encode());self.process.stdin.close()
             deadline=time.monotonic()+40
             while not self.socket.exists():
@@ -273,6 +280,8 @@ def main():
     parser.add_argument("--runtime",type=Path,required=True);parser.add_argument("--home",type=Path,required=True)
     parser.add_argument("--profile-id",default="personal");parser.add_argument("--width",type=int,default=1280);parser.add_argument("--height",type=int,default=720)
     parser.add_argument("--browser-worker",type=Path,default=Path("/opt/okami-computer/browser-worker/src/native.ts"))
+    parser.add_argument("--browser-channel",choices=("chrome","chromium"),default="chrome")
+    parser.add_argument("--browser-proxy-port",type=int)
     args=parser.parse_args()
     if os.getuid()==0:raise RuntimeError("Desktop session must run under its registered bot UID")
     uuid.UUID(args.session_id)
@@ -287,7 +296,7 @@ def main():
         device.preflight()
         session={"id":args.session_id,"sessionGeneration":native.generation,"browserSessionId":args.session_id,"profileId":args.profile_id,
                  "width":args.width,"height":args.height}
-        browser=NativeBrowser(session,args.runtime,args.home,native.env,args.browser_worker)
+        browser=NativeBrowser(session,args.runtime,args.home,native.env,args.browser_worker,args.browser_channel,args.browser_proxy_port)
         broker=DesktopBroker(args.executor_id,args.host_id,session,DesktopDriver(device,native.generation),browser=browser)
         socket_path=args.runtime/"desktop.sock"
         socket_path.unlink(missing_ok=True)

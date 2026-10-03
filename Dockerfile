@@ -3,6 +3,7 @@ FROM node:24.21.0-bookworm-slim AS build
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11.19.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json tsconfig.build.json ./
+COPY patches ./patches
 COPY apps/mobile/package.json ./apps/mobile/package.json
 COPY apps/worker/package.json ./apps/worker/package.json
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter openmuse

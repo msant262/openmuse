@@ -518,6 +518,24 @@ test("worker protects all controls, validates before launch, and health reveals 
   }
 });
 
+test("native egress proxy binds the registered port and refuses an occupied or invalid port", async () => {
+  const probe = await startEgressProxy();
+  const port = Number(new URL(probe.url).port);
+  await probe.close();
+  const native = await startEgressProxy(port);
+  try {
+    assert.equal(native.url, `http://127.0.0.1:${port}`);
+    await assert.rejects(
+      startEgressProxy(port),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "EADDRINUSE",
+    );
+    for (const invalid of [-1, 80, 65536, 18777.5])
+      await assert.rejects(startEgressProxy(invalid), /registered unprivileged port/);
+  } finally {
+    await native.close();
+  }
+});
+
 test("egress proxy blocks HTTP and CONNECT traffic to local network destinations", async () => {
   const proxy = await startEgressProxy();
   const address = new URL(proxy.url);

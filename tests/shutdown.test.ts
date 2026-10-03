@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { AbstractAgent, type BaseEvent, EventType, type RunAgentInput } from "@ag-ui/client";
 import { defineTool } from "@copilotkit/runtime/v2";
+import { serve } from "@hono/node-server";
 import { lastValueFrom, Observable, toArray } from "rxjs";
 import { z } from "zod";
 import { ActionLog } from "../apps/server/src/action-log.ts";
@@ -14,9 +15,12 @@ import { createApp } from "../apps/server/src/app.ts";
 import { createStore, Store } from "../apps/server/src/db.ts";
 import { tanstackAgent } from "../apps/server/src/engine/tanstack-agent.ts";
 import { LostLeaseError, TaskWorker } from "../apps/server/src/engine/worker.ts";
+import { ExecutorRegistry } from "../apps/server/src/executors/registry.ts";
+import { executorRoutes } from "../apps/server/src/executors/routes.ts";
 import { OperationDrain, RequestDrain, shutdownServer } from "../apps/server/src/shutdown.ts";
 import { LocalThreads } from "../apps/server/src/threads.ts";
 import type { AgentTask } from "../packages/domain/src/agent.ts";
+import { authority, hello, nodeToken, registration } from "./helpers/executors.ts";
 import { modelFixture } from "./helpers/model.ts";
 
 function deferred() {
@@ -545,5 +549,79 @@ test("unconfirmed native action persistence makes shutdown fail rather than auth
     await assert.rejects(actions.close(), /could not confirm/);
   } finally {
     await db.close();
+  }
+});
+
+test("HTTP shutdown wakes an authenticated twenty-second native claim before closing storage", {
+  timeout: 5000,
+}, async () => {
+  const db = await createStore();
+  const entered = deferred();
+  const base = authority(db);
+  let inspecting = false;
+  const registry = new ExecutorRegistry(db, {
+    registrations: [registration],
+    authority: {
+      ...base,
+      pause: async () => {
+        if (inspecting) entered.resolve();
+        return base.pause();
+      },
+    },
+  });
+  const { epoch } = await registry.register(hello);
+  await registry.reconcile("lenovo-okami", {
+    epoch,
+    bootId: "boot-a",
+    operations: [],
+    contained: true,
+  });
+  const requests = new RequestDrain();
+  const app = executorRoutes(registry);
+  const server = serve({
+    fetch: (request) => requests.fetch(app.fetch, request),
+    hostname: "127.0.0.1",
+    port: 0,
+  }) as Server;
+  if (!server.listening) await new Promise<void>((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  inspecting = true;
+  let finished = false,
+    closed = false;
+  const response = fetch(`http://127.0.0.1:${address.port}/lenovo-okami/claim`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${nodeToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ epoch, waitMs: 20000 }),
+  })
+    .then(async (value) => ({ status: value.status, body: await value.json() }))
+    .catch(() => null)
+    .finally(() => {
+      finished = true;
+    });
+  try {
+    await entered.promise;
+    assert.equal(finished, false);
+    await shutdownServer(
+      server,
+      requests,
+      async () => registry.stopDispatch(),
+      async () => {
+        await db.close();
+        closed = true;
+      },
+    );
+    assert.equal(closed, true);
+    const result = await response;
+    if (result) {
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body.operations, []);
+    }
+  } finally {
+    registry.stopDispatch();
+    server.closeAllConnections();
+    server.close();
+    await response;
+    if (!closed) await db.close();
   }
 });

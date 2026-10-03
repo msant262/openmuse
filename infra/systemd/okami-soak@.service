@@ -1,0 +1,16 @@
+[Unit]
+Description=Local metadata-only 24 hour Okami soak on %i
+After=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+StateDirectory=okami-soak
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 /opt/openmuse/scripts/soak_hybrid.py collect --config /etc/okami-soak/%i.json
+TimeoutStartSec=25h
+MemoryMax=128M
+CPUQuota=10%
+Nice=10
+IOSchedulingClass=idle

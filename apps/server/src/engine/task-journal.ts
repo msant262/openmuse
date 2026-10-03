@@ -11,7 +11,7 @@ import {
 } from "../../../../packages/domain/src/runtime.ts";
 import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
-import { AppError } from "../errors.ts";
+import { AppError, NativePreflightRejection } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { ResourceBusyError } from "./resource-leases.ts";
 import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
@@ -168,12 +168,64 @@ export class TaskJournal {
     const ids: string[] = [];
     for (const op of await this.operations(owner, taskId)) {
       if (
-        !/^(import_pdf|fill_pdf|export_computer_(pdf|file))$/.test(op.toolName) ||
+        !/^(import_pdf|fill_pdf|export_computer_(pdf|file)|manual_native\.export)$/.test(
+          op.toolName,
+        ) ||
         !["dispatching", "outcome_unknown"].includes(op.status)
       )
         continue;
       const recovered = await files.reconcilePublications(owner, op.id);
       if (!recovered.length) continue;
+      const operations = await this.operations(owner, taskId);
+      const children = operations.filter((child) => child.parentOperationId === op.id);
+      for (const child of children) {
+        if (
+          child.nativeEnvelope ||
+          child.revision !== op.revision ||
+          !["dispatching", "outcome_unknown"].includes(child.status)
+        )
+          continue;
+        const descendants = operations.filter((item) => item.parentOperationId === child.id);
+        const publication = recovered.find(
+          (file) => child.id === `primitive:${op.id}:file-publication:${file.id}`,
+        );
+        const read = descendants.length === 1 ? descendants[0] : undefined;
+        const args = read?.args as { operation?: string; path?: string } | undefined;
+        const readReceipt = read?.receipt as
+          | { status?: string; data?: { sha256?: string } }
+          | undefined;
+        const publishedRead =
+          read &&
+          !read.effect &&
+          read.toolName === "native.file" &&
+          read.nativeEnvelope?.kind === "file" &&
+          read.status === "succeeded" &&
+          read.revision === op.revision &&
+          args?.operation === "read_binary" &&
+          readReceipt?.status === "succeeded" &&
+          !operations.some((item) => item.parentOperationId === read.id);
+        if (
+          (publication && descendants.length === 0 && child.resourceLeaseIds.length === 0) ||
+          publishedRead
+        )
+          await this.recordReceipt(
+            owner,
+            child.id,
+            publication
+              ? { fileId: publication.id, reconciled: true }
+              : { nativeOperationId: read?.id, reconciled: true },
+            "succeeded",
+            (child.sequence ?? 0) + 1,
+          );
+      }
+      // A verified local artifact cannot prove that an unrelated external effect
+      // finished. Keep any other pending primitive visible and unreplayed.
+      if (
+        (await this.operations(owner, taskId)).some(
+          (child) => child.parentOperationId === op.id && !terminal.has(child.status),
+        )
+      )
+        continue;
       const receipt =
         recovered.length === 1
           ? { id: recovered[0].id, name: recovered[0].name, reconciled: true }
@@ -556,6 +608,92 @@ export class TaskJournal {
       } catch (error) {
         if (error instanceof TaskOutcomeUnknownError && error.operationIds.includes(op.id))
           throw error;
+        if (error instanceof NativePreflightRejection && error.parentOperationId === op.id) {
+          const operations = await this.operations(owner, task.id);
+          const primitive = operations.find((item) => item.id === error.primitiveOperationId);
+          if (
+            primitive?.parentOperationId === op.id &&
+            !primitive.nativeEnvelope &&
+            ["queued", "dispatching"].includes(primitive.status) &&
+            !operations.some((item) => item.parentOperationId === primitive.id)
+          ) {
+            const receipt = { error: error.message, dispatched: false, code: error.code };
+            await this.recordReceipt(
+              owner,
+              primitive.id,
+              receipt,
+              "rejected_not_dispatched",
+              (primitive.sequence ?? 0) + 1,
+            );
+            const siblings = operations.filter(
+              (item) => item.parentOperationId === op.id && item.id !== primitive.id,
+            );
+            for (let index = 0; index < siblings.length; index++) {
+              const sibling = siblings[index];
+              const children = operations.filter((item) => item.parentOperationId === sibling.id);
+              const child = children[0];
+              if (
+                sibling.nativeEnvelope ||
+                sibling.status !== "dispatching" ||
+                children.length !== 1 ||
+                child?.nativeEnvelope?.kind !== "file" ||
+                child.status !== "succeeded" ||
+                child.taskId !== sibling.taskId ||
+                child.revision !== sibling.revision ||
+                operations.some((item) => item.parentOperationId === child.id)
+              )
+                continue;
+              const args = child.args as { operation?: string };
+              const delivered = child.receipt as {
+                status?: string;
+                data?: Record<string, unknown>;
+              };
+              if (
+                !["write", "write_binary"].includes(args.operation ?? "") ||
+                delivered.status !== "succeeded"
+              )
+                continue;
+              const data = delivered.data;
+              if (!data || typeof data.artifactId !== "string") continue;
+              const artifact = await this.db.get<Record<string, unknown>>(
+                owner,
+                "native-artifacts",
+                data.artifactId,
+              );
+              if (
+                !artifact?.published ||
+                artifact.executorId !== child.executorId ||
+                artifact.version !== data.version ||
+                artifact.sha256 !== data.sha256 ||
+                (artifact.generation ?? 1) !== (data.generation ?? 1) ||
+                artifact.versionId !== data.versionId
+              )
+                continue;
+              siblings[index] = await this.recordReceipt(
+                owner,
+                sibling.id,
+                { nativeOperationId: child.id, artifactId: data.artifactId, published: true },
+                "succeeded",
+                (sibling.sequence ?? 0) + 1,
+              );
+            }
+            if (siblings.every((item) => terminal.has(item.status))) {
+              // A compound tool may already have uploaded an attachment. Preserve
+              // that successful effect instead of calling the whole tool undispatched.
+              const status = siblings.some((item) => ["succeeded", "failed"].includes(item.status))
+                ? "failed"
+                : "rejected_not_dispatched";
+              await this.recordReceipt(
+                owner,
+                op.id,
+                status === "failed" ? { ...receipt, dispatched: true, partial: true } : receipt,
+                status,
+                (op.sequence ?? 0) + 1,
+              );
+              throw error;
+            }
+          }
+        }
         const current = await this.db.get<JournalOperation>(owner, "task-operations", op.id);
         if (current?.status === "queued")
           await this.recordReceipt(

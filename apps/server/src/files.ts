@@ -95,7 +95,10 @@ export class Files {
       (await this.db.get<typeof intent>(owner, "file-publications", id));
     if (!previous || previous.binding !== binding)
       throw new AppError("File intention is bound to different content", 409);
-    await authorizeTaskEffect();
+    // Publishing these already-copied bytes is a separate physical step. A
+    // preceding native read has released its remote file lease; retain the
+    // task/revision barrier without borrowing that completed read's handles.
+    await authorizeTaskEffect([], `file-publication:${id}`);
     try {
       await writeFile(path, bytes, { mode: 0o600, flag: "wx" });
     } catch (error) {

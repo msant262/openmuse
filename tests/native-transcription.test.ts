@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -102,6 +102,65 @@ async function nativeRuntime() {
   };
   return state;
 }
+
+test("native file export publishes bytes after releasing the remote read lease", async (t) => {
+  const native = await nativeRuntime();
+  t.after(native.close);
+  const bytes = Buffer.from("generated office document bytes");
+  const request = native.server.app.request("/api/computer/files/export", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${native.session.token}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": "native-export-regression",
+    },
+    body: JSON.stringify({ path: "/workspace/report.docx" }),
+  });
+  const claim = await native.node("claim", { epoch: native.epoch, waitMs: 5000 });
+  const operation = claim.operations?.[0];
+  assert.ok(operation);
+  assert.equal(operation.args.operation, "read_binary");
+  await native.node("receipt", {
+    epoch: native.epoch,
+    operationId: operation.id,
+    sequence: 1,
+    receipt: {
+      status: "succeeded",
+      data: {
+        path: "/workspace/report.docx",
+        base64: bytes.toString("base64"),
+        size: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+    },
+  });
+  const initial = await request;
+  let value = await initial.json();
+  for (let poll = 0; value.pending && poll < 40; poll++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const response = await native.server.app.request(`/api/computer/requests/${value.taskId}`, {
+      headers: { Authorization: `Bearer ${native.session.token}` },
+    });
+    value = await response.json();
+  }
+  const artifact = value.result ?? value;
+  assert.ok(artifact.id, JSON.stringify(value));
+  assert.equal(artifact.name, "report.docx");
+  assert.deepEqual(Buffer.from(await native.server.files.bytes("local-user", artifact.id)), bytes);
+  const operations = await native.server.agent.journal.operations(
+    "local-user",
+    (await native.db.list<{ id: string }>("local-user", "tasks"))[0].id,
+  );
+  assert.ok(operations.length >= 3);
+  assert.ok(
+    operations.every((item) => item.status === "succeeded"),
+    JSON.stringify(operations),
+  );
+  assert.equal(
+    (await native.node("claim", { epoch: native.epoch, waitMs: 0 })).operations?.length ?? 0,
+    0,
+  );
+});
 
 test("concurrent late transcript publication creates one complete VPS text and SRT attachment", async (t) => {
   const server = await taskRuntime(t);
@@ -710,4 +769,342 @@ test("an immediately succeeded native transcription receipt publishes without su
   } finally {
     backend.media = originalMedia;
   }
+});
+
+test("compound native attachment transcription reconciles a published upload before a pre-enqueue media rejection", async (t) => {
+  const native = await nativeRuntime();
+  t.after(native.close);
+
+  // Switch to a registered node that supports file transfer but not transcription.
+  const { epoch } = await native.node("register", hello);
+  native.epoch = Number(epoch);
+  await native.node("reconcile", {
+    epoch: native.epoch,
+    bootId: hello.bootId,
+    operations: [],
+    contained: true,
+  });
+
+  const threadId = "compound-preflight-chat";
+  if (!("ensure" in native.server.threads))
+    throw new Error("Test app did not create local threads");
+  await native.server.threads.ensure("local-user", threadId);
+  const audio = await native.server.files.importAttachment(
+    "local-user",
+    "meeting.m4a",
+    Buffer.from("fixture audio input"),
+    "Uploaded by you",
+    "audio/mp4",
+    "compound-preflight-audio",
+  );
+  const body = {
+    fileId: audio.id,
+    language: "auto",
+    includeSubtitles: true,
+    threadId,
+    requestId: "compound-preflight-request",
+  };
+  const acceptedRequest = native.server.app.request("/api/computer/transcribe-attachment", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${native.session.token}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": body.requestId,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const upload = await native.node("claim", { epoch: native.epoch, waitMs: 5000 });
+  assert.equal(upload.operations?.length, 1);
+  const uploadOperation = upload.operations?.[0];
+  assert.ok(uploadOperation);
+  assert.equal(uploadOperation.kind, "file");
+  assert.equal(uploadOperation.args.operation, "write_binary");
+  const uploadBytes = Buffer.from(String(uploadOperation.args.base64), "base64");
+  const uploadSha = createHash("sha256").update(uploadBytes).digest("hex");
+  const uploadedArtifact = {
+    artifactId: createHash("sha256").update(String(uploadOperation.args.path)).digest("hex"),
+    path: uploadOperation.args.path,
+    version: uploadSha,
+    sha256: uploadSha,
+    size: uploadBytes.length,
+    mimeType: "audio/mp4",
+    executorLocal: true,
+    published: false,
+    restoredAsCopy: false,
+    generation: 1,
+    versionId: "compound-preflight-upload-version",
+  };
+  await native.node("receipt", {
+    epoch: native.epoch,
+    operationId: uploadOperation.id,
+    sequence: 1,
+    receipt: { status: "succeeded", data: uploadedArtifact },
+  });
+  await native.node("artifact", { epoch: native.epoch, ...uploadedArtifact });
+
+  const response = await acceptedRequest;
+  const result = (await response.json()) as { taskId?: string; status?: string };
+  assert.ok(result.taskId, JSON.stringify(result));
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const task = await native.server.agent.getTask("local-user", result.taskId);
+    if (["failed", "waiting_input"].includes(task.status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  const operations = await native.server.agent.journal.operations("local-user", result.taskId);
+  const wrapper = operations.find(
+    (operation) => operation.toolName === "manual_native.transcribe_attachment",
+  );
+  assert.ok(wrapper);
+  assert.equal(wrapper.status, "failed");
+  assert.equal((wrapper.receipt as { dispatched?: boolean }).dispatched, true);
+  assert.equal((wrapper.receipt as { partial?: boolean }).partial, true);
+  assert.equal((wrapper.receipt as { code?: string }).code, "NATIVE_CAPABILITY_UNAVAILABLE");
+  assert.ok(
+    operations.some(
+      (operation) =>
+        operation.parentOperationId === wrapper.id &&
+        operation.toolName.startsWith("primitive.") &&
+        operation.status === "succeeded",
+    ),
+    "the prior upload primitive must be reconciled from its succeeded native receipt",
+  );
+  assert.ok(
+    operations.some(
+      (operation) =>
+        operation.parentOperationId === wrapper.id &&
+        operation.toolName.startsWith("primitive.") &&
+        operation.status === "rejected_not_dispatched",
+    ),
+    "only the transcription primitive should be rejected as not dispatched",
+  );
+  assert.ok(
+    !operations.some((operation) =>
+      ["dispatching", "running", "outcome_unknown"].includes(operation.status),
+    ),
+    JSON.stringify(
+      operations.map(({ id, toolName, status, parentOperationId }) => ({
+        id,
+        toolName,
+        status,
+        parentOperationId,
+      })),
+    ),
+  );
+  const deliveries = await native.server.executors.deliveries(
+    "local-user",
+    registration.executorId,
+  );
+  assert.equal(deliveries.filter((delivery) => delivery.operation.kind === "media").length, 0);
+  assert.ok(deliveries.some((delivery) => delivery.operation.id === uploadOperation.id));
+  const artifact = await native.db.get<{ published: boolean; version: string; sha256: string }>(
+    "local-user",
+    "native-artifacts",
+    uploadedArtifact.artifactId,
+  );
+  assert.equal(artifact?.published, true);
+  assert.equal(artifact?.version, uploadSha);
+  assert.equal(artifact?.sha256, uploadSha);
+});
+
+async function makeCrashSnapshot(
+  state: Awaited<ReturnType<typeof nativeRuntime>>,
+  addUnknownSibling = false,
+) {
+  const data = Buffer.from("bytes copied from Lenovo before publication crash");
+  const sha256 = createHash("sha256").update(data).digest("hex");
+  const { node } = state;
+  const requestId = addUnknownSibling
+    ? "export-crash-with-unrelated-unknown"
+    : "export-crash-recovery";
+  const path = "/workspace/report.docx";
+  const headers = {
+    Authorization: `Bearer ${state.session.token}`,
+    "Content-Type": "application/json",
+    "Idempotency-Key": requestId,
+  };
+  const request = state.server.app.request("/api/computer/files/export", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ path }),
+  });
+  const claim = await node("claim", { epoch: state.epoch, waitMs: 5000 });
+  const nativeRead = claim.operations?.[0];
+  assert.ok(nativeRead);
+  assert.equal(nativeRead.args.operation, "read_binary");
+
+  const originalPut = state.db.put.bind(state.db);
+  let failedAfterPhysicalWrite = false;
+  state.db.put = async (owner, kind, value) => {
+    if (!failedAfterPhysicalWrite && owner === "local-user" && kind === "files") {
+      failedAfterPhysicalWrite = true;
+      throw new Error("simulated process failure after publication file write");
+    }
+    return originalPut(owner, kind, value);
+  };
+  await node("receipt", {
+    epoch: state.epoch,
+    operationId: nativeRead.id,
+    sequence: 1,
+    receipt: {
+      status: "succeeded",
+      data: {
+        path,
+        base64: data.toString("base64"),
+        size: data.length,
+        sha256,
+      },
+    },
+  });
+  const firstResponse = await request;
+  assert.equal(failedAfterPhysicalWrite, true);
+  assert.equal(firstResponse.status, 409);
+  const firstBody = await firstResponse.json();
+  const taskId = firstBody.taskId;
+  const task = await state.db.get<import("../packages/domain/src/agent.ts").AgentTask>(
+    "local-user",
+    "tasks",
+    taskId,
+  );
+  assert.ok(task);
+  assert.equal(task.status, "failed");
+  const ops = await state.server.agent.journal.operations("local-user", taskId);
+  const wrapper = ops.find((op) => op.toolName === "manual_native.export");
+  assert.ok(wrapper);
+  const localPublication = ops.find(
+    (op) =>
+      op.id ===
+      `primitive:${wrapper.id}:file-publication:${createHash("sha256").update(`local-user:file:${wrapper.id}:report.docx`).digest("hex")}`,
+  );
+  assert.ok(localPublication, "real Files.importAttachment publication primitive is present");
+  const publication = (
+    await state.db.list<{ id: string; operationId: string; status: string }>(
+      "local-user",
+      "file-publications",
+    )
+  )[0];
+  assert.ok(publication);
+  assert.equal(publication.operationId, wrapper.id);
+  assert.equal(publication.status, "prepared");
+  const savedBytes = await readFile(join(state.directory, "files", `${publication.id}.bin`));
+  assert.deepEqual(savedBytes, data, "all published bytes landed before simulated process death");
+  assert.equal(wrapper.status, "outcome_unknown");
+
+  // Recreate the durable state a process death leaves at this exact boundary:
+  // the filesystem write and prepare row committed, but wrapper/primitive receipts did not.
+  state.db.put = originalPut;
+  await originalPut("local-user", "tasks", {
+    ...task,
+    status: "running",
+    leaseId: "crashed-worker-lease",
+    leaseUntil: "2000-01-01T00:00:00.000Z",
+    error: undefined,
+    question: undefined,
+  });
+  for (const operation of ops) {
+    if (operation.id === wrapper.id || operation.id === localPublication.id) {
+      const { receipt: _receipt, sequence: _sequence, ...crashed } = operation;
+      await originalPut("local-user", "task-operations", { ...crashed, status: "dispatching" });
+    }
+  }
+  if (addUnknownSibling) {
+    await originalPut("local-user", "task-operations", {
+      ...wrapper,
+      id: `primitive:${wrapper.id}:unrelated-mutation`,
+      parentOperationId: wrapper.id,
+      physicalOperationId: `unrelated-mutation:${taskId}`,
+      resourceHoldTaskId: `unrelated-mutation:${taskId}`,
+      toolName: "primitive.manual_native.export",
+      status: "outcome_unknown",
+      effect: true,
+      resourceLeaseIds: [],
+      receipt: { outcomeUnknown: true },
+    });
+  }
+  await state.restart();
+  state.epoch = Number((await node("register", hello)).epoch);
+  await node("reconcile", {
+    epoch: state.epoch,
+    bootId: hello.bootId,
+    operations: [],
+    contained: true,
+  });
+  return {
+    requestId,
+    path,
+    taskId,
+    wrapperId: wrapper.id,
+    publicationId: publication.id,
+    headers,
+    data,
+  };
+}
+
+test("manual export recovers a post-write crash from VPS bytes without a second Lenovo read", async (t) => {
+  const fx = await nativeRuntime();
+  t.after(fx.close);
+  const snapshot = await makeCrashSnapshot(fx);
+  const response = await fx.server.app.request("/api/computer/files/export", {
+    method: "POST",
+    headers: snapshot.headers,
+    body: JSON.stringify({ path: snapshot.path }),
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  const artifact = await response.json();
+  assert.equal(artifact.id, snapshot.publicationId);
+  assert.deepEqual(await fx.server.files.bytes("local-user", artifact.id), snapshot.data);
+  assert.equal((await fx.db.list("local-user", "files")).length, 1);
+  const publication = await fx.db.get<{ status: string }>(
+    "local-user",
+    "file-publications",
+    snapshot.publicationId,
+  );
+  assert.equal(publication?.status, "published");
+  const ops = await fx.server.agent.journal.operations("local-user", snapshot.taskId);
+  assert.ok(
+    ops.every((op) =>
+      ["succeeded", "failed", "rejected_not_dispatched", "superseded"].includes(op.status),
+    ),
+    JSON.stringify(ops.map(({ id, status }) => ({ id, status }))),
+  );
+  assert.equal(
+    ops.filter(
+      (op) =>
+        op.toolName === "native.file" &&
+        (op.args as { operation?: string })?.operation === "read_binary",
+    ).length,
+    1,
+  );
+  assert.equal((await fx.node("claim", { epoch: fx.epoch, waitMs: 0 })).operations?.length ?? 0, 0);
+});
+
+test("recovered file publication does not erase a distinct unresolved mutation sibling", async (t) => {
+  const fx = await nativeRuntime();
+  t.after(fx.close);
+  const snapshot = await makeCrashSnapshot(fx, true);
+  const response = await fx.server.app.request("/api/computer/files/export", {
+    method: "POST",
+    headers: snapshot.headers,
+    body: JSON.stringify({ path: snapshot.path }),
+  });
+  assert.equal(response.status, 409);
+  const body = await response.json();
+  assert.equal(body.status, "waiting_input");
+  const ops = await fx.server.agent.journal.operations("local-user", snapshot.taskId);
+  const wrapper = ops.find((op) => op.id === snapshot.wrapperId);
+  assert.equal(wrapper?.status, "dispatching");
+  const unrelated = ops.find(
+    (op) => op.id === `primitive:${snapshot.wrapperId}:unrelated-mutation`,
+  );
+  assert.equal(unrelated?.status, "outcome_unknown");
+  assert.equal(
+    ops.filter(
+      (op) =>
+        op.toolName === "native.file" &&
+        (op.args as { operation?: string })?.operation === "read_binary",
+    ).length,
+    1,
+  );
+  assert.equal((await fx.node("claim", { epoch: fx.epoch, waitMs: 0 })).operations?.length ?? 0, 0);
 });

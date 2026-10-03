@@ -38,6 +38,8 @@ services:
       PORT: 8787
       DATA_DIR: /data/openmuse
       TASK_WORKER_ENABLED: "true"
+      API_QUOTAS_ENABLED: ${API_QUOTAS_ENABLED:-true}
+      DEPLOYMENT_OPERATOR_TOKEN_SHA256: ${DEPLOYMENT_OPERATOR_TOKEN_SHA256:-}
       PUBLIC_API_URL: ${PUBLIC_API_URL:?Set a phone-reachable private or HTTPS URL}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       OPENMUSE_ACCESS_KEY: ${OPENMUSE_ACCESS_KEY:?Set a random access key of at least 24 characters}
@@ -50,6 +52,14 @@ services:
       CREDENTIAL_ADAPTERS_JSON: ${CREDENTIAL_ADAPTERS_JSON:-[]}
       MODEL: ${MODEL:?Choose a configured provider/model-id}
       MODEL_FALLBACKS: ${MODEL_FALLBACKS:-}
+      MODEL_QUOTA_SCOPE: ${MODEL_QUOTA_SCOPE:-process}
+      MODEL_PROVIDER_QUOTAS: ${MODEL_PROVIDER_QUOTAS:-}
+      MODEL_CAPABILITIES: ${MODEL_CAPABILITIES:-}
+      MODEL_MAX_ATTEMPTS: ${MODEL_MAX_ATTEMPTS:-3}
+      MODEL_DEADLINE_MS: ${MODEL_DEADLINE_MS:-300000}
+      MODEL_ATTEMPT_TIMEOUT_MS: ${MODEL_ATTEMPT_TIMEOUT_MS:-60000}
+      MODEL_COOLDOWN_MS: ${MODEL_COOLDOWN_MS:-200}
+      MODEL_IMAGE_CONTEXT_TOKENS: ${MODEL_IMAGE_CONTEXT_TOKENS:-8192}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -87,6 +97,12 @@ services:
       COMPUTER_DEPLOYMENT_ID: ${COMPUTER_DEPLOYMENT_ID:-personal-vps}
       APPROVAL_POLICY: ${APPROVAL_POLICY:-money}
       ROUTINE_TIMEZONE: ${ROUTINE_TIMEZONE:-UTC}
+      PROACTIVITY_ENABLED: ${PROACTIVITY_ENABLED:-false}
+      PROACTIVITY_INTERVAL_HOURS: ${PROACTIVITY_INTERVAL_HOURS:-4}
+      NATIVE_COMMAND_MEMORY_MB: ${NATIVE_COMMAND_MEMORY_MB:-3072}
+      FILE_VERSION_RETENTION_DAYS: ${FILE_VERSION_RETENTION_DAYS:-30}
+      FILE_VERSION_MAX_BYTES: ${FILE_VERSION_MAX_BYTES:-2147483648}
+      SESSION_DEVICE_IDLE_DAYS: ${SESSION_DEVICE_IDLE_DAYS:-0}
       CPK_INTELLIGENCE_API_KEY: ${CPK_INTELLIGENCE_API_KEY:-}
       JEV_MODE: ${JEV_MODE:-off}
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
@@ -120,12 +136,11 @@ services:
       start_period: 30s
   openbao:
     image: openbao/openbao:2.7.1
-    command: ["server", "-config=/openbao/config/openbao.hcl"]
+    command: ["server"]
     init: true
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
-    cap_add: [IPC_LOCK]
     security_opt: ["no-new-privileges:true"]
     mem_limit: 256m
     memswap_limit: 256m
@@ -254,6 +269,8 @@ networks:
     ipam:
       config:
         - subnet: ${COMPUTER_CONTROL_SUBNET:-172.30.88.0/24}
+          # Dynamic workers must never claim the API's fixed .2 before it starts.
+          ip_range: ${COMPUTER_DYNAMIC_RANGE:-172.30.88.128/25}
   vault-control:
     driver: bridge
     internal: true

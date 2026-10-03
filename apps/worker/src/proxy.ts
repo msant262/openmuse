@@ -4,7 +4,9 @@ import { connect, type Socket } from "node:net";
 import { validatePublicUrl } from "./network.ts";
 
 /** All upstream sockets connect to a validated IP, never a second DNS lookup. */
-export async function startEgressProxy() {
+export async function startEgressProxy(port = 0) {
+  if (!Number.isInteger(port) || (port !== 0 && (port < 1024 || port > 65535)))
+    throw new Error("Proxy port must be a registered unprivileged port");
   const sockets = new Set<Socket>();
   const server = createServer(async (incoming, response) => {
     try {
@@ -74,7 +76,9 @@ export async function startEgressProxy() {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
   });
-  server.listen(0, "127.0.0.1");
+  // Native UIDs have a fixed root-owned firewall catalog. Never choose another
+  // port when that exact endpoint is occupied; VPS/test workers keep port zero.
+  server.listen(port, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Proxy unavailable");

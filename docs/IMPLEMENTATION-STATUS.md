@@ -1,6 +1,6 @@
 # OkamiBot implementation status
 
-Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-implementation.md), starting at `8c8c1a4`. The earlier seven VPS milestones remain recorded separately in the historical plan.
+Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-implementation.md), starting at `8c8c1a4`. The earlier seven VPS milestones remain recorded separately in the historical plan. Integration-time statuses below are supplemented by current physical evidence in the deployment record.
 
 | Milestone | Integrated status |
 | --- | --- |
@@ -14,7 +14,11 @@ Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-
 | 8 — Private credentials and connector OAuth | Reviewed and integrated; real account/device acceptance pending |
 | 9 — Capability-aware browser fallback | Reviewed and integrated; physical partition acceptance pending |
 | 10 — Bounded context and long-term memory | Reviewed and integrated; physical/provider acceptance pending |
-| 11–12 | Pending integration |
+| 11 — Proactive routines, attachments and media | Reviewed and integrated; live accounts/push/phone acceptance pending |
+| 12 — Hybrid installation and Android release | Implemented and deployed for technical acceptance; Account/physical pilot acceptance remains partial |
+
+The milestone sections below retain their integration-time evidence. Current physical
+deployment results and remaining setup are recorded in [DEPLOYMENT-ACCEPTANCE.md](DEPLOYMENT-ACCEPTANCE.md).
 
 ## Milestone 1
 
@@ -299,3 +303,35 @@ checks passed 58/58 earlier in composition and targeted transcript recovery pass
 3/3. A stale receipt-text assertion was updated to the complete-file contract.
 Physical microphones, Google accounts, installed ASR model and phone UI remain
 milestone 12 acceptance; no such acceptance is implied by fixture tests.
+
+## Milestone 12
+
+The hybrid Compose deployment and root-owned native installer are installed on
+the existing VPS/Lenovo. Android release APKs were built with the project's private
+signing key; the final emulator journey preserves pairing and drafts. Deployment
+provides scoped maintenance, API quotas, measured memory admission, automatic
+OpenBao token renewal, encrypted cross-host backup/recovery and a metadata-only
+24-hour observer. MIT/dependency notices and the demo remain intact.
+
+Real integration found and corrected platform issues not visible in fixtures:
+Node's unavailable native TypeScript support on the Lenovo distro build, Chromium
+user-namespace/AppArmor and command-line preflight, queued graphical receipt
+latency, PyAV/Whisper compatibility, CopilotKit Android XHR completion, released
+read leases during native export, and frozen-session shutdown for backups. Exact
+pre-enqueue rejection and completed publication evidence now avoid false unknown
+outcomes without replaying uncertain external effects.
+
+Final server source passed **867/867** tests (182.8 seconds), server/mobile/worker
+types, and **92/92** computer Python tests including cold desktop restart. Backup scripts
+passed **49/49**, including real age authentication and failure recovery. Live
+Take control/capture/input/handback, Office generation/PDF conversion, native
+command/files, silence transcription and DOCX/PPTX/XLSX/PDF downloads passed.
+
+See [DEPLOYMENT-ACCEPTANCE.md](DEPLOYMENT-ACCEPTANCE.md) for service/source identities,
+APK paths/hashes, operational evidence and activation steps. This is partial
+physical acceptance: private HTTPS is active and verified;
+ChatGPT/Grok subscription login and real responses passed (default GPT-6-Luna);
+MiMo/Google/FCM still need credentials and consent, and the actual
+phone, Wi-Fi/energy failures, five sessions, large workloads and a completed
+24-hour observation remain unverified. No production-ready personal pilot is
+claimed solely from passing automated tests.

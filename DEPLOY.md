@@ -79,6 +79,7 @@ TOKEN_ENCRYPTION_KEY=replace-with-base64-of-exactly-32-random-bytes
 WORKER_TOKEN=replace-with-random-32-or-more-characters
 COMPUTER_TOKEN=replace-with-a-different-random-32-or-more-characters
 COMPUTER_CONTROL_SUBNET=172.30.88.0/24
+COMPUTER_DYNAMIC_RANGE=172.30.88.128/25
 COMPUTER_SERVER_IP=172.30.88.2
 COMPUTER_HOST_PUBLIC_IPS=all-actual-vps-public-ipv4-addresses-comma-separated
 APPROVAL_POLICY=money
@@ -277,7 +278,7 @@ uncertain dispatch, foreground lifetime/cancellation, native consent races, conf
 credential scrubbing, paused routine edits and audit backlog/native send receipts. These
 checks do not establish a deployed VPS, account eligibility or physical phone delivery.
 
-Web/iOS/Android JavaScript/Hermes exports pass; signed mobile/device acceptance remains
+Historical pre-hybrid evidence: Web/iOS/Android JavaScript/Hermes exports pass; signed mobile/device acceptance remained
 unverified. Independent checks of the final compiled build passed actual HTTP/PGlite/model/
 MCP integration and active-stream SIGTERM (exit 0 in 0.06s), retained the partial reply
 through restart, and admitted a fresh turn. Official Compose configuration and exact
@@ -291,3 +292,22 @@ while the real native-send audit INSERT completion is held, and releasing that w
 zero provider sends. The original compiled integration, SIGTERM/restart and official static
 Compose checks passed again on that repaired build. These fixtures use synthetic providers
 and local services; operator Docker/VPS/device/account validation remains required.
+# Native Lenovo + existing VPS
+
+The two-host installation uses [the reviewed hybrid procedure](deploy/HYBRID.md),
+`deploy/compose.hybrid.yml` and `scripts/install_native.py`. It preserves the
+existing `okami-bot` account, sudo/groups, GNOME/RDP and Hermes. The hybrid example
+uses `Europe/Berlin`; the local/demo default below stays UTC.
+
+On the current VPS the API binds **100.113.59.40:8787** for the authenticated native
+supervisor. Private HTTPS serves the phone/web URL separately. Tailscale Serve
+must first be enabled on the existing tailnet; an example HTTPS hostname alone
+does not establish working TLS. No public `0.0.0.0` listener is generated.
+
+The hybrid backup service uses maintenance admission, bounded draining, encrypted
+cross-host copies and isolated restore. Use its dedicated service/timer rather
+than the legacy all-container backup timer below. Preparation produces reviewable
+root-owned code/units. The [current deployment acceptance](docs/DEPLOYMENT-ACCEPTANCE.md)
+records the activated services, signed Android release, backup evidence and remaining
+HTTPS/account/phone/24-hour checks. Historical verification counts and memory totals
+above do not supersede the hybrid record.

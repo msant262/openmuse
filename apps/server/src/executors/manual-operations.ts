@@ -459,6 +459,10 @@ export class ManualNativeOperations {
           );
       }
     }
+    if (record.request.method === "export") {
+      const result = record.result as { id?: unknown };
+      if (typeof result.id === "string") return this.files.get(owner, result.id);
+    }
     if (record.request.method !== "transcribe_attachment") return record.result;
     const saved = record.result as {
       status?: string;

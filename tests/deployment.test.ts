@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { parseDocument } from "yaml";
 
 interface ComposeService {
+  command?: string[];
   mem_limit: string;
   memswap_limit: string;
   shm_size?: string;
@@ -29,6 +30,30 @@ interface ComposeService {
   depends_on?: Record<string, { condition: string }>;
   volumes?: (string | { target: string; read_only?: boolean })[];
 }
+
+test("hybrid installer, selective backup, encrypted receiver, drain and measured budget contracts", () => {
+  const result = execFileSync(
+    "python3",
+    ["-m", "unittest", "discover", "-s", "scripts", "-p", "test_hybrid_deployment.py"],
+    { timeout: 20000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  assert.doesNotMatch(result, /credential value|secret diagnostic/i);
+  execFileSync(
+    "python3",
+    ["-m", "unittest", "discover", "-s", "scripts", "-p", "test_native_install.py"],
+    { timeout: 20000, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  execFileSync(
+    "python3",
+    ["-m", "unittest", "discover", "-s", "scripts", "-p", "test_soak_hybrid.py"],
+    { timeout: 20000, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  execFileSync(
+    "python3",
+    ["-m", "unittest", "discover", "-s", "scripts", "-p", "test_operator_backup_token.py"],
+    { timeout: 20000, stdio: ["ignore", "pipe", "pipe"] },
+  );
+});
 
 test("VPS Compose has an exact decimal-safe budget and enforceable isolated service contracts", async () => {
   const source = await readFile("docker-compose.yml", "utf8");
@@ -67,7 +92,7 @@ test("VPS Compose has an exact decimal-safe budget and enforceable isolated serv
     assert.equal(value.env_file, undefined);
     assert(!JSON.stringify(value.volumes ?? []).includes("docker.sock"));
     if (name !== "server") assert.equal(value.ports, undefined);
-    if (!["computer-egress", "openbao"].includes(name)) assert.equal(value.cap_add, undefined);
+    if (name !== "computer-egress") assert.equal(value.cap_add, undefined);
   }
   assert.deepEqual(services.server.ports, ["127.0.0.1:8787:8787"]);
   assert.equal(services.server.environment.TASK_WORKER_ENABLED, "true");
@@ -102,7 +127,9 @@ test("VPS Compose has an exact decimal-safe budget and enforceable isolated serv
   const env = await readFile(".env.example", "utf8");
   for (const match of source.matchAll(/\$\{([A-Z][A-Z0-9_]*)/g))
     assert(env.includes(`${match[1]}=`), `Missing ${match[1]} example`);
-  assert.deepEqual(services.openbao.cap_add, ["IPC_LOCK"]);
+  assert.match(source, /ip_range:.*COMPUTER_DYNAMIC_RANGE.*172\.30\.88\.128\/25/);
+  assert.equal(services.openbao.cap_add, undefined);
+  assert.deepEqual(services.openbao.command, ["server"]);
   assert.deepEqual(services.openbao.networks, ["vault-control"]);
   assert.equal(Object.keys(config.volumes).length, 5);
 });

@@ -15,7 +15,7 @@ const db = await createStore({
 });
 await db.recoverInterruptedActions();
 await new ActionLog(db).reconcile(true);
-const { app, agent, actions, threads } = await createApp(db, config);
+const { app, agent, actions, threads, executors } = await createApp(db, config);
 const stopTokenMaintenance = startModelTokenMaintenance(config);
 if (config.taskWorkerEnabled) agent.start();
 const requests = new RequestDrain();
@@ -39,13 +39,15 @@ const shutdown = async () => {
     await shutdownServer(
       server,
       requests,
-      () =>
-        Promise.all([
+      () => {
+        executors.stopDispatch();
+        return Promise.all([
           threads instanceof LocalThreads ? threads.close() : Promise.resolve(),
           agent.stop(),
           actions.close(),
           stopTokenMaintenance(),
-        ]),
+        ]);
+      },
       async () => {
         // REST handlers may settle after the work drains; check their writes too.
         if (db.persistenceFailed) throw new Error("Database persistence is unconfirmed");

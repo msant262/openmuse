@@ -47,12 +47,12 @@ def checksum(path):
     return digest.hexdigest()
 
 
-def validate_archive(path):
+def validate_archive(path, required_roots=ROOTS, data_roots=MOUNTS):
     seen, links, roots = set(), set(), set()
     with tarfile.open(path, "r:gz") as archive:
         for member in archive:
             p = PurePosixPath(member.name)
-            if p.is_absolute() or ".." in p.parts or not p.parts or p.parts[0] not in ROOTS:
+            if p.is_absolute() or ".." in p.parts or not p.parts or p.parts[0] not in required_roots:
                 raise ValueError("Archive contains an unsafe path")
             if member.name in seen or len(seen) >= 500000:
                 raise ValueError("Archive contains duplicate or excessive entries")
@@ -61,17 +61,17 @@ def validate_archive(path):
             if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
                 raise ValueError("Archive contains a special file")
             if member.issym() or member.islnk():
-                if p.parts[0] not in MOUNTS:
+                if p.parts[0] not in data_roots:
                     raise ValueError("Configuration entries must not be links")
                 links.add(p)
             if member.islnk():
                 target = PurePosixPath(member.linkname)
-                if target.is_absolute() or ".." in target.parts or not target.parts or target.parts[0] not in MOUNTS:
+                if target.is_absolute() or ".." in target.parts or not target.parts or target.parts[0] not in data_roots:
                     raise ValueError("Archive contains an unsafe hard link")
     for name in seen:
         if any(parent in links for parent in PurePosixPath(name).parents):
             raise ValueError("Archive writes through a link")
-    if roots != ROOTS:
+    if roots != set(required_roots):
         raise ValueError("Archive is missing required state/configuration")
 
 
@@ -256,16 +256,33 @@ def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("backup", "restore"))
-    parser.add_argument("--project-dir", required=True)
-    parser.add_argument("--env-file", required=True)
-    parser.add_argument("--backup-dir", required=True)
+    parser.add_argument("--mode",choices=("legacy","hybrid-vps","native"),default="legacy")
+    parser.add_argument("--config",help="Root-private hybrid backup configuration; no credentials in argv")
+    parser.add_argument("--project-dir")
+    parser.add_argument("--env-file")
+    parser.add_argument("--backup-dir")
     parser.add_argument("--retention-days", type=int, default=14)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
     parser.add_argument("--archive")
+    parser.add_argument("--identity-file",help="Offline operator age recovery identity, used only for isolated restore")
+    parser.add_argument("--batch-id",help="Shared UUID linking the two quiescent host archives")
+    parser.add_argument("--transfer",action="store_true",help="Copy only committed encrypted archives to the configured other host")
+    parser.add_argument("--quiesce",action="store_true",help="Drain new admission, then temporarily pause only idle managed work")
+    parser.add_argument("--drain-timeout-seconds",type=int,default=300)
     args = parser.parse_args()
     if not 1 <= args.retention_days <= 365 or not 30 <= args.timeout_seconds <= 3600:
         parser.error("Retention must be 1..365 days; timeout 30..3600 seconds")
     try:
+        if args.mode!="legacy":
+            if not args.config:parser.error("Hybrid backup/restore requires --config")
+            from hybrid_backup import HybridBackup
+            deployment=HybridBackup(args.config,args.mode,args.timeout_seconds)
+            if not 1<=args.drain_timeout_seconds<=600:parser.error("Drain timeout must be 1..600 seconds")
+            if args.operation=="backup":deployment.backup(args.retention_days,args.batch_id,args.transfer,args.quiesce,args.drain_timeout_seconds)
+            elif args.archive and args.identity_file:deployment.restore(args.archive,args.identity_file)
+            else:parser.error("Hybrid restore requires --archive and --identity-file")
+            return
+        if not all((args.project_dir,args.env_file,args.backup_dir)):parser.error("Legacy mode requires project-dir, env-file and backup-dir")
         deployment = Deployment(args.project_dir, args.env_file, args.backup_dir, args.timeout_seconds)
         if args.operation == "backup":
             deployment.backup(args.retention_days)

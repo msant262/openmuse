@@ -571,3 +571,60 @@ test("web locks hold delayed cookie responses before another tab can advance gen
   );
   assert.equal(unsafeDispatch, false);
 });
+
+test("Android mount and active events share initial pairing and restart preserves that single device", async (t) => {
+  const f = await fixture(t);
+  let pairs = 0;
+  const original = f.transport.pair;
+  f.transport.pair = async () => {
+    pairs++;
+    return original();
+  };
+  const manager = f.manager();
+  await Promise.all(Array.from({ length: 10 }, () => manager.restoreOrPair()));
+  assert.equal(pairs, 1);
+  assert.equal(f.counts().writes, 1);
+  const first = manager.snapshot.identity;
+  const reopened = f.manager();
+  await Promise.all([reopened.restoreOrPair(), reopened.restoreOrPair()]);
+  assert.equal(pairs, 1);
+  assert.deepEqual(reopened.snapshot.identity, first);
+});
+
+test("an old missing SecureStore read cannot replace a concurrently submitted pairing", async (t) => {
+  const f = await fixture(t);
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.storage.read = async () => {
+    await pending;
+    return null;
+  };
+  const manager = f.manager();
+  const restoring = manager.restore();
+  await manager.pair("explicit-key");
+  const first = manager.snapshot.identity;
+  release();
+  await restoring;
+  assert.equal(manager.snapshot.status, "paired");
+  assert.deepEqual(manager.snapshot.identity, first);
+  assert.equal(f.counts().writes, 1);
+});
+
+test("failed initial pairing clears the shared attempt so a deliberate retry can succeed", async (t) => {
+  const f = await fixture(t);
+  const original = f.transport.pair;
+  let pairs = 0;
+  f.transport.pair = async () => {
+    if (++pairs === 1) throw new ApiError("Access key required", 401, "ACCESS_KEY_REQUIRED");
+    return original();
+  };
+  const manager = f.manager();
+  const results = await Promise.allSettled([manager.restoreOrPair(), manager.restoreOrPair()]);
+  assert.ok(results.every((result) => result.status === "rejected"));
+  assert.equal(pairs, 1);
+  await manager.pair("provided-key");
+  assert.equal(pairs, 2);
+  assert.equal(manager.snapshot.status, "paired");
+});

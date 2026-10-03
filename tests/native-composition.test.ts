@@ -511,6 +511,33 @@ test("paired native request status exposes pending separately and returns only i
   );
 });
 
+test("missing native media capability rejects before dispatch without leaving uncertain operations", async (t) => {
+  const server = await nativeRuntime(t);
+  const response = await server.post(
+    "/transcribe",
+    {
+      path: "/workspace/voice.m4a",
+      background: true,
+    },
+    "missing-transcription-capability",
+  );
+  assert.ok(response.status >= 400, await response.text());
+  const tasks = await server.db.list<AgentTask>("local-user", "tasks");
+  assert.equal(tasks.length, 1);
+  const operations = await server.agent.journal.operations("local-user", tasks[0].id);
+  assert.equal(operations.length, 2);
+  assert.ok(operations.every((operation) => operation.status === "rejected_not_dispatched"));
+  assert.ok(operations.every((operation) => !operation.nativeEnvelope));
+  assert.equal(
+    (await server.executors.deliveries("local-user", registration.executorId)).length,
+    0,
+  );
+  assert.equal(
+    (await server.node("claim", { epoch: server.epoch, waitMs: 0 })).operations.length,
+    0,
+  );
+});
+
 for (const kind of ["preview", "transcribe"] as const)
   test(`production native ${kind} shares job admission, exact media receipt and replay identity`, async (t) => {
     const server = await nativeRuntime(t);

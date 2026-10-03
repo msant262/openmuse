@@ -21,10 +21,13 @@ BLOCKED_V6 = ["::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "100::/64", 
 
 
 class NetworkPolicy:
-    def __init__(self, uid, dns, exceptions=None, admin_replies=None):
+    def __init__(self, uid, dns, exceptions=None, admin_replies=None, browser_proxy_port=None):
         if not isinstance(uid, int) or uid < 1000:
             raise ValueError("Network policy requires registered unprivileged UID")
         self.uid = uid
+        if browser_proxy_port is not None and (type(browser_proxy_port) is not int or not 1024<=browser_proxy_port<=65535):
+            raise ValueError("Browser proxy requires a fixed unprivileged port")
+        self.browser_proxy_port=browser_proxy_port
         self.dns = [ipaddress.ip_address(value) for value in dns]
         if not self.dns:
             raise ValueError("Register explicit DNS resolver addresses")
@@ -43,12 +46,15 @@ class NetworkPolicy:
                 raise ValueError("Administrative replies require a fixed SSH/RDP source port")
             self.admin_replies.append((address,port))
 
-    def permits(self, address, port, protocol="tcp", gate_open=True, source_port=None, direction="original", state="new",local_route=False):
+    def permits(self, address, port, protocol="tcp", gate_open=True, source_port=None, direction="original", state="new",local_route=False,source_address=None):
         address = ipaddress.ip_address(address)
         if protocol=="tcp" and direction=="reply" and state=="established" and (address,source_port) in self.admin_replies:
             return True
         if not gate_open or protocol not in ("tcp", "udp"):
             return False
+        if self.browser_proxy_port is not None and protocol=="tcp" and str(address)==source_address=="127.0.0.1":
+            if direction=="original" and port==self.browser_proxy_port:return True
+            if direction=="reply" and state=="established" and source_port==self.browser_proxy_port:return True
         if address in self.dns:
             return port == 53
         if (address, port) in self.exceptions:
@@ -65,6 +71,11 @@ class NetworkPolicy:
 
     def chain(self):
         rules = [f"chain uid_{self.uid} {{"]
+        if self.browser_proxy_port is not None:
+            # Both peers run under this UID. These exact loopback rules remain
+            # behind closed_uids, so established proxy replies cannot evade pause.
+            rules.extend([f"  ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp dport {self.browser_proxy_port} ct direction original accept",
+                          f"  ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp sport {self.browser_proxy_port} ct direction reply ct state established accept"])
         for address in self.dns:
             family = "ip" if address.version == 4 else "ip6"
             rules.append(f"  {family} daddr {address} meta l4proto {{ tcp, udp }} th dport 53 accept")
@@ -120,6 +131,7 @@ def policy_identity(text):
     text = text.replace("reject with icmpx type port-unreachable", "reject")
     text = text.replace("reject with icmp 3", "reject").replace("reject with icmpv6 4","reject")
     text = re.sub(r"\bct direction 1\b","ct direction reply",text)
+    text = re.sub(r"\bct direction 0\b","ct direction original",text)
     text = re.sub(r"\bct state (?:0x2|2)\b","ct state established",text)
     text = re.sub(r"\bfib daddr type 2\b","fib daddr type local",text)
     text = re.sub(r"meta l4proto\s*\{([^{}]+)\}",lambda match:"meta l4proto {"+
@@ -146,7 +158,7 @@ class AdminHelper:
         if any(account["trustMode"]=="full-trust" and account.get("network",{}).get("administrativeRepliesVerified") is not True
             for account in self.sessions.registry.values()):
             raise ValueError("Full-trust administrative RDP/SSH reply catalog must be verified before UID firewall changes")
-        policies = [NetworkPolicy(account["uid"], account.get("network", {}).get("dns", []), account.get("network", {}).get("exceptions", []),account.get("network",{}).get("adminReplies",[]))
+        policies = [NetworkPolicy(account["uid"], account.get("network", {}).get("dns", []), account.get("network", {}).get("exceptions", []),account.get("network",{}).get("adminReplies",[]),account.get("desktop",{}).get("proxyPort"))
             for account in self.sessions.registry.values()]
         observed = self.runner(["nft", "-n", "list", "table", "inet", "okami_executor"])
         if policy_identity(observed) != policy_identity(ruleset(policies)):

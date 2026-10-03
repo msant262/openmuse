@@ -68,6 +68,8 @@ export class AuthManager {
   private credential: Credential | null = null;
   private loaded = false;
   private flight?: Promise<void>;
+  private bootstrapFlight?: Promise<void>;
+  private pairingFlight?: Promise<void>;
   private listeners = new Set<(snapshot: AuthSnapshot) => void>();
   snapshot: AuthSnapshot = { status: "loading", token: "", accessExpiresAt: 0 };
   constructor(
@@ -113,15 +115,33 @@ export class AuthManager {
       return credential?.serverOrigin === this.serverOrigin ? credential : null;
     });
   }
+  /** Mount and AppState-active may arrive together on Android's first frame. */
+  restoreOrPair(): Promise<void> {
+    if (this.bootstrapFlight) return this.bootstrapFlight;
+    this.bootstrapFlight = (async () => {
+      await this.restore();
+      if (this.snapshot.status === "missing") await this.pair();
+    })().finally(() => {
+      this.bootstrapFlight = undefined;
+    });
+    return this.bootstrapFlight;
+  }
   async restore() {
+    if (this.pairingFlight) return this.pairingFlight;
     try {
       if (this.options.web) {
         await this.recoverExpiredSession();
         return;
       }
       if (!this.loaded) {
-        this.credential = await this.readCredential();
-        this.loaded = true;
+        const stored = await this.readCredential();
+        // A submitted pairing may finish while SecureStore's initial read is
+        // pending. Never overwrite its newly saved identity with the old read.
+        if (this.pairingFlight) return await this.pairingFlight;
+        if (!this.loaded) {
+          this.credential = stored;
+          this.loaded = true;
+        }
       }
       if (!this.credential) {
         this.emit("missing");
@@ -143,7 +163,14 @@ export class AuthManager {
       throw error;
     }
   }
-  async pair(accessKey?: string, deviceLabel = "OpenMuse mobile") {
+  pair(accessKey?: string, deviceLabel = "OkamiBot mobile"): Promise<void> {
+    if (this.pairingFlight) return this.pairingFlight;
+    this.pairingFlight = this.performPair(accessKey, deviceLabel).finally(() => {
+      this.pairingFlight = undefined;
+    });
+    return this.pairingFlight;
+  }
+  private async performPair(accessKey: string | undefined, deviceLabel: string) {
     const result = await this.options.transport.pair(accessKey, deviceLabel);
     const session = sessionSchema.parse(result);
     if (!this.options.web) {

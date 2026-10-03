@@ -1,0 +1,14 @@
+[Unit]
+Description=Coordinated encrypted two-host Okami backup
+Requires=docker.service
+After=docker.service network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+WorkingDirectory=/opt/openmuse
+ExecStart=/usr/bin/python3 /opt/openmuse/scripts/deployment_backup.py backup --mode hybrid-vps --config /etc/okami-backup/vps.json --quiesce --drain-timeout-seconds 300 --transfer --retention-days 14
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=idle

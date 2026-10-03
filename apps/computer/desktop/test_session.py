@@ -25,7 +25,8 @@ class SessionContracts(unittest.TestCase):
             self.assertEqual(argv[argv.index("-AllowOverride") + 1], "")
             env = mod.session_environment(config, home / "Xauthority", bus="unix:path=/run/test-bus")
             self.assertEqual(set(env), {"HOME", "PATH", "LANG", "DISPLAY", "XAUTHORITY",
-                                       "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"})
+                                       "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "PLAYWRIGHT_BROWSERS_PATH"})
+            self.assertEqual(env["PLAYWRIGHT_BROWSERS_PATH"],"/opt/okami-computer/playwright-browsers")
 
     def test_runtime_path_must_be_private_owned_directory_not_symlink(self):
         mod = self.module()

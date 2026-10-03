@@ -12,7 +12,7 @@ def render(registry):
     UserSession(registry)
     if any(account["trustMode"]=="full-trust" and account.get("network",{}).get("administrativeRepliesVerified") is not True for account in registry.values()):
         raise ValueError("Verify actual administrative RDP reply sources/direction/UID before rendering the host policy")
-    return load_ruleset([NetworkPolicy(account["uid"],account.get("network",{}).get("dns",[]),account.get("network",{}).get("exceptions",[]),account.get("network",{}).get("adminReplies",[]))
+    return load_ruleset([NetworkPolicy(account["uid"],account.get("network",{}).get("dns",[]),account.get("network",{}).get("exceptions",[]),account.get("network",{}).get("adminReplies",[]),account.get("desktop",{}).get("proxyPort"))
         for account in registry.values()])
 
 

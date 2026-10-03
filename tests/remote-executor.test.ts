@@ -585,3 +585,105 @@ test("ordinary native file reads get fresh receipts while explicit output reads 
     await db.close();
   }
 });
+
+test("native shutdown releases a long poll and preserves queued deliveries for restart", {
+  timeout: 3000,
+}, async () => {
+  const db = await createStore();
+  const base = authority(db);
+  let inspected!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    inspected = resolve;
+  });
+  const registry = new ExecutorRegistry(db, {
+    registrations: [registration],
+    authority: {
+      ...base,
+      pause: async () => {
+        inspected();
+        return base.pause();
+      },
+    },
+  });
+  try {
+    const { epoch } = await registry.register(hello);
+    await registry.reconcile("lenovo-okami", {
+      epoch,
+      bootId: "boot-a",
+      operations: [],
+      contained: true,
+    });
+    const poll = registry.claimOperations("lenovo-okami", epoch, { waitMs: 20000 });
+    await entered;
+    registry.stopDispatch();
+    assert.deepEqual((await poll).operations, []);
+    const queued = await registry.enqueue("owner", request(), context);
+    assert.deepEqual((await registry.claimOperations("lenovo-okami", epoch)).operations, []);
+    assert.equal((await registry.delivery("owner", queued.id))?.state, "queued");
+    const restarted = new ExecutorRegistry(db, { registrations: [registration], authority: base });
+    assert.equal(
+      (await restarted.claimOperations("lenovo-okami", epoch)).operations[0]?.id,
+      queued.id,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("native shutdown during authorization records no dispatch and still persists receipts", async () => {
+  const db = await createStore();
+  const base = authority(db);
+  let release!: () => void, entered!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const enteredBarrier = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const registry = new ExecutorRegistry(db, {
+    registrations: [registration],
+    authority: {
+      ...base,
+      beforeDispatch: async (owner, operation) => {
+        entered();
+        await held;
+        await base.beforeDispatch(owner, operation);
+      },
+    },
+  });
+  try {
+    const { epoch } = await registry.register(hello);
+    await registry.reconcile("lenovo-okami", {
+      epoch,
+      bootId: "boot-a",
+      operations: [],
+      contained: true,
+    });
+    const operation = await registry.enqueue("owner", request(), context);
+    const claim = registry.claimOperations("lenovo-okami", epoch);
+    await enteredBarrier;
+    registry.stopDispatch();
+    release();
+    assert.deepEqual((await claim).operations, []);
+    assert.equal(
+      (await registry.delivery("owner", operation.id))?.receipt?.status,
+      "rejected_not_dispatched",
+    );
+    assert.equal(
+      (await db.get("owner", "fixture-authoritative-operations", operation.id))?.status,
+      "rejected_not_dispatched",
+    );
+    assert.equal(
+      (
+        await registry.submitReceipt("lenovo-okami", epoch, operation.id, 1, {
+          status: "rejected_not_dispatched",
+          message: "Server is shutting down",
+        })
+      ).sequence,
+      1,
+    );
+  } finally {
+    release();
+    await db.close();
+  }
+});

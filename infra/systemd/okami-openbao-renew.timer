@@ -1,0 +1,12 @@
+[Unit]
+Description=Maintain scoped vault credentials independently of app activity
+
+[Timer]
+OnCalendar=hourly
+OnBootSec=2min
+Persistent=true
+RandomizedDelaySec=2min
+Unit=okami-openbao-renew.service
+
+[Install]
+WantedBy=timers.target

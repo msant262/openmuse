@@ -41,7 +41,13 @@ function secretFixture() {
     },
     async delete() {},
   };
-  return { store, values, get writes() { return writes; } };
+  return {
+    store,
+    values,
+    get writes() {
+      return writes;
+    },
+  };
 }
 
 test("credential forms store secrets privately and resume the matching task by reference once", async (t) => {
@@ -107,7 +113,11 @@ test("credential forms store secrets privately and resume the matching task by r
     events: await db.conversationEvents("owner", threadId, 0),
     operations: await db.list("owner", "task-operations"),
   });
-  assert.equal(serialized.includes(canary), false, "the secret must never enter durable chat or task data");
+  assert.equal(
+    serialized.includes(canary),
+    false,
+    "the secret must never enter durable chat or task data",
+  );
   assert.equal(secrets.values.get(`owner:${saved.credentialRef?.id}`)?.password, canary);
 });
 
@@ -121,11 +131,21 @@ test("credential requests reject stale revisions and are owner-scoped", async (t
     title: "Read account documents",
     status: "waiting_input",
     attempts: 4,
-    plan: [], evidence: [], input: {}, state: {},
-    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), artifactIds: [],
+    plan: [],
+    evidence: [],
+    input: {},
+    state: {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    artifactIds: [],
   });
   await assert.rejects(
-    broker.request("owner", { taskId, revision: 3, adapterId: adapter.id, purpose: "Read documents" }),
+    broker.request("owner", {
+      taskId,
+      revision: 3,
+      adapterId: adapter.id,
+      purpose: "Read documents",
+    }),
     /revision/i,
   );
   const current = await broker.request("owner", {
@@ -151,9 +171,11 @@ test("OpenBao KV v2 adapter uses a hashed owner path and CAS without exposing se
     mount: "secret",
     fetch: async (input, init) => {
       outbound = { url: String(input), init };
-      const payload = init?.method === "GET"
-        ? { data: { data: { password: canary }, metadata: { version: 1 } } }
-        : { data: { version: 1 } };
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const payload =
+        init?.method === "GET"
+          ? { data: { data: { password: canary }, metadata: { version: 1 } } }
+          : { data: { version: 1 } };
       return new Response(JSON.stringify(payload), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -162,14 +184,40 @@ test("OpenBao KV v2 adapter uses a hashed owner path and CAS without exposing se
   });
   const ref = randomUUID();
   assert.equal(await store.write("user@example.test", ref, { password: canary }, 0), 1);
-  assert.match(outbound?.url ?? "", /^http:\/\/openbao:8200\/v1\/secret\/data\/openmuse\/[a-f0-9]{64}\//);
+  assert.match(
+    outbound?.url ?? "",
+    /^http:\/\/openbao:8200\/v1\/secret\/data\/openmuse\/[a-f0-9]{64}\//,
+  );
   const requestBody = JSON.parse(String(outbound?.init?.body));
   assert.equal(requestBody.options.cas, 0);
   assert.equal(requestBody.data.password, canary);
-  assert.equal((outbound?.init?.headers as Record<string, string>)?.["X-Vault-Token"], "fixture-service-token-not-root");
+  assert.equal(
+    (outbound?.init?.headers as Record<string, string>)?.["X-Vault-Token"],
+    "fixture-service-token-not-root",
+  );
   await store.delete("user@example.test", ref, 1);
   assert.equal(outbound?.init?.method, "DELETE");
-  assert.match(outbound?.url ?? "", /^http:\/\/openbao:8200\/v1\/secret\/metadata\/openmuse\/[a-f0-9]{64}\//);
+  assert.match(
+    outbound?.url ?? "",
+    /^http:\/\/openbao:8200\/v1\/secret\/metadata\/openmuse\/[a-f0-9]{64}\//,
+  );
+});
+
+test("OpenBao never treats an empty write receipt as a confirmed credential save", async () => {
+  const store = new OpenBaoSecretStore({
+    address: "http://openbao:8200",
+    token: "fixture-token",
+    mount: "secret",
+    fetch: async (_input, init) => {
+      assert.equal(init?.redirect, "error");
+      return new Response(null, { status: 204 });
+    },
+  });
+  await assert.rejects(
+    store.write("owner", randomUUID(), { password: canary }, 0),
+    (error: unknown) =>
+      error instanceof Error && "code" in error && error.code === "VAULT_UNAVAILABLE",
+  );
 });
 
 test("authenticated credential routes save inline values without returning them or exposing a secret lookup", async (t) => {
@@ -209,8 +257,13 @@ test("authenticated credential routes save inline values without returning them 
     title: "Read Portal X documents",
     status: "waiting_input",
     attempts: 1,
-    plan: [], evidence: [], input: {}, state: {},
-    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), artifactIds: [],
+    plan: [],
+    evidence: [],
+    input: {},
+    state: {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    artifactIds: [],
   });
   const request = await server.credentials.request("local-user", {
     taskId,
@@ -242,5 +295,8 @@ test("authenticated credential routes save inline values without returning them 
   assert.equal(body.includes(canary), false);
   const savedTask = await db.get<Record<string, unknown>>("local-user", "tasks", taskId);
   assert.equal(savedTask?.status, "queued");
-  assert.equal(JSON.stringify(await db.list("local-user", "task-operations")).includes(canary), false);
+  assert.equal(
+    JSON.stringify(await db.list("local-user", "task-operations")).includes(canary),
+    false,
+  );
 });

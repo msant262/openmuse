@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript/Hono, CopilotKit/AG-UI existente, PGlite/PostgreSQL, Expo 54, Playwright, Python, systemd/cgroups v2, nftables, TigerVNC/Xvnc, Xfce/X11, noVNC e Tailscale; versões compatíveis e fixadas no lockfile/manifests.
 
-**Spec:** [Arquitetura e decisões](2026-10-02-lenovo-agent-design.md). Ler junto com [PLAN.md](../../PLAN.md). Base `a9fe722`; todos os passos abaixo estão pendentes.
+**Spec:** [Arquitetura e decisões](2026-10-02-lenovo-agent-design.md). Ler junto com [PLAN.md](../../PLAN.md). Base histórica `a9fe722`; o [status de execução](../IMPLEMENTATION-STATUS.md) registra o código integrado e o [aceite real](../DEPLOYMENT-ACCEPTANCE.md) registra implantação e pendências. Os checkboxes abaixo preservam o plano original, não representam o status atual.
 
 **Adendo:** [Credenciais privadas sem licença paga](2026-10-02-private-credentials.md). Inclui marco 8: cofre/login/CAPTCHA usando os browsers Lenovo e VPS existentes. Não criar serviço adicional de browser. Composio não é dependência desta entrega; OpenBao self-hosted é o cofre proposto.
 
@@ -16,7 +16,7 @@
 
 **Referência adicional:** [Noodle, commit c733034](2026-10-02-noodle-review.md). Perfil/preferências, anotações, biblioteca de resultados e contratos de desktop inspiram refinamentos nos mesmos marcos. Não importar reinício do bot ao editar estilo, interrupção automática de tarefas ou arquitetura Apple. Nenhum código externo foi incorporado.
 
-**Revisão upstream:** [Matriz dos 65 PRs abertos, com heads e decisões](2026-10-02-upstream-pr-review.md). Abaixo, as regressões selecionadas entram nos mesmos marcos. Não aplicar patches em lote; não reintroduzir dependências cloud, aprovação de toda escrita, bypass de acesso ou contratos antigos. Fixar o head aproveitado e manter atribuições MIT. Tudo continua pendente; revisão estática não é teste executado.
+**Revisão upstream:** [Matriz dos 65 PRs abertos, com heads e decisões](2026-10-02-upstream-pr-review.md). Abaixo, as regressões selecionadas entram nos mesmos marcos. Não aplicar patches em lote; não reintroduzir dependências cloud, aprovação de toda escrita, bypass de acesso ou contratos antigos. Fixar o head aproveitado e manter atribuições MIT. A revisão estática original é distinta dos testes executados documentados no status.
 
 ## Global Constraints
 

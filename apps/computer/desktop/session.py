@@ -57,7 +57,8 @@ class SessionConfig:
 def session_environment(config, authority, *, bus=None):
     value = {"HOME": str(config.home), "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8",
              "DISPLAY": f":{config.display}", "XAUTHORITY": str(authority),
-             "XDG_RUNTIME_DIR": str(config.runtime)}
+             "XDG_RUNTIME_DIR": str(config.runtime),
+             "PLAYWRIGHT_BROWSERS_PATH": "/opt/okami-computer/playwright-browsers"}
     if bus:
         value["DBUS_SESSION_BUS_ADDRESS"] = bus
     return value
