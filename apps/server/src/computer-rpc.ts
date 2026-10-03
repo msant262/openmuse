@@ -147,11 +147,20 @@ export class RpcComputerService {
     )
       throw new AppError("Computer receipt does not match its owned command", 502);
     const previous = await this.db.get<Intent>(owner, "computer-commands", receipt.id);
-    await this.db.put(owner, "computer-commands", {
+    const update = {
       ...receipt,
       ...(previous?.binding && { binding: previous.binding }),
-    });
-    return receipt;
+    };
+    if (!previous) await this.db.insertIfAbsent(owner, "computer-commands", update);
+    else if (previous.status === "running")
+      await this.db.compareAndSwap(
+        owner,
+        "computer-commands",
+        receipt.id,
+        { status: "running" },
+        update,
+      );
+    return commandReceiptSchema.parse(await this.db.get(owner, "computer-commands", receipt.id));
   }
   async command(owner: string, id: string): Promise<ComputerCommand> {
     await this.bind(owner);
@@ -169,8 +178,8 @@ export class RpcComputerService {
         stderr:
           "Computer receipt is missing; outcome unknown. Inspect files before repeating work.",
       };
-      await this.db.put(owner, "computer-commands", missing);
-      return commandReceiptSchema.parse(missing);
+      await this.db.compareAndSwap(owner, "computer-commands", id, { status: "running" }, missing);
+      return commandReceiptSchema.parse(await this.db.get(owner, "computer-commands", id));
     }
   }
   async snapshot(owner: string): Promise<ComputerSnapshot> {
@@ -326,12 +335,18 @@ export class RpcComputerService {
     try {
       await options.onDispatch?.(id);
     } catch (error) {
-      await this.db.put(owner, "computer-commands", {
-        ...intent,
-        status: "failed",
-        completedAt: new Date().toISOString(),
-        stderr: "Dispatch ownership was not confirmed; no RPC request was sent.",
-      });
+      await this.db.compareAndSwap(
+        owner,
+        "computer-commands",
+        id,
+        { status: "running" },
+        {
+          ...intent,
+          status: "failed",
+          completedAt: new Date().toISOString(),
+          stderr: "Dispatch ownership was not confirmed; no RPC request was sent.",
+        },
+      );
       throw error;
     }
     let receipt: ComputerCommand;
@@ -351,24 +366,42 @@ export class RpcComputerService {
           completedAt: new Date().toISOString(),
           stderr: "The computer was busy. This operation was not dispatched and can be retried.",
         };
-        await this.db.put(owner, "computer-commands", rejected);
-        return commandReceiptSchema.parse(rejected);
+        await this.db.compareAndSwap(
+          owner,
+          "computer-commands",
+          id,
+          { status: "running" },
+          { ...rejected },
+        );
+        return commandReceiptSchema.parse(await this.db.get(owner, "computer-commands", id));
       }
       if (error instanceof RuntimePausedError) {
-        await this.db.put(owner, "computer-commands", {
-          ...intent,
-          status: "rejected_not_dispatched",
-          completedAt: new Date().toISOString(),
-          stderr: "Global pause prevented dispatch. This operation was not sent.",
-        });
+        await this.db.compareAndSwap(
+          owner,
+          "computer-commands",
+          id,
+          { status: "running" },
+          {
+            ...intent,
+            status: "rejected_not_dispatched",
+            completedAt: new Date().toISOString(),
+            stderr: "Global pause prevented dispatch. This operation was not sent.",
+          },
+        );
         throw error;
       }
-      await this.db.put(owner, "computer-commands", {
-        ...intent,
-        status: "interrupted",
-        completedAt: new Date().toISOString(),
-        stderr: "Submission outcome is unknown; inspect files before repeating work.",
-      });
+      await this.db.compareAndSwap(
+        owner,
+        "computer-commands",
+        id,
+        { status: "running" },
+        {
+          ...intent,
+          status: "interrupted",
+          completedAt: new Date().toISOString(),
+          stderr: "Submission outcome is unknown; inspect files before repeating work.",
+        },
+      );
       throw error;
     }
     if (request.background) return receipt;

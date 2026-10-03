@@ -1,0 +1,17 @@
+{
+  "hello": {
+    "hostId": "lenovo",
+    "executorId": "lenovo-okami",
+    "osAccountId": "1003",
+    "bootId": "boot-a",
+    "minProtocolVersion": 1,
+    "maxProtocolVersion": 1,
+    "capabilities": [{ "name": "command", "version": 1 }, { "name": "files", "version": 1 }]
+  },
+  "receipt": {
+    "epoch": 1,
+    "operationId": "17bac333-bacd-4b01-a714-b141abc48a0e",
+    "sequence": 1,
+    "receipt": { "status": "succeeded", "data": { "path": "/workspace/attachment.bin" } }
+  }
+}

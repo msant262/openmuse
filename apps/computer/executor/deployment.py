@@ -1,0 +1,78 @@
+"""Pure deployment renderer. Writing/installation is an explicit operator action."""
+import argparse
+import configparser
+import io
+from pathlib import Path
+
+from .user_session import UserSession,root_owned_json
+
+
+def render_units(registry,memory_total_bytes,reserve_bytes=4*1024**3):
+    if not 3*1024**3<=reserve_bytes<=4*1024**3 or memory_total_bytes<=reserve_bytes:
+        raise ValueError("Calibrate aggregate RAM against measured total and 3–4 GiB host reserve")
+    UserSession(registry)
+    maximum=memory_total_bytes-reserve_bytes
+    units={
+      "okami.slice":{"Unit":{"Description":"Okami native workload ancestry"},"Slice":{"MemoryAccounting":"yes","IOAccounting":"yes","TasksAccounting":"yes"}},
+      "okami-bots.slice":{"Unit":{"Description":"Aggregate native bots physical RAM budget"},"Slice":{
+        "CPUWeight":"200","IOWeight":"200","TasksMax":"4096","MemoryHigh":str(int(maximum*.9)),
+        "MemoryMax":str(maximum),"MemorySwapMax":"0","MemoryAccounting":"yes","IOAccounting":"yes","TasksAccounting":"yes"}},
+    }
+    for executor_id,account in registry.items():
+        uid=account["uid"];slice_name=f"okami-bots-u{uid}.slice"
+        units[slice_name]={"Unit":{"Description":"Registered native bot account shared RAM"},"Slice":{
+            "CPUWeight":"100","IOWeight":"100","TasksMax":"1024","MemoryHigh":"infinity","MemoryMax":"infinity"}}
+        units[f"okami-session@{executor_id}.service"]={"Unit":{"Description":"Registered native session and D-Bus ancestry","After":"okami-bots.slice"},"Service":{
+            "Type":"simple","User":account["user"],"Group":str(account["gid"]),"Slice":slice_name,
+            "ExecStart":"/usr/bin/dbus-run-session -- /usr/bin/sleep infinity","WorkingDirectory":account["workspace"],
+            "Environment":"HOME="+account["home"]+" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8",
+            "RuntimeDirectory":f"okami-user-{uid}","RuntimeDirectoryMode":"0700","UMask":"0077",
+            "KillMode":"control-group","Restart":"on-failure","NoNewPrivileges":"yes","CapabilityBoundingSet":"",
+            "ProtectSystem":"strict","ProtectHome":"tmpfs","BindPaths":account["home"],
+            "ReadWritePaths":account["home"]+f" /run/okami-user-{uid}","ProtectControlGroups":"yes",
+            "InaccessiblePaths":"/root /etc/okami-executor /var/lib/okami-executor /run/docker.sock /run/lxd /run/okami-executor",
+            "TasksMax":"512","CPUWeight":"100","IOWeight":"100"},"Install":{"WantedBy":"multi-user.target"}}
+        units[f"okami-executor@{executor_id}.service"]={"Unit":{"Description":"Persistent native supervisor outside bot budget","After":"network-online.target tailscaled.service okami-firewall.service","Requires":"okami-firewall.service"},"Service":{
+            "Type":"simple","User":"root","Group":"root","Slice":"system.slice","WorkingDirectory":"/opt/okami-computer",
+            "ExecStart":"/usr/bin/python3 -m executor.supervisor --config /etc/okami-executor/"+executor_id+".json",
+            "ExecStopPost":"/usr/bin/python3 -m executor.admin_helper contain-executor "+executor_id,
+            "Restart":"always","RestartSec":"2","UMask":"0077","RuntimeDirectory":"okami-executor","RuntimeDirectoryMode":"0700",
+            "StateDirectory":"okami-executor","StateDirectoryMode":"0700","ProtectSystem":"strict",
+            "ReadWritePaths":"/var/lib/okami-executor /run/okami-executor "+account["workspace"],"TimeoutStopSec":"45",
+            "TasksMax":"128","MemoryMax":"512M","Environment":"PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8"},
+            "Install":{"WantedBy":"multi-user.target"}}
+        units[f"okami-suspend@{executor_id}.service"]={"Unit":{"Description":"Close native gates before machine sleeps","Before":"sleep.target","StopWhenUnneeded":"yes"},"Service":{
+            "Type":"oneshot","WorkingDirectory":"/opt/okami-computer","ExecStart":"/usr/bin/python3 -m executor.supervisor --prepare-sleep "+executor_id,
+            "TimeoutStartSec":"15","RemainAfterExit":"yes"}}
+    units["okami-firewall.service"]={"Unit":{"Description":"Registered bot UID network gates start closed","Before":"network-online.target"},"Service":{
+        "Type":"oneshot","ExecStart":"/usr/sbin/nft -f /etc/okami-executor/firewall.nft","RemainAfterExit":"yes"},"Install":{"WantedBy":"multi-user.target"}}
+    return units
+
+
+def unit_text(sections):
+    parser=configparser.ConfigParser(interpolation=None)
+    parser.optionxform=str
+    for section,values in sections.items():
+        parser[section]=values
+    output=io.StringIO();parser.write(output,space_around_delimiters=False)
+    return output.getvalue()
+
+
+def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument("--registry",default="/etc/okami-executor/users.json")
+    parser.add_argument("--memory-total-bytes",type=int,required=True)
+    parser.add_argument("--reserve-bytes",type=int,default=4*1024**3)
+    parser.add_argument("--output",type=Path,required=True)
+    args=parser.parse_args()
+    registry=root_owned_json(args.registry)
+    units=render_units(registry,args.memory_total_bytes,args.reserve_bytes)
+    args.output.mkdir(mode=0o700,parents=True,exist_ok=True)
+    for name,sections in units.items():
+        (args.output/name).write_text(unit_text(sections))
+    dependencies=" ".join("okami-suspend@"+executor_id+".service" for executor_id in registry)
+    (args.output/"sleep-target.conf").write_text("[Unit]\nRequires="+dependencies+"\nAfter="+dependencies+"\n")
+
+
+if __name__=="__main__":
+    main()

@@ -305,6 +305,23 @@ export class Store {
     );
     return result.rows.length === 1;
   }
+  /** Artifact ACKs may arrive after a newer local version. Publish metadata
+   * monotonically with a database CAS; old transport snapshots cannot regress it.
+   */
+  async publishNativeArtifact<T extends { id: string; generation: number }>(
+    owner: string,
+    value: T,
+  ): Promise<T | null> {
+    const result = await this.write(
+      `INSERT INTO records AS artifact(owner,kind,id,data)
+      VALUES($1,'native-artifacts',$2,$3::jsonb) ON CONFLICT(owner,kind,id) DO UPDATE
+      SET data=excluded.data,updated_at=now()
+      WHERE COALESCE((artifact.data->>'generation')::bigint,0)<($3::jsonb->>'generation')::bigint
+        AND artifact.data->>'executorId'=$3::jsonb->>'executorId' RETURNING data`,
+      [owner, value.id, JSON.stringify(value)],
+    );
+    return (result.rows[0]?.data as T | undefined) ?? null;
+  }
   async remove(owner: string, kind: string, id: string): Promise<void> {
     await this.write("DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3", [owner, kind, id]);
   }
@@ -330,7 +347,7 @@ export class Store {
     const result = await this.write(
       `UPDATE records SET data=(data || $4::jsonb) || jsonb_build_object('state',
           CASE WHEN $4::jsonb ? 'state' THEN
-            ((COALESCE(data->'state','{}'::jsonb) || $4::jsonb->'state') ||
+            ((COALESCE(data->'state','{}'::jsonb) || ($4::jsonb->'state')) ||
               jsonb_strip_nulls(jsonb_build_object(
                 'desiredRevision',data->'state'->'desiredRevision',
                 'mailboxSeq',data->'state'->'mailboxSeq',

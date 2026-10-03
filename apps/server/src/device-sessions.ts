@@ -104,6 +104,9 @@ export class DeviceSessions {
     return device;
   }
   async owner(token: string) {
+    return (await this.identity(token)).owner;
+  }
+  async identity(token: string) {
     const [version, encoded, signature, extra] = token.split(".");
     if (version !== "om1" || !encoded || !signature || extra)
       throw new AppError("Invalid workspace session", 401, "SESSION_REQUIRED");
@@ -122,7 +125,7 @@ export class DeviceSessions {
       throw new AppError("Invalid workspace session", 401, "SESSION_REQUIRED");
     if (claims.expiresAt <= Date.now())
       throw new AppError("Workspace access expired", 401, "SESSION_EXPIRED");
-    return device.owner;
+    return { owner: device.owner, deviceId: device.id };
   }
   async refresh(input: z.infer<typeof refreshSchema>): Promise<DeviceAccess> {
     const request = refreshSchema.parse(input);

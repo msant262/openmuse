@@ -9,7 +9,8 @@ Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-
 | 3 — Four work slots, resources and global pause | Reviewed and integrated; native executor acceptance pending |
 | 4 — Task direction, recovery and verified completion | Reviewed and integrated; native/provider composition follows |
 | 5 — Capability-aware model fallback | Reviewed and integrated; real subscription acceptance pending |
-| 6–12 | Pending integration |
+| 6 — Native Linux executor and file recovery | Reviewed and integrated; physical deployment acceptance pending |
+| 7–12 | Pending integration |
 
 ## Milestone 1
 
@@ -131,3 +132,43 @@ server/mobile typecheck, and changed-source lint with zero errors.
 Real ChatGPT/Grok/MiMo entitlement, model capabilities and account quotas still
 require account acceptance. No subscription support was invented for Anthropic
 or Cursor. M10 supplies bounded context/history integration later.
+
+
+## Milestone 6
+
+The VPS now dispatches computer commands and controlled file/version operations
+through a registered native Linux supervisor. The node pulls scoped operations,
+reconciles epochs and durable receipts, reports readiness and measured host
+resources, and publishes file hash/version metadata separately from operation
+completion. The aggregate host budget supports a configurable command allocation;
+accounts do not each reserve a fixed 8 GB. Native user/session, systemd and UID
+network policy modules preserve the administrator's existing services.
+
+The production application composes the M4 authority and M3 resource handles.
+Paired manual requests use private typed records and the same four-slot task worker;
+accepted requests survive disk restart and retries preserve the original intention.
+Revoked devices cannot dispatch queued work. Owned cancellation remains available
+during global pause. Controlled file writes retain recoverable versions and cached
+publication receipts are invalidated if the origin reports a conflict.
+
+After the implementer's two deliveries, root corrected a bounded conflict-ACK
+backlog and connected the default app/manual API. Independent review of that
+composition found a pre-publication admission gap. Root now holds occupancy before
+native delivery and preserves it through pause/cancel until physical cleanup is
+confirmed. A partial-state SQL precedence defect exposed by that integration was
+also corrected. The regression admits only three additional jobs while one native
+effect remains active, including after a simulated controller restart.
+
+Final validation on 2026-10-03 passed the complete existing test glob at concurrency
+4 (645/645, 123.3 seconds), server types, nine production composition regressions
+and 56 Python executor contracts. Mobile/worker types passed before the final
+server-only admission correction. Changed-source lint had zero errors and three
+style warnings. Earlier isolated local nftables/systemd probes passed; these do
+not constitute deployment acceptance on the Lenovo/VPS.
+
+The authorized Lenovo account keeps broad sudo and privileged groups and is
+explicitly full-trust: managed-job controls cannot guarantee containment against
+that account's own privileges. Desktop lifecycle/Take control, private login,
+browser fallback and final installation remain in milestones 7–9/12. Native media
+and physical Android/account acceptance are not claimed here. See
+[the native deployment guide](../apps/computer/deployment/README.md).

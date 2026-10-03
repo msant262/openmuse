@@ -114,6 +114,51 @@ test("RPC backgrounds survive API adapter restart, bind ownership and never repe
     await db.close();
   }
 });
+
+test("late RPC running snapshot cannot overwrite a committed terminal receipt", async () => {
+  const db = await createStore();
+  const mock = remote();
+  let release!: (response: Response) => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let delay = false;
+  const upstream: typeof fetch = async (input, init) => {
+    if (delay && new URL(String(input)).pathname.startsWith("/rpc/jobs/") && !init?.body) {
+      delay = false;
+      entered();
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    }
+    return mock.upstream(input, init);
+  };
+  const service = new RpcComputerService(db, config, upstream);
+  try {
+    const first = await service.execute(
+      "owner",
+      { command: "printf test", background: true },
+      { idempotencyKey: "snapshot-race" },
+    );
+    delay = true;
+    const old = service.command("owner", first.id);
+    await waiting;
+    const record = mock.records.get(first.id);
+    assert.ok(record);
+    record.status = "succeeded";
+    record.stdout = "committed";
+    assert.equal((await service.command("owner", first.id)).status, "succeeded");
+    release(Response.json(first));
+    assert.equal((await old).status, "succeeded");
+    assert.equal(
+      (await db.get<{ status: string }>("owner", "computer-commands", first.id))?.status,
+      "succeeded",
+    );
+  } finally {
+    await db.close();
+  }
+});
 test("lost submission and missing receipt never cause an automatic command retry", async () => {
   const db = await createStore();
   const mock = remote();

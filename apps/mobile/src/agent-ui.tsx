@@ -1,3 +1,4 @@
+import * as Crypto from "expo-crypto";
 import {
   ArrowRight,
   Bell,
@@ -19,7 +20,7 @@ import {
   Users,
   X,
 } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Linking, Pressable, Text, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import type { Artifact, BrowserSession } from "../../../packages/domain/src";
@@ -34,6 +35,7 @@ import type {
   RunEvent,
 } from "../../../packages/domain/src/agent";
 import { attachmentLabel } from "../../../packages/domain/src/attachments";
+import type { FileRecoverySnapshot } from "../../../packages/domain/src/file-versions";
 import type { InteractionRequest } from "../../../packages/domain/src/runtime";
 import { useAgentWorkspace } from "./agent-workspace";
 import { InteractionCard } from "./interaction-card";
@@ -1846,6 +1848,7 @@ export function AppsScreen() {
             />
           ))}
       </Card>
+      <FileRecoveryPanel />
       <Button onPress={() => setSettings(!settings)}>
         {settings ? "Close agent settings" : "Personality & memory"}
       </Button>
@@ -1911,6 +1914,95 @@ export function AppsScreen() {
       )}
       <ErrorNotice error={error} />
     </View>
+  );
+}
+
+export function FileRecoveryPanel() {
+  const { api } = useWorkspace();
+  const [snapshot, setSnapshot] = useState<FileRecoverySnapshot>();
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState("");
+  const requests = useRef(
+    new Map<string, { requestId: string; expectedCurrentVersion: string | null }>(),
+  );
+  const load = async () => {
+    try {
+      setSnapshot(await api.request<FileRecoverySnapshot>("/api/computer/file-versions"));
+      setError("");
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, [api]);
+  if (!snapshot?.versions.length && !error) return null;
+  const restore = async (versionId: string, artifactId: string) => {
+    setBusy(versionId);
+    setError("");
+    setMessage("");
+    const prior = requests.current.get(versionId) ?? {
+      requestId: Crypto.randomUUID(),
+      expectedCurrentVersion:
+        snapshot?.artifacts.find((value) => value.artifactId === artifactId)?.version ?? null,
+    };
+    requests.current.set(versionId, prior);
+    try {
+      const result = await api.request<{ path: string; restoredAsCopy: boolean }>(
+        "/api/computer/file-versions/restore",
+        { versionId, ...prior },
+      );
+      requests.current.delete(versionId);
+      setMessage(
+        result.restoredAsCopy
+          ? `Recovered as a copy: ${result.path}. Your later edit is preserved.`
+          : `Recovered: ${result.path}`,
+      );
+      await load();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <Card style={{ gap: 12 }}>
+      <SectionHeading title="Recover files" />
+      <Text style={s.muted}>
+        Versions saved by controlled file tools stay on their original computer for{" "}
+        {snapshot?.policy.retentionDays ?? 30} days, within{" "}
+        {Math.round((snapshot?.policy.maxVersionBytes ?? 2 * 1024 ** 3) / 1024 ** 3)} GiB. Shell and
+        app edits need backups.
+      </Text>
+      <ErrorNotice error={error} />
+      {message && <Text style={s.text}>{message}</Text>}
+      {snapshot?.versions
+        .slice(-20)
+        .reverse()
+        .map((version) => (
+          <View key={version.id} style={{ gap: 8 }}>
+            <Text selectable style={s.text}>
+              {version.path}
+              {version.trashed ? " · Trash" : " · Saved version"}
+            </Text>
+            <Text style={s.muted}>
+              {new Date(version.createdAt * 1000).toLocaleString()} ·{" "}
+              {Math.max(1, Math.ceil(version.size / 1024))} KB
+            </Text>
+            <Button
+              small
+              disabled={Boolean(busy)}
+              onPress={() => void restore(version.id, version.artifactId)}
+            >
+              {busy === version.id ? "Recovering…" : "Recover this version"}
+            </Button>
+          </View>
+        ))}
+      <Button small onPress={() => void load()}>
+        Refresh recovery history
+      </Button>
+    </Card>
   );
 }
 function MemoryRow({ memory }: { memory: AgentMemory }) {

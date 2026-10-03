@@ -1,0 +1,8 @@
+{
+  "executorId": "lenovo-okami",
+  "hostId": "lenovo",
+  "serverOrigin": "http://100.113.59.40:8787",
+  "reserveBytes": 4294967296,
+  "retentionDays": 30,
+  "maxVersionBytes": 2147483648
+}

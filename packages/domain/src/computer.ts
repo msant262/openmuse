@@ -34,7 +34,7 @@ export interface ComputerMediaResult {
 }
 export interface ComputerSnapshot {
   enabled: boolean;
-  provider: "docker" | "rpc";
+  provider: "docker" | "rpc" | "native";
   status: "unconfigured" | "stopped" | "running" | "error";
   workspacePath: "/workspace";
   network: "disabled" | "public-only";
@@ -42,6 +42,12 @@ export interface ComputerSnapshot {
   maxTimeoutMs?: number;
   message?: string;
   commands: ComputerCommand[];
+  executorId?: string;
+  executorEpoch?: number;
+  connected?: boolean;
+  trustMode?: "restricted" | "full-trust";
+  containmentGuaranteed?: boolean;
+  readiness?: Record<string, unknown>;
 }
 export interface ComputerDirectory {
   path: string;

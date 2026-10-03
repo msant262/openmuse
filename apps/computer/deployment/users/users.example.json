@@ -1,0 +1,16 @@
+{
+  "lenovo-okami": {
+    "user": "okami-bot",
+    "uid": 1003,
+    "gid": 1004,
+    "home": "/home/okami-bot",
+    "workspace": "/home/okami-bot/workspace",
+    "trustMode": "full-trust",
+    "network": {
+      "dns": ["127.0.0.53", "1.1.1.1"],
+      "exceptions": [],
+      "adminReplies": [],
+      "administrativeRepliesVerified": false
+    }
+  }
+}

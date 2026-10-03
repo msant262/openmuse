@@ -12,7 +12,7 @@ import { ActionLog } from "./action-log.ts";
 import { approvalPolicy } from "./action-policy.ts";
 import { ActionService } from "./actions.ts";
 import { agentConfigured, conversationAgentFactory, makeRuntime } from "./agent.ts";
-import { auditedComputer } from "./audited-computer.ts";
+import { auditedComputer, currentComputerResourceScope } from "./audited-computer.ts";
 import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
@@ -24,7 +24,24 @@ import { ResourceLeases } from "./engine/resource-leases.ts";
 import { agentRoutes } from "./engine/routes.ts";
 import { RuntimePause, RuntimePausedError } from "./engine/runtime-pause.ts";
 import { AgentService } from "./engine/service.ts";
+import { currentExecutorContext, TaskExecutorAuthority } from "./engine/task-executor-authority.ts";
+import { LostLeaseError } from "./engine/worker.ts";
 import { AppError } from "./errors.ts";
+import {
+  currentManualNativeScope,
+  ManualNativeOperations,
+  nativeDeviceRequests,
+} from "./executors/manual-operations.ts";
+import type {
+  ExecutorAuthority,
+  ExecutorDispatchContext,
+  ExecutorOperation,
+  ExecutorRequest,
+} from "./executors/protocol.ts";
+import { ExecutorRegistry } from "./executors/registry.ts";
+import { RemoteComputerBackend } from "./executors/remote-computer.ts";
+import { executorRoutes } from "./executors/routes.ts";
+import { fileVersionRoutes } from "./file-versions.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
 import { LocalThreads } from "./threads.ts";
@@ -33,7 +50,20 @@ import { WorkspaceService } from "./workspace.ts";
 export async function createApp(
   db: Store,
   config: Config,
-  options: { docker?: DockerRunner } = {},
+  options: {
+    docker?: DockerRunner;
+    nativeAuthority?: ExecutorAuthority;
+    nativeContext?: (
+      owner: string,
+      requestId: string,
+      request?: ExecutorRequest,
+    ) => Promise<ExecutorDispatchContext | undefined>;
+    nativeManualContext?: (
+      owner: string,
+      requestId: string,
+      request?: ExecutorRequest,
+    ) => Promise<ExecutorDispatchContext>;
+  } = {},
 ) {
   const auth = await createAuth(db, config),
     files = new Files(db, config, auth),
@@ -54,17 +84,98 @@ export async function createApp(
   });
   const browser = new BrowserService(db, config, auth, files);
   browser.configureActions(actions);
+  const registryOptions = {
+    registrations: config.nativeExecutors ?? [],
+    authority: options.nativeAuthority,
+    beforePublish: async (owner: string, operation: ExecutorOperation) => {
+      if (operation.inspection || operation.kind === "cancel") return;
+      if (!(await agent.workAdmission.holdForDispatch(operation.taskId)))
+        throw new LostLeaseError();
+      await db.compareAndSwapTask(
+        owner,
+        operation.taskId,
+        {},
+        { state: { nativeAdmissionPending: true } },
+      );
+    },
+  };
+  const executors = new ExecutorRegistry(db, registryOptions);
+  let taskAuthority: TaskExecutorAuthority;
+  const nativeContext: NonNullable<typeof options.nativeContext> =
+    options.nativeContext ??
+    (async (owner, id, request) => {
+      const context = await currentExecutorContext(
+        owner,
+        id,
+        { memoryBytes: (config.nativeCommandMemoryMb ?? 3072) * 1024 ** 2, heavy: true },
+        currentComputerResourceScope(owner),
+      );
+      if (!context && request?.kind === "cancel" && typeof request.args.operationId === "string") {
+        const device = nativeDeviceRequests.getStore();
+        const target = await db.get<import("./engine/task-journal.ts").JournalOperation>(
+          owner,
+          "task-operations",
+          request.args.operationId,
+        );
+        if (
+          device?.owner === owner &&
+          target?.nativeEnvelope &&
+          target.executorId === request.executorId
+        )
+          return taskAuthority.registerManualRequest(owner, id, device.deviceId, request, {
+            kind: "task",
+            taskId: target.taskId,
+            desiredRevision: target.revision,
+            runToken: target.runToken,
+            resourceLeaseIds: target.resourceLeaseIds,
+          });
+      }
+      const manual = currentManualNativeScope();
+      if (context?.kind === "task" && request && manual?.owner === owner)
+        return taskAuthority.registerManualRequest(owner, id, manual.deviceId, request, context);
+      return context;
+    });
   const computer = auditedComputer(
-    config.computerBackend === "rpc"
-      ? new RpcComputerService(db, config)
-      : new ComputerService(db, config, options.docker),
+    config.computerBackend === "native" && config.nativeExecutorId
+      ? new RemoteComputerBackend(executors, {
+          executorId: config.nativeExecutorId,
+          enabled: config.computerEnabled,
+          timeoutMs: config.computerCommandTimeoutMs,
+          context: nativeContext,
+          manualContext: options.nativeManualContext,
+          retentionDays: config.fileVersionRetentionDays,
+          maxVersionBytes: config.fileVersionMaxBytes,
+        })
+      : config.computerBackend === "rpc"
+        ? new RpcComputerService(db, config)
+        : new ComputerService(db, config, options.docker),
     new ActionLog(db),
     config.computerBackend ?? "docker",
     new ResourceLeases(db),
-    config.resourceHostId ?? "openmuse-server",
+    config.computerBackend === "native" && config.nativeExecutorId
+      ? executors.registration(config.nativeExecutorId).hostId
+      : (config.resourceHostId ?? "openmuse-server"),
     runtimePause,
   );
   const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
+  taskAuthority = new TaskExecutorAuthority(agent.journal, {
+    executor: (owner, executorId) => {
+      const registration = executors.registration(executorId);
+      if (registration.owner !== owner)
+        throw new AppError("Native executor belongs to another owner", 403);
+      return registration;
+    },
+    wake: (owner, taskId) => agent.actor.wake(owner, taskId, "job"),
+  });
+  registryOptions.authority ??= taskAuthority;
+  const manualNative =
+    config.computerBackend === "native"
+      ? new ManualNativeOperations(agent, computer, files)
+      : undefined;
+  if (manualNative)
+    agent.configureNativeExecution((owner, task, context) =>
+      manualNative.execute(owner, task, context),
+    );
   const inbox = agent.inbox;
   const threads = config.intelligenceApiKey?.trim()
     ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey.trim() })
@@ -97,7 +208,10 @@ export async function createApp(
   );
   app.use("*", async (c, next) =>
     bodyLimit({
-      maxSize: (c.req.path === "/api/files" ? 26 : 12) * 1024 * 1024,
+      maxSize:
+        (c.req.path.startsWith("/executor/") ? 36 : c.req.path === "/api/files" ? 26 : 12) *
+        1024 *
+        1024,
       onError: (c) =>
         c.json({ error: "Request is too large; attachments must be 25 MB or smaller" }, 413),
     })(c, next),
@@ -130,6 +244,7 @@ export async function createApp(
       502,
     );
   });
+  app.route("/executor", executorRoutes(executors));
   app.get("/api/health", (c) =>
     c.json({
       ok: true,
@@ -234,6 +349,11 @@ export async function createApp(
         ? auth.verify(new URL(c.req.url))
         : await auth.owner(c.req.header("authorization"));
     c.set("owner", owner);
+    const authorization = c.req.header("authorization");
+    if (config.computerBackend === "native" && authorization?.startsWith("Bearer om1.")) {
+      const identity = await auth.devices.identity(authorization.slice(7));
+      return nativeDeviceRequests.run(identity, next);
+    }
     await next();
   });
   app.get("/api/devices", async (c) => c.json(await auth.devices.list(c.get("owner"))));
@@ -291,7 +411,9 @@ export async function createApp(
   app.get("/api/conversations/:threadId/interactions", async (c) =>
     c.json({ requests: await agent.interactions.list(c.get("owner"), c.req.param("threadId")) }),
   );
+  if (manualNative) app.route("/api/computer", manualNative.routes(auth));
   app.route("/api/computer", computerRoutes(computer, files));
+  app.route("/api/computer/file-versions", fileVersionRoutes(computer.recovery));
   app.get("/api/calendars", async (c) => c.json(await workspace.calendars(c.get("owner"))));
   app.get("/api/calendar/events", async (c) => {
     const query = z
@@ -555,5 +677,17 @@ export async function createApp(
   app.get("/", (c) =>
     c.json({ name: "OpenMuse", app: "http://localhost:8081", health: "/api/health" }),
   );
-  return { app, auth, files, actions, workspace, agent, computer, threads, inbox };
+  return {
+    app,
+    auth,
+    files,
+    actions,
+    workspace,
+    agent,
+    computer,
+    executors,
+    manualNative,
+    threads,
+    inbox,
+  };
 }

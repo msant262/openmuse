@@ -1,0 +1,10 @@
+[
+  {
+    "executorId": "lenovo-okami",
+    "hostId": "lenovo",
+    "osAccountId": "1003",
+    "owner": "REPLACE_WITH_AUTHENTICATED_APP_OWNER_ID",
+    "tokenHash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "trustMode": "full-trust"
+  }
+]

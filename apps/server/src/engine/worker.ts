@@ -67,6 +67,7 @@ export class TaskWorker {
       workAdmission?: WorkAdmission;
       resourceLeases?: ResourceLeases;
       runtimePause?: RuntimePause;
+      retainAdmission?: (owner: string, taskId: string) => Promise<boolean>;
     } = {},
   ) {
     this.admission = options.workAdmission ?? new WorkAdmission(db);
@@ -444,6 +445,17 @@ export class TaskWorker {
       clearInterval(heartbeat);
       await Promise.allSettled([...renewals]);
       try {
+        // A native effect can outlive a pause/cancellation and this JS run. The
+        // durable receipt, rather than the run's local flag, decides occupancy.
+        try {
+          if (await this.options.retainAdmission?.(owner, taskId)) {
+            keepAdmission = true;
+            await this.admission.hold(taskId);
+          }
+        } catch (error) {
+          keepAdmission = true;
+          cleanupFailure = error;
+        }
         if (!keepAdmission) {
           try {
             await this.admission.release(taskId);

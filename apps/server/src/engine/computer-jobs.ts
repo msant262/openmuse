@@ -67,6 +67,8 @@ export async function reconcileWaitingComputerTasks(
             stdout: receipt.stdout.slice(0, 12000),
             stderr: receipt.stderr.slice(0, 4000),
             truncated: receipt.truncated || receipt.stdout.length > 12000,
+            cleanupConfirmed: receipt.cleanupConfirmed,
+            outcomeUnknown: receipt.outcomeUnknown,
           },
         },
       },

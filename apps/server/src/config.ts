@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseEnv } from "node:util";
+import { z } from "zod";
+import { type ExecutorRegistration, executorRegistrationSchema } from "./executors/protocol.ts";
 import { type McpServerConfig, readMcpConfig } from "./mcp.ts";
 import {
   type ModelProviderConfig,
@@ -67,11 +69,16 @@ export interface Config {
   computerImage?: string;
   computerDeploymentId?: string;
   resourceHostId?: string;
-  computerBackend?: "docker" | "rpc";
+  computerBackend?: "docker" | "rpc" | "native";
   computerProfile?: "offline" | "open";
   computerUrl?: string;
   computerToken?: string;
   computerCommandTimeoutMs?: number;
+  nativeExecutors?: ExecutorRegistration[];
+  nativeExecutorId?: string;
+  nativeCommandMemoryMb?: number;
+  fileVersionRetentionDays?: number;
+  fileVersionMaxBytes?: number;
   allowedOrigins: string[];
   sessionDeviceIdleDays?: number;
 }
@@ -199,16 +206,28 @@ export function readConfig(): Config {
     computerUrl: process.env.COMPUTER_URL?.replace(/\/+$/, ""),
     computerToken: process.env.COMPUTER_TOKEN,
     computerCommandTimeoutMs: Number(process.env.COMPUTER_COMMAND_TIMEOUT_MS ?? 1800000),
+    nativeExecutors: process.env.NATIVE_EXECUTOR_REGISTRATIONS_FILE
+      ? z
+          .array(executorRegistrationSchema)
+          .min(1)
+          .parse(JSON.parse(readFileSync(process.env.NATIVE_EXECUTOR_REGISTRATIONS_FILE, "utf8")))
+      : undefined,
+    nativeExecutorId: process.env.NATIVE_EXECUTOR_ID?.trim(),
+    nativeCommandMemoryMb: integer("NATIVE_COMMAND_MEMORY_MB", 3072, 256, 1048576),
+    fileVersionRetentionDays: integer("FILE_VERSION_RETENTION_DAYS", 30, 1, 36500),
+    fileVersionMaxBytes: integer("FILE_VERSION_MAX_BYTES", 2 * 1024 ** 3, 1024 ** 2, 1024 ** 4),
     allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "http://localhost:8081,http://127.0.0.1:8081")
       .split(",")
       .map((origin) => httpOrigin(origin.trim(), "ALLOWED_ORIGINS")),
   };
   if (config.model) orderedModels(config.model, config.modelFallbacks);
   if (
-    !["docker", "rpc"].includes(config.computerBackend ?? "") ||
+    !["docker", "rpc", "native"].includes(config.computerBackend ?? "") ||
     !["offline", "open"].includes(config.computerProfile ?? "")
   )
-    throw new Error("COMPUTER_BACKEND must be docker or rpc and COMPUTER_PROFILE offline or open");
+    throw new Error(
+      "COMPUTER_BACKEND must be docker, rpc or native and COMPUTER_PROFILE offline or open",
+    );
   if (
     !Number.isInteger(config.computerCommandTimeoutMs) ||
     (config.computerCommandTimeoutMs ?? 0) < 1000 ||
@@ -218,9 +237,19 @@ export function readConfig(): Config {
   if (
     config.computerEnabled &&
     config.computerProfile === "open" &&
-    config.computerBackend !== "rpc"
+    !["rpc", "native"].includes(config.computerBackend ?? "")
   )
     throw new Error("The open computer profile requires the guarded RPC backend");
+  if (config.computerEnabled && config.computerBackend === "native") {
+    if (
+      config.computerProfile !== "open" ||
+      !config.nativeExecutorId ||
+      !config.nativeExecutors?.some((value) => value.executorId === config.nativeExecutorId)
+    )
+      throw new Error(
+        "Native computer requires COMPUTER_PROFILE=open and explicitly registered NATIVE_EXECUTOR_ID / NATIVE_EXECUTOR_REGISTRATIONS_FILE",
+      );
+  }
   if (config.computerEnabled && config.computerBackend === "rpc") {
     if (
       config.computerProfile !== "open" ||

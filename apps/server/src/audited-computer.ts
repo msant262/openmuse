@@ -3,12 +3,19 @@ import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
 import type { ResourceLease } from "../../../packages/domain/src/runtime.ts";
 import { type ActionLog, type LogAction, unknownOutcome } from "./action-log.ts";
 import { workspacePath } from "./computer.ts";
-import { type ComputerBackend, computerCommandCleanupConfirmed } from "./computer-contract.ts";
+import {
+  type ComputerBackend,
+  type ComputerDispatchOptions,
+  computerCommandCleanupConfirmed,
+} from "./computer-contract.ts";
+import { physicalComputerResources as physicalResources } from "./computer-resource-scope.ts";
 import { ResourceBusyError, ResourceLeases } from "./engine/resource-leases.ts";
 import type { RuntimePause } from "./engine/runtime-pause.ts";
 import { authorizeTaskEffect } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import { backgroundFailure } from "./log.ts";
+
+export { currentComputerResourceScope } from "./computer-resource-scope.ts";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -16,6 +23,32 @@ const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 // observe a prepared row while its own request is still awaiting local I/O.
 // Track the whole attempt, including acquisition before handle publication.
 const activePreflights = new Set<string>();
+const activeNativeFileHolds = new Set<string>();
+type NativeFileHold = {
+  id: string;
+  resourceHoldTaskId: string;
+  leases: ResourceLease[];
+  complete: boolean;
+};
+async function finishNativeFileHold(
+  backend: ComputerBackend,
+  log: ActionLog,
+  resources: ResourceLeases | undefined,
+  owner: string,
+  hold: NativeFileHold,
+) {
+  if (hold.complete || !backend.physicalOperation) return;
+  const state = await backend.physicalOperation(owner, hold.id);
+  if (!state.cleanupConfirmed) return;
+  await Promise.all(hold.leases.map((lease) => resources?.release(lease)));
+  await log.db.compareAndSwap(
+    owner,
+    "computer-file-holds",
+    hold.id,
+    { complete: false },
+    { complete: true },
+  );
+}
 async function withActivePreflight<T>(operation: (attemptId: string) => Promise<T>) {
   const attemptId = randomUUID();
   activePreflights.add(attemptId);
@@ -74,7 +107,7 @@ async function abandonPreflight(
 export function auditedComputer(
   backend: ComputerBackend,
   log: ActionLog,
-  provider: "rpc" | "docker" = "docker",
+  provider: "rpc" | "docker" | "native" = "docker",
   resources?: ResourceLeases,
   hostId = "openmuse-server",
   runtimePause?: RuntimePause,
@@ -82,6 +115,7 @@ export function auditedComputer(
   const readCommand = backend.command?.bind(backend);
   const cancelCommand = backend.cancel?.bind(backend);
   const mediaCommand = backend.media?.bind(backend);
+  const inspectArtifact = backend.artifact?.bind(backend);
   const canonicalFilePath = (path: string) => {
     try {
       return workspacePath(path);
@@ -104,6 +138,7 @@ export function auditedComputer(
     const lockId = `computer-operation:${randomUUID()}`;
     const lease = request && resources ? await resources.acquire(owner, lockId, [request]) : [];
     if (request && resources && !lease) throw new ResourceBusyError([request]);
+    const nativeOperations = new Set<string>();
     try {
       return await log.run(
         owner,
@@ -112,11 +147,41 @@ export function auditedComputer(
           if (!["read", "list", "export", "stop", "cancel"].includes(tool))
             await runtimePause?.assertResumed(owner);
           await authorizeTaskEffect(lease ?? [], lockId);
-          return operation();
+          return physicalResources.run(
+            {
+              owner,
+              resourceHoldTaskId: lockId,
+              leases: lease ?? [],
+              trackNativeOperation: async (id) => {
+                if (provider !== "native" || !request) return;
+                nativeOperations.add(id);
+                activeNativeFileHolds.add(`${owner}:${id}`);
+                await log.db.insertIfAbsent<NativeFileHold>(owner, "computer-file-holds", {
+                  id,
+                  resourceHoldTaskId: lockId,
+                  leases: lease ?? [],
+                  complete: false,
+                });
+                for (const handle of lease ?? [])
+                  if (!(await resources?.hold(handle))) throw new ResourceBusyError([request]);
+              },
+            },
+            operation,
+          );
         },
       );
     } finally {
-      if (request && resources) await resources.releaseTask(lockId);
+      try {
+        if (nativeOperations.size) {
+          for (const id of nativeOperations) {
+            const hold = await log.db.get<NativeFileHold>(owner, "computer-file-holds", id);
+            if (hold) await finishNativeFileHold(backend, log, resources, owner, hold);
+          }
+        } else if (request && resources)
+          await Promise.all((lease ?? []).map((handle) => resources.release(handle)));
+      } finally {
+        for (const id of nativeOperations) activeNativeFileHolds.delete(`${owner}:${id}`);
+      }
     }
   };
   const finish = async (owner: string, receipt: ComputerCommand) => {
@@ -153,12 +218,7 @@ export function auditedComputer(
   const command = async (
     owner: string,
     tool: string,
-    options: {
-      idempotencyKey?: string;
-      signal?: AbortSignal;
-      dispatchGuard?: () => Promise<void>;
-      onDispatch?: (receiptId: string) => Promise<void>;
-    },
+    options: ComputerDispatchOptions,
     operation: (bound: typeof options) => Promise<ComputerCommand>,
   ) =>
     withActivePreflight(async (attemptId) => {
@@ -166,7 +226,7 @@ export function auditedComputer(
       const bound = { ...options, idempotencyKey: options.idempotencyKey ?? randomUUID() };
       const receiptId = createHash("sha256")
         .update(
-          provider === "rpc"
+          provider === "rpc" || provider === "native"
             ? `${owner}:${bound.idempotencyKey}`
             : `computer-command:${bound.idempotencyKey}`,
         )
@@ -179,12 +239,17 @@ export function auditedComputer(
       if (priorReceipt && priorReceipt.status !== "rejected_not_dispatched") {
         // A replay borrows physical ownership; it cannot prepare or clean up the
         // running command's leases. Let the adapter validate the argument binding.
-        const receipt = await operation({
-          ...bound,
-          onDispatch: async () => {
-            throw new AppError("Existing command cannot acquire new dispatch ownership", 409);
-          },
-        });
+        const borrowed = (await resources?.listForTask(receiptId)) ?? [];
+        const receipt = await physicalResources.run(
+          { owner, resourceHoldTaskId: receiptId, leases: borrowed },
+          () =>
+            operation({
+              ...bound,
+              onDispatch: async () => {
+                throw new AppError("Existing command cannot acquire new dispatch ownership", 409);
+              },
+            }),
+        );
         await bound.onDispatch?.(receipt.id);
         await finish(owner, receipt);
         return receipt;
@@ -249,6 +314,7 @@ export function auditedComputer(
       const backendOptions = {
         idempotencyKey: bound.idempotencyKey,
         signal: bound.signal,
+        dispatchContext: bound.dispatchContext,
         onDispatch: async (actualId: string) => {
           if (actualId !== receiptId)
             throw new Error("Computer backend receipt ID did not match the audited operation");
@@ -272,7 +338,10 @@ export function auditedComputer(
       };
       try {
         await backendOptions.dispatchGuard();
-        receipt = await operation(backendOptions);
+        receipt = await physicalResources.run(
+          { owner, resourceHoldTaskId: receiptId, leases },
+          () => operation(backendOptions),
+        );
         // Test and third-party backends may not expose a pre-dispatch hook. If
         // they return a receipt, conservatively persist occupancy before using it.
         await backendOptions.onDispatch(receipt.id);
@@ -301,7 +370,40 @@ export function auditedComputer(
       await finish(owner, receipt);
       return receipt;
     });
+  const recovery =
+    backend.recovery &&
+    new Proxy(backend.recovery, {
+      get(target, key) {
+        if (key === "capture" || key === "trash" || key === "restore")
+          return async (...args: unknown[]) => {
+            const owner = String(args[0]);
+            const record = await log.db.get<{ path: string }>(
+              owner,
+              key === "restore" ? "file-versions" : "native-artifacts",
+              String(args[key === "restore" ? 1 : 2]),
+            );
+            if (!record)
+              throw new AppError("Owned native recovery artifact/version not found", 404);
+            return run(
+              owner,
+              `file_version_${key}`,
+              () => Reflect.apply(target[key], target, args),
+              fileResource(owner, record.path, "exclusive"),
+            );
+          };
+        const value = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
   return {
+    ...(recovery && { recovery }),
+    ...(backend.physicalOperation && {
+      physicalOperation: backend.physicalOperation.bind(backend),
+    }),
+    ...(inspectArtifact && {
+      artifact: (owner: string, path: string) =>
+        run(owner, "read", () => inspectArtifact(owner, path), fileResource(owner, path, "shared")),
+    }),
     snapshot: async (owner) => {
       const value = await backend.snapshot(owner);
       for (const receipt of value.commands) await finish(owner, receipt);
@@ -387,12 +489,7 @@ export function auditedComputer(
         owner: string,
         kind: "transcribe" | "preview",
         raw: unknown,
-        options: {
-          idempotencyKey?: string;
-          signal?: AbortSignal;
-          dispatchGuard?: () => Promise<void>;
-          onDispatch?: (receiptId: string) => Promise<void>;
-        } = {},
+        options: ComputerDispatchOptions = {},
       ) => command(owner, kind, options, (bound) => mediaCommand(owner, kind, raw, bound)),
     }),
   };
@@ -401,6 +498,14 @@ export function auditedComputer(
 /** Reconcile background results from their owned backend receipts, without rerunning commands. */
 export async function reconcileComputerAudit(backend: ComputerBackend, log: ActionLog) {
   const resources = new ResourceLeases(log.db);
+  for (const { owner, value } of await log.db.scan<NativeFileHold>("computer-file-holds")) {
+    if (value.complete || activeNativeFileHolds.has(`${owner}:${value.id}`)) continue;
+    try {
+      await finishNativeFileHold(backend, log, resources, owner, value);
+    } catch (error) {
+      backgroundFailure("native file hold reconciliation", error);
+    }
+  }
   for (const { owner, value } of await log.db.scan<ComputerAudit>("computer-audit")) {
     if (value.complete) continue;
     if (value.phase === "abandoned") {

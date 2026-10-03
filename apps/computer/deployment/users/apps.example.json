@@ -1,0 +1,14 @@
+{
+  "desktop-prerequisites": [
+    [
+      "/usr/bin/apt-get",
+      "install",
+      "--yes",
+      "--no-install-recommends",
+      "tigervnc-standalone-server",
+      "xfce4",
+      "novnc",
+      "python3-xlib"
+    ]
+  ]
+}

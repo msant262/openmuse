@@ -83,6 +83,14 @@ export class AgentService {
   readonly timing: TaskTimingService;
   readonly verification: TaskVerification;
   readonly toolOperations = new OperationDrain(() => this.db.persistenceFailed);
+  private nativeExecution?: (
+    owner: string,
+    task: AgentTask,
+    context: TaskContext,
+  ) => Promise<Partial<AgentTask> | undefined>;
+  configureNativeExecution(execute: NonNullable<AgentService["nativeExecution"]>) {
+    this.nativeExecution = execute;
+  }
   private localThreads?: LocalThreads;
   private routineTimer?: ReturnType<typeof setInterval>;
   private routineRefreshing = false;
@@ -204,6 +212,24 @@ export class AgentService {
       browserReleased: async (owner, id) =>
         (await this.browser.control(owner, id)).control === "agent",
       workAdmission: this.workAdmission,
+      retainAdmission: async (owner, taskId) => {
+        const pending = (await this.journal.operations(owner, taskId)).some(
+          (op) =>
+            op.nativeEnvelope &&
+            op.effect &&
+            !["succeeded", "failed", "rejected_not_dispatched", "superseded"].includes(op.status) &&
+            (op.receipt as { data?: { cleanupConfirmed?: boolean } })?.data?.cleanupConfirmed !==
+              true,
+        );
+        if (pending)
+          await this.db.compareAndSwapTask(
+            owner,
+            taskId,
+            {},
+            { state: { nativeAdmissionPending: true } },
+          );
+        return pending;
+      },
       resourceLeases: this.resourceLeases,
       runtimePause: this.runtimePause,
     });
@@ -254,7 +280,11 @@ export class AgentService {
       await new ActionLog(this.db).reconcile();
       // Recover publications if the process exited after committing an outcome.
       for (const { owner, value } of await this.db.scan<AgentTask>("tasks")) {
-        if (value.state.nativeCleanupPending === true && value.status !== "running") {
+        if (
+          (value.state.nativeCleanupPending === true ||
+            value.state.nativeAdmissionPending === true) &&
+          value.status !== "running"
+        ) {
           const physical = (await this.journal.operations(owner, value.id)).filter(
             (op) => op.nativeEnvelope && op.effect,
           );
@@ -273,8 +303,8 @@ export class AgentService {
             await this.db.compareAndSwapTask(
               owner,
               value.id,
-              { status: value.status, state: { nativeCleanupPending: true } },
-              { state: { ...value.state, nativeCleanupPending: false } },
+              { status: value.status },
+              { state: { nativeCleanupPending: false, nativeAdmissionPending: false } },
             );
           }
         }
@@ -1172,6 +1202,8 @@ export class AgentService {
           ),
         };
     }
+    const nativeResult = await this.nativeExecution?.(owner, task, context);
+    if (nativeResult) return nativeResult;
     if (task.actionId) {
       const action = await this.db.get<ActionProposal>(owner, "actions", task.actionId);
       if (!action) throw new Error("The linked review could not be found");
