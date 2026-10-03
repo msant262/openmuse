@@ -1,6 +1,6 @@
 # OkamiBot: instalação e aceite em 3 de outubro de 2026
 
-**Revisão atual publicada: API, web e Android `0df26c4`.** O usuário rejeitou
+**Revisão atual publicada: API `973d120`; web e Android `0df26c4`.** O usuário rejeitou
 explicitamente a solução limitada ao Tavily. Esta revisão implementa pedidos de
 credenciais em runtime: o agente informa destino e campos, um modal global abre,
 os valores vão ao cofre e a mesma tarefa continua. Serviços novos não precisam
@@ -15,6 +15,12 @@ quatro informações). Testes cobrem múltiplos campos e destinos, chave inváli
 cofre indisponível, retomada, cancelamento, concorrência, login dinâmico e a
 política de aprovação das operações com efeitos. O formulário privado não gera
 outra pergunta comum e polling não reabre solicitações dispensadas.
+
+A correção posterior da API vincula a verificação de login reutilizado à tarefa
+atual: um desafio OTP abre no pedido correto sem solicitar a senha novamente.
+Passaram 43 regressões de credenciais/interações, o teste dedicado de reutilização
+com OTP e TypeScript. O ensaio público abaixo corresponde ao build `0df26c4`;
+a API posterior também teve saúde e preservação das conexões verificadas.
 
 O ensaio **real no app público**, com o modelo conectado e um token sintético,
 abriu o modal para um serviço novo HTTPBin, gravou no cofre de produção e retomou
@@ -39,7 +45,7 @@ Evidências: `artifacts/generic-credentials/` e
 `artifacts/android/generic-credentials-release/`.
 
 A reinicialização da API reproduziu o defeito conhecido de reconexão nativa.
-Reiniciar somente o supervisor recuperou as capacidades no epoch 20, preservando
+Reiniciar somente o supervisor recuperou as capacidades no epoch 21, preservando
 a sessão gráfica, o controle humano na revisão 6 e a pausa desativada na revisão
 16. A conexão Codex e o avatar selecionado foram preservados. A causa desse
 defeito de reconexão continua aberta.
