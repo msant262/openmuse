@@ -323,7 +323,7 @@ export function ChatScreen({
   wide?: boolean;
 }) {
   const { t } = useI18n();
-  const { api, workspace: w, refresh, navigate, open } = useWorkspace();
+  const { api, workspace: w, refresh, open } = useWorkspace();
   const { data: agentWorkspace, refresh: refreshAgent } = useAgentWorkspace();
   const { enabled: richThreads, mainId, claimPrompt, markAccepted } = useMuseThread();
   const selection = thread || { id: "local", existing: false };
