@@ -606,11 +606,59 @@ export class CredentialBroker {
     );
   }
 
+  /** A reused secret keeps its vault reference, but verification belongs to the
+   * task and conversation that initiated this login, never its original card. */
+  async bindTaskRequest(owner: string, taskId: string, refId: string) {
+    const { task, connection, adapter } = await this.authorizeForTask(owner, taskId, refId);
+    if (task.status !== "running") throw new AppError("This task is no longer active", 409);
+    const existing = (await this.db.list<CredentialRequestRecord>(owner, "credential-requests"))
+      .filter(
+        (request) =>
+          request.taskId === taskId &&
+          request.credentialRefId === refId &&
+          !["superseded", "cancelled", "expired"].includes(request.status),
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (existing) return this.card(adapter, existing);
+    const timestamp = new Date(this.now()).toISOString();
+    const id = stableId(`credential-use\n${taskId}\n${task.attempts}\n${refId}`);
+    const record: CredentialRequestRecord = {
+      id,
+      taskId,
+      revision: task.attempts,
+      ...(task.originThreadId ? { threadId: task.originThreadId } : {}),
+      adapterId: adapter.id,
+      purpose: `Sign in to ${adapter.serviceName} to continue the original task.`,
+      credentialRefId: refId,
+      credentialRef: connection.credentialRef,
+      status: connection.status,
+      createdAt: timestamp,
+      expiresAt: new Date(this.now() + (this.options.requestTtlMs ?? 10 * 60_000)).toISOString(),
+    };
+    const interaction = this.card(adapter, record);
+    const result = await this.db.durableMutation<CredentialRequestRecord | InteractionRequest>(
+      owner,
+      `credential-use:${id}`,
+      bindingHash({ taskId, refId, revision: task.attempts }),
+      [
+        { kind: "credential-requests", id, mode: "insert", value: record },
+        { kind: "interaction-requests", id, mode: "insert", value: interaction },
+      ],
+      [],
+    );
+    if (result.status === "thread_deleted")
+      throw new AppError("This conversation was deleted", 410);
+    if (!["applied", "duplicate"].includes(result.status))
+      throw new AppError("This login request changed before verification", 409);
+    return result.values[1] as InteractionRequest;
+  }
+
   async setConnectionStatus(
     owner: string,
     id: string,
     status: CredentialStatus,
     details: {
+      taskId?: string;
       challengeId?: string;
       challengeKind?: CredentialConnection["challengeKind"];
       authenticatedAt?: string;
@@ -629,9 +677,18 @@ export class CredentialBroker {
       ...(details.authenticatedAt ? { lastAuthenticatedAt: details.authenticatedAt } : {}),
     };
     await this.db.put(owner, "credentials", updated);
-    const request = (
-      await this.db.list<CredentialRequestRecord>(owner, "credential-requests")
-    ).find((value) => value.credentialRefId === id && value.status !== "superseded");
+    const challenge = details.challengeId
+      ? await this.db.get<CredentialChallenge>(owner, "credential-challenges", details.challengeId)
+      : undefined;
+    const taskId = details.taskId ?? challenge?.taskId;
+    const request = (await this.db.list<CredentialRequestRecord>(owner, "credential-requests"))
+      .filter(
+        (value) =>
+          value.credentialRefId === id &&
+          !["superseded", "cancelled", "expired"].includes(value.status) &&
+          (!taskId || value.taskId === taskId),
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
     if (request) {
       const requestStatus = status === "saved" ? "saved" : status;
       const revised = {

@@ -705,6 +705,12 @@ export async function executeModelTask(
                           ...task.state,
                           credentialRef: task.state.credentialRef,
                           credentialChallengeId: result.challengeId,
+                          ...(result.interactionRequestId
+                            ? {
+                                interactionRequestId: result.interactionRequestId,
+                                credentialRequestId: result.interactionRequestId,
+                              }
+                            : {}),
                         },
                       });
                       if (result.challengeKind === "captcha" && result.agentAttempt)

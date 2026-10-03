@@ -167,6 +167,7 @@ export class CredentialCaptcha {
           authenticatedAt,
         });
         await this.credentials.setConnectionStatus(owner, challenge.credentialRefId, "connected", {
+          taskId: challenge.taskId,
           authenticatedAt,
         });
       }

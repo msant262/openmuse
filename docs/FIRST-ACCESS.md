@@ -43,10 +43,14 @@ e infográficos podem usar GPT Image sem depender do Grok nem de uma chave de AP
 paga. Se desconectar, o app oferece um código para autorizar no site oficial da
 OpenAI. Essa conexão é independente do modelo usado para conversar.
 
-Para Tavily, use **Conexões → Conectar Tavily** ou peça a conexão na conversa.
-O agente abre um formulário privado; insira a API key nesse campo. A chave é
-validada e guardada no cofre, fora do histórico enviado ao modelo. Tavily ainda
-não está configurado com uma chave real nesta instalação.
+Quando uma tarefa precisar de uma chave de API, token ou login, o agente abre
+**Conexão segura** com o serviço, destino e campos necessários. Digite ali e toque
+em **Salvar e continuar**: a credencial vai ao cofre e a mesma tarefa é retomada.
+Não é preciso editar configuração ou cadastrar uma tela para cada serviço novo.
+**Fazer depois** dispensa o modal; o cartão da conversa permite reabrir. Cancelar
+encerra o pedido dependente. As conexões salvas aparecem em **Configurações →
+Conexões**, onde podem ser atualizadas ou removidas. OAuth, como a conexão ChatGPT,
+continua usando a autorização oficial do provedor.
 
 O menu de cada conversa permite renomear, arquivar, restaurar e excluir.
 **Arquivadas** mostra as conversas guardadas. Excluir remove a transcrição;
@@ -63,7 +67,7 @@ janela anônima se quiser manter o acesso; apagar cookies exige novo pareamento.
 Se abriu a versão anterior, use **Ctrl+Shift+R**. O endereço `/api/health` é apenas
 diagnóstico, não a interface.
 
-**Android:** baixe o [APK ARM64 assinado](https://app.okamibot.cloud/downloads/okamibot.apk?v=7ec9235)
+**Android:** baixe o [APK ARM64 assinado](https://app.okamibot.cloud/downloads/okamibot.apk?v=0df26c4)
 no telefone e instale. Ele usa o mesmo domínio público e não exige Tailscale.
 Se já tiver o app, instale como atualização para preservar os dados. Caso o
 Android recuse por assinatura diferente, não desinstale nem apague os dados para
@@ -98,8 +102,8 @@ Rotas da instalação atual (comandos na VPS):
 ```bash
 sudo tailscale serve --bg --yes --set-path=/api http://100.113.59.40:8787/api
 sudo tailscale serve --bg --yes --set-path=/executor http://100.113.59.40:8787/executor
-sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/7ec9235-public
-sudo tailscale serve --bg --yes --set-path=/downloads/okamibot.apk /opt/okami-web/downloads/okamibot-7ec9235-arm64-v8a.apk
+sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/0df26c4-public
+sudo tailscale serve --bg --yes --set-path=/downloads/okamibot.apk /opt/okami-web/downloads/okamibot-0df26c4-arm64-v8a.apk
 ```
 
 Mantenha os sufixos `/api` e `/executor` nos destinos: o Serve remove o prefixo

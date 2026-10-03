@@ -1,6 +1,52 @@
 # OkamiBot: instalação e aceite em 3 de outubro de 2026
 
-**Revisão atual publicada: API, web e Android `7ec9235`.** A revisão anterior
+**Revisão atual publicada: API, web e Android `0df26c4`.** O usuário rejeitou
+explicitamente a solução limitada ao Tavily. Esta revisão implementa pedidos de
+credenciais em runtime: o agente informa destino e campos, um modal global abre,
+os valores vão ao cofre e a mesma tarefa continua. Serviços novos não precisam
+ser adicionados ao catálogo/configuração do servidor. Há reutilização, troca e
+revogação de credenciais, autenticação HTTP genérica e formulários de login em
+sites definidos a partir da página observada.
+[Contrato e critérios](superpowers/specs/2026-10-03-generic-credential-prompts.md).
+
+A suíte completa do código final passou em **1.066 testes**, sem falhas.
+TypeScript passou para servidor e mobile; Biome terminou sem erros (218 avisos e
+quatro informações). Testes cobrem múltiplos campos e destinos, chave inválida,
+cofre indisponível, retomada, cancelamento, concorrência, login dinâmico e a
+política de aprovação das operações com efeitos. O formulário privado não gera
+outra pergunta comum e polling não reabre solicitações dispensadas.
+
+O ensaio **real no app público**, com o modelo conectado e um token sintético,
+abriu o modal para um serviço novo HTTPBin, gravou no cofre de produção e retomou
+a mesma tarefa. `credential_http_request` recebeu HTTP 200 e
+`authenticated: true`; o token apareceu como `[redacted]` no recibo. Não houve
+uso de navegador/computador. Conversa, eventos, tarefas e operações não expuseram
+o canário. Desktop 1440 e viewport móvel 390, modal automático e serviço salvo em
+Configurações passaram. Credencial de teste foi revogada, conversa de teste
+excluída e pareamento temporário revogado. O primeiro ensaio foi repetido porque
+a medição ocorreu antes de o layout React estabilizar após o resize; seu
+cancelamento e limpeza também foram confirmados.
+
+O bundle web público tem SHA-256
+`84297533f0b8eff28555755e34632b9aef0e057bff984432828b57fdec055477`.
+O APK ARM64 publicado tem 58.938.713 bytes e SHA-256
+`995a71ba453adc2a4a5e5060bad10c27a66d11ec0f392a82687a8d9baa788356`.
+Ambos os downloads públicos foram comparados aos builds do commit limpo.
+O upgrade x86 no emulador preservou pareamento, GUMC e um rascunho de teste local
+persistido antes do upgrade e removido ao final. Modelos, Codex e conexões
+passaram no Android. Não houve teste em aparelho físico.
+Evidências: `artifacts/generic-credentials/` e
+`artifacts/android/generic-credentials-release/`.
+
+A reinicialização da API reproduziu o defeito conhecido de reconexão nativa.
+Reiniciar somente o supervisor recuperou as capacidades no epoch 20, preservando
+a sessão gráfica, o controle humano na revisão 6 e a pausa desativada na revisão
+16. A conexão Codex e o avatar selecionado foram preservados. A causa desse
+defeito de reconexão continua aberta.
+
+## Histórico: correção anterior do harness (`7ec9235`)
+
+**Revisão anterior: API, web e Android `7ec9235`.** A revisão anterior
 foi novamente rejeitada no uso real. Esta correção adiciona geração de imagens
 pela assinatura ChatGPT via conexão Codex OAuth, seleção de modelo em
 Configurações, Tavily com formulário seguro, gestão de conversas e limpeza dos

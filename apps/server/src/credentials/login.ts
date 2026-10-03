@@ -27,6 +27,7 @@ export type CredentialLoginToolResult = {
   challengeKind?: CredentialChallenge["kind"];
   reasonCode?: string;
   agentAttempt?: boolean;
+  interactionRequestId?: string;
 };
 
 type CredentialBrowserResult = {
@@ -90,6 +91,7 @@ export class CredentialLoginService {
       credentialRef: { id: string; version: number };
       origin: string;
       serviceName: string;
+      interactionRequestId?: string;
     },
     more: Partial<CredentialLoginToolResult> = {},
   ): CredentialLoginToolResult {
@@ -98,6 +100,9 @@ export class CredentialLoginService {
       credentialRef: connection.credentialRef,
       origin: connection.origin,
       serviceName: connection.serviceName,
+      ...(connection.interactionRequestId
+        ? { interactionRequestId: connection.interactionRequestId }
+        : {}),
       ...more,
     };
   }
@@ -114,7 +119,21 @@ export class CredentialLoginService {
     if (!task || task.status !== "running")
       throw new AppError("This task is no longer active", 409);
     const authorized = await this.credentials.authorizeForTask(owner, taskId, refId);
-    const { connection, adapter } = authorized;
+    const { adapter } = authorized;
+    const scope = currentTaskScope();
+    if (
+      !scope ||
+      scope.owner !== owner ||
+      scope.task.id !== taskId ||
+      scope.operation.taskId !== taskId
+    )
+      throw new AppError("Credential login requires the current durable task operation", 403);
+    const interaction = await this.credentials.bindTaskRequest(owner, taskId, refId);
+    const connection = { ...authorized.connection, interactionRequestId: interaction.id };
+    const setStatus = (
+      status: CredentialStatus,
+      details: Parameters<CredentialBroker["setConnectionStatus"]>[3] = {},
+    ) => this.credentials.setConnectionStatus(owner, refId, status, { ...details, taskId });
     const challenge = challengeId
       ? await this.credentials.getChallenge(owner, taskId, refId, challengeId)
       : undefined;
@@ -145,13 +164,13 @@ export class CredentialLoginService {
         ...(challenge.kind === "captcha" ? { agentAttempt: true } : {}),
       });
 
-    await this.credentials.setConnectionStatus(owner, refId, "connecting");
+    await setStatus("connecting");
     let code: string | undefined;
     if (challenge && !(await this.browser.isNativeSession(owner, challenge.sessionId))) {
       try {
         code = this.grants.takeChallengeCode(owner, taskId, challenge.id);
       } catch {
-        await this.credentials.setConnectionStatus(owner, refId, "needs_challenge", {
+        await setStatus("needs_challenge", {
           challengeId: challenge.id,
           challengeKind: challenge.kind,
         });
@@ -161,14 +180,6 @@ export class CredentialLoginService {
         });
       }
     }
-    const scope = currentTaskScope();
-    if (
-      !scope ||
-      scope.owner !== owner ||
-      scope.task.id !== taskId ||
-      scope.operation.taskId !== taskId
-    )
-      throw new AppError("Credential login requires the current durable task operation", 403);
     const revision = scope.operation.revision;
     const plan = challenge
       ? trustedCredentialChallengePlan(adapter, refId, taskId, revision, {
@@ -243,7 +254,7 @@ export class CredentialLoginService {
     } catch (error) {
       const unknown = (error as { code?: unknown })?.code === "OUTCOME_UNKNOWN";
       const status = unknown ? "outcome_unknown" : "error";
-      await this.credentials.setConnectionStatus(owner, refId, status);
+      await setStatus(status);
       if (challenge && unknown)
         await this.db.compareAndSwap(
           owner,
@@ -274,7 +285,7 @@ export class CredentialLoginService {
           result.sessionId !== target.sessionId ||
           result.sessionGeneration !== target.sessionGeneration))
     ) {
-      await this.credentials.setConnectionStatus(owner, refId, "outcome_unknown");
+      await setStatus("outcome_unknown");
       if (challenge)
         await this.db.compareAndSwap(
           owner,
@@ -288,7 +299,7 @@ export class CredentialLoginService {
 
     if (result.status === "authenticated") {
       if (!result.sessionGeneration || !result.executorId || !result.profileId) {
-        await this.credentials.setConnectionStatus(owner, refId, "outcome_unknown");
+        await setStatus("outcome_unknown");
         return this.safeResult("outcome_unknown", connection, {
           reasonCode: "SESSION_BINDING_UNAVAILABLE",
         });
@@ -301,7 +312,7 @@ export class CredentialLoginService {
         sessionGeneration: result.sessionGeneration,
         authenticatedAt,
       });
-      await this.credentials.setConnectionStatus(owner, refId, "connected", { authenticatedAt });
+      await setStatus("connected", { authenticatedAt });
       if (challenge)
         await this.db.compareAndSwap(
           owner,
@@ -314,7 +325,7 @@ export class CredentialLoginService {
     }
     if (result.status === "challenge") {
       if (!result.sessionGeneration || !result.executorId || !result.profileId) {
-        await this.credentials.setConnectionStatus(owner, refId, "outcome_unknown");
+        await setStatus("outcome_unknown");
         return this.safeResult("outcome_unknown", connection, {
           reasonCode: "SESSION_BINDING_UNAVAILABLE",
         });
@@ -348,7 +359,7 @@ export class CredentialLoginService {
         ).toISOString(),
       };
       await this.db.insertIfAbsent(owner, "credential-challenges", challengeRecord);
-      await this.credentials.setConnectionStatus(owner, refId, "needs_challenge", {
+      await setStatus("needs_challenge", {
         challengeId: challengeRecord.id,
         challengeKind: challengeRecord.kind,
       });
@@ -364,7 +375,7 @@ export class CredentialLoginService {
         : result.status === "outcome_unknown"
           ? "outcome_unknown"
           : "error";
-    await this.credentials.setConnectionStatus(owner, refId, status);
+    await setStatus(status);
     if (challenge) {
       const next = status === "outcome_unknown" ? "outcome_unknown" : "waiting";
       await this.db.compareAndSwap(
@@ -478,7 +489,9 @@ export class CredentialLoginService {
         { status: "waiting" },
         { status: "expired" },
       );
-      await this.credentials.setConnectionStatus(owner, challenge.credentialRefId, "error");
+      await this.credentials.setConnectionStatus(owner, challenge.credentialRefId, "error", {
+        taskId: challenge.taskId,
+      });
       return {
         id: challenge.id,
         kind: challenge.kind,

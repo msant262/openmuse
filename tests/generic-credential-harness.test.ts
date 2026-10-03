@@ -637,3 +637,126 @@ test("a rejected browser login reopens its secure modal on the original task", a
   );
   assert.equal(cards.filter((request) => request.status === "waiting").length, 1);
 });
+
+test("OTP after reusing a site credential belongs to the new task and its conversation", async (t) => {
+  const owner = "local-user";
+  let credentialRefId = "";
+  const site = {
+    serviceName: "Atlas Portal",
+    origin: "https://portal.atlas-observatory.example",
+    fields: [{ id: "password", label: "Password", type: "password", required: true }],
+    selectors: { password: "input[name=password]" },
+    submitSelector: "button[type=submit]",
+    authenticatedSelector: "[data-account-menu]",
+    challengeSubmitSelector: "button[data-verify]",
+    challengeSelectors: { otp: "input[name=otp]" },
+  };
+  const { requests } = await modelFixture(t, (index) => {
+    if (index === 0 || index === 2)
+      return {
+        name: "request_site_connection",
+        arguments: { site, purpose: "Read my observation" },
+      };
+    if (index === 1) return { name: "list_site_connections", arguments: {} };
+    if (index === 3) return { name: "authenticate_connection", arguments: { credentialRefId } };
+    return undefined;
+  });
+  const server = await taskRuntime(
+    t,
+    { agentBackend: "model", model: "openai/fixture" },
+    { credentialSecretStore: vault() },
+  );
+  const oldThread = randomUUID(),
+    newThread = randomUUID(),
+    sessionId = randomUUID();
+  await server.db.put(owner, "threads", { id: oldThread });
+  await server.db.put(owner, "threads", { id: newThread });
+  server.agent.browser.credentialTarget = async () => undefined;
+  server.agent.browser.isNativeSession = async () => false;
+  server.agent.browser.runAutomated = async (
+    _owner,
+    _task,
+    _session,
+    _url,
+    _signal,
+    _effect,
+    operation,
+  ) => operation(sessionId);
+  server.agent.browser.credentials = async (_owner, _session, input) => {
+    assert.ok("fields" in input);
+    assert.equal(input.fields[0].value, "otp-password-canary-954");
+    return {
+      status: "challenge",
+      origin: site.origin,
+      sessionId,
+      executorId: "fixture",
+      profileId: "personal",
+      sessionGeneration: "generation-one",
+      challengeKind: "otp",
+      challengeId: randomUUID(),
+    };
+  };
+  const first = await server.agent.createTask(owner, {
+    prompt: "Read my Atlas observation",
+    originThreadId: oldThread,
+  });
+  await server.agent.worker.tick();
+  const originalCard = (
+    await server.db.list<CredentialInteractionRequest>(owner, "interaction-requests")
+  )[0];
+  const saved = await server.credentials.submit(owner, originalCard.id, {
+    clientResponseId: "otp-first-save-954",
+    values: { password: "otp-password-canary-954" },
+  });
+  assert.equal(saved.kind, "credential");
+  if (saved.kind !== "credential") throw new Error("Expected saved credential");
+  assert.ok(saved.credentialRef);
+  credentialRefId = saved.credentialRef.id;
+  await server.db.compareAndSwap(
+    owner,
+    "tasks",
+    first.id,
+    { status: "queued" },
+    { status: "succeeded" },
+  );
+  const second = await server.agent.createTask(owner, {
+    prompt: "Read my new Atlas observation",
+    originThreadId: newThread,
+  });
+  await server.agent.worker.tick();
+  const waiting = await server.agent.getTask(owner, second.id);
+  assert.equal(waiting.status, "waiting_input");
+  assert.ok(waiting.state.credentialChallengeId);
+  const original = await server.credentials.status(owner, originalCard.id);
+  assert.equal(
+    original.status,
+    "saved",
+    "the old conversation must not receive the new login challenge",
+  );
+  const cards = await server.db.list<CredentialInteractionRequest>(owner, "interaction-requests");
+  assert.equal(cards.length, 2);
+  assert.equal(
+    cards.every((card) => card.kind === "credential"),
+    true,
+  );
+  const active = cards.find((card) => card.status === "needs_challenge");
+  assert.ok(active);
+  assert.equal(active.taskId, second.id);
+  assert.equal(active.threadId, newThread);
+  assert.equal(waiting.state.interactionRequestId, active.id);
+  const { token } = await server.auth.session();
+  const pendingResponse = await server.app.request("/api/credential-prompts", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.equal(pendingResponse.status, 200);
+  const pending = await pendingResponse.json();
+  assert.deepEqual(
+    pending.requests.map((request: { id: string }) => request.id),
+    [active.id],
+  );
+  assert.equal(
+    JSON.stringify({ cards, requests, pending }).includes("otp-password-canary-954"),
+    false,
+  );
+  assert.equal((await server.agent.getTask(owner, first.id)).status, "succeeded");
+});
