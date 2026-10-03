@@ -275,6 +275,25 @@ export async function executeModelTask(
         task = await ctx.checkpoint({ state: { ...task.state, browserId: id } });
       },
       paused: pauseBrowser,
+      waiting: async (code, sessionId) => {
+        const latest = await service.db.get<AgentTask>(owner, "tasks", task.id);
+        task = await ctx.checkpoint({
+          state: {
+            ...(latest?.state ?? task.state),
+            ...(sessionId ? { browserDestinationId: sessionId } : {}),
+          },
+        });
+        outcome = {
+          status: "waiting_input",
+          question:
+            code === "BROWSER_LOGIN_REQUIRED"
+              ? "Waiting for the destination browser's secure sign-in or verification card."
+              : code === "BROWSER_ARTIFACT_UNAVAILABLE"
+                ? "Waiting for the required artifact version to be published."
+                : "The bound browser needs inspection or availability before this task can continue.",
+          state: task.state,
+        };
+      },
     }),
     ...searchTools(service.search, owner, {
       taskId: task.id,
@@ -878,7 +897,7 @@ export async function executeModelTask(
           task,
           call,
           execute,
-          !/^(read_|inspect_|get_|list_|computer_status|desktop_observe|browser_(snapshot|screenshot)|set_plan|ask_user|finish_task|AGUI)/.test(
+          !/^(read_|inspect_|get_|list_|computer_status|desktop_observe|browser_(research|snapshot|screenshot)|set_plan|ask_user|finish_task|AGUI)/.test(
             call.name,
           ),
         );

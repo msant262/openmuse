@@ -91,20 +91,30 @@ async function fixture(t: TestContext) {
     now = Date.now(),
     status: "pending" | "authenticated" = "pending";
   const browser = {
-    runAutomated: async (
+    runOnExecutor: async (
       _owner: unknown,
       _task: unknown,
-      id: string,
+      _account: unknown,
+      target: {
+        sessionId: string;
+        executorId: string;
+        profileId: string;
+        sessionGeneration: string;
+      },
       _url: unknown,
       _signal: unknown,
-      _effect: unknown,
       operation: (id: string) => Promise<unknown>,
-    ) => operation(id),
+    ) => {
+      assert.equal(target.executorId, record.executorId);
+      assert.equal(target.profileId, record.profileId);
+      assert.equal(target.sessionGeneration, record.sessionGeneration);
+      return operation(target.sessionId);
+    },
     challenge: async () => {
       calls++;
       return { status, sessionId: record.sessionId };
     },
-  } as unknown as Pick<BrowserService, "runAutomated" | "challenge">;
+  } as unknown as Pick<BrowserService, "runOnExecutor" | "challenge">;
   let captcha = new CredentialCaptcha(db, broker, browser, { now: () => now });
   const step = (input: unknown, taskOverride = task) =>
     journal.run(

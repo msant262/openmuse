@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
@@ -13,15 +13,21 @@ import { Files } from "../../apps/server/src/files.ts";
 
 export async function browserFixture(
   t: TestContext,
-  handle: (path: string, body: Record<string, unknown>) => { status?: number; data: unknown },
+  handle: (
+    path: string,
+    body: Record<string, unknown>,
+    request: IncomingMessage,
+  ) =>
+    | { status?: number; data: unknown; raw?: string }
+    | Promise<{ status?: number; data: unknown; raw?: string }>,
 ) {
   const server = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
-    const result = handle(request.url ?? "", body);
+    const result = await handle(request.url ?? "", body, request);
     response.writeHead(result.status ?? 200, { "content-type": "application/json" });
-    response.end(JSON.stringify(result.data));
+    response.end(result.raw ?? JSON.stringify(result.data));
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");

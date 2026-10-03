@@ -20,7 +20,7 @@ export class CredentialCaptcha {
   constructor(
     readonly db: Store,
     readonly credentials: CredentialBroker,
-    readonly browser: Pick<BrowserService, "runAutomated" | "challenge">,
+    readonly browser: Pick<BrowserService, "runOnExecutor" | "challenge">,
     readonly options: { now?: () => number; maxSubmissions?: number; attemptMs?: number } = {},
   ) {}
   private now() {
@@ -95,6 +95,8 @@ export class CredentialCaptcha {
         challengeId,
         reason: "This service lacks a trusted challenge region or login success signal.",
       };
+    if (!challenge.executorId || !challenge.profileId || !challenge.sessionGeneration)
+      throw new AppError("Challenge session binding is unavailable", 409);
     if (challenge.actionId)
       return {
         status: "manual_required",
@@ -138,13 +140,18 @@ export class CredentialCaptcha {
     };
     try {
       await validateTaskEffect();
-      const result = await this.browser.runAutomated(
+      const result = await this.browser.runOnExecutor(
         owner,
         taskId,
-        challenge.sessionId,
+        challenge.credentialRefId,
+        {
+          executorId: challenge.executorId,
+          profileId: challenge.profileId,
+          sessionId: challenge.sessionId,
+          sessionGeneration: challenge.sessionGeneration,
+        },
         undefined,
         signal,
-        true,
         (id) => this.browser.challenge(owner, id, plan, signal),
       );
       await validateTaskEffect();

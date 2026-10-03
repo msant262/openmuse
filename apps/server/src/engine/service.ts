@@ -263,7 +263,7 @@ export class AgentService {
             {},
             { state: { nativeAdmissionPending: true } },
           );
-        return pending;
+        return pending || (await this.browser.hasUncertainDispatch(owner, taskId));
       },
       resourceLeases: this.resourceLeases,
       runtimePause: this.runtimePause,

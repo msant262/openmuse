@@ -75,12 +75,14 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       BROWSER_WORKER_URL: http://browser:8790
+      BROWSER_FALLBACK_ENABLED: ${BROWSER_FALLBACK_ENABLED:-false}
+      BROWSER_EXECUTOR_ID: ${BROWSER_EXECUTOR_ID:-openmuse-server}
       WORKER_TOKEN: ${WORKER_TOKEN:?Set a random worker token of at least 32 characters}
       COMPUTER_ENABLED: "true"
       COMPUTER_BACKEND: rpc
       COMPUTER_PROFILE: open
       COMPUTER_URL: http://computer-egress:8811
-      COMPUTER_TOKEN: ${COMPUTER_TOKEN:?Set a random computer token of at least 32 characters}
+      COMPUTER_TOKEN: ${COMPUTER_TOKEN:-}
       COMPUTER_COMMAND_TIMEOUT_MS: ${COMPUTER_COMMAND_TIMEOUT_MS:-1800000}
       COMPUTER_DEPLOYMENT_ID: ${COMPUTER_DEPLOYMENT_ID:-personal-vps}
       APPROVAL_POLICY: ${APPROVAL_POLICY:-money}
@@ -200,9 +202,9 @@ services:
       net.ipv6.conf.all.disable_ipv6: "1"
       net.ipv6.conf.default.disable_ipv6: "1"
     environment:
-      COMPUTER_TOKEN: ${COMPUTER_TOKEN:?Set COMPUTER_TOKEN}
+      COMPUTER_TOKEN: ${COMPUTER_TOKEN:-}
       COMPUTER_SERVER_IP: ${COMPUTER_SERVER_IP:-172.30.88.2}
-      COMPUTER_HOST_PUBLIC_IPS: ${COMPUTER_HOST_PUBLIC_IPS:?List every actual public IPv4 address of the VPS}
+      COMPUTER_HOST_PUBLIC_IPS: ${COMPUTER_HOST_PUBLIC_IPS:-}
     healthcheck:
       test: [CMD, python3, -I, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8811/health', timeout=3)"]
       interval: 15s

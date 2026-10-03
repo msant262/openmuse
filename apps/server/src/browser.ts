@@ -1,12 +1,19 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { attachmentMime } from "../../../packages/domain/src/attachments.ts";
+import {
+  browserBodyHash,
+  signBrowserExecutor,
+} from "../../../packages/domain/src/browser-executor.ts";
 import { browserUploadLimit } from "../../../packages/domain/src/browser-file.ts";
 import {
   type BrowserPaymentBinding,
   signBrowserAuthorization,
 } from "../../../packages/domain/src/browser-payment.ts";
+import { captchaResultSchema } from "../../../packages/domain/src/credential-challenge.ts";
 import type { BrowserSession } from "../../../packages/domain/src/index.ts";
+import type { ResourceLease } from "../../../packages/domain/src/runtime.ts";
 import { type SearchInput, searchResultSchema } from "../../../packages/domain/src/search.ts";
 import { ActionLog, auditTarget } from "./action-log.ts";
 import { approvalPolicy } from "./action-policy.ts";
@@ -25,9 +32,23 @@ import {
 import type { Store } from "./db.ts";
 import type { DesktopService } from "./desktop-service.ts";
 import { ResourceBusyError, ResourceLeases } from "./engine/resource-leases.ts";
-import { RuntimePause } from "./engine/runtime-pause.ts";
-import { authorizeTaskEffect } from "./engine/task-journal.ts";
+import { RuntimePause, RuntimePausedError } from "./engine/runtime-pause.ts";
+import {
+  authorizeTaskEffect,
+  currentTaskScope,
+  TaskSupersededError,
+  taskOperationId,
+} from "./engine/task-journal.ts";
+import { TaskValidityExpiredError } from "./engine/task-timing.ts";
 import { AppError } from "./errors.ts";
+import {
+  type ArtifactRequirement,
+  type BrowserExecutor,
+  type BrowserOperationClass,
+  type CapabilityRouter,
+  classifyBrowserOperation,
+  type ExecutorBinding,
+} from "./executors/capability-router.ts";
 import type { Files } from "./files.ts";
 
 const sessionSchema = z.object({
@@ -66,8 +87,24 @@ const failureSchema = z.object({
   createdAt: z.string(),
 });
 type ChatBrowser = { id: string; sessionId: string };
+type BrowserRouting = {
+  taskId?: string;
+  capability?: "browser.dom" | "browser.screenshot";
+  operationClass?: BrowserOperationClass;
+  accountId?: string;
+  artifactVersions?: ArtifactRequirement[];
+};
+const routedBrowser = new AsyncLocalStorage<{
+  owner: string;
+  binding: ExecutorBinding;
+  lease?: ResourceLease;
+  revision?: number;
+  operationId?: string;
+  beforeDispatch?: () => Promise<void>;
+}>();
 
 export class BrowserService {
+  private router?: CapabilityRouter;
   private native?: DesktopService;
   private actions?: ActionService;
   private readonly log: ActionLog;
@@ -88,11 +125,408 @@ export class BrowserService {
     this.resourceLeases = new ResourceLeases(db);
     this.runtimePause = new RuntimePause(db);
   }
+  configureFallback(router: CapabilityRouter) {
+    this.router = router;
+  }
+  async credentialTarget(owner: string, taskId: string, accountId: string) {
+    if (!this.router) return undefined;
+    const binding = await this.router.binding(owner, taskId);
+    const fallback = await this.fallbackExecutors(owner, accountId);
+    if (binding?.transport === "vps") {
+      const target = fallback.find(
+        (executor) =>
+          executor.executorId === binding.executorId &&
+          executor.profileId === binding.profileId &&
+          executor.sessionGeneration === binding.sessionGeneration,
+      );
+      if (!target)
+        throw new BrowserError(
+          "STALE_BROWSER_BINDING",
+          "The login browser lifecycle changed.",
+          409,
+          binding.sessionId,
+        );
+      return target;
+    }
+    try {
+      const native = await this.native?.session(owner);
+      if (
+        native &&
+        (!binding ||
+          (native.executorEpoch === binding.epoch &&
+            native.sessionGeneration === binding.sessionGeneration &&
+            native.profileId === binding.profileId))
+      )
+        return {
+          executorId: native.executorId,
+          profileId: native.profileId,
+          sessionId: native.browserSessionId,
+          sessionGeneration: native.sessionGeneration,
+        };
+    } catch {
+      /* The bound native session must wait; a first login may select VPS. */
+    }
+    if (binding)
+      throw new BrowserError(
+        "BROWSER_EXECUTOR_UNAVAILABLE",
+        "The bound login browser is offline.",
+        503,
+        binding.sessionId,
+      );
+    return fallback[0];
+  }
+  async hasUncertainDispatch(owner: string, taskId: string) {
+    if (!this.router) return false;
+    const operations = await this.db.list<{
+      taskId: string;
+      toolName: string;
+      status: string;
+      effect: boolean;
+    }>(owner, "task-operations");
+    if (
+      !operations.some(
+        (operation) =>
+          operation.taskId === taskId &&
+          operation.effect &&
+          /browser|credential/.test(operation.toolName) &&
+          ["dispatching", "running", "outcome_unknown"].includes(operation.status),
+      )
+    )
+      return false;
+    const handles = await Promise.all(
+      (await this.resourceLeases.listForTask(taskId)).map((lease) =>
+        this.db.get<{ hold?: boolean; request: { key: string } }>(
+          "__runtime__",
+          "resource-leases",
+          lease.id,
+        ),
+      ),
+    );
+    return handles.some(
+      (handle) =>
+        handle?.hold &&
+        handle.request.key.startsWith(
+          `browser-profile:${this.config.resourceHostId ?? "openmuse-server"}:`,
+        ),
+    );
+  }
+  /** Server-only credential path. The destination is independently validated;
+   * login uses this task's existing admission and a separate durable binding. */
+  async runOnExecutor<T>(
+    owner: string,
+    taskId: string,
+    accountId: string,
+    target: Pick<BrowserExecutor, "executorId" | "profileId" | "sessionId" | "sessionGeneration">,
+    url: string | undefined,
+    signal: AbortSignal | undefined,
+    operation: (id: string) => Promise<T>,
+  ) {
+    const native =
+      target.executorId === this.config.nativeExecutorId
+        ? await this.native?.session(owner)
+        : undefined;
+    const destination: Omit<BrowserExecutor, "capabilities" | "ready"> | undefined = native
+      ? {
+          executorId: native.executorId,
+          hostId: native.hostId,
+          profileId: native.profileId,
+          sessionId: native.browserSessionId,
+          sessionGeneration: native.sessionGeneration,
+          epoch: native.executorEpoch,
+          transport: "native",
+        }
+      : (await this.fallbackExecutors(owner, accountId)).find(
+          (item) => item.executorId === target.executorId,
+        );
+    if (
+      !destination ||
+      destination.profileId !== target.profileId ||
+      destination.sessionId !== target.sessionId ||
+      destination.sessionGeneration !== target.sessionGeneration
+    )
+      throw new BrowserError(
+        "STALE_BROWSER_BINDING",
+        "The selected login browser lifecycle changed.",
+        409,
+        target.sessionId,
+      );
+    const id = `login:${taskId}:${accountId}:${target.executorId}`;
+    let binding: ExecutorBinding | undefined;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const previous = await this.db.get<ExecutorBinding>(owner, "browser-bindings", id);
+      if (
+        previous &&
+        previous.epoch === destination.epoch &&
+        previous.sessionGeneration === destination.sessionGeneration &&
+        previous.sessionId === destination.sessionId &&
+        previous.profileId === destination.profileId
+      ) {
+        binding = previous;
+        break;
+      }
+      const value: ExecutorBinding = {
+        ...destination,
+        id,
+        taskId: id,
+        accountId,
+        fence: (previous?.fence ?? 0) + 1,
+        operationClass: "mutable",
+        authentication: { status: "public" },
+      };
+      binding =
+        (previous
+          ? await this.db.compareAndSwap<ExecutorBinding>(
+              owner,
+              "browser-bindings",
+              id,
+              { fence: previous.fence },
+              value,
+            )
+          : await this.db.insertIfAbsent(owner, "browser-bindings", value)) ?? undefined;
+      if (binding) break;
+    }
+    if (!binding)
+      throw new BrowserError(
+        "STALE_BROWSER_BINDING",
+        "The login binding raced with a newer session.",
+        409,
+        target.sessionId,
+      );
+    await this.db.insertIfAbsent(owner, "browsers", {
+      id: binding.sessionId,
+      url: url ?? "https://example.com/",
+      title: "Account login",
+      status: "idle",
+      control: "agent",
+      updatedAt: new Date().toISOString(),
+    });
+    await this.db.put(owner, "browser-session-bindings", { ...binding, id: binding.sessionId });
+    return routedBrowser.run({ owner, binding }, () =>
+      this.runAutomated(owner, taskId, binding.sessionId, url, signal, true, operation),
+    );
+  }
+  /** Authenticated worker handshake gives a fresh lifecycle. Profiles are owned
+   * by host/account; no source profile/cookies are copied during migration. */
+  async fallbackExecutors(owner: string, accountId?: string): Promise<BrowserExecutor[]> {
+    if (!this.config.workerUrl || !this.config.workerToken) return [];
+    let handshake: {
+      executorId: string;
+      instanceId: string;
+      minProtocolVersion: number;
+      maxProtocolVersion: number;
+      capabilities: BrowserExecutor["capabilities"];
+    };
+    try {
+      const response = await fetch(`${this.config.workerUrl}/executor`, {
+        headers: { Authorization: `Bearer ${this.config.workerToken}` },
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!response.ok) return [];
+      handshake = z
+        .object({
+          executorId: z.string(),
+          instanceId: z.string().min(1).max(128),
+          minProtocolVersion: z.number().int(),
+          maxProtocolVersion: z.number().int(),
+          capabilities: z.array(
+            z.object({
+              name: z.enum([
+                "browser.dom",
+                "browser.screenshot",
+                "browser.pointer",
+                "browser.drag",
+                "desktop",
+                "command",
+                "files",
+                "transcribe",
+              ]),
+              version: z.number().int().positive(),
+            }),
+          ),
+        })
+        .parse(await response.json());
+    } catch {
+      return [];
+    }
+    const executorId = this.config.browserFallbackExecutorId ?? "openmuse-server";
+    if (
+      handshake.executorId !== executorId ||
+      handshake.minProtocolVersion > 1 ||
+      handshake.maxProtocolVersion < 1
+    )
+      return [];
+    let epoch = 0;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const previous = await this.db.get<{ id: string; instanceId: string; epoch: number }>(
+        "__executors__",
+        "browser-workers",
+        executorId,
+      );
+      if (previous?.instanceId === handshake.instanceId) {
+        epoch = previous.epoch;
+        break;
+      }
+      const value = {
+        id: executorId,
+        instanceId: handshake.instanceId,
+        epoch: (previous?.epoch ?? 0) + 1,
+      };
+      const saved = previous
+        ? await this.db.compareAndSwap<{ epoch: number }>(
+            "__executors__",
+            "browser-workers",
+            executorId,
+            previous,
+            value,
+          )
+        : await this.db.insertIfAbsent("__executors__", "browser-workers", value);
+      if (saved) {
+        epoch = saved.epoch;
+        break;
+      }
+    }
+    if (!epoch)
+      throw new BrowserError("STALE_BROWSER_BINDING", "Browser worker registration raced.", 409);
+    const key = `${executorId}:${accountId ?? "public"}`;
+    const profile =
+      (await this.db.get<ChatBrowser>(owner, "browser-executor-profiles", key)) ??
+      (await this.db.insertIfAbsent(owner, "browser-executor-profiles", {
+        id: key,
+        sessionId: randomUUID(),
+      })) ??
+      (await this.db.get<ChatBrowser>(owner, "browser-executor-profiles", key));
+    if (!profile) throw new AppError("Could not reserve destination browser profile", 500);
+    return [
+      {
+        executorId,
+        hostId: this.config.resourceHostId ?? "openmuse-server",
+        transport: "vps",
+        epoch,
+        profileId: profile.sessionId,
+        sessionId: profile.sessionId,
+        sessionGeneration: `${handshake.instanceId}:${profile.sessionId}`,
+        ready: true,
+        capabilities: handshake.capabilities,
+      },
+    ];
+  }
+  private async routedAutomated<T>(
+    owner: string,
+    taskId: string | undefined,
+    sessionId: string | undefined,
+    url: string | undefined,
+    signal: AbortSignal | undefined,
+    effect: boolean,
+    operation: (id: string) => Promise<T>,
+    guard: (() => Promise<void>) | undefined,
+    trackResources: ((leases: ResourceLease[]) => void) | undefined,
+    routing?: BrowserRouting,
+  ): Promise<T> {
+    const router = this.router;
+    if (!router) throw new AppError("Browser routing is not configured", 503);
+    const routeId = routing?.taskId ?? taskId ?? "chat:personal";
+    const previous = await router.binding(owner, routeId);
+    const source = previous
+      ? await this.db.get<BrowserSession>(owner, "browsers", previous.sessionId)
+      : undefined;
+    if (sessionId && previous && sessionId !== previous.sessionId)
+      throw new BrowserError(
+        "STALE_BROWSER_BINDING",
+        "This task moved to another session. Obtain a fresh snapshot.",
+        409,
+        sessionId,
+      );
+    if (sessionId && !previous) await this.get(owner, sessionId);
+    const operationClass =
+      routing?.operationClass ??
+      (effect || url
+        ? "mutable"
+        : previous?.operationClass === "public_read"
+          ? "public_read"
+          : "authenticated_read");
+    if (previous?.operationClass === "public_read" && operationClass === "mutable")
+      throw new BrowserError(
+        "PUBLIC_RESEARCH_ONLY",
+        "Public research sessions accept reading only. Use the personal browser for site actions.",
+        409,
+        previous.sessionId,
+      );
+    const task = taskId
+      ? await this.db.get<{ artifactIds: string[]; state: { credentialRef?: { id?: string } } }>(
+          owner,
+          "tasks",
+          taskId,
+        )
+      : undefined;
+    const localArtifacts = await Promise.all(
+      (task?.artifactIds ?? []).map((id) =>
+        this.db.get<{ id: string; version: string }>(owner, "native-artifacts", id),
+      ),
+    );
+    const requiredArtifacts = localArtifacts.flatMap((artifact) =>
+      artifact ? [{ artifactId: artifact.id, version: artifact.version }] : [],
+    );
+    const request = {
+      owner,
+      taskId: routeId,
+      capability: routing?.capability ?? ("browser.dom" as const),
+      accountId:
+        operationClass === "public_read"
+          ? undefined
+          : (routing?.accountId ?? previous?.accountId ?? task?.state.credentialRef?.id),
+      artifactVersions: routing?.artifactVersions ?? requiredArtifacts,
+      operationClass,
+    };
+    const execute = async (binding: ExecutorBinding) => {
+      signal?.throwIfAborted();
+      await guard?.();
+      const saved = await this.db.get<BrowserSession>(owner, "browsers", binding.sessionId);
+      await this.db.insertIfAbsent(owner, "browsers", {
+        id: binding.sessionId,
+        title: "Personal browser",
+        url: url ?? source?.url ?? saved?.url ?? "https://example.com/",
+        status: "idle",
+        control: "agent",
+        updatedAt: new Date().toISOString(),
+      });
+      await this.db.put(owner, "browser-session-bindings", { ...binding, id: binding.sessionId });
+      return routedBrowser.run({ owner, binding }, () =>
+        this.runAutomated(
+          owner,
+          taskId,
+          binding.sessionId,
+          url ?? (binding.fence !== previous?.fence ? (source?.url ?? saved?.url) : undefined),
+          signal,
+          effect,
+          operation,
+          guard,
+          trackResources,
+        ),
+      );
+    };
+    const binding = await router.choose(request);
+    try {
+      return await execute(binding);
+    } catch (error) {
+      signal?.throwIfAborted();
+      const unavailable =
+        (error instanceof AppError && error.status === 503) ||
+        (error instanceof BrowserError &&
+          ["OUTCOME_UNKNOWN", "DESKTOP_FAILED", "WORKER_STOPPING"].includes(error.code));
+      if (operationClass === "mutable" || binding.transport !== "native" || !unavailable)
+        throw error;
+      const destination = await router.choose({
+        ...request,
+        excludeExecutorId: binding.executorId,
+      });
+      return execute(destination);
+    }
+  }
   configureActions(actions: ActionService) {
     this.actions = actions;
     actions.registerExternal("browser.act", async (owner, raw, proposal, beforeDispatch) => {
       const { sessionId, binding } = raw as { sessionId: string; binding: BrowserPaymentBinding };
-      if (this.native)
+      if (this.native && (await this.usesNative(owner, sessionId)))
         throw new BrowserError(
           "APPROVAL_FAILED",
           "Native browser reviewed money adapter is unavailable",
@@ -112,55 +546,89 @@ export class BrowserService {
       if (!leases) throw new ResourceBusyError(requests);
       let retainForUncertainOutcome = false;
       try {
-        return await this.serial(sessionId, async () => {
-          await this.get(owner, sessionId);
-          if (proposal.taskId) {
-            const task = await this.db.get<{ status: string }>(owner, "tasks", proposal.taskId);
-            if (!task || !["running", "waiting_approval"].includes(task.status))
-              throw new AppError("Task was cancelled or paused before browser dispatch", 409);
-          }
-          if (!this.config.workerToken) throw new AppError("Browser worker is unavailable", 503);
-          const authorization = signBrowserAuthorization(this.config.workerToken, {
-            id: proposal.id,
-            sessionId,
-            binding,
-            expiresAt: Date.parse(proposal.expiresAt),
-          });
-          // A local rejection is known not dispatched. Errors after this barrier
-          // require an explicit worker rejection to establish that fact.
-          await this.runtimePause.assertResumed(owner);
-          await beforeDispatch();
-          try {
-            const receipt = z
-              .object({ id: z.string(), status: z.literal("succeeded") })
-              .parse(
+        const destination = await this.db.get<ExecutorBinding>(
+          owner,
+          "browser-session-bindings",
+          sessionId,
+        );
+        if (destination) await this.router?.assertCurrent(owner, destination);
+        const reviewedTask = proposal.taskId
+          ? await this.db.get<{ state: { appliedRevision?: number } }>(
+              owner,
+              "tasks",
+              proposal.taskId,
+            )
+          : undefined;
+        const dispatch = () =>
+          this.serial(sessionId, async () => {
+            await this.get(owner, sessionId);
+            if (proposal.taskId) {
+              const task = await this.db.get<{ status: string }>(owner, "tasks", proposal.taskId);
+              if (!task || !["running", "waiting_approval"].includes(task.status))
+                throw new AppError("Task was cancelled or paused before browser dispatch", 409);
+            }
+            if (!this.config.workerToken) throw new AppError("Browser worker is unavailable", 503);
+            const authorization = signBrowserAuthorization(this.config.workerToken, {
+              id: proposal.id,
+              sessionId,
+              binding,
+              expiresAt: Date.parse(proposal.expiresAt),
+            });
+            // A local rejection is known not dispatched. Errors after this barrier
+            // require an explicit worker rejection to establish that fact.
+            await this.runtimePause.assertResumed(owner);
+            await beforeDispatch();
+            try {
+              const receipt = z.object({ id: z.string(), status: z.literal("succeeded") }).parse(
                 await (
-                  await this.request(`/sessions/${sessionId}/reviewed-act`, { authorization })
+                  await this.ownedRequest(owner, `/sessions/${sessionId}/reviewed-act`, {
+                    authorization,
+                  })
                 ).json(),
               );
-            if (receipt.id !== proposal.id) throw new Error("Mismatched browser receipt");
-            return `Browser action completed · ${receipt.id}`;
-          } catch (error) {
-            if (
-              error instanceof BrowserError &&
-              [
-                "STALE_SNAPSHOT",
-                "BROWSER_CONTROLLED",
-                "SESSION_CLOSED",
-                "SESSION_NOT_FOUND",
-                "INVALID_APPROVAL",
-                "APPROVAL_FAILED",
-                "INVALID_ACTION",
-              ].includes(error.code)
+              if (receipt.id !== proposal.id) throw new Error("Mismatched browser receipt");
+              return `Browser action completed · ${receipt.id}`;
+            } catch (error) {
+              if (
+                error instanceof RuntimePausedError ||
+                error instanceof ResourceBusyError ||
+                error instanceof TaskSupersededError ||
+                error instanceof TaskValidityExpiredError
+              )
+                throw error;
+              if (
+                error instanceof BrowserError &&
+                [
+                  "STALE_SNAPSHOT",
+                  "BROWSER_CONTROLLED",
+                  "SESSION_CLOSED",
+                  "SESSION_NOT_FOUND",
+                  "INVALID_APPROVAL",
+                  "APPROVAL_FAILED",
+                  "INVALID_ACTION",
+                ].includes(error.code)
+              )
+                throw error;
+              throw new BrowserError(
+                "OUTCOME_UNKNOWN",
+                "The browser could not confirm the reviewed action. Check the site before preparing another action.",
+                409,
+              );
+            }
+          });
+        return await (destination?.transport === "vps"
+          ? routedBrowser.run(
+              {
+                owner,
+                binding: destination,
+                lease: leases[0],
+                revision: reviewedTask?.state.appliedRevision ?? 0,
+                operationId: proposal.id,
+                beforeDispatch,
+              },
+              dispatch,
             )
-              throw error;
-            throw new BrowserError(
-              "OUTCOME_UNKNOWN",
-              "The browser could not confirm the reviewed action. Check the site before preparing another action.",
-              409,
-            );
-          }
-        });
+          : dispatch());
       } catch (error) {
         if (error instanceof BrowserError && error.code === "OUTCOME_UNKNOWN") {
           // Keep the profile unavailable until the person checks the uncertain
@@ -186,6 +654,9 @@ export class BrowserService {
   }
   private async usesNative(owner: string, id?: string) {
     if (!this.native) return false;
+    const routed = routedBrowser.getStore();
+    if (routed?.owner === owner)
+      return routed.binding.transport === "native" && (!id || id === routed.binding.sessionId);
     if (!id) return true;
     const session = await this.db.get<BrowserSession>(owner, "browsers", id);
     return !session || Boolean(session.desktopSessionId);
@@ -206,9 +677,10 @@ export class BrowserService {
     }
     if (!("fields" in input))
       throw new AppError("VPS credential fields must be resolved by the trusted broker", 503);
-    return trustedCredentialResultSchema.parse(
+    const result = trustedCredentialResultSchema.parse(
       await (await this.ownedRequest(owner, `/sessions/${id}/credentials`, input, signal)).json(),
     );
+    return this.credentialResult(owner, id, result);
   }
   async submitCredentialChallenge(
     owner: string,
@@ -222,11 +694,33 @@ export class BrowserService {
     await this.get(owner, id);
     if (!("fields" in input))
       throw new AppError("VPS challenge code requires trusted ephemeral input", 503);
-    return trustedCredentialResultSchema.parse(
+    const result = trustedCredentialResultSchema.parse(
       await (
         await this.ownedRequest(owner, `/sessions/${id}/credential-challenge`, input, signal)
       ).json(),
     );
+    return this.credentialResult(owner, id, result);
+  }
+  private async credentialResult(
+    owner: string,
+    id: string,
+    result: z.infer<typeof trustedCredentialResultSchema>,
+  ) {
+    if (result.sessionId !== id)
+      throw new AppError("Credential result belongs to another browser", 409);
+    const binding =
+      routedBrowser.getStore()?.binding ??
+      (await this.db.get<ExecutorBinding>(owner, "browser-session-bindings", id));
+    if (binding?.transport !== "vps") return result;
+    await this.router?.assertCurrent(owner, binding);
+    if (result.sessionGeneration && result.sessionGeneration !== binding.sessionGeneration)
+      throw new AppError("Credential result lifecycle changed", 409);
+    return {
+      ...result,
+      executorId: binding.executorId,
+      profileId: binding.profileId,
+      sessionGeneration: binding.sessionGeneration,
+    };
   }
   private ownedRequest(owner: string, path: string, body?: unknown, signal?: AbortSignal) {
     const endpoint = path.split("/")[3] ?? "open";
@@ -242,31 +736,144 @@ export class BrowserService {
         summary: `Browser ${endpoint}`,
         actor: human ? "human" : "agent",
       },
-      async () => {
-        const id =
-          /^\/sessions\/([^/]+)\//.exec(path)?.[1] ??
-          (body && typeof body === "object" && "id" in body && typeof body.id === "string"
-            ? body.id
-            : undefined);
-        return this.native && (await this.usesNative(owner, id))
-          ? this.native.browserRequest(owner, path, body, signal)
-          : this.request(path, body, signal);
-      },
+      () => this.boundWorkerRequest(owner, path, body, signal),
     );
   }
+  private async boundWorkerRequest(
+    owner: string,
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    const current = routedBrowser.getStore();
+    const id = ["/sessions", "/sessions/human"].includes(path)
+      ? (body as { id?: string } | undefined)?.id
+      : /^\/sessions\/([^/]+)/.exec(path)?.[1];
+    if (current) await this.router?.assertCurrent(owner, current.binding);
+    if (current || !this.router || !id) {
+      if (
+        current?.binding.operationClass === "public_read" &&
+        classifyBrowserOperation(
+          path === "/sessions"
+            ? "open"
+            : path.endsWith("/control") && body === undefined
+              ? "control-read"
+              : (path.split("/")[3] ?? "unknown"),
+          true,
+        ) === "mutable"
+      )
+        throw new BrowserError(
+          "PUBLIC_RESEARCH_ONLY",
+          "Public research profiles accept reading only.",
+          409,
+          id,
+        );
+      return this.native && (await this.usesNative(owner, id))
+        ? this.native.browserRequest(owner, path, body, signal)
+        : this.request(path, body, signal);
+    }
+    const binding = await this.db.get<ExecutorBinding>(owner, "browser-session-bindings", id);
+    if (binding) await this.router.assertCurrent(owner, binding);
+    const mutable =
+      classifyBrowserOperation(
+        path === "/sessions"
+          ? "open"
+          : path.endsWith("/control") && body === undefined
+            ? "control-read"
+            : (path.split("/")[3] ?? "unknown"),
+        binding?.operationClass === "public_read",
+      ) === "mutable";
+    if (mutable) {
+      if (binding?.operationClass === "public_read")
+        throw new BrowserError(
+          "PUBLIC_RESEARCH_ONLY",
+          "Public research profiles accept reading only.",
+          409,
+          id,
+        );
+      await this.runtimePause.assertResumed(owner);
+    }
+    if (binding?.transport !== "vps") {
+      if (this.native && (await this.usesNative(owner, id))) {
+        const session = await this.native.session(owner);
+        if (
+          binding &&
+          (binding.epoch !== session.executorEpoch ||
+            binding.sessionGeneration !== session.sessionGeneration ||
+            binding.profileId !== session.profileId ||
+            binding.sessionId !== session.browserSessionId)
+        )
+          throw new BrowserError(
+            "STALE_BROWSER_BINDING",
+            "The native browser lifecycle changed. Obtain a fresh observation.",
+            409,
+            id,
+          );
+        return this.native.browserRequest(owner, path, body, signal);
+      }
+      return this.request(path, body, signal);
+    }
+    if (!mutable) {
+      const held = (
+        await this.db.list<
+          ResourceLease & { owner: string; hold: boolean; request: { key: string } }
+        >("__runtime__", "resource-leases")
+      ).find(
+        (lease) =>
+          lease.owner === owner &&
+          lease.hold &&
+          lease.request.key === `browser-profile:${binding.hostId}:${binding.profileId}` &&
+          Date.parse(lease.expiresAt) > this.now(),
+      );
+      if (held)
+        return routedBrowser.run(
+          { owner, binding, lease: { id: held.id, fence: held.fence, expiresAt: held.expiresAt } },
+          () => this.request(path, body, signal),
+        );
+    }
+    const holdId = `browser-ui:${randomUUID()}`,
+      requests = [
+        {
+          key: `browser-profile:${binding.hostId}:${binding.profileId}`,
+          units: 1,
+          mode: "exclusive" as const,
+        },
+      ];
+    const leases = await this.resourceLeases.acquire(owner, holdId, requests);
+    if (!leases) throw new ResourceBusyError(requests);
+    let retain = false;
+    try {
+      return await routedBrowser.run({ owner, binding, lease: leases[0] }, () =>
+        this.request(path, body, signal),
+      );
+    } catch (error) {
+      if (
+        mutable &&
+        ((error instanceof BrowserError && error.code === "OUTCOME_UNKNOWN") ||
+          (error instanceof AppError && error.status === 503))
+      ) {
+        retain = true;
+        await this.resourceLeases.holdTask(holdId);
+      }
+      throw error;
+    } finally {
+      if (!retain) await Promise.all(leases.map((lease) => this.resourceLeases.release(lease)));
+    }
+  }
   /** Whether the configured worker answers its health check, cached briefly for snapshots. */
-  reachable(): Promise<boolean> {
-    if (this.native)
-      return this.native
-        .session(
+  async reachable(): Promise<boolean> {
+    if (this.native) {
+      try {
+        await this.native.session(
           this.config.nativeExecutors?.find(
             (item) => item.executorId === this.config.nativeExecutorId,
           )?.owner ?? "local-user",
-        )
-        .then(
-          () => true,
-          () => false,
         );
+        return true;
+      } catch {
+        if (!this.router) return false;
+      }
+    }
     if (!this.config.workerUrl || !this.config.workerToken) return Promise.resolve(false);
     const now = this.now();
     if (this.health && now - this.health.checkedAt < 15_000) return this.health.reachable;
@@ -292,6 +899,106 @@ export class BrowserService {
     signal?.throwIfAborted();
     if (!this.config.workerUrl || !this.config.workerToken)
       throw new AppError("Browser worker is not configured. Start it using the setup guide.", 503);
+    const routing = routedBrowser.getStore();
+    if (routing?.binding.transport === "vps") {
+      await this.router?.assertCurrent(routing.owner, routing.binding);
+      if (!routing.lease)
+        throw new BrowserError(
+          "STALE_BROWSER_BINDING",
+          "Browser profile lease is absent.",
+          409,
+          routing.binding.sessionId,
+        );
+    }
+    const serialized = body === undefined ? "" : JSON.stringify(body);
+    const operationClass = classifyBrowserOperation(
+      path === "/sessions"
+        ? "open"
+        : path.endsWith("/control") && body === undefined
+          ? "control-read"
+          : (path.split("/")[3] ?? "unknown"),
+      routing?.binding.operationClass === "public_read" ||
+        currentTaskScope()?.operation.toolName === "browser_research",
+    );
+    // Everything that can await (vault access, queueing, inspection) finishes
+    // before this final dispatch barrier. The task check atomically revalidates
+    // revision, pause, run authority and the actual physical lease.
+    if (routing?.binding.transport === "vps" && routing.lease) {
+      if (operationClass === "mutable") await this.runtimePause.assertResumed(routing.owner);
+      const live = await this.db.get<
+        ResourceLease & { owner: string; request: { key: string; mode: string } }
+      >("__runtime__", "resource-leases", routing.lease.id);
+      if (
+        !live ||
+        live.owner !== routing.owner ||
+        live.fence !== routing.lease.fence ||
+        live.request.key !==
+          `browser-profile:${routing.binding.hostId}:${routing.binding.profileId}` ||
+        live.request.mode !== "exclusive" ||
+        Date.parse(live.expiresAt) <= this.now()
+      )
+        throw new ResourceBusyError([]);
+      routing.lease = { id: live.id, fence: live.fence, expiresAt: live.expiresAt };
+      const scope = currentTaskScope();
+      if (routing.beforeDispatch && operationClass === "mutable") await routing.beforeDispatch();
+      else if (scope) {
+        if (scope.owner !== routing.owner) throw new AppError("Browser task owner changed", 403);
+        const operation = scope.primitive ?? scope.operation;
+        await scope.journal.authorizeDispatch(
+          scope.owner,
+          operation.id,
+          operation.revision,
+          operation.runToken,
+          [routing.lease],
+          true,
+        );
+      }
+      signal?.throwIfAborted();
+    } else {
+      // The legacy VPS adapter uses the same durable task barrier, while
+      // trusted manual calls remain independent of background task authority.
+      const scope = currentTaskScope();
+      if (scope) {
+        const operation = scope.primitive ?? scope.operation;
+        await scope.journal.authorizeDispatch(
+          scope.owner,
+          operation.id,
+          operation.revision,
+          operation.runToken,
+          undefined,
+          true,
+        );
+      }
+      signal?.throwIfAborted();
+    }
+    const authority =
+      routing?.binding.transport === "vps" && routing.lease
+        ? signBrowserExecutor(this.config.workerToken, {
+            executorId: routing.binding.executorId,
+            epoch: routing.binding.epoch,
+            instanceId: routing.binding.sessionGeneration.slice(
+              0,
+              -(routing.binding.sessionId.length + 1),
+            ),
+            profileId: routing.binding.profileId,
+            sessionId: routing.binding.sessionId,
+            sessionGeneration: routing.binding.sessionGeneration,
+            fence: routing.lease.fence,
+            bindingFence: routing.binding.fence,
+            taskId: routing.binding.taskId,
+            revision: currentTaskScope()?.operation.revision ?? routing.revision ?? 0,
+            operationId: createHash("sha256")
+              .update(
+                `${taskOperationId() ?? routing.operationId ?? randomUUID()}:${path}:${browserBodyHash(serialized)}`,
+              )
+              .digest("hex"),
+            expiresAt: Math.min(Date.parse(routing.lease.expiresAt), this.now() + 45_000),
+            operationClass: operationClass ?? "mutable",
+            method: body === undefined ? "GET" : "POST",
+            path,
+            bodyHash: browserBodyHash(serialized),
+          })
+        : undefined;
     let response: Response;
     try {
       response = await fetch(`${this.config.workerUrl}${path}`, {
@@ -299,26 +1006,28 @@ export class BrowserService {
         headers: {
           Authorization: `Bearer ${this.config.workerToken}`,
           "Content-Type": "application/json",
+          ...(authority ? { "X-OpenMuse-Browser-Authority": authority } : {}),
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined ? undefined : serialized,
         signal: signal
           ? AbortSignal.any([signal, AbortSignal.timeout(45000)])
           : AbortSignal.timeout(45000),
       });
     } catch {
-      signal?.throwIfAborted();
       if (
         path.endsWith("/upload") ||
         path.endsWith("/reviewed-act") ||
         path.endsWith("/credentials") ||
         path.endsWith("/credential-challenge") ||
-        path.endsWith("/challenge")
+        path.endsWith("/challenge") ||
+        (authority && operationClass === "mutable")
       )
         throw new BrowserError(
           "OUTCOME_UNKNOWN",
-          "The reviewed browser response was lost. Check the site before preparing another action.",
+          "The browser response was lost after mutable dispatch. Check the site before preparing another action.",
           409,
         );
+      signal?.throwIfAborted();
       throw new AppError(
         "Browser worker is unavailable. Check that its container is running.",
         503,
@@ -337,6 +1046,48 @@ export class BrowserService {
           : /^\/sessions\/([^/]+)/.exec(path)?.[1],
         payload?.error?.details,
       );
+    }
+    if (body !== undefined && operationClass === "mutable") {
+      try {
+        const payload: unknown = await response.clone().json();
+        const endpoint = path.split("/")[3] ?? "open";
+        const sessionId =
+          path === "/sessions" || path === "/sessions/human"
+            ? (body as { id?: string }).id
+            : /^\/sessions\/([^/]+)/.exec(path)?.[1];
+        if (["credentials", "credential-challenge"].includes(endpoint)) {
+          const receipt = trustedCredentialResultSchema.parse(payload);
+          if (
+            receipt.sessionId !== sessionId ||
+            receipt.origin !== (body as { origin?: string }).origin ||
+            (receipt.sessionGeneration &&
+              receipt.sessionGeneration !== routing?.binding.sessionGeneration) ||
+            receipt.status === "outcome_unknown"
+          )
+            throw new Error("Credential receipt binding changed");
+        } else if (endpoint === "challenge") {
+          const receipt = captchaResultSchema.parse(payload);
+          if (receipt.sessionId !== sessionId)
+            throw new Error("Challenge receipt belongs to another session");
+        } else if (["act", "upload"].includes(endpoint)) {
+          if (snapshotSchema.parse(payload).sessionId !== sessionId)
+            throw new Error("Browser action receipt belongs to another session");
+        } else if (endpoint === "reviewed-act")
+          z.object({ id: z.string(), status: z.literal("succeeded") }).parse(payload);
+        else if (
+          ["open", "navigate", "agent-navigate", "close", "control", "input"].includes(endpoint)
+        ) {
+          if (sessionSchema.parse(payload).id !== sessionId)
+            throw new Error("Browser receipt belongs to another session");
+        } else throw new Error("Unsupported mutable browser receipt");
+      } catch {
+        throw new BrowserError(
+          "OUTCOME_UNKNOWN",
+          "The browser returned an invalid receipt after mutable dispatch. Inspect the site before retrying.",
+          409,
+          routing?.binding.sessionId,
+        );
+      }
     }
     return response;
   }
@@ -446,7 +1197,21 @@ export class BrowserService {
     trackResources?: (
       leases: import("../../../packages/domain/src/runtime.ts").ResourceLease[],
     ) => void,
+    routing?: BrowserRouting,
   ): Promise<T> {
+    if (this.router && !routedBrowser.getStore())
+      return this.routedAutomated(
+        owner,
+        taskId,
+        sessionId,
+        url,
+        signal,
+        effect,
+        operation,
+        guard,
+        trackResources,
+        routing,
+      );
     if (this.native && (await this.usesNative(owner, sessionId))) {
       const desktop = await this.native.session(owner);
       if (sessionId && sessionId !== desktop.browserSessionId)
@@ -517,9 +1282,12 @@ export class BrowserService {
       leases = await this.resourceLeases.acquire(owner, leaseTaskId, requests);
     }
     if (!leases) throw new ResourceBusyError(requests);
+    const currentRouting = routedBrowser.getStore();
+    if (currentRouting?.owner === owner) currentRouting.lease = leases[0];
     trackResources?.(leases);
     const renewals = new Set<Promise<unknown>>();
     let leaseLost = false;
+    let retainForUncertainOutcome = false;
     const heartbeat =
       taskId === undefined
         ? setInterval(() => {
@@ -536,17 +1304,24 @@ export class BrowserService {
       await guard?.();
       if (effect) await this.runtimePause.assertResumed(owner);
       if (leaseLost) throw new ResourceBusyError(requests);
-      await authorizeTaskEffect();
+      await authorizeTaskEffect(leases, leaseTaskId);
       const activeId = await this.agentSession(owner, id, url, signal);
       await guard?.();
       if (effect) await this.runtimePause.assertResumed(owner);
       if (leaseLost) throw new ResourceBusyError(requests);
-      if (effect) await authorizeTaskEffect();
+      if (effect) await authorizeTaskEffect(leases, leaseTaskId);
       return await operation(activeId);
+    } catch (error) {
+      if (error instanceof BrowserError && error.code === "OUTCOME_UNKNOWN") {
+        retainForUncertainOutcome = true;
+        await this.resourceLeases.holdTask(leaseTaskId);
+      }
+      throw error;
     } finally {
       if (heartbeat) clearInterval(heartbeat);
       await Promise.allSettled([...renewals]);
-      if (!taskId) await Promise.all(leases.map((lease) => this.resourceLeases.release(lease)));
+      if (!taskId && !retainForUncertainOutcome)
+        await Promise.all(leases.map((lease) => this.resourceLeases.release(lease)));
     }
   }
   async observe(
@@ -814,30 +1589,9 @@ export class BrowserService {
     signal?: AbortSignal,
   ) {
     await this.get(owner, id);
-    const result = z
-      .object({
-        status: z.enum(["pending", "authenticated", "manual_required"]),
-        sessionId: z.uuid(),
-        frameId: z.uuid().optional(),
-        image: z.string().max(1_398_104).optional(),
-        mimeType: z.literal("image/png").optional(),
-        width: z.number().int().positive().optional(),
-        height: z.number().int().positive().optional(),
-        observedAt: z.iso.datetime().optional(),
-        elements: z
-          .array(
-            z.object({
-              number: z.number().int().positive(),
-              label: z.string().max(200),
-              type: z.string(),
-            }),
-          )
-          .max(80)
-          .optional(),
-      })
-      .parse(
-        await (await this.ownedRequest(owner, `/sessions/${id}/challenge`, plan, signal)).json(),
-      );
+    const result = captchaResultSchema.parse(
+      await (await this.ownedRequest(owner, `/sessions/${id}/challenge`, plan, signal)).json(),
+    );
     if (result.sessionId !== id)
       throw new BrowserError(
         "CHALLENGE_SESSION_CHANGED",

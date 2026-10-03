@@ -65,6 +65,8 @@ export interface Config {
   googleRedirectUri: string;
   workerUrl?: string;
   workerToken?: string;
+  browserFallbackEnabled?: boolean;
+  browserFallbackExecutorId?: string;
   taskWorkerEnabled?: boolean;
   computerEnabled?: boolean;
   computerImage?: string;
@@ -242,6 +244,8 @@ export function readConfig(): Config {
       .parse(process.env.CAPTCHA_MAX_SUBMISSIONS),
     workerUrl: browserWorkerUrl(process.env.BROWSER_WORKER_URL),
     workerToken: process.env.WORKER_TOKEN,
+    browserFallbackEnabled: process.env.BROWSER_FALLBACK_ENABLED === "true",
+    browserFallbackExecutorId: process.env.BROWSER_EXECUTOR_ID?.trim() || "openmuse-server",
     taskWorkerEnabled: process.env.TASK_WORKER_ENABLED !== "false",
     computerEnabled: process.env.COMPUTER_ENABLED === "true",
     computerImage: process.env.COMPUTER_IMAGE ?? "openmuse-computer:local",

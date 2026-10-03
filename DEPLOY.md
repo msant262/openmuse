@@ -2,14 +2,19 @@
 
 This deployment runs one OpenMuse owner on a Linux **2 vCPU / 8 GB VPS**, using the existing mobile app. The root `docker-compose.yml` runs the API with its in-process task worker/PGlite, persistent Chromium, the nonroot open computer and its authenticated egress gateway. CopilotKit Intelligence, Composio and native push credentials are optional. The MIT source, demo and local browser-only `infra/compose.yaml` workflow remain available.
 
+The optional Lenovo primary browser and VPS backup use the
+[hybrid overlay and browser routing](docs/BROWSER-FALLBACK.md). The VPS browser
+keeps its 2 GiB limit; native accounts and privilege mode require operator setup.
+
 | Service | Maximum resident memory | Persistent state |
 | --- | ---: | --- |
 | server | 1280 MiB | `server-data`: embedded DB, threads/tasks/audit/routines, files, signing key, subscription credentials/VM host ID |
 | browser | 2048 MiB | `browser-data`: profiles, cookies, takeover metadata/downloads; shared memory capacity 1 GiB inside this cap |
-| computer | 3072 MiB | `workspace` at `/workspace`; `computer-home` at `/home/node`, including command receipts/logs/user tools |
+| computer | 2944 MiB | `workspace` at `/workspace`; `computer-home` at `/home/node`, including command receipts/logs/user tools |
 | computer-egress | 128 MiB | Firewall/authenticated proxy, separate PID namespace |
+| openbao | 256 MiB | `openbao-data`: encrypted credential vault; private vault network |
 
-Total: **6528 MiB / 6,845,104,128 bytes**, below decimal 7 GB. Every long-running container has init as PID 1, restart policy, healthcheck and memory/PID limits. Container swap is disabled; add host swap for the OS/build/maintenance headroom, not as an increased model budget. A large local LLM is not bundled. Image builds, CPU int8 transcription and concurrent Chromium activity need timing/resource checks on your actual host.
+Total: **6656 MiB / 6,979,321,856 bytes**, below decimal 7 GB. The hybrid overlay starts API, browser and vault at **3584 MiB**, with the legacy computer/gateway available by profile. Every long-running container has init as PID 1, restart policy, healthcheck and memory/PID limits. Container swap is disabled; add host swap for the OS/build/maintenance headroom, not as an increased model budget. A large local LLM is not bundled. Image builds, CPU int8 transcription and concurrent Chromium activity need timing/resource checks on your actual host.
 
 ## 1. Prepare the host and 4 GiB swap
 

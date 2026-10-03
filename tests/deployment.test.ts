@@ -157,6 +157,34 @@ test("root browser image layout loads actual worker/shared modules with native s
   }
 });
 
+test("hybrid Compose retains 2GiB browser and legacy profile without starting a second computer host", async () => {
+  const overlaySource = await readFile("deploy/compose.hybrid.yml", "utf8");
+  const overlay = parseDocument(overlaySource, {
+    customTags: [{ tag: "!override", collection: "map", resolve: (value) => value }],
+  });
+  assert.deepEqual(overlay.errors, []);
+  const config = overlay.toJS() as {
+    services: Record<string, ComposeService & { profiles?: string[] }>;
+  };
+  assert.equal(config.services.browser.mem_limit, "2g");
+  assert.equal(config.services.browser.memswap_limit, "2g");
+  assert.deepEqual(config.services.server.depends_on, {
+    browser: { condition: "service_healthy" },
+    openbao: { condition: "service_healthy" },
+  });
+  assert.equal(config.services.server.environment.COMPUTER_BACKEND, "native");
+  assert.equal(config.services.server.environment.BROWSER_FALLBACK_ENABLED, "true");
+  assert.equal(config.services.browser.environment.BROWSER_REQUIRE_BINDING, "true");
+  assert.deepEqual(config.services.computer.profiles, ["legacy-computer"]);
+  assert.deepEqual(config.services["computer-egress"].profiles, ["legacy-computer"]);
+  const base = parseDocument(await readFile("docker-compose.yml", "utf8")).toJS() as {
+    services: Record<string, ComposeService>;
+  };
+  assert(1280 * 1024 ** 2 + 2 * 1024 ** 3 + 256 * 1024 ** 2 < 7000000000);
+  assert(base.services.browser.volumes?.includes("browser-data:/data"));
+  assert.equal(base.services.server.environment.DATABASE_URL, undefined);
+});
+
 test("host backup scripts reject dirty stops and stage real private archive round-trips", () => {
   execFileSync("bash", ["-n", "scripts/backup.sh", "scripts/restore.sh"], { stdio: "pipe" });
   execFileSync("python3", ["scripts/test_deployment_backup.py"], { stdio: "pipe", timeout: 30000 });

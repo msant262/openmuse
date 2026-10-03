@@ -48,7 +48,7 @@ export class BrowserSearchBackend implements SearchBackend {
       return await this.browser.runAutomated(
         context.owner,
         context.taskId,
-        context.sessionId,
+        undefined,
         undefined,
         context.signal,
         true,
@@ -58,6 +58,11 @@ export class BrowserSearchBackend implements SearchBackend {
         },
         context.before,
         context.trackResourceLeases,
+        {
+          taskId: `search:${context.taskId ?? "chat"}`,
+          operationClass: "public_read",
+          artifactVersions: [],
+        },
       );
     } catch (error) {
       // Loss of a lease/pause/unknown native dispatch is control flow owned by

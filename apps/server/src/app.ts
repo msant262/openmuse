@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { MessageSchema } from "@ag-ui/core";
 import { CopilotKitIntelligence } from "@copilotkit/runtime/v2";
 import { Hono } from "hono";
@@ -36,8 +36,10 @@ import { agentRoutes } from "./engine/routes.ts";
 import { RuntimePause, RuntimePausedError } from "./engine/runtime-pause.ts";
 import { AgentService } from "./engine/service.ts";
 import { currentExecutorContext, TaskExecutorAuthority } from "./engine/task-executor-authority.ts";
+import { currentTaskScope } from "./engine/task-journal.ts";
 import { LostLeaseError } from "./engine/worker.ts";
 import { AppError } from "./errors.ts";
+import { CapabilityRouter } from "./executors/capability-router.ts";
 import { nativeGraphicalReset } from "./executors/graphical-policy.ts";
 import {
   currentManualNativeScope,
@@ -261,6 +263,98 @@ export async function createApp(
     });
     await desktopViewers!.recover();
   }
+  if (config.browserFallbackEnabled)
+    browser.configureFallback(
+      new CapabilityRouter(db, {
+        authentication: async (owner, accountId, target) => {
+          const connection = await credentials.connection(owner, accountId);
+          if (connection.status !== "connected") return undefined;
+          const proof = await credentials.browserBinding(owner, accountId, target);
+          return proof?.sessionGeneration
+            ? { accountId: proof.accountId, authenticatedAt: proof.authenticatedAt }
+            : undefined;
+        },
+        requestLogin: async (owner, accountId, target, taskId) => {
+          const scope = currentTaskScope();
+          if (!scope || scope.owner !== owner || scope.task.id !== taskId) return;
+          const id = createHash("sha256")
+            .update(
+              `${accountId}:${target.executorId}:${target.profileId}:${target.sessionGeneration}`,
+            )
+            .digest("hex");
+          const result = (await agent.journal.run(
+            owner,
+            scope.task,
+            {
+              id: `destination-login:${id}`,
+              name: "credential_login",
+              args: {
+                credentialRefId: accountId,
+                executorId: target.executorId,
+                sessionId: target.sessionId,
+                sessionGeneration: target.sessionGeneration,
+              },
+            },
+            () => credentialLogin.authenticate(owner, taskId, accountId, undefined, target),
+            true,
+          )) as { status: string; challengeId?: string };
+          if (result.status === "needs_challenge" && result.challengeId) {
+            const task = await db.get<import("../../../packages/domain/src/agent.ts").AgentTask>(
+              owner,
+              "tasks",
+              taskId,
+            );
+            if (task)
+              await db.compareAndSwapTask(
+                owner,
+                taskId,
+                { leaseId: task.leaseId, state: task.state },
+                {
+                  state: {
+                    ...task.state,
+                    credentialChallengeId: result.challengeId,
+                    browserDestinationId: target.sessionId,
+                  },
+                },
+              );
+          }
+        },
+        executors: async (owner, accountId) => {
+          const fallback = await browser.fallbackExecutors(owner, accountId);
+          try {
+            const session = await browser.nativeSession(owner);
+            if (!session) return fallback;
+            const node = await executors.node(session.executorId);
+            if (!node) return fallback;
+            return [
+              {
+                executorId: session.executorId,
+                hostId: session.hostId,
+                profileId: session.profileId,
+                sessionId: session.browserSessionId,
+                sessionGeneration: session.sessionGeneration,
+                epoch: session.executorEpoch,
+                transport: "native" as const,
+                ready:
+                  node.connected &&
+                  node.reconciled &&
+                  !node.hello.readiness.quarantined &&
+                  node.hello.readiness.account.state === "ready" &&
+                  node.hello.readiness.browser.state === "ready",
+                capabilities: node.hello.capabilities.filter(
+                  (capability) =>
+                    capability.name !== "browser.screenshot" ||
+                    node.hello.readiness.capture.state === "ready",
+                ),
+              },
+              ...fallback,
+            ];
+          } catch {
+            return fallback;
+          }
+        },
+      }),
+    );
   const manualNative =
     config.computerBackend === "native"
       ? new ManualNativeOperations(agent, computer, files)

@@ -504,7 +504,12 @@ export class TaskWorker {
         }
         try {
           await Promise.all(
-            [...ownedResources.values()].map((lease) => this.resources.release(lease)),
+            [...ownedResources.values()].map(async (lease) => {
+              const held = keepAdmission
+                ? await this.db.get<{ hold?: boolean }>("__runtime__", "resource-leases", lease.id)
+                : undefined;
+              if (!held?.hold) await this.resources.release(lease);
+            }),
           );
         } catch (error) {
           cleanupFailure ??= error;

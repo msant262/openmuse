@@ -12,7 +12,7 @@ Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-
 | 6 — Native Linux executor and file recovery | Reviewed and integrated; physical deployment acceptance pending |
 | 7 — Native desktop and browser | Reviewed and integrated; physical deployment acceptance pending |
 | 8 — Private credentials and connector OAuth | Reviewed and integrated; real account/device acceptance pending |
-| 9 — Capability-aware browser fallback | Pending integration |
+| 9 — Capability-aware browser fallback | Reviewed and integrated; physical partition acceptance pending |
 | 10 — Bounded context and long-term memory | Reviewed and integrated; physical/provider acceptance pending |
 | 11–12 | Pending integration |
 
@@ -250,3 +250,24 @@ two deliveries, composed the final desktop/context changes and fixed Docker memo
 accounting for the co-located vault. The complete suite passed **724/724**
 (148.8 seconds), with server/mobile/worker type checks and four real Chromium
 challenge fixtures, on 2026-10-03. No physical vault/login/phone acceptance is claimed.
+
+## Milestone 9
+
+Public browser research and source search can use an independent persistent VPS
+profile when the native executor is offline. Routing checks concrete capabilities,
+protocol version, profile/session generation and resource fences. Login on a
+destination uses the private broker and that destination's own profile; cookies
+are not copied. Shell and desktop jobs remain bound to Lenovo.
+
+A possible external mutation is never replayed on another machine. Lost or invalid
+mutable receipts retain their admission and profile holds for inspection. Signed
+worker requests bind exact method, path, body and current task authority. Vault
+reads finish before a final pause/direction/lease check. CAPTCHA continues only on
+its recorded executor/session and retains the original attempt budget.
+
+Root composed the second delivery with final desktop, vault and context changes,
+then added regressions for source search, uploads and CAPTCHA routes. The complete
+suite passed **755/755** (165.2 seconds) on 2026-10-03; composed focus checks passed
+39/39, new source-search/CAPTCHA receipt cases 4/4, and real worker HTTP contracts
+3/3. Server/mobile/worker type checks passed. Earlier delivery Chromium fixtures
+passed 19/19; physical Wi-Fi loss and rejoin remain deployment acceptance.

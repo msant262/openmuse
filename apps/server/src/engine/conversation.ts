@@ -370,6 +370,7 @@ export class ConversationAgent extends AbstractAgent {
       ...delegateTools(
         browserTools(this.service.browser, this.owner, {
           computer: this.service.computer,
+          routingTaskId: `chat:${input.threadId}`,
           signal: browserAbort.signal,
           effectBefore: () => this.service.runtimePause.assertResumed(this.owner).then(() => {}),
         }),

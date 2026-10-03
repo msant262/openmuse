@@ -50,3 +50,24 @@ export const captchaPlanSchema = z
   })
   .strict();
 export type CaptchaPlan = z.infer<typeof captchaPlanSchema>;
+
+export const captchaResultSchema = z.object({
+  status: z.enum(["pending", "authenticated", "manual_required"]),
+  sessionId: z.uuid(),
+  frameId: z.uuid().optional(),
+  image: z.string().max(1_398_104).optional(),
+  mimeType: z.literal("image/png").optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  observedAt: z.iso.datetime().optional(),
+  elements: z
+    .array(
+      z.object({
+        number: z.number().int().positive(),
+        label: z.string().max(200),
+        type: z.string(),
+      }),
+    )
+    .max(80)
+    .optional(),
+});

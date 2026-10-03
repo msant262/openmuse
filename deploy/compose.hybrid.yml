@@ -1,0 +1,29 @@
+# MIT. Overlay: exactly two hosts, one VPS database writer; Lenovo uses native
+# systemd services. Compose 2.24.4+ supports the explicit dependency override.
+services:
+  server:
+    depends_on: !override
+      browser:
+        condition: service_healthy
+      openbao:
+        condition: service_healthy
+    environment:
+      COMPUTER_BACKEND: native
+      COMPUTER_PROFILE: open
+      COMPUTER_ENABLED: "true"
+      NATIVE_EXECUTOR_ID: ${NATIVE_EXECUTOR_ID:?Set the registered Lenovo executor ID}
+      NATIVE_EXECUTOR_REGISTRATIONS_FILE: /run/secrets/native-executors.json
+      BROWSER_FALLBACK_ENABLED: "true"
+      BROWSER_EXECUTOR_ID: openmuse-server
+      RESOURCE_HOST_ID: openmuse-server
+      COMPUTER_TOKEN: ""
+  browser:
+    mem_limit: 2g
+    memswap_limit: 2g
+    environment:
+      BROWSER_EXECUTOR_ID: openmuse-server
+      BROWSER_REQUIRE_BINDING: "true"
+  computer:
+    profiles: [legacy-computer]
+  computer-egress:
+    profiles: [legacy-computer]

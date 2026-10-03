@@ -42,7 +42,13 @@ type CredentialBrowserResult = {
 };
 type CredentialBrowser = Pick<
   BrowserService,
-  "runAutomated" | "credentials" | "submitCredentialChallenge" | "isNativeSession" | "challenge"
+  | "runAutomated"
+  | "runOnExecutor"
+  | "credentialTarget"
+  | "credentials"
+  | "submitCredentialChallenge"
+  | "isNativeSession"
+  | "challenge"
 >;
 type BrowserTarget = {
   executorId: string;
@@ -112,6 +118,14 @@ export class CredentialLoginService {
     const challenge = challengeId
       ? await this.credentials.getChallenge(owner, taskId, refId, challengeId)
       : undefined;
+    if (!target && challenge?.executorId && challenge.profileId && challenge.sessionGeneration)
+      target = {
+        executorId: challenge.executorId,
+        profileId: challenge.profileId,
+        sessionId: challenge.sessionId,
+        sessionGeneration: challenge.sessionGeneration,
+      };
+    if (!target && !challenge) target = await this.browser.credentialTarget(owner, taskId, refId);
     if (connection.status === "outcome_unknown")
       throw new AppError(
         "The last login outcome is uncertain. Inspect the browser before retrying.",
@@ -164,57 +178,68 @@ export class CredentialLoginService {
       : trustedCredentialPlan(adapter, refId, taskId, revision);
     let result: CredentialBrowserResult;
     try {
-      result = await this.browser.runAutomated(
-        owner,
-        taskId,
-        challenge?.sessionId ?? target?.sessionId,
-        challenge ? undefined : target ? undefined : (adapter.loginUrl ?? adapter.origin),
-        signal,
-        true,
-        async (sessionId) => {
-          if (target && target.sessionId !== sessionId)
+      const inject = async (sessionId: string) => {
+        if (target && target.sessionId !== sessionId)
+          throw new AppError(
+            "The requested destination browser binding changed",
+            409,
+            "BROWSER_BINDING_CHANGED",
+          );
+        if (await this.browser.isNativeSession(owner, sessionId))
+          return (
+            challenge
+              ? this.browser.submitCredentialChallenge(owner, sessionId, plan, signal)
+              : this.browser.credentials(owner, sessionId, plan, signal)
+          ) as Promise<CredentialBrowserResult>;
+        if (challenge) {
+          if (!code)
             throw new AppError(
-              "The requested destination browser binding changed",
+              "The verification code expired; enter it again",
               409,
-              "BROWSER_BINDING_CHANGED",
+              "CHALLENGE_CODE_EXPIRED",
             );
-          if (await this.browser.isNativeSession(owner, sessionId))
-            return (
-              challenge
-                ? this.browser.submitCredentialChallenge(owner, sessionId, plan, signal)
-                : this.browser.credentials(owner, sessionId, plan, signal)
-            ) as Promise<CredentialBrowserResult>;
-          if (challenge) {
-            if (!code)
-              throw new AppError(
-                "The verification code expired; enter it again",
-                409,
-                "CHALLENGE_CODE_EXPIRED",
-              );
-            const input = trustedCredentialChallengeInput(
-              adapter,
-              { id: challenge.id, kind: challenge.kind },
-              code,
-            );
-            return this.browser.submitCredentialChallenge(
-              owner,
-              sessionId,
-              input,
-              signal,
-            ) as Promise<CredentialBrowserResult>;
-          }
-          // Only the isolated VPS worker receives a direct, short-lived body.
-          // The Lenovo branch above supplies a metadata-only plan; OpenBao is
-          // read only by the node's claimed, one-use consume route.
-          const stored = await this.credentials.getForTask(owner, taskId, refId);
-          return this.browser.credentials(
+          const input = trustedCredentialChallengeInput(
+            adapter,
+            { id: challenge.id, kind: challenge.kind },
+            code,
+          );
+          return this.browser.submitCredentialChallenge(
             owner,
             sessionId,
-            trustedCredentialInput(stored.adapter, stored.values),
+            input,
             signal,
           ) as Promise<CredentialBrowserResult>;
-        },
-      );
+        }
+        // Only the isolated VPS worker receives a direct, short-lived body.
+        // The Lenovo branch above supplies a metadata-only plan; OpenBao is
+        // read only by the node's claimed, one-use consume route.
+        const stored = await this.credentials.getForTask(owner, taskId, refId);
+        return this.browser.credentials(
+          owner,
+          sessionId,
+          trustedCredentialInput(stored.adapter, stored.values),
+          signal,
+        ) as Promise<CredentialBrowserResult>;
+      };
+      result = target
+        ? await this.browser.runOnExecutor(
+            owner,
+            taskId,
+            refId,
+            target,
+            challenge ? undefined : (adapter.loginUrl ?? adapter.origin),
+            signal,
+            inject,
+          )
+        : await this.browser.runAutomated(
+            owner,
+            taskId,
+            challenge?.sessionId,
+            challenge ? undefined : (adapter.loginUrl ?? adapter.origin),
+            signal,
+            true,
+            inject,
+          );
     } catch (error) {
       const unknown = (error as { code?: unknown })?.code === "OUTCOME_UNKNOWN";
       const status = unknown ? "outcome_unknown" : "error";
