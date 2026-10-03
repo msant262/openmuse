@@ -49,7 +49,7 @@ import type {
   InteractionRequest,
   TaskMailbox,
 } from "../../../packages/domain/src/runtime";
-import { ArtifactCard } from "./agent-ui";
+import { AgentStatus, ArtifactCard } from "./agent-ui";
 import { useAgentWorkspace } from "./agent-workspace";
 import { AssistantResponse } from "./assistant-response";
 import { useAvatarPresentation } from "./avatar-presentation";
@@ -942,7 +942,12 @@ export function ChatScreen({
       <ScrollView
         ref={list}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ gap: 13, paddingTop: 15, paddingBottom: 20, flexGrow: 1 }}
+        contentContainerStyle={{
+          gap: wide ? 18 : 15,
+          paddingTop: wide ? 24 : 116,
+          paddingBottom: 22,
+          flexGrow: 1,
+        }}
         onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
           const nearEnd = contentSize.height - contentOffset.y - layoutMeasurement.height < 100;
           followLatest.current = nearEnd;
@@ -955,6 +960,10 @@ export function ChatScreen({
         }}
         keyboardShouldPersistTaps="handled"
       >
+        <AgentStatus />
+        {richThreads && selection.id !== mainId && (
+          <Text style={[s.small, { textAlign: "center" }]}>{t("Side chat")}</Text>
+        )}
         {showResourceLibrary && queue instanceof MessageOutbox && (
           <View style={{ gap: 10 }}>
             <Button
@@ -1002,9 +1011,9 @@ export function ChatScreen({
           >
             <Text
               style={{
-                fontSize: wide ? 34 : 28,
+                fontSize: wide ? 26 : 24,
                 fontWeight: "500",
-                letterSpacing: -1.1,
+                letterSpacing: -0.7,
                 color: colors.text,
                 textAlign: "center",
                 maxWidth: wide ? 580 : 350,
@@ -1020,10 +1029,10 @@ export function ChatScreen({
             <View
               style={{
                 width: "100%",
-                maxWidth: wide ? 640 : 360,
+                maxWidth: 390,
                 marginTop: wide ? 22 : 14,
-                gap: wide ? 12 : 8,
-                flexDirection: wide ? "row" : "column",
+                gap: 0,
+                flexDirection: "column",
                 flexWrap: "wrap",
                 justifyContent: "center",
               }}
@@ -1057,16 +1066,15 @@ export function ChatScreen({
                   accessibilityRole="button"
                   onPress={() => void item.action()}
                   style={({ pressed }) => ({
-                    flex: wide ? 1 : undefined,
-                    minWidth: wide ? 175 : undefined,
-                    padding: 17,
-                    borderRadius: 22,
-                    backgroundColor: pressed ? item.tint : "#FFFFFF",
-                    borderWidth: 1,
-                    borderColor: "#E9EBEE",
+                    paddingVertical: 15,
+                    paddingHorizontal: 10,
+                    borderRadius: 0,
+                    backgroundColor: pressed ? item.tint : "transparent",
+                    borderBottomWidth: 1,
+                    borderBottomColor: colors.line,
                     gap: 12,
-                    flexDirection: wide ? "column" : "row",
-                    alignItems: wide ? "flex-start" : "center",
+                    flexDirection: "row",
+                    alignItems: "center",
                   })}
                 >
                   <View
@@ -1107,7 +1115,7 @@ export function ChatScreen({
                 key={message.id}
                 style={{
                   alignSelf: user ? "flex-end" : "flex-start",
-                  maxWidth: user ? "85%" : "95%",
+                  maxWidth: user ? "85%" : "94%",
                   width: toolCalls.length ? "95%" : undefined,
                   gap: 8,
                 }}
@@ -1548,12 +1556,12 @@ export function ChatScreen({
         <View
           style={{
             backgroundColor: "#FFF",
-            borderRadius: 32,
+            borderRadius: 30,
             borderWidth: 1,
-            borderColor: focused ? "#C7E4F9" : "#EEF0F2",
-            padding: 8,
+            borderColor: focused ? "#D4DCE4" : "#F3F3F4",
+            padding: 4,
             shadowColor: "#18384B",
-            shadowOpacity: focused ? 0.1 : 0.06,
+            shadowOpacity: focused ? 0.07 : 0.045,
             shadowRadius: 20,
             shadowOffset: { width: 0, height: 4 },
             elevation: 4,
@@ -1676,7 +1684,7 @@ export function ChatScreen({
                 height: inputHeight,
                 minHeight: 44,
                 maxHeight: 140,
-                fontSize: 17,
+                fontSize: 16,
                 lineHeight: 24,
                 paddingHorizontal: 2,
                 paddingTop: 10,
@@ -1718,7 +1726,7 @@ export function ChatScreen({
                 width: 44,
                 height: 44,
                 borderRadius: 24,
-                backgroundColor: replying || draft.trim() ? colors.blue : "#F3F5F6",
+                backgroundColor: replying || draft.trim() ? colors.blue : "transparent",
                 alignItems: "center",
                 justifyContent: "center",
                 transform: [{ scale: pressed ? 0.94 : 1 }],
@@ -1728,7 +1736,7 @@ export function ChatScreen({
                 <ArrowUp
                   size={25}
                   strokeWidth={1.8}
-                  color={draft.trim() ? colors.text : "#9CB5C5"}
+                  color={draft.trim() ? colors.text : "#BFC0C3"}
                 />
               }
             </Pressable>

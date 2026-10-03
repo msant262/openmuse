@@ -6,6 +6,7 @@ import {
   profileScopeSchema,
 } from "../../../../packages/domain/src/agent.ts";
 import { avatarDesignSchema } from "../../../../packages/domain/src/avatar.ts";
+import { avatarRoutes } from "../avatars.ts";
 import { AppError } from "../errors.ts";
 import { memoryInput } from "../memory.ts";
 import { playbookRoutes } from "../playbooks.ts";
@@ -47,6 +48,7 @@ const goalPatchSchema = z.object({
 
 export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: string } }> {
   const app = new Hono<{ Variables: { owner: string } }>();
+  app.route("/avatars", avatarRoutes(service.avatars));
   app.route("/proactivity", proactivityRoutes(service));
   app.route("/playbooks", playbookRoutes(service.playbooks));
   app.get("/", async (c) => c.json(await service.snapshot(c.get("owner"))));
@@ -331,6 +333,7 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
         tone: z.enum(["warm", "concise", "thoughtful"]).optional(),
         avatar: z.enum(["sky", "sand", "lilac"]).optional(),
         avatarDesign: avatarDesignSchema.optional(),
+        avatarAssetId: z.string().min(1).max(128).optional(),
         showChatUpdates: z.boolean().optional(),
         expectedRevision: z.number().int().min(0).optional(),
         requestId: z.string().min(1).max(256).optional(),
@@ -339,6 +342,7 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
       .parse(await c.req.json());
     const owner = c.get("owner");
     await service.ensure(owner);
+    if (body.avatarAssetId) await service.avatars.asset(owner, body.avatarAssetId);
     if (body.name || body.tone) {
       if (body.expectedRevision === undefined || !body.requestId)
         throw new AppError("Personality edits require expectedRevision and requestId", 422);

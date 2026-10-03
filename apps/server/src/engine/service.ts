@@ -29,6 +29,7 @@ import { ActionLog } from "../action-log.ts";
 import type { ActionService } from "../actions.ts";
 import { AgentProfile } from "../agent-profile.ts";
 import { reconcileComputerAudit } from "../audited-computer.ts";
+import { AvatarService } from "../avatars.ts";
 import type { BrowserService } from "../browser.ts";
 import { ComputerService } from "../computer.ts";
 import type { ComputerBackend } from "../computer-contract.ts";
@@ -91,6 +92,7 @@ export class AgentService {
   }
   readonly playbooks: Playbooks;
   readonly profiles: AgentProfile;
+  readonly avatars: AvatarService;
   readonly interactions: InteractionRequests;
   readonly worker: TaskWorker;
   readonly runtimePause: RuntimePause;
@@ -204,6 +206,7 @@ export class AgentService {
     credentialLogin?: CredentialLoginService,
   ) {
     this.credentials = credentials;
+    this.avatars = new AvatarService(db, files, config);
     this.credentialLogin = credentialLogin;
     this.search = new BrowserSearchBackend(browser);
     this.journal = new TaskJournal(db);
@@ -294,6 +297,7 @@ export class AgentService {
     });
   }
   start() {
+    this.avatars.start();
     this.worker.start();
     void this.routineTick().catch((error) => backgroundFailure("routine scheduler", error));
     this.routineTimer = setInterval(() => {
@@ -313,6 +317,7 @@ export class AgentService {
     // Abort connector discovery/auth and native sends before waiting on tasks:
     // startup requests must not hold shutdown open behind the task worker.
     const adaptersClosed = Promise.all([
+      this.avatars.close(),
       this.push.close(),
       this.mcp.close(),
       this.toolOperations.close(),
@@ -470,6 +475,13 @@ export class AgentService {
       notifications,
       identity: {
         ...(identity ?? { name: PRODUCT_NAME, tone: "warm" }),
+        avatarAssetId: identity?.avatarAssetId ?? undefined,
+        ...(identity?.avatarAssetId && {
+          avatarAsset: await this.avatars.decorate(
+            owner,
+            await this.avatars.asset(owner, identity.avatarAssetId),
+          ),
+        }),
         name: profile.fields.assistantName,
         tone: profile.fields.tone,
         profile,

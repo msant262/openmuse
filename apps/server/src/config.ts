@@ -5,6 +5,7 @@ import { z } from "zod";
 import { type CredentialAdapter, credentialAdapterSchema } from "./credentials/contracts.ts";
 import { type ExecutorRegistration, executorRegistrationSchema } from "./executors/protocol.ts";
 import { type McpServerConfig, readMcpConfig } from "./mcp.ts";
+import { type AvatarProviderSettings, avatarProviderSettings } from "./providers/avatar-media.ts";
 import {
   type ModelProviderConfig,
   modelProviderConfig,
@@ -55,6 +56,7 @@ export interface Config {
   model?: string;
   modelFallbacks?: string[];
   modelProviders?: ModelProviderConfig;
+  avatarProvider?: AvatarProviderSettings;
   jevMode?: "off" | "sample" | "live";
   typesafeApiKey?: string;
   jevModel?: string;
@@ -220,6 +222,7 @@ export function readConfig(): Config {
       .map((s) => s.trim())
       .filter(Boolean),
     modelProviders: modelProviderConfig(resolve(process.env.DATA_DIR ?? ".openmuse")),
+    avatarProvider: avatarProviderSettings(),
     jevMode,
     typesafeApiKey,
     jevModel: process.env.JEV_MODEL?.trim() || defaultJevModel,

@@ -1,31 +1,42 @@
 import { useThreads } from "@copilotkit/react-native/headless";
 import {
   Bell,
+  CheckCircle2,
   ChevronRight,
+  Clock3,
+  Fingerprint,
   Lightbulb,
+  List,
   type LucideIcon,
+  Menu,
   MessageCircle,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelsTopLeft,
+  Pencil,
   Plus,
+  Search,
   Settings2,
   Shapes,
-  Sparkles,
+  ShieldCheck,
   SquareCheck,
+  X,
 } from "lucide-react-native";
 import { type ReactNode, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from "react-native";
 import type { Section } from "../../../packages/domain/src";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useAvatarPresentation } from "./avatar-presentation";
-import { AvatarThumbnail } from "./avatar-thumbnail";
 import { ComputerEntry } from "./computer";
 import { cachedConversationTitle, isEmptyConversationCache } from "./conversation-label";
 import { desktopStyles as d } from "./desktop-shell-styles";
@@ -34,7 +45,7 @@ import { MemorySettings } from "./memory-settings";
 import { messageStorage } from "./message-storage";
 import { ProfileSettings } from "./profile-settings";
 import { type Selection, useMuseThread } from "./threads";
-import { Button, Card, CheckRow, colors, ErrorNotice, IconButton, Mascot, s } from "./ui";
+import { Button, Card, CheckRow, colors, ErrorNotice, Mascot, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 // Kept together so the workspace language catalog can translate the desktop shell.
@@ -80,7 +91,7 @@ const desktopNavigation: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "activity", label: desktopCopy.activity, icon: PanelsTopLeft },
   { id: "ideas", label: desktopCopy.ideas, icon: Lightbulb },
   { id: "goals", label: desktopCopy.goals, icon: SquareCheck },
-  { id: "apps", label: desktopCopy.apps, icon: Shapes },
+  { id: "files", label: "Library", icon: Shapes },
 ];
 
 function SidebarItem({
@@ -99,19 +110,19 @@ function SidebarItem({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      {...(Platform.OS === "web" ? { title: label } : {})}
       accessibilityState={{ selected: !!active }}
       onPress={onPress}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
       style={({ pressed }) => [
-        d.navItem,
-        hovered && { backgroundColor: "#ECF0F5" },
+        d.railItem,
+        hovered && { backgroundColor: "#F0F0F1" },
         active && d.activeItem,
         pressed && { opacity: 0.7 },
       ]}
     >
-      <Icon size={18} strokeWidth={1.8} color={active ? "#205C91" : "#78848F"} />
-      <Text style={[d.navLabel, active && d.activeLabel]}>{label}</Text>
+      <Icon size={22} strokeWidth={1.7} color={active ? colors.text : "#737477"} />
     </Pressable>
   );
 }
@@ -142,7 +153,11 @@ export function DesktopShell({
   pending: number;
 }) {
   const { t, locale } = useI18n();
-  const { api, workspace, section, open } = useWorkspace();
+  const { width } = useWindowDimensions();
+  const [sideChatsOpen, setSideChatsOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [search, setSearch] = useState("");
+  const { api, section, open } = useWorkspace();
   const { data } = useAgentWorkspace();
   const { state: companionState } = useAvatarPresentation();
   const { selection, visited, mainId, enabled, loading, select, start } = useMuseThread();
@@ -152,7 +167,6 @@ export function DesktopShell({
     includeArchived: false,
     limit: 8,
   });
-  const utility = ["mail", "calendar", "browser", "files", "connections"].includes(section);
   const agentName = data?.identity.name || "OkamiBot";
   const saved = threads.threads.filter((thread) => thread.id !== mainId && !thread.archived);
   const drafts = visited.filter(
@@ -206,167 +220,168 @@ export function DesktopShell({
     onNavigate("chat");
     select(next);
   }
+  const conversationList = [
+    ...drafts
+      .filter(
+        (thread) =>
+          thread.existing || thread.id === selection.id || !emptyDrafts.includes(thread.id),
+      )
+      .map((thread, index) => ({
+        ...thread,
+        name:
+          localLabels[thread.id] ??
+          (thread.existing
+            ? t("Earlier conversation {number}", { number: index + 1 })
+            : t("Draft conversation {number}", { number: index + 1 })),
+        detail: thread.existing ? t("Saved conversation") : t("Draft"),
+      })),
+    ...saved.map((thread, index) => ({
+      ...thread,
+      existing: true,
+      name:
+        thread.name || localLabels[thread.id] || t("Conversation {number}", { number: index + 1 }),
+      detail: Number.isFinite(new Date(thread.lastRunAt ?? thread.updatedAt).getTime())
+        ? new Date(thread.lastRunAt ?? thread.updatedAt).toLocaleDateString(
+            locale === "pt-BR" ? "pt-BR" : "en-US",
+            { month: "short", day: "numeric" },
+          )
+        : t("Saved conversation"),
+    })),
+  ].slice(0, 8);
+  const sideChatsVisible = sideChatsOpen && width >= 1240 && chatOpen;
+  function newSideChat() {
+    if (!enabled) return onThreads();
+    onNavigate("chat");
+    start();
+  }
   return (
     <View style={desktop ? d.shell : { flex: 1, minHeight: 0 }}>
       {desktop && (
-        <ScrollView
-          testID="desktop-sidebar"
-          style={{ width: 240, flexGrow: 0, flexShrink: 0, backgroundColor: "#F5F7FA" }}
-          contentContainerStyle={[d.sidebar, { flexGrow: 1, gap: 14 }]}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={d.brand}>
-            <AvatarThumbnail
-              size={36}
-              species={data?.identity.avatarDesign?.species ?? "capybara"}
-            />
-            <View style={{ flex: 1 }}>
-              <Text numberOfLines={1} style={d.brandName}>
-                {agentName}
-              </Text>
-              <Text style={d.brandCaption}>{t(desktopCopy.workspace)}</Text>
+        <>
+          <View testID="desktop-sidebar" style={d.rail}>
+            <View style={d.railNavigation}>
+              {desktopNavigation.map((item) => (
+                <SidebarItem
+                  key={item.id}
+                  label={t(item.label)}
+                  icon={item.icon}
+                  active={
+                    !settingsOpen &&
+                    (section === item.id || (item.id === "files" && section === "files"))
+                  }
+                  onPress={() => {
+                    if (item.id === "chat" && enabled && !loading)
+                      openThread({ id: mainId, existing: true });
+                    else onNavigate(item.id);
+                  }}
+                />
+              ))}
             </View>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t(desktopCopy.newConversation)}
-            accessibilityState={{ disabled: enabled && loading }}
-            disabled={enabled && loading}
-            onPress={() => {
-              if (!enabled) return onThreads();
-              onNavigate("chat");
-              start();
-            }}
-            style={({ pressed }) => [d.newChat, (pressed || loading) && { opacity: 0.75 }]}
-          >
-            <Plus size={17} color="#344A5D" />
-            <Text style={d.newChatText}>{t(desktopCopy.newConversation)}</Text>
-          </Pressable>
-          <View style={d.navigation}>
-            {desktopNavigation.map((item) => (
+            <View style={d.railUtilities}>
               <SidebarItem
-                key={item.id}
-                label={t(item.label)}
-                icon={item.icon}
-                active={!settingsOpen && (section === item.id || (item.id === "apps" && utility))}
-                onPress={() => {
-                  if (item.id === "chat" && enabled && !loading)
-                    openThread({ id: mainId, existing: true });
-                  else onNavigate(item.id);
-                }}
+                label={t(desktopCopy.apps)}
+                icon={Settings2}
+                active={!settingsOpen && section === "apps"}
+                onPress={() => onNavigate("apps")}
               />
-            ))}
-            <SidebarItem
-              label={t(desktopCopy.settings)}
-              icon={Settings2}
-              active={settingsOpen}
-              onPress={onSettings}
-            />
-          </View>
-          <View style={d.divider} />
-          <View style={[d.conversations, { minHeight: 126 }]}>
-            <View style={d.conversationHeading}>
-              <Text style={d.sectionLabel}>{t(desktopCopy.conversations)}</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t(desktopCopy.conversationMenu)}
-                onPress={onThreads}
-                style={({ pressed }) => [d.menuButton, pressed && { backgroundColor: "#E4E9EF" }]}
-              >
-                <MoreHorizontal size={18} color="#78848F" />
-              </Pressable>
+              <View style={d.notification}>
+                <SidebarItem
+                  label={t(desktopCopy.notifications, { pending })}
+                  icon={Bell}
+                  onPress={() => open({ type: "notifications" })}
+                />
+                {pending > 0 && <View pointerEvents="none" style={d.badge} />}
+              </View>
+              <SidebarItem
+                label={t(desktopCopy.settings)}
+                icon={Menu}
+                active={settingsOpen}
+                onPress={onSettings}
+              />
             </View>
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 280 }}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t(desktopCopy.mainChat)}
-                onPress={() =>
-                  enabled ? openThread({ id: mainId, existing: true }) : onNavigate("chat")
-                }
-                style={[
-                  d.navItem,
-                  d.conversationItem,
-                  !settingsOpen && section === "chat" && selection.id === mainId && d.activeItem,
-                ]}
-              >
-                <MessageCircle size={14} color="#78848F" />
-                <Text style={d.conversationLabel}>{t(desktopCopy.mainChat)}</Text>
-              </Pressable>
-              {loading && <ActivityIndicator color={colors.blueDark} style={{ marginTop: 10 }} />}
-              {[
-                ...drafts
-                  .filter(
-                    (thread) =>
-                      thread.existing ||
-                      thread.id === selection.id ||
-                      !emptyDrafts.includes(thread.id),
-                  )
-                  .map((thread, index) => ({
-                    ...thread,
-                    name:
-                      localLabels[thread.id] ??
-                      (thread.existing
-                        ? t("Earlier conversation {number}", { number: index + 1 })
-                        : t("Draft conversation {number}", { number: index + 1 })),
-                    detail: thread.existing ? t("Saved conversation") : t("Draft"),
-                  })),
-                ...saved.map((thread, index) => ({
-                  ...thread,
-                  existing: true,
-                  name:
-                    thread.name ||
-                    localLabels[thread.id] ||
-                    t("Conversation {number}", { number: index + 1 }),
-                  detail: Number.isFinite(new Date(thread.lastRunAt ?? thread.updatedAt).getTime())
-                    ? new Date(thread.lastRunAt ?? thread.updatedAt).toLocaleDateString(
-                        locale === "pt-BR" ? "pt-BR" : "en-US",
-                        { month: "short", day: "numeric" },
-                      )
-                    : t("Saved conversation"),
-                })),
-              ]
-                .slice(0, 8)
-                .map((thread) => (
-                  <Pressable
-                    key={thread.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={t(desktopCopy.openConversation, { name: thread.name })}
-                    accessibilityState={{ selected: !settingsOpen && selection.id === thread.id }}
-                    onPress={() => openThread({ id: thread.id, existing: thread.existing })}
-                    style={[
-                      d.navItem,
-                      d.conversationItem,
-                      !settingsOpen && selection.id === thread.id && d.activeItem,
-                    ]}
-                  >
-                    <MessageCircle size={14} color="#78848F" />
-                    <View style={{ flex: 1, gap: 3 }}>
-                      <Text numberOfLines={1} style={d.conversationLabel}>
-                        {thread.name}
-                      </Text>
-                      <Text style={{ color: "#92999E", fontSize: 10 }}>{thread.detail}</Text>
-                    </View>
-                  </Pressable>
-                ))}
-            </ScrollView>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t(desktopCopy.customize)}
-            onPress={onSettings}
-            style={({ pressed }) => [d.customize, pressed && { opacity: 0.75 }]}
-          >
-            <Text style={d.customizeCaption}>{t(desktopCopy.customizeCaption)}</Text>
-            <View style={d.customizeAction}>
-              <Sparkles size={15} color="#205C91" />
-              <Text style={d.customizeLabel}>{t(desktopCopy.customize)}</Text>
-              <ChevronRight size={14} color="#205C91" style={{ marginLeft: "auto" }} />
+          {sideChatsVisible && (
+            <View testID="desktop-side-chats" style={d.sidebar}>
+              <View style={d.sideChatToolbar}>
+                <View style={d.search}>
+                  <Search size={15} color={colors.muted} />
+                  <TextInput
+                    accessibilityLabel={
+                      locale === "pt-BR" ? "Buscar conversas" : "Search conversations"
+                    }
+                    placeholder={locale === "pt-BR" ? "Buscar" : "Search"}
+                    placeholderTextColor={colors.muted}
+                    value={search}
+                    onChangeText={setSearch}
+                    style={d.searchInput}
+                  />
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t(desktopCopy.conversationMenu)}
+                  onPress={onThreads}
+                  style={d.menuButton}
+                >
+                  <MoreHorizontal size={19} color={colors.muted} />
+                </Pressable>
+              </View>
+              {conversationList.length ? (
+                <ScrollView
+                  style={d.conversations}
+                  contentContainerStyle={{ paddingHorizontal: 10, paddingTop: 22, gap: 5 }}
+                  showsVerticalScrollIndicator={false}
+                >
+                  <Text style={[d.sectionLabel, { marginHorizontal: 10, marginBottom: 8 }]}>
+                    {t("Side chats")}
+                  </Text>
+                  {conversationList
+                    .filter((thread) => thread.name.toLowerCase().includes(search.toLowerCase()))
+                    .map((thread) => (
+                      <Pressable
+                        key={thread.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={t(desktopCopy.openConversation, { name: thread.name })}
+                        accessibilityState={{ selected: selection.id === thread.id }}
+                        onPress={() => openThread({ id: thread.id, existing: thread.existing })}
+                        style={[d.conversationItem, selection.id === thread.id && d.activeItem]}
+                      >
+                        <MessageCircle size={16} strokeWidth={1.7} color={colors.muted} />
+                        <View style={{ flex: 1, gap: 4 }}>
+                          <Text numberOfLines={1} style={d.conversationLabel}>
+                            {thread.name}
+                          </Text>
+                          <Text style={d.conversationDate}>{thread.detail}</Text>
+                        </View>
+                      </Pressable>
+                    ))}
+                </ScrollView>
+              ) : (
+                <View style={d.sideChatEmpty}>
+                  <MessageCircle size={27} strokeWidth={1.5} color="#929297" />
+                  <Text style={d.sideChatEmptyTitle}>
+                    {locale === "pt-BR" ? "Comece uma conversa separada" : "Start a side chat"}
+                  </Text>
+                  <Text style={d.sideChatEmptyCopy}>
+                    {locale === "pt-BR"
+                      ? "Conversas separadas são uma forma opcional de organizar seus assuntos."
+                      : "Side chats are an optional way to organize your conversations by topic."}
+                  </Text>
+                  <Button small disabled={enabled && loading} onPress={newSideChat}>
+                    {t("New side chat")}
+                  </Button>
+                </View>
+              )}
+              {!!conversationList.length && (
+                <View style={{ padding: 16 }}>
+                  <Button small icon={Plus} disabled={enabled && loading} onPress={newSideChat}>
+                    {t("New side chat")}
+                  </Button>
+                </View>
+              )}
+              {loading && <ActivityIndicator color={colors.muted} style={{ marginBottom: 20 }} />}
             </View>
-          </Pressable>
-          <Text numberOfLines={1} style={[s.small, { paddingHorizontal: 8 }]}>
-            {workspace.mode === "sample" ? "OkamiBot" : workspace.profile.name}
-          </Text>
-        </ScrollView>
+          )}
+        </>
       )}
       <View
         key="workspace-main"
@@ -379,43 +394,41 @@ export function DesktopShell({
         {desktop ? (
           <View style={[d.header, chatOpen && d.chatHeader]}>
             {chatOpen ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t("Open {name} activity and approvals", { name: agentName })}
-                onPress={() => onNavigate("activity")}
-                style={d.companionHeading}
-              >
-                <Mascot size={72} variant={data?.identity.avatar} />
-                <View style={d.companionName}>
-                  <Text numberOfLines={1} style={d.headerTitle}>
-                    {title}
-                  </Text>
-                  <Text numberOfLines={1} style={d.companionStatus}>
-                    {companionStatus}
-                  </Text>
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t(desktopCopy.conversationMenu)}
+                  accessibilityState={{ expanded: sideChatsVisible }}
+                  onPress={() => (width >= 1240 ? setSideChatsOpen(!sideChatsOpen) : onThreads())}
+                  style={d.menuButton}
+                >
+                  {sideChatsVisible ? (
+                    <PanelLeftClose size={19} color={colors.muted} />
+                  ) : (
+                    <PanelLeftOpen size={19} color={colors.muted} />
+                  )}
+                </Pressable>
+                <View style={d.headerActions}>
+                  <ComputerEntry />
+                  {!inspectorOpen && (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={t("Open {name} activity and approvals", {
+                        name: agentName,
+                      })}
+                      onPress={() => setInspectorOpen(true)}
+                    >
+                      <Mascot size={38} variant={data?.identity.avatar} />
+                    </Pressable>
+                  )}
                 </View>
-              </Pressable>
+              </>
             ) : (
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text numberOfLines={1} style={d.headerTitle}>
-                  {title}
-                </Text>
-                <Text numberOfLines={1} style={d.headerSubtitle}>
-                  {subtitle}
-                </Text>
-              </View>
+              <>
+                <View accessibilityLabel={title} style={{ flex: 1 }} />
+                <ComputerEntry />
+              </>
             )}
-            <View style={[d.headerActions, chatOpen && d.chatHeaderActions]}>
-              <ComputerEntry />
-              <View style={d.notification}>
-                <IconButton
-                  icon={Bell}
-                  label={t(desktopCopy.notifications, { pending })}
-                  onPress={() => open({ type: "notifications" })}
-                />
-                {pending > 0 && <View pointerEvents="none" style={d.badge} />}
-              </View>
-            </View>
           </View>
         ) : (
           mobileHeader
@@ -425,6 +438,250 @@ export function DesktopShell({
         </View>
         {!desktop && mobileNavigation}
       </View>
+      {desktop && chatOpen && inspectorOpen && (
+        <AgentInspector
+          name={agentName}
+          status={companionStatus}
+          onSettings={onSettings}
+          onClose={() => setInspectorOpen(false)}
+        />
+      )}
+    </View>
+  );
+}
+
+export function AgentInspector({
+  name,
+  status,
+  onSettings,
+  onClose,
+  compact = false,
+}: {
+  name: string;
+  status: string;
+  onSettings: () => void;
+  onClose: () => void;
+  compact?: boolean;
+}) {
+  const { t, locale } = useI18n();
+  const { data } = useAgentWorkspace();
+  const { workspace, open } = useWorkspace();
+  const [tab, setTab] = useState("activity");
+  const tabs = [
+    { id: "activity", label: t("Activity"), icon: List },
+    { id: "approvals", label: t("Approvals"), icon: ShieldCheck },
+    { id: "history", label: t("History"), icon: Clock3 },
+    { id: "identity", label: t("Personality"), icon: Fingerprint },
+  ];
+  const tasks = [...(data?.tasks ?? [])].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const shownTasks =
+    tab === "history"
+      ? tasks.filter((task) => ["succeeded", "failed", "cancelled"].includes(task.status))
+      : tasks;
+  const actions = [...workspace.actions].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  function showDetail(detail: Parameters<typeof open>[0]) {
+    if (compact) onClose();
+    open(detail);
+  }
+  const { state } = useAvatarPresentation();
+  const liveStatus =
+    state === "talking"
+      ? t("Writing to you…")
+      : state === "thinking" && status === t("Here when you need me")
+        ? t("Thinking it through…")
+        : status;
+  const connected = !!data?.worker.running;
+  const resting = liveStatus === t("Here when you need me");
+  return (
+    <View
+      testID="desktop-agent-inspector"
+      style={[d.inspector, compact && { width: "100%", flex: 1, borderLeftWidth: 0 }]}
+    >
+      <View
+        style={[
+          d.inspectorToolbar,
+          compact && { justifyContent: "space-between", flexDirection: "row-reverse" },
+        ]}
+      >
+        {compact && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t(desktopCopy.notifications, {
+              pending: data?.notifications.filter((item) => !item.read).length ?? 0,
+            })}
+            onPress={() => showDetail({ type: "notifications" })}
+            style={d.menuButton}
+          >
+            <Bell size={19} color={colors.muted} />
+          </Pressable>
+        )}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={locale === "pt-BR" ? "Fechar painel do agente" : "Close agent panel"}
+          onPress={onClose}
+          style={d.menuButton}
+        >
+          <X size={18} color={colors.muted} />
+        </Pressable>
+      </View>
+      <View style={d.inspectorProfile}>
+        <View style={d.inspectorPortrait}>
+          <View style={{ width: 108, height: 108, borderRadius: 54, overflow: "hidden" }}>
+            <Mascot size={108} variant={data?.identity.avatar} framing="portrait" />
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t(desktopCopy.customize)}
+            onPress={onSettings}
+            style={d.portraitEdit}
+          >
+            <Pencil size={14} color={colors.text} />
+          </Pressable>
+        </View>
+        <Text numberOfLines={1} style={d.inspectorName}>
+          {name}
+        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, maxWidth: "100%" }}>
+          <View
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: connected ? "#59A478" : "#A0A0A4",
+            }}
+          />
+          <Text numberOfLines={2} style={d.inspectorStatus}>
+            {resting
+              ? connected
+                ? t("Connected")
+                : locale === "pt-BR"
+                  ? "Desconectado"
+                  : "Offline"
+              : liveStatus}
+          </Text>
+        </View>
+      </View>
+      <View accessibilityRole="tablist" style={d.inspectorTabs}>
+        {tabs.map(({ id, label, icon: Icon }) => (
+          <Pressable
+            key={id}
+            accessibilityRole="tab"
+            accessibilityLabel={label}
+            accessibilityState={{ selected: tab === id }}
+            onPress={() => setTab(id)}
+            style={[d.inspectorTab, tab === id && d.inspectorTabActive]}
+          >
+            <Icon size={17} strokeWidth={1.6} color={tab === id ? colors.text : colors.muted} />
+          </Pressable>
+        ))}
+      </View>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 20, paddingBottom: 20, gap: 3 }}
+      >
+        {tab === "identity" ? (
+          <View style={{ gap: 16, paddingHorizontal: 4 }}>
+            <Text style={d.inspectorSection}>{t("Name and personality")}</Text>
+            <Text style={s.muted}>
+              {data?.identity.profile?.fields.personality || t(desktopCopy.customizeCaption)}
+            </Text>
+            <Button small icon={Pencil} onPress={onSettings}>
+              {t(desktopCopy.customize)}
+            </Button>
+            <Text style={d.inspectorSection}>{t("Preferences")}</Text>
+            <Text style={s.muted}>{t(desktopCopy.settingsSubtitle)}</Text>
+            <Button small icon={Settings2} onPress={onSettings}>
+              {t("Settings")}
+            </Button>
+          </View>
+        ) : tab === "approvals" ? (
+          <>
+            <Text style={d.inspectorSection}>{t("Approvals")}</Text>
+            {!actions.length && (
+              <Text style={d.inspectorEmpty}>
+                {locale === "pt-BR"
+                  ? "Pedidos de aprovação aparecem aqui."
+                  : "Requests for your approval will appear here."}
+              </Text>
+            )}
+            {actions.map((action) => (
+              <Pressable
+                key={action.id}
+                accessibilityRole="button"
+                onPress={() => showDetail({ type: "review", action })}
+                style={({ pressed }) => [d.activityRow, pressed && d.activeItem]}
+              >
+                <View style={d.activityIcon}>
+                  <ShieldCheck size={17} color={colors.muted} />
+                </View>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text numberOfLines={2} style={d.activityTitle}>
+                    {action.title}
+                  </Text>
+                  <Text numberOfLines={2} style={d.activityDetail}>
+                    {action.status === "awaiting_review"
+                      ? t("Waiting for approval")
+                      : action.result || action.status.replaceAll("_", " ")}
+                  </Text>
+                </View>
+                <ChevronRight size={14} color={colors.muted} />
+              </Pressable>
+            ))}
+          </>
+        ) : (
+          <>
+            <Text style={d.inspectorSection}>
+              {tab === "history" ? t("History") : t("Activity")}
+            </Text>
+            {!shownTasks.length && (
+              <Text style={d.inspectorEmpty}>
+                {locale === "pt-BR"
+                  ? "Os próximos passos e resultados aparecem aqui enquanto conversamos."
+                  : "Your next steps and results will appear here as we work together."}
+              </Text>
+            )}
+            {shownTasks.map((task) => {
+              const complete = task.status === "succeeded";
+              const RowIcon = complete
+                ? CheckCircle2
+                : task.status === "waiting_approval"
+                  ? ShieldCheck
+                  : Clock3;
+              return (
+                <Pressable
+                  key={task.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={task.title}
+                  onPress={() => showDetail({ type: "task", taskId: task.id })}
+                  style={({ pressed }) => [d.activityRow, pressed && d.activeItem]}
+                >
+                  <View style={d.activityIcon}>
+                    <RowIcon size={17} strokeWidth={1.6} color={colors.muted} />
+                  </View>
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <Text numberOfLines={2} style={d.activityTitle}>
+                      {task.title}
+                    </Text>
+                    <Text numberOfLines={2} style={d.activityDetail}>
+                      {task.question ||
+                        task.error ||
+                        task.result ||
+                        task.plan.find((step) => step.status === "running")?.title ||
+                        task.title}
+                    </Text>
+                    <Text style={d.activityTime}>
+                      {new Date(task.updatedAt).toLocaleTimeString(locale, {
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </>
+        )}
+      </ScrollView>
     </View>
   );
 }

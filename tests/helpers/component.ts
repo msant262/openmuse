@@ -12,6 +12,7 @@ export function componentHarness(
   name: string,
   dependencies: Record<string, unknown>,
   props: Record<string, unknown> = {},
+  globals: Record<string, unknown> = {},
 ) {
   const cells: Cell[] = [];
   let index = 0;
@@ -69,7 +70,11 @@ export function componentHarness(
     },
   }).outputText;
   const module = { exports: {} as Record<string, unknown> };
-  const factory = runInNewContext(`(function(require,module,exports){${js}})`, { Error, URL });
+  const factory = runInNewContext(`(function(require,module,exports){${js}})`, {
+    Error,
+    URL,
+    ...globals,
+  });
   factory(
     (key: string) => {
       assert.ok(key in modules, `Unknown component dependency: ${key}`);

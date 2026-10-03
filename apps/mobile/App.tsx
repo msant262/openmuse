@@ -1,7 +1,6 @@
 import { CopilotKitProvider } from "@copilotkit/react-native/headless";
 import { StatusBar } from "expo-status-bar";
 import {
-  Bell,
   Check,
   Lightbulb,
   type LucideIcon,
@@ -17,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -26,13 +26,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import type { Section, Workspace } from "../../packages/domain/src";
-import {
-  AgentActivityScreen,
-  AgentStatus,
-  AppsScreen,
-  GoalsScreen,
-  IdeasScreen,
-} from "./src/agent-ui";
+import { AgentActivityScreen, AppsScreen, GoalsScreen, IdeasScreen } from "./src/agent-ui";
 import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace";
 import { API_URL, ApiError, authManager, MuseApi } from "./src/api";
 import type { AuthManager } from "./src/auth-manager";
@@ -40,16 +34,31 @@ import { installRuntimeAuthFetch } from "./src/auth-transport";
 import { AvatarPresentationProvider, useAvatarPresentation } from "./src/avatar-presentation";
 import { AvatarStudio } from "./src/avatar-studio";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
-import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
-import { AppLanguagePicker, DesktopSettings, DesktopShell, desktopCopy } from "./src/desktop-shell";
+import {
+  AgentInspector,
+  AppLanguagePicker,
+  DesktopSettings,
+  DesktopShell,
+  desktopCopy,
+} from "./src/desktop-shell";
 import { desktopStyles as d } from "./src/desktop-shell-styles";
 import { Details } from "./src/details";
 import { useI18n } from "./src/i18n";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ShareReceiver } from "./src/share-receiver";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
-import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
+import {
+  Button,
+  Card,
+  colors,
+  ErrorNotice,
+  Field,
+  HeaderFade,
+  IconButton,
+  Mascot,
+  s,
+} from "./src/ui";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
@@ -57,7 +66,7 @@ const nav: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "activity", label: "Activity", icon: PanelsTopLeft },
   { id: "ideas", label: "Ideas", icon: Lightbulb },
   { id: "goals", label: "Goals", icon: SquareCheck },
-  { id: "apps", label: "Apps", icon: Shapes },
+  { id: "files", label: "Library", icon: Shapes },
 ];
 const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   activity: { title: "Activity", subtitle: "Plans, progress, decisions and results." },
@@ -74,7 +83,7 @@ const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   mail: { title: "Mail", subtitle: "The conversations behind your work." },
   calendar: { title: "Calendar", subtitle: "Time for what matters." },
   browser: { title: "Browser", subtitle: "Your connected browsing sessions." },
-  files: { title: "Files", subtitle: "Documents, forms and filled copies." },
+  files: { title: "Library", subtitle: "Documents, forms and filled copies." },
 };
 export default function App() {
   const { t } = useI18n();
@@ -337,6 +346,7 @@ function CompanionHeading({
 }) {
   const { t } = useI18n();
   const { state } = useAvatarPresentation();
+  const showStatus = state !== "idle" || status !== t("Here when you need me");
   return (
     <Pressable
       accessibilityRole="button"
@@ -348,27 +358,37 @@ function CompanionHeading({
         opacity: pressed ? 0.65 : 1,
       })}
     >
-      <Mascot size={64} variant={variant} />
+      <Mascot size={54} variant={variant} />
       <View
         style={{
-          paddingHorizontal: 13,
-          paddingVertical: 5,
-          borderRadius: 18,
-          backgroundColor: "#F1F2F3",
+          paddingHorizontal: 14,
+          paddingVertical: showStatus ? 7 : 8,
+          marginTop: -4,
+          borderRadius: showStatus ? 20 : 24,
+          backgroundColor: "#FFFFFF",
+          shadowColor: "#171719",
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: 0.06,
+          shadowRadius: 14,
           alignItems: "center",
           maxWidth: "100%",
         }}
       >
-        <Text style={{ fontSize: 15, fontWeight: "600", color: colors.text, letterSpacing: -0.4 }}>
+        <Text
+          numberOfLines={1}
+          style={{ fontSize: 15, fontWeight: "600", color: colors.text, letterSpacing: -0.4 }}
+        >
           {name}
         </Text>
-        <Text numberOfLines={1} style={{ fontSize: 10, color: colors.muted, marginTop: 2 }}>
-          {state === "talking"
-            ? t("Writing to you…")
-            : state === "thinking" && status === t("Here when you need me")
-              ? t("Thinking it through…")
-              : status}
-        </Text>
+        {showStatus && (
+          <Text numberOfLines={1} style={{ fontSize: 11, color: colors.muted, marginTop: 3 }}>
+            {state === "talking"
+              ? t("Writing to you…")
+              : state === "thinking" && status === t("Here when you need me")
+                ? t("Thinking it through…")
+                : status}
+          </Text>
+        )}
       </View>
     </Pressable>
   );
@@ -388,12 +408,11 @@ function WorkspaceShell({
   prompt?: { id: number; text: string };
 }) {
   const { t } = useI18n();
-  const { api, workspace, section, navigate, open } = useWorkspace();
+  const { api, workspace, section, navigate } = useWorkspace();
   const { data } = useAgentWorkspace();
   const {
     selection,
     visited,
-    mainId,
     loading: threadsLoading,
     error: threadsError,
     retry: retryThreads,
@@ -401,6 +420,7 @@ function WorkspaceShell({
   } = useMuseThread();
   const [threadsOpen, setThreadsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
   useEffect(() => setSettingsOpen(false), [section, prompt?.id]);
   const navigateSection = useCallback(
     (next: Section) => {
@@ -449,7 +469,7 @@ function WorkspaceShell({
                 : section === "goals"
                   ? GoalsScreen
                   : AppsScreen;
-  const utility = ["mail", "calendar", "browser", "files"].includes(section);
+  const utility = ["mail", "calendar", "browser"].includes(section);
   const content = (
     <View style={{ flex: 1, minHeight: 0 }}>
       {settingsOpen && (
@@ -457,7 +477,9 @@ function WorkspaceShell({
           key="settings"
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={desktop ? d.page : { paddingHorizontal: 22, paddingBottom: 28 }}
+          contentContainerStyle={
+            desktop ? d.page : { paddingHorizontal: 20, paddingTop: 100, paddingBottom: 28 }
+          }
         >
           {desktop && (
             <>
@@ -473,7 +495,9 @@ function WorkspaceShell({
         <ScrollView
           key={section}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={desktop ? d.page : { paddingHorizontal: 22, paddingBottom: 28 }}
+          contentContainerStyle={
+            desktop ? d.page : { paddingHorizontal: 20, paddingTop: 100, paddingBottom: 28 }
+          }
           keyboardShouldPersistTaps="handled"
         >
           {utility && (
@@ -495,11 +519,10 @@ function WorkspaceShell({
       )}
       <View
         style={[
-          desktop ? d.chat : { flex: 1, paddingHorizontal: 17 },
+          desktop ? d.chat : { flex: 1, paddingHorizontal: 16 },
           { display: !settingsOpen && section === "chat" ? "flex" : "none" },
         ]}
       >
-        <AgentStatus />
         {richThreads ? (
           <>
             <ErrorNotice error={threadsError} />
@@ -508,11 +531,6 @@ function WorkspaceShell({
             ) : threadsLoading ? (
               <ActivityIndicator color={colors.blueDark} />
             ) : null}
-            {!threadsLoading && selection.id !== mainId && (
-              <Text style={[s.small, { textAlign: "center", marginBottom: 8 }]}>
-                {t("Side chat")}
-              </Text>
-            )}
             {visited.map((thread) => (
               <View
                 key={thread.id}
@@ -535,18 +553,23 @@ function WorkspaceShell({
   );
   const mobileHeader = (
     <View
+      pointerEvents="box-none"
       style={{
-        height: settingsOpen ? 72 : 132,
-        paddingTop: 2,
-        marginHorizontal: 20,
+        position: "absolute",
+        zIndex: 3,
+        top: 0,
+        left: 0,
+        right: 0,
+        height: settingsOpen ? 80 : 102,
       }}
     >
-      <View style={{ position: "absolute", left: 0, top: 16 }}>
+      <HeaderFade />
+      <View style={{ position: "absolute", left: 16, top: 17 }}>
         <IconButton icon={Menu} label={t(desktopCopy.conversationMenu)} onPress={openThreads} />
       </View>
-      <View pointerEvents="box-none" style={{ alignItems: "center", gap: 1 }}>
+      <View pointerEvents="box-none" style={{ alignItems: "center", paddingTop: 1 }}>
         {settingsOpen ? (
-          <View style={{ height: 68, justifyContent: "center", maxWidth: "58%" }}>
+          <View style={{ height: 72, justifyContent: "center", maxWidth: "58%" }}>
             <Text numberOfLines={1} style={[s.heading, { textAlign: "center" }]}>
               {t(desktopCopy.customize)}
             </Text>
@@ -556,45 +579,25 @@ function WorkspaceShell({
             name={agentName}
             status={status}
             variant={data?.identity.avatar}
-            onPress={() => navigateSection("activity")}
+            onPress={() => setAgentOpen(true)}
           />
         )}
-        {!settingsOpen && section === "chat" && <ComputerEntry />}
       </View>
-      <View style={{ position: "absolute", right: 0, top: 16, flexDirection: "row", gap: 2 }}>
+      <View style={{ position: "absolute", right: 16, top: 17 }}>
         <IconButton
           icon={Settings2}
           label={t(desktopCopy.settings)}
           onPress={() => setSettingsOpen(true)}
         />
-        <IconButton
-          icon={Bell}
-          label={t(desktopCopy.notifications, { pending })}
-          onPress={() => open({ type: "notifications" })}
-        />
-        {pending > 0 && (
-          <View
-            pointerEvents="none"
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: 4,
-              position: "absolute",
-              top: 7,
-              right: 9,
-              backgroundColor: colors.blueDark,
-            }}
-          />
-        )}
       </View>
     </View>
   );
   const mobileNavigation = (
     <View
       style={{
-        paddingHorizontal: 22,
+        paddingHorizontal: 18,
         paddingTop: 10,
-        paddingBottom: 7,
+        paddingBottom: 8,
         alignItems: "center",
       }}
     >
@@ -603,7 +606,7 @@ function WorkspaceShell({
           flexDirection: "row",
           width: "100%",
           maxWidth: 370,
-          padding: 5,
+          padding: 4,
           backgroundColor: "#FFF",
           borderRadius: 40,
           shadowColor: "#132631",
@@ -616,7 +619,8 @@ function WorkspaceShell({
         }}
       >
         {nav.map((item) => {
-          const active = !settingsOpen && (section === item.id || (item.id === "apps" && utility));
+          const active =
+            !settingsOpen && (section === item.id || (item.id === "files" && section === "files"));
           return (
             <Pressable
               key={item.id}
@@ -626,10 +630,10 @@ function WorkspaceShell({
               onPress={() => navigateSection(item.id)}
               style={{
                 flex: 1,
-                height: 47,
+                height: 48,
                 alignItems: "center",
                 justifyContent: "center",
-                backgroundColor: active ? "#F0F1F2" : "transparent",
+                backgroundColor: active ? "#EDEDEF" : "transparent",
                 borderRadius: 28,
               }}
             >
@@ -643,6 +647,7 @@ function WorkspaceShell({
   return (
     <AvatarPresentationProvider
       design={data?.identity.avatarDesign}
+      asset={data?.identity.avatarAsset}
       state={activeTask?.status === "running" ? "thinking" : "idle"}
       active={!settingsOpen && !detail}
       conversationKey={
@@ -679,6 +684,40 @@ function WorkspaceShell({
         >
           {content}
         </DesktopShell>
+        {agentOpen && !desktop && (
+          <Modal
+            transparent
+            animationType="slide"
+            visible
+            onRequestClose={() => setAgentOpen(false)}
+          >
+            <View
+              style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.12)" }}
+            >
+              <SafeAreaView
+                edges={["bottom"]}
+                style={{
+                  height: "94%",
+                  backgroundColor: colors.canvas,
+                  borderTopLeftRadius: 28,
+                  borderTopRightRadius: 28,
+                  overflow: "hidden",
+                }}
+              >
+                <AgentInspector
+                  compact
+                  name={agentName}
+                  status={status}
+                  onClose={() => setAgentOpen(false)}
+                  onSettings={() => {
+                    setAgentOpen(false);
+                    setSettingsOpen(true);
+                  }}
+                />
+              </SafeAreaView>
+            </View>
+          </Modal>
+        )}
         {!!toast && (
           <View
             pointerEvents="box-none"

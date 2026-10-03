@@ -892,9 +892,38 @@ export async function createApp(
     c.header("Content-Type", file.mimeType);
     c.header(
       "Content-Disposition",
-      `${file.mimeType === "application/pdf" || file.mimeType.startsWith("image/") ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+      `${file.mimeType === "application/pdf" || /^(image|video|audio)\//.test(file.mimeType) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(file.name)}`,
     );
-    return c.body(await files.bytes(c.get("owner"), file.id));
+    const bytes = await files.bytes(c.get("owner"), file.id);
+    c.header("Accept-Ranges", "bytes");
+    const range = c.req.header("Range");
+    if (range) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+      const suffix = match && !match[1] && match[2] ? Number(match[2]) : undefined;
+      const start = suffix !== undefined ? Math.max(0, bytes.length - suffix) : Number(match?.[1]);
+      const end =
+        match?.[2] && suffix === undefined
+          ? Math.min(Number(match[2]), bytes.length - 1)
+          : bytes.length - 1;
+      if (
+        !match ||
+        (!match[1] && !match[2]) ||
+        !Number.isSafeInteger(start) ||
+        !Number.isSafeInteger(end) ||
+        start < 0 ||
+        start > end ||
+        start >= bytes.length ||
+        suffix === 0
+      ) {
+        c.header("Content-Range", `bytes */${bytes.length}`);
+        return c.body(null, 416);
+      }
+      c.header("Content-Range", `bytes ${start}-${end}/${bytes.length}`);
+      c.header("Content-Length", String(end - start + 1));
+      return c.body(bytes.slice(start, end + 1), 206);
+    }
+    c.header("Content-Length", String(bytes.length));
+    return c.body(bytes);
   });
   app.get("/api/files/:id", async (c) =>
     c.json(files.signed(c.get("owner"), await files.get(c.get("owner"), c.req.param("id")))),

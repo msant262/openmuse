@@ -1,10 +1,12 @@
 import { createContext, type ReactNode, useCallback, useContext, useRef, useState } from "react";
 import type { AvatarDesign, AvatarMotionState } from "../../../packages/domain/src/avatar";
+import type { AvatarAsset } from "../../../packages/domain/src/avatar-character";
 
 import { type ConversationActivity, companionMotion } from "./avatar-motion";
 
 const AvatarPresentation = createContext<{
   design?: AvatarDesign;
+  asset?: AvatarAsset;
   state: AvatarMotionState;
   active: boolean;
   reportActivity: (activity: ConversationActivity) => void;
@@ -13,12 +15,14 @@ const AvatarPresentation = createContext<{
 export function AvatarPresentationProvider({
   children,
   design,
+  asset,
   state = "idle",
   active = true,
   conversationKey,
 }: {
   children: ReactNode;
   design?: AvatarDesign;
+  asset?: AvatarAsset;
   state?: AvatarMotionState;
   active?: boolean;
   conversationKey?: string;
@@ -36,6 +40,7 @@ export function AvatarPresentationProvider({
     <AvatarPresentation.Provider
       value={{
         design,
+        asset,
         state: companionMotion(conversationKey, activity, state),
         active,
         reportActivity,

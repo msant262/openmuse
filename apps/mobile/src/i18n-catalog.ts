@@ -1,8 +1,12 @@
+import { avatarCharacterPtBR } from "./avatar-character-copy";
 import { avatarPTBR } from "./avatar-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
   ...avatarPTBR,
+  ...avatarCharacterPtBR,
+  "Animation unavailable · showing your companion":
+    "Animação indisponível · exibindo seu companheiro",
   Strengths: "Pontos fortes",
   Considerations: "Pontos de atenção",
   "View source": "Ver fonte",
@@ -97,6 +101,7 @@ export const ptBR: Record<string, string> = {
   Refresh: "Atualizar",
   "Refresh workspace": "Atualizar espaço",
   Files: "Arquivos",
+  Library: "Biblioteca",
   Calendar: "Calendário",
   Mail: "E-mail",
   Browser: "Navegador",

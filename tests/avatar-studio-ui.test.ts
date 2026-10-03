@@ -1,12 +1,49 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  AVATAR_PRESETS,
-  avatarDesignSchema,
-  resolveAvatarDesign,
-} from "../packages/domain/src/avatar.ts";
 import { componentHarness } from "./helpers/component.ts";
 
+const poster = {
+  fileId: "poster-file",
+  url: "https://example.test/avatar.png",
+  mimeType: "image/png",
+  width: 1024,
+  height: 1024,
+};
+const asset = (id: string) => ({
+  id,
+  version: 1,
+  label: `Companion ${id}`,
+  source: "generated",
+  prompt: "A small teal dragon",
+  poster,
+  motions: {},
+  status: "still",
+  generationId: "generation-one",
+  createdAt: "2026-10-03T00:00:00Z",
+  updatedAt: "2026-10-03T00:00:00Z",
+});
+const candidates = ["one", "two", "three", "four"].map(asset);
+const job = (patch: Record<string, unknown> = {}) => ({
+  id: "generation-one",
+  requestId: "request-one",
+  label: "A small teal dragon",
+  completedMotions: [],
+  prompt: "A small teal dragon",
+  candidateIds: candidates.map((item) => item.id),
+  candidates,
+  status: "awaiting_selection",
+  phase: "selection",
+  retryable: false,
+  createdAt: "2026-10-03T00:00:00Z",
+  updatedAt: "2026-10-03T00:00:00Z",
+  ...patch,
+});
+const studio = (patch: Record<string, unknown> = {}) => ({
+  capabilities: { images: true, videos: true, provider: "grok" },
+  assets: [],
+  generations: [],
+  ...patch,
+});
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -17,144 +54,440 @@ function deferred<T>() {
 function fixture(request: (path: string, body?: unknown) => Promise<unknown>) {
   const api = { identityKey: "owner-one", request };
   const notifications: string[] = [];
+  const timers = new Map<number, () => void>();
+  let nextId = 0;
+  let refreshes = 0;
   const view = componentHarness(
     new URL("../apps/mobile/src/avatar-studio.tsx", import.meta.url),
     "AvatarStudio",
     {
+      "expo-crypto": { randomUUID: () => `request-${++nextId}` },
       "react-native": {
         Text: "Text",
-        Platform: { OS: "web" },
-        useWindowDimensions: () => ({ width: 1440 }),
         View: "View",
         Pressable: "Button",
+        Image: "Image",
+        ActivityIndicator: "ActivityIndicator",
+        Platform: { OS: "web" },
+        useWindowDimensions: () => ({ width: 1440 }),
         StyleSheet: { create: (value: unknown) => value },
       },
       "../../../packages/domain/src/avatar": {
-        AVATAR_PRESETS,
-        avatarDesignSchema,
-        resolveAvatarDesign,
+        resolveAvatarDesign: () => ({ species: "capybara" }),
+        AVATAR_PRESETS: [],
+        avatarDesignSchema: {},
       },
-      "./agent-workspace": { useAgentWorkspace: () => ({ refresh: async () => {} }) },
+      "./agent-workspace": {
+        useAgentWorkspace: () => ({
+          refresh: async () => {
+            refreshes++;
+          },
+        }),
+      },
       "./avatar-renderer": { AvatarRenderer: "AvatarRenderer" },
       "./avatar-thumbnail": { AvatarThumbnail: "AvatarThumbnail" },
-      "./i18n": { useI18n: () => ({ t: (key: string) => key }) },
+      "./avatar-studio-styles": { avatarStudioStyles: {} },
+      "./i18n": {
+        useI18n: () => ({
+          t: (key: string, values?: Record<string, unknown>) =>
+            key.replace(/\{(\w+)\}/g, (_match, name) => String(values?.[name] ?? name)),
+        }),
+      },
       "./ui": { Button: "Button", ErrorNotice: "ErrorNotice", Field: "Field" },
       "./workspace": {
         useWorkspace: () => ({ api, notify: (message: string) => notifications.push(message) }),
       },
     },
+    {},
+    {
+      setTimeout: (run: () => void) => {
+        const id = ++nextId;
+        timers.set(id, run);
+        return id;
+      },
+      clearTimeout: (id: number) => timers.delete(id),
+    },
   );
-  return { view, api, notifications };
+  return {
+    view,
+    api,
+    notifications,
+    get refreshes() {
+      return refreshes;
+    },
+    async poll() {
+      const pending = [...timers.values()];
+      timers.clear();
+      for (const run of pending) run();
+      await view.flush();
+    },
+  };
+}
+function describe(view: ReturnType<typeof fixture>["view"], prompt: string) {
+  const field = view
+    .nodes()
+    .find((item) => item.type === "Field" && item.props.label === "Describe your companion");
+  assert.ok(field, "free-form creation remains available");
+  (field.props.onChangeText as (value: string) => void)(prompt);
+  view.render();
+}
+function choose(view: ReturnType<typeof fixture>["view"], label: string) {
+  const node = view.nodes().find((item) => item.props.accessibilityLabel === label);
+  assert.ok(node, `Missing option ${label}`);
+  (node.props.onPress as () => void)();
+  view.render();
+}
+function errors(view: ReturnType<typeof fixture>["view"]) {
+  return view
+    .nodes()
+    .filter((item) => item.type === "ErrorNotice")
+    .map((item) => item.props.error)
+    .join(" ");
 }
 
-test("avatar studio describes actual renderer readiness instead of the loaded profile", async () => {
-  const { view } = fixture(async () => ({ identity: { avatarDesign: AVATAR_PRESETS[0] } }));
-  try {
-    view.render();
-    await view.flush();
-    assert.match(view.text(), /Loading your companion…/);
-    const renderer = view.nodes().find((node) => node.type === "AvatarRenderer");
-    assert.ok(renderer);
-    (renderer.props.onReady as (kind: string) => void)("webgl");
-    view.render();
-    assert.match(view.text(), /Your companion, in motion/);
-    assert.doesNotMatch(view.text(), /Loading your companion…/);
-  } finally {
-    view.close();
-  }
-});
-
-test("avatar studio saves actual custom parameters and ignores a delayed save after pairing changes", async () => {
-  const oldSave = deferred<unknown>();
+test("avatar creation polls real job candidates and applies selected poster while videos generate", async () => {
   const calls: { path: string; body?: unknown }[] = [];
-  const { view, api, notifications } = fixture(async (path, body) => {
+  const f = fixture(async (path, body) => {
     calls.push({ path, body });
-    if (path === "/api/agent/identity") return oldSave.promise;
-    return {
-      identity: {
-        avatarDesign: api.identityKey === "owner-one" ? AVATAR_PRESETS[0] : AVATAR_PRESETS[4],
-      },
-    };
+    if (path === "/api/agent/avatars") return studio();
+    if (path.endsWith("/select"))
+      return job({
+        selectedAssetId: "two",
+        status: "running",
+        phase: "videos",
+        candidates: candidates.map((item) => ({
+          ...item,
+          status: item.id === "two" ? "animating" : "still",
+        })),
+      });
+    if (body) return job({ status: "queued", phase: "images", candidates: [], candidateIds: [] });
+    return job();
   });
   try {
-    view.render();
-    await view.flush();
-    view.button("Create your ownStart from the current companion and make it yours.").onPress();
-    view.render();
-    view.button("Fine-tune appearance").onPress();
-    view.render();
-    view.button("Slender").onPress();
-    view.render();
-    const capturedSave = view.button("Save companion").onPress;
-    capturedSave();
-    view.render();
-    assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), {
-      path: "/api/agent/identity",
-      body: { avatarDesign: { ...AVATAR_PRESETS[0], preset: "custom", bodyShape: "slender" } },
-    });
-    api.identityKey = "owner-two";
-    view.render();
-    await view.flush();
-    capturedSave();
-    assert.equal(calls.filter((call) => call.path === "/api/agent/identity").length, 1);
-    oldSave.resolve({
-      avatarDesign: { ...AVATAR_PRESETS[0], preset: "custom", bodyShape: "slender" },
-    });
-    await view.flush();
-    assert.equal(notifications.length, 0);
-    assert.equal(view.button("Save companion").disabled, true);
-    view.button("Create your ownStart from the current companion and make it yours.").onPress();
-    view.render();
-    assert.equal(view.field("Custom body color"), AVATAR_PRESETS[4].bodyColor);
+    f.view.render();
+    await f.view.flush();
+    describe(f.view, "A small teal dragon");
+    f.view.button("Generate companions").onPress();
+    await f.view.flush();
+    assert.match(f.view.text(), /Creating four companions/);
+    await f.poll();
+    assert.equal(
+      f.view.nodes().filter((item) => item.props.accessibilityRole === "radio").length,
+      4,
+    );
+    assert.equal(f.view.button("Select companion").disabled, true);
+    choose(f.view, "Choose option 2");
+    assert.equal(
+      f.view.nodes().find((item) => item.props.accessibilityLabel === "Choose option 2")?.props[
+        "aria-checked"
+      ],
+      true,
+    );
+    f.view.button("Select companion").onPress();
+    await f.view.flush();
+    assert.equal(
+      (calls.find((item) => item.path.endsWith("/select"))?.body as { assetId: string } | undefined)
+        ?.assetId,
+      "two",
+    );
+    const preview = f.view.nodes().find((item) => item.type === "AvatarRenderer");
+    assert.equal((preview?.props.asset as { id: string } | undefined)?.id, "two");
+    assert.match(f.view.text(), /Your companion is applied/);
+    assert.ok(f.refreshes > 0);
   } finally {
-    view.close();
+    f.view.close();
   }
 });
 
-test("avatar studio keeps edits when saving fails and a retry saves the same design", async () => {
-  let saveCalls = 0;
-  const { view, notifications } = fixture(async (path, body) => {
-    if (path === "/api/agent/identity") {
-      saveCalls++;
-      if (saveCalls === 1) throw new Error("offline");
-      return { avatarDesign: (body as { avatarDesign: unknown }).avatarDesign };
+test("generation transport retry preserves the draft and reuses its idempotency key", async () => {
+  const posts: Record<string, unknown>[] = [];
+  const f = fixture(async (_path, body) => {
+    if (!body) return studio();
+    posts.push(body as Record<string, unknown>);
+    if (posts.length === 1) throw new Error("Connection interrupted");
+    return job();
+  });
+  try {
+    f.view.render();
+    await f.view.flush();
+    describe(f.view, "A small teal dragon");
+    f.view.button("Generate companions").onPress();
+    await f.view.flush();
+    assert.match(errors(f.view), /Connection interrupted/);
+    assert.equal(f.view.field("Describe your companion"), "A small teal dragon");
+    f.view.button("Try again").onPress();
+    await f.view.flush();
+    assert.equal(posts.length, 2);
+    assert.equal(posts[0].requestId, posts[1].requestId);
+    assert.equal(posts[1].prompt, "A small teal dragon");
+  } finally {
+    f.view.close();
+  }
+});
+
+test("old owner generation responses and captured handlers cannot change the next owner", async () => {
+  const old = deferred<unknown>();
+  let posts = 0;
+  const f = fixture(async (_path, body) => {
+    if (body) {
+      posts++;
+      return old.promise;
     }
-    return { identity: { avatarDesign: AVATAR_PRESETS[0] } };
+    return studio();
   });
   try {
-    view.render();
-    await view.flush();
-    view.button("Fox").onPress();
-    view.render();
-    view.button("Save companion").onPress();
-    await view.flush();
-    assert.equal(view.button("Save companion").disabled, false);
-    assert.match(view.text(), /Changes are not saved yet/);
-    view.button("Save companion").onPress();
-    await view.flush();
-    assert.equal(saveCalls, 2);
-    assert.equal(view.button("Save companion").disabled, true);
-    assert.deepEqual(notifications, ["Companion saved"]);
+    f.view.render();
+    await f.view.flush();
+    describe(f.view, "A small teal dragon");
+    const generate = f.view.button("Generate companions").onPress;
+    generate();
+    f.view.render();
+    f.api.identityKey = "owner-two";
+    f.view.render();
+    await f.view.flush();
+    generate();
+    old.resolve(job());
+    await f.view.flush();
+    assert.equal(posts, 1);
+    assert.equal(
+      f.view.nodes().filter((item) => item.props.accessibilityRole === "radio").length,
+      0,
+    );
+    assert.equal(f.view.field("Describe your companion"), "");
+    assert.deepEqual(f.notifications, []);
   } finally {
-    view.close();
+    f.view.close();
   }
 });
 
-test("avatar selection and motion expose their checked state to web accessibility", async () => {
-  const { view } = fixture(async () => ({ identity: { avatarDesign: AVATAR_PRESETS[0] } }));
+test("unmounted selection response cannot refresh identity or announce success", async () => {
+  const selection = deferred<unknown>();
+  const f = fixture(async (_path, body) =>
+    body ? selection.promise : studio({ generations: [job()], assets: candidates }),
+  );
+  f.view.render();
+  await f.view.flush();
+  choose(f.view, "Choose option 1");
+  f.view.button("Select companion").onPress();
+  f.view.close();
+  selection.resolve(job({ selectedAssetId: "one", status: "running", phase: "videos" }));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(f.refreshes, 0);
+  assert.deepEqual(f.notifications, []);
+});
+
+test("unavailable provider keeps creation draft visible and rechecking does not erase it", async () => {
+  let loads = 0;
+  const f = fixture(async () => {
+    loads++;
+    if (loads === 1) throw new Error("Service offline");
+    return studio({
+      capabilities: {
+        images: false,
+        videos: false,
+        provider: null,
+        reason: "Connect a generation provider",
+      },
+    });
+  });
   try {
-    view.render();
-    await view.flush();
-    assert.equal(Reflect.get(view.button("Fox"), "aria-checked"), false);
-    view.button("Fox").onPress();
-    view.render();
-    assert.equal(Reflect.get(view.button("Fox"), "aria-checked"), true);
-    assert.equal(Reflect.get(view.button("Capybara"), "aria-checked"), false);
-    view.button("Thinking").onPress();
-    view.render();
-    assert.equal(Reflect.get(view.button("Thinking"), "aria-checked"), true);
-    assert.equal(Reflect.get(view.button("Idle"), "aria-checked"), false);
+    f.view.render();
+    await f.view.flush();
+    describe(f.view, "A sleepy cream companion");
+    assert.match(errors(f.view), /Service offline/);
+    f.view.button("Try again").onPress();
+    await f.view.flush();
+    assert.equal(f.view.field("Describe your companion"), "A sleepy cream companion");
+    assert.match(f.view.text(), /Connect a generation provider/);
+    assert.equal(f.view.button("Generate companions").disabled, true);
   } finally {
-    view.close();
+    f.view.close();
+  }
+});
+
+test("uncertain jobs retry only after explicit acknowledgement with a new action key", async () => {
+  const posts: { path: string; body: Record<string, unknown> }[] = [];
+  const f = fixture(async (path, body) => {
+    if (!body)
+      return studio({
+        generations: [
+          job({
+            status: "uncertain",
+            phase: "images",
+            candidates: [],
+            candidateIds: [],
+            retryable: true,
+            error: "Provider result could not be confirmed",
+          }),
+        ],
+      });
+    posts.push({ path, body: body as Record<string, unknown> });
+    return job({ status: "running", phase: "images", candidates: [], candidateIds: [] });
+  });
+  try {
+    f.view.render();
+    await f.view.flush();
+    f.view.button("Retry generation").onPress();
+    f.view.render();
+    assert.equal(posts.length, 0);
+    assert.match(f.view.text(), /may create another generation/);
+    f.view.button("Confirm new attempt").onPress();
+    await f.view.flush();
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].path, "/api/agent/avatars/generations/generation-one/retry");
+    assert.equal(posts[0].body.acknowledgeUncertain, true);
+    assert.notEqual(posts[0].body.requestId, "request-one");
+  } finally {
+    f.view.close();
+  }
+});
+
+test("saved companion selection uses its own route without generating a new character", async () => {
+  const posts: string[] = [];
+  const saved = { ...asset("saved"), source: "upload", generationId: undefined };
+  const f = fixture(async (path, body) => {
+    if (!body) return studio({ assets: [saved] });
+    posts.push(path);
+    return saved;
+  });
+  try {
+    f.view.render();
+    await f.view.flush();
+    choose(f.view, "Use Companion saved");
+    await f.view.flush();
+    assert.deepEqual(posts, ["/api/agent/avatars/saved/select"]);
+    assert.equal(
+      (
+        f.view.nodes().find((item) => item.type === "AvatarRenderer")?.props.asset as
+          | { id: string }
+          | undefined
+      )?.id,
+      "saved",
+    );
+  } finally {
+    f.view.close();
+  }
+});
+
+test("progress read failure pauses polling and an explicit check recovers without recreating the job", async () => {
+  let reads = 0;
+  let posts = 0;
+  const f = fixture(async (path, body) => {
+    if (body) posts++;
+    if (path === "/api/agent/avatars")
+      return studio({
+        generations: [
+          job({ status: "running", phase: "images", candidates: [], candidateIds: [] }),
+        ],
+      });
+    reads++;
+    if (reads === 1) throw new Error("Progress temporarily unavailable");
+    return job();
+  });
+  try {
+    f.view.render();
+    await f.view.flush();
+    describe(f.view, "Keep this description");
+    await f.poll();
+    assert.match(errors(f.view), /Progress temporarily unavailable/);
+    await f.poll();
+    assert.equal(reads, 1, "failed reads do not silently restart work");
+    f.view.button("Try again").onPress();
+    f.view.render();
+    await f.poll();
+    assert.equal(reads, 2);
+    assert.equal(posts, 0);
+    assert.equal(f.view.field("Describe your companion"), "Keep this description");
+    assert.equal(
+      f.view.nodes().filter((item) => item.props.accessibilityRole === "radio").length,
+      4,
+    );
+  } finally {
+    f.view.close();
+  }
+});
+
+test("a delayed job poll cannot reveal a previous owner’s candidate images", async () => {
+  const old = deferred<unknown>();
+  const f = fixture(async (path) =>
+    path === "/api/agent/avatars"
+      ? studio({
+          generations:
+            f.api.identityKey === "owner-one"
+              ? [job({ status: "running", phase: "images", candidates: [], candidateIds: [] })]
+              : [],
+        })
+      : old.promise,
+  );
+  try {
+    f.view.render();
+    await f.view.flush();
+    await f.poll();
+    f.api.identityKey = "owner-two";
+    f.view.render();
+    await f.view.flush();
+    old.resolve(job());
+    await f.view.flush();
+    assert.equal(
+      f.view.nodes().filter((item) => item.props.accessibilityRole === "radio").length,
+      0,
+    );
+    assert.doesNotMatch(f.view.text(), /Which one feels/);
+  } finally {
+    f.view.close();
+  }
+});
+
+test("the gallery retains chosen characters after their generation leaves the latest 30 jobs", async () => {
+  const old = { ...asset("old-favorite"), generationId: "old-generation", status: "ready" };
+  const skipped = asset("not-chosen");
+  const recent = Array.from({ length: 30 }, (_, index) =>
+    job({
+      id: `recent-${index}`,
+      selectedAssetId: `chosen-${index}`,
+      status: "succeeded",
+      phase: "complete",
+    }),
+  );
+  const f = fixture(async () => studio({ assets: [old, skipped], generations: recent }));
+  try {
+    f.view.render();
+    await f.view.flush();
+    assert.ok(
+      f.view.nodes().some((item) => item.props.accessibilityLabel === "Use Companion old-favorite"),
+    );
+    assert.equal(
+      f.view.nodes().some((item) => item.props.accessibilityLabel === "Use Companion not-chosen"),
+      false,
+    );
+  } finally {
+    f.view.close();
+  }
+});
+
+test("using the default companion clears the active asset without deleting the saved gallery", async () => {
+  const saved = { ...asset("saved"), status: "ready" };
+  const paths: string[] = [];
+  const f = fixture(async (path, body) => {
+    if (!body) return studio({ assets: [saved], activeAssetId: "saved" });
+    paths.push(path);
+    return { selected: true };
+  });
+  try {
+    f.view.render();
+    await f.view.flush();
+    f.view.button("Use default companion").onPress();
+    await f.view.flush();
+    assert.deepEqual(paths, ["/api/agent/avatars/default/select"]);
+    assert.equal(
+      f.view.nodes().find((item) => item.type === "AvatarRenderer")?.props.asset,
+      undefined,
+    );
+    assert.ok(
+      f.view.nodes().some((item) => item.props.accessibilityLabel === "Use Companion saved"),
+    );
+    assert.ok(f.refreshes > 0);
+  } finally {
+    f.view.close();
   }
 });

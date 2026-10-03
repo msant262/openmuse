@@ -25,13 +25,13 @@ export function MessageBubble({
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
       style={{
-        paddingLeft: 16,
-        paddingRight: onQuote ? 48 : 16,
-        paddingVertical: 13,
-        borderRadius: 22,
-        borderBottomRightRadius: user ? 7 : 22,
-        borderBottomLeftRadius: user ? 22 : 7,
-        backgroundColor: user ? colors.blue : "#EEEEF0",
+        paddingLeft: 15,
+        paddingRight: onQuote && !contextual ? 38 : 15,
+        paddingVertical: 11,
+        borderRadius: 23,
+        borderBottomRightRadius: user ? 17 : 23,
+        borderBottomLeftRadius: user ? 17 : 23,
+        backgroundColor: user ? colors.blue : "#EDEDEF",
       }}
     >
       {children}
@@ -45,9 +45,9 @@ export function MessageBubble({
           onPress={onQuote}
           style={({ pressed }) => ({
             position: "absolute",
-            right: 2,
+            right: contextual ? -36 : 0,
             top: 2,
-            width: 44,
+            width: contextual ? 32 : 38,
             height: 44,
             alignItems: "center",
             justifyContent: "center",

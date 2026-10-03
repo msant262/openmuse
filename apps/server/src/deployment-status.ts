@@ -8,8 +8,8 @@ import type { ExecutorDelivery } from "./executors/registry.ts";
  * cannot be omitted from a stopped-writer consistency decision. No payloads,
  * tokens, source contents or account information are returned. */
 export async function deploymentStatus(db: Store, now = Date.now(), activeRequests = () => 0) {
-  const [pause, maintenance, tasks, admissions, leases, deliveries, operations] = await Promise.all(
-    [
+  const [pause, maintenance, tasks, admissions, leases, deliveries, operations, avatars] =
+    await Promise.all([
       new RuntimePause(db).get(""),
       new DeploymentMaintenance(db).current(now),
       db.scan<AgentTask>("tasks"),
@@ -31,8 +31,13 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
           error?: unknown;
         };
       }>("task-operations"),
-    ],
-  );
+      db.scan<{
+        status: string;
+        leaseUntil?: number;
+        dispatching?: boolean;
+        providerRequestId?: string | null;
+      }>("avatar-generations"),
+    ]);
   const occupied = (row: { hold?: boolean; expiresAt: string }) =>
     row.hold === true || Date.parse(row.expiresAt) > now;
   const activeTasks = tasks.filter(({ value }) =>
@@ -40,25 +45,34 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
   ).length;
   const heldResources = leases.filter(({ value }) => occupied(value)).length;
   const workAdmissions = admissions.filter(({ value }) => occupied(value)).length;
-  const activeOperations = operations.filter(
+  const activeAvatarOperations = avatars.filter(
     ({ value }) =>
-      // Older journals copied the computer's running state onto a completed
-      // read. Preserve that history while counting only actual pending work.
-      !(
-        value.status === "running" &&
-        value.effect === false &&
-        value.toolName === "computer_status" &&
-        !value.receipt?.error &&
-        typeof value.receipt?.enabled === "boolean" &&
-        ["docker", "rpc", "native"].includes(value.receipt.provider ?? "") &&
-        value.receipt.status === "running" &&
-        value.receipt.workspacePath === "/workspace" &&
-        ["disabled", "public-only"].includes(value.receipt.network ?? "") &&
-        Array.isArray(value.receipt.commands)
-      ) &&
-      (["dispatching", "running"].includes(value.status) ||
-        (value.status === "outcome_unknown" && value.receipt?.cleanupConfirmed !== true)),
+      value.status === "running" &&
+      (Boolean(value.providerRequestId) ||
+        Boolean(value.dispatching) ||
+        (value.leaseUntil ?? 0) > now),
   ).length;
+  const activeOperations =
+    activeAvatarOperations +
+    operations.filter(
+      ({ value }) =>
+        // Older journals copied the computer's running state onto a completed
+        // read. Preserve that history while counting only actual pending work.
+        !(
+          value.status === "running" &&
+          value.effect === false &&
+          value.toolName === "computer_status" &&
+          !value.receipt?.error &&
+          typeof value.receipt?.enabled === "boolean" &&
+          ["docker", "rpc", "native"].includes(value.receipt.provider ?? "") &&
+          value.receipt.status === "running" &&
+          value.receipt.workspacePath === "/workspace" &&
+          ["disabled", "public-only"].includes(value.receipt.network ?? "") &&
+          Array.isArray(value.receipt.commands)
+        ) &&
+        (["dispatching", "running"].includes(value.status) ||
+          (value.status === "outcome_unknown" && value.receipt?.cleanupConfirmed !== true)),
+    ).length;
   const nativeDeliveries = deliveries.filter(
     (value) =>
       value.state === "claimed" ||

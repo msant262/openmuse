@@ -1,0 +1,46 @@
+export const avatarCharacterPtBR: Record<string, string> = {
+  "Use default companion": "Usar companheiro padrão",
+  "Your companion": "Seu companheiro",
+  "Companion preview unavailable": "Prévia do companheiro indisponível",
+  "Static preview · video unavailable": "Prévia estática · vídeo indisponível",
+  "Imagine a companion that feels like you. Describe it, then choose your favorite.":
+    "Imagine um companheiro com a sua cara. Descreva e escolha seu favorito.",
+  "Companion preview": "Prévia do companheiro",
+  "Preview your choice": "Prévia da sua escolha",
+  "A familiar face, made for you": "Um rosto familiar, feito para você",
+  Responding: "Respondendo",
+  "Your companion is applied. Its portrait stays visible while animations are created.":
+    "Seu companheiro já está aplicado. O retrato continua visível enquanto as animações são criadas.",
+  "Describe your companion": "Descreva seu companheiro",
+  "A little cream-colored forest spirit with a soft hood and a gentle smile…":
+    "Um pequeno espírito da floresta, cor creme, com capuz macio e sorriso gentil…",
+  "Any creature, character, color or personality. We’ll create four directions for you.":
+    "Qualquer criatura, personagem, cor ou personalidade. Vamos criar quatro opções para você.",
+  "Loading your companions…": "Carregando seus companheiros…",
+  "Image generation is unavailable. Your description will stay here.":
+    "A geração de imagens está indisponível. Sua descrição continuará aqui.",
+  "Check availability": "Verificar disponibilidade",
+  "You can create a portrait now. Animation generation is currently unavailable.":
+    "Você pode criar um retrato agora. A geração de animações está indisponível no momento.",
+  "Generate companions": "Gerar companheiros",
+  "Creating animations…": "Criando animações…",
+  "Creating four companions…": "Criando quatro companheiros…",
+  "Which one feels like your companion?": "Qual deles combina com você?",
+  "Choose option {number}": "Escolher opção {number}",
+  "Option {number}": "Opção {number}",
+  "Select companion": "Selecionar companheiro",
+  "Your companion is saved in your gallery.": "Seu companheiro está salvo na sua galeria.",
+  "Retry generation": "Tentar gerar novamente",
+  "The previous result could not be confirmed. Trying again may create another generation and use additional provider credits.":
+    "Não foi possível confirmar o resultado anterior. Uma nova tentativa pode gerar outro resultado e usar mais créditos do provedor.",
+  "Confirm new attempt": "Confirmar nova tentativa",
+  "Your companions": "Seus companheiros",
+  "Create another": "Criar outro",
+  "The companions you choose will live here.": "Os companheiros que você escolher ficarão aqui.",
+  "Use {name}": "Usar {name}",
+  Selected: "Selecionado",
+  "Could not load your companions.": "Não foi possível carregar seus companheiros.",
+  "Could not check generation progress.": "Não foi possível verificar o progresso da geração.",
+  "Could not update your companion. Your description is still here.":
+    "Não foi possível atualizar seu companheiro. Sua descrição continua aqui.",
+};

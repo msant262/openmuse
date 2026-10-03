@@ -59,19 +59,26 @@ test("mounted viewer preserves pixels without permitting stale input across take
     format: "iife",
     platform: "browser",
     jsx: "automatic",
-    loader: { ".png": "dataurl" },
+    loader: { ".png": "dataurl", ".mp4": "dataurl" },
     resolveExtensions: [".web.tsx", ".web.ts", ".web.js", ".tsx", ".ts", ".jsx", ".js"],
     alias: {
       "react-native": mobileRequire.resolve("react-native-web"),
       "expo-crypto": crypto,
       "lucide-react-native": icons,
     },
-    define: { "process.env.NODE_ENV": '"test"', __DEV__: "false" },
+    define: {
+      "process.env.NODE_ENV": '"test"',
+      "process.env.EXPO_PUBLIC_API_URL": '"http://localhost:8787"',
+      "process.env.EXPO_PUBLIC_WEB_SAME_ORIGIN": '"false"',
+      __DEV__: "false",
+    },
     logLevel: "silent",
   });
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage();
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.message));
   const session = {
     id: randomUUID(),
     browserSessionId: randomUUID(),
@@ -213,7 +220,10 @@ test("mounted viewer preserves pixels without permitting stale input across take
       0,
     );
   };
-  await desktopImage.waitFor();
+  await desktopImage.waitFor().catch((error) => {
+    assert.deepEqual(pageErrors, [], "Desktop viewer browser errors");
+    throw error;
+  });
   await page.waitForFunction(() => {
     const image = document.querySelector("img");
     return image?.complete && image.naturalWidth > 0;

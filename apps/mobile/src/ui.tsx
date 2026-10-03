@@ -14,15 +14,16 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useAvatarPresentation } from "./avatar-presentation";
 import { AvatarRenderer } from "./avatar-renderer";
 export const colors = {
   canvas: "#FCFCFC",
   card: "#FFFFFF",
-  text: "#11191C",
-  muted: "#697176",
+  text: "#171719",
+  muted: "#737376",
   line: "#EEEEF0",
-  blue: "#C8E7FF",
+  blue: "#CEE5FC",
   blueDark: "#1473C8",
   sky: "#EDF7FD",
   green: "#E3F3E8",
@@ -403,40 +404,46 @@ export function LinkRow({
     </Pressable>
   );
 }
-/** Shared companion appearance; legacy background tints remain supported. */
+/** A transparent companion, shared by the floating header and the agent portrait. */
 export function Mascot({
   size = 42,
-  variant = "sky",
+  variant: _variant = "sky",
+  framing = "full",
 }: {
   size?: number;
   variant?: "sky" | "sand" | "lilac";
+  framing?: "full" | "portrait";
 }) {
   const presentation = useAvatarPresentation();
-  const palette = {
-    sky: "#ECF5FA",
-    sand: "#FAF0DF",
-    lilac: "#F1ECF9",
-  }[variant];
   return (
-    <View style={{ width: size, height: size, borderRadius: size / 2, overflow: "hidden" }}>
-      <View
-        style={{
-          position: "absolute",
-          top: size * 0.15,
-          left: size * 0.12,
-          width: size * 0.76,
-          height: size * 0.76,
-          borderRadius: size,
-          backgroundColor: palette,
-        }}
-      />
-      <AvatarRenderer
-        size={size}
-        design={presentation.design}
-        state={presentation.state}
-        active={presentation.active}
-        framing="portrait"
-      />
+    <AvatarRenderer
+      size={size}
+      design={presentation.design}
+      asset={presentation.asset}
+      state={presentation.state}
+      active={presentation.active}
+      framing={framing}
+    />
+  );
+}
+
+/** The conversation stays visible beneath the floating companion. */
+export function HeaderFade() {
+  return (
+    <View
+      pointerEvents="none"
+      style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: -20 }}
+    >
+      <Svg width="100%" height="100%" preserveAspectRatio="none">
+        <Defs>
+          <LinearGradient id="companionHeaderFade" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={colors.canvas} stopOpacity="1" />
+            <Stop offset="0.55" stopColor={colors.canvas} stopOpacity="0.96" />
+            <Stop offset="1" stopColor={colors.canvas} stopOpacity="0" />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height="100%" fill="url(#companionHeaderFade)" />
+      </Svg>
     </View>
   );
 }
