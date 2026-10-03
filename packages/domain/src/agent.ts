@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AvatarDesign } from "./avatar.ts";
 import {
   type CompletionAssessment,
   type CompletionCriterion,
@@ -185,6 +186,7 @@ export interface AgentIdentity {
   name: string;
   tone: "warm" | "concise" | "thoughtful";
   avatar?: "sky" | "sand" | "lilac";
+  avatarDesign?: AvatarDesign;
   showChatUpdates?: boolean;
   profile?: EffectiveAgentProfile;
 }

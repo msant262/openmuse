@@ -11,7 +11,10 @@
     "build:android": "expo export --platform android --output-dir dist/android",
     "typecheck": "tsc --noEmit",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "build:avatar": "node scripts/bundle-avatar.mjs",
+    "check:avatar": "node scripts/bundle-avatar.mjs --check",
+    "verify:avatar": "pnpm check:avatar && node scripts/check-avatar-render.mjs"
   },
   "dependencies": {
     "@copilotkit/react-native": "1.70.1",
@@ -42,6 +45,7 @@
     "react-native-svg": "15.12.1",
     "react-native-web": "^0.21.0",
     "react-native-webview": "13.15.0",
+    "three": "0.186.1",
     "zod": "^4.1.0"
   },
   "devDependencies": {
@@ -49,6 +53,8 @@
     "@config-plugins/react-native-pdf": "^12.0.0",
     "@types/markdown-it": "14.1.2",
     "@types/react": "~19.1.0",
+    "@types/three": "0.186.0",
+    "esbuild": "0.28.2",
     "typescript": "~5.9.2"
   }
 }

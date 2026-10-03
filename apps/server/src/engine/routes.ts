@@ -5,6 +5,7 @@ import {
   agentProfilePatchSchema,
   profileScopeSchema,
 } from "../../../../packages/domain/src/agent.ts";
+import { avatarDesignSchema } from "../../../../packages/domain/src/avatar.ts";
 import { AppError } from "../errors.ts";
 import { memoryInput } from "../memory.ts";
 import { playbookRoutes } from "../playbooks.ts";
@@ -329,6 +330,7 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
         name: z.string().trim().min(1).max(80).optional(),
         tone: z.enum(["warm", "concise", "thoughtful"]).optional(),
         avatar: z.enum(["sky", "sand", "lilac"]).optional(),
+        avatarDesign: avatarDesignSchema.optional(),
         showChatUpdates: z.boolean().optional(),
         expectedRevision: z.number().int().min(0).optional(),
         requestId: z.string().min(1).max(256).optional(),
