@@ -6,6 +6,7 @@ import {
   catalogPath,
   connectionRequestStatus,
   connectionStatusLabel,
+  googleConnectionDestination,
   safeConnectionAuthorizationUrl,
 } from "../src/connections-state.ts";
 
@@ -17,6 +18,30 @@ const item = (slug: string, name = slug): ConnectionToolkit => ({
   authSchemes: [],
   noAuth: false,
   deprecated: false,
+});
+
+test("unconfigured Google opens the matching catalog app instead of native OAuth", () => {
+  for (const toolkit of ["gmail", "googlecalendar"] as const) {
+    assert.equal(
+      googleConnectionDestination({ toolkit, configured: false, hasAccount: false }),
+      toolkit,
+    );
+    assert.equal(
+      googleConnectionDestination({ toolkit, configured: true, hasAccount: false }),
+      "native",
+    );
+  }
+});
+
+test("existing native Google accounts remain manageable when OAuth setup becomes unavailable", () => {
+  assert.equal(
+    googleConnectionDestination({
+      toolkit: "gmail",
+      configured: false,
+      hasAccount: true,
+    }),
+    "native",
+  );
 });
 
 test("catalog search, category and opaque cursors stay independent query parameters", () => {

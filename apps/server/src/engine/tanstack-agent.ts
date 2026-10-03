@@ -69,6 +69,11 @@ export function tanstackAgent(options: {
   maxSteps: number;
   /** Reserve the last allowed model turn for a chat answer without any tools. */
   finalResponseOnStepLimit?: boolean;
+  /** Reserve the preceding turn for handing unfinished work to a durable worker. */
+  handoffBeforeFinalResponse?: {
+    tools: () => readonly string[];
+    prompt: string;
+  };
   tools: ToolDefinition[];
   prompt: string;
   /** Re-read trusted profile/steering at each model safe point without restarting work. */
@@ -156,7 +161,19 @@ export function tanstackAgent(options: {
                     const systemPrompts = [((await options.promptContext?.()) ?? "") + system];
                     const finalResponse =
                       options.finalResponseOnStepLimit && ctx.iteration >= options.maxSteps - 1;
-                    const tools = finalResponse ? [] : config.tools;
+                    const handoff =
+                      options.finalResponseOnStepLimit &&
+                      !finalResponse &&
+                      ctx.iteration >= options.maxSteps - 2
+                        ? options.handoffBeforeFinalResponse
+                        : undefined;
+                    const handoffTools = handoff?.tools();
+                    const tools = finalResponse
+                      ? []
+                      : handoffTools
+                        ? config.tools.filter((tool) => handoffTools.includes(tool.name))
+                        : config.tools;
+                    if (handoff) systemPrompts.push(handoff.prompt);
                     if (finalResponse)
                       systemPrompts.push(
                         "This is the final response for this chat run. Tools are unavailable. Answer the user's request now using the observations already returned. Cite source URLs for verified details and prices. If research is incomplete, give the useful verified results and briefly explain what could not be verified. Do not invent findings or claim that pending delegated work has finished. Do not ask more questions or ask the user to say continue, restart, or repeat the request.",

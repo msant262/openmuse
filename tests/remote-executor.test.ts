@@ -422,7 +422,7 @@ test("native replay borrows existing physical audit holds and confirmed unknown 
   }
 });
 
-test("unknown native file work keeps its exact physical lease until confirmed cleanup", async () => {
+test("unknown native file work keeps its exact physical lease until confirmed cleanup", async (t) => {
   const db = await createStore();
   try {
     const registry = new ExecutorRegistry(db, {
@@ -438,6 +438,19 @@ test("unknown native file work keeps its exact physical lease until confirmed cl
     });
     const resources = new ResourceLeases(db),
       log = new ActionLog(db);
+    let receiptSubmitted!: () => void;
+    const receiptReady = new Promise<void>((resolve) => {
+      receiptSubmitted = resolve;
+    });
+    t.after(receiptSubmitted);
+    const enqueue = registry.enqueue.bind(registry);
+    t.mock.method(registry, "enqueue", async (...args: Parameters<typeof enqueue>) => {
+      const operation = await enqueue(...args);
+      // Publish real work first, then let the simulated executor submit its receipt.
+      // This test covers unknown cleanup, not a race against the 50ms polling timeout.
+      await receiptReady;
+      return operation;
+    });
     let holdTaskId = "";
     const native = new RemoteComputerBackend(registry, {
       executorId: "lenovo-okami",
@@ -458,6 +471,7 @@ test("unknown native file work keeps its exact physical lease until confirmed cl
       status: "outcome_unknown",
       data: { cleanupConfirmed: false },
     });
+    receiptSubmitted();
     await rejected;
     assert.ok(holdTaskId);
     const leases = await resources.listForTask(holdTaskId);

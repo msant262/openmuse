@@ -40,6 +40,7 @@ import type {
 import { ActionLogScreen } from "./action-log-screen";
 import { API_URL } from "./api";
 import { ConnectionsCatalog } from "./connections-catalog";
+import { type ConnectionToolkit, googleConnectionDestination } from "./connections-state";
 import { localDateTime, zonedInstant } from "./date-time";
 import { useI18n } from "./i18n";
 import { MuseLibrary } from "./muse-library";
@@ -1159,21 +1160,74 @@ export function ConnectionsScreen({ query }: { query?: string }) {
   return (
     <ConnectionsCatalog
       query={query}
-      nativeConnections={(search) => <NativeConnections query={search} />}
+      nativeConnections={(search, selectToolkit) => (
+        <NativeConnections query={search} selectToolkit={selectToolkit} />
+      )}
     />
   );
 }
 
-function NativeConnections({ query }: { query: string }) {
+function NativeConnections({
+  query,
+  selectToolkit,
+}: {
+  query: string;
+  selectToolkit: (toolkit: ConnectionToolkit) => void;
+}) {
   const { t } = useI18n();
   const { workspace: w, api, refresh, notify, open } = useWorkspace();
-  const [selected, setSelected] = useState<string>();
+  const [selected, setSelected] = useState<"gmail" | "googlecalendar">();
+  const [nativeConfigured, setNativeConfigured] = useState(w.mode === "sample");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const google = w.connections.find((c) => c.id === "google");
+  const connected = google?.status === "connected" || google?.status === "sample";
+  const hasAccount = connected || Boolean(google?.account);
+  function openCatalog(toolkit: "gmail" | "googlecalendar") {
+    setSelected(undefined);
+    selectToolkit({
+      slug: toolkit,
+      name: toolkit === "gmail" ? "Gmail" : t("Google Calendar"),
+      description: t("Connect this app to use it in your conversations"),
+      categories: [],
+      authSchemes: [],
+      noAuth: false,
+      deprecated: false,
+    });
+  }
+  async function checkNative() {
+    const configured =
+      w.mode === "sample" ||
+      (await api.request<{ configured: boolean }>("/api/google/status")).configured;
+    setNativeConfigured(configured);
+    return configured;
+  }
+  async function selectGoogle(toolkit: "gmail" | "googlecalendar") {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const destination = googleConnectionDestination({
+        toolkit,
+        configured: await checkNative(),
+        hasAccount,
+      });
+      if (destination === "native") setSelected(toolkit);
+      else openCatalog(destination);
+    } catch {
+      setError(t("Could not check the connection. We will try again."));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function connect(capability: "read" | "write") {
     setBusy(true);
     setError("");
     try {
+      if (!(await checkNative())) {
+        openCatalog(selected ?? "gmail");
+        return;
+      }
       const result = await api.request<{ url: string | null; connected?: boolean }>(
         "/api/google/connect",
         { capability },
@@ -1204,12 +1258,10 @@ function NativeConnections({ query }: { query: string }) {
       setBusy(false);
     }
   }
-  const google = w.connections.find((c) => c.id === "google");
-  const connected = google?.status === "connected" || google?.status === "sample";
   const rows = [
     { id: "gmail", name: "Gmail", icon: Mail, color: "#EA5B4D", connected, group: "google" },
     {
-      id: "calendar",
+      id: "googlecalendar",
       name: "Google Calendar",
       icon: CalendarDays,
       color: "#4285F4",
@@ -1229,6 +1281,7 @@ function NativeConnections({ query }: { query: string }) {
   );
   return (
     <View style={{ gap: 24 }}>
+      {!selected && <ErrorNotice error={error} />}
       {[true, false].map((isConnected) => {
         const group = rows.filter((row) => row.connected === isConnected);
         if (!group.length) return null;
@@ -1247,8 +1300,11 @@ function NativeConnections({ query }: { query: string }) {
                   key={row.id}
                   accessibilityRole="button"
                   accessibilityLabel={t("Manage {name}", { name: t(row.name) })}
+                  disabled={row.group === "google" && busy}
                   onPress={() =>
-                    row.group === "browser" ? open({ type: "computer" }) : setSelected(row.group)
+                    row.group === "browser"
+                      ? open({ type: "computer" })
+                      : void selectGoogle(row.id === "gmail" ? "gmail" : "googlecalendar")
                   }
                   style={[
                     s.row,
@@ -1312,13 +1368,21 @@ function NativeConnections({ query }: { query: string }) {
               ))}
             </View>
             <ErrorNotice error={error} />
-            <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
-              {t("Connect Google")}
-            </Button>
-            <Button busy={busy} onPress={() => void connect("write")}>
-              {t("Enable sending & editing")}
-            </Button>
-            {connected && (
+            {nativeConfigured ? (
+              <>
+                <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
+                  {t("Connect Google")}
+                </Button>
+                <Button busy={busy} onPress={() => void connect("write")}>
+                  {t("Enable sending & editing")}
+                </Button>
+              </>
+            ) : (
+              <Button primary icon={Link2} onPress={() => openCatalog(selected)}>
+                {t("Connect account")}
+              </Button>
+            )}
+            {hasAccount && (
               <Button busy={busy} danger onPress={() => void disconnect()}>
                 {t("Disconnect Google")}
               </Button>

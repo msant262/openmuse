@@ -63,6 +63,9 @@ Quando o agente precisar de uma conta, o modal abre na tarefa correspondente;
 confirmar a autorização retoma essa mesma tarefa. Links expirados podem ser
 reiniciados pelo modal. A integração depende do serviço hospedado Composio;
 a geração de imagens pela assinatura ChatGPT continua com sua conexão própria.
+Gmail e Google Agenda também abrem esse catálogo quando o OAuth próprio da
+instalação não está configurado. Se a ativação ainda estiver pendente, a tela
+mostra o campo privado do Composio e mantém o app escolhido após salvar a chave.
 
 O menu de cada conversa permite renomear, arquivar, restaurar e excluir.
 **Arquivadas** mostra as conversas guardadas. Excluir remove a transcrição;

@@ -982,6 +982,9 @@ export async function createApp(
     const body = z.object({ reference: z.string() }).parse(await c.req.json());
     return c.json(await workspace.importAttachment(c.get("owner"), body.reference), 201);
   });
+  app.get("/api/google/status", (c) =>
+    c.json({ configured: config.mode === "sample" || google.configured() }),
+  );
   app.post("/api/google/connect", async (c) => {
     const body = z.object({ capability: z.enum(["read", "write"]) }).parse(await c.req.json());
     if (config.mode === "sample") {

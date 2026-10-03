@@ -68,7 +68,10 @@ export function ConnectionsCatalog({
   nativeConnections,
 }: {
   query?: string;
-  nativeConnections: (query: string) => ReactNode;
+  nativeConnections: (
+    query: string,
+    selectToolkit: (toolkit: ConnectionToolkit) => void,
+  ) => ReactNode;
 }) {
   const { api, notify } = useWorkspace();
   const { t } = useI18n();
@@ -156,7 +159,7 @@ export function ConnectionsCatalog({
     };
   }, [api, configured, tab, debounced, category, attempt, t]);
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || !configured) return;
     let active = true;
     void api
       .request<ConnectionToolkit>(`/api/composio/toolkits/${encodeURIComponent(selected.slug)}`)
@@ -167,7 +170,7 @@ export function ConnectionsCatalog({
     return () => {
       active = false;
     };
-  }, [api, selected?.slug]);
+  }, [api, configured, selected?.slug]);
 
   async function more() {
     if (!catalog?.nextCursor || loading) return;
@@ -191,6 +194,7 @@ export function ConnectionsCatalog({
     }
   }
   async function connect(item: ConnectionToolkit, replace = false) {
+    if (!configured) return;
     setBusy(item.slug);
     setError("");
     try {
@@ -266,7 +270,7 @@ export function ConnectionsCatalog({
             <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
               <Button
                 small
-                disabled={!!busy}
+                disabled={!!busy || !configured}
                 busy={busy === selected.slug}
                 onPress={() => void connect(selected, true)}
               >
@@ -302,7 +306,20 @@ export function ConnectionsCatalog({
             )}
           </View>
         ))}
-        {selected.noAuth ? (
+        {configured === false ? (
+          <ComposioSetup
+            onConnected={() => {
+              setConfigured(true);
+              setAttempt((value) => value + 1);
+              void reload().catch(() =>
+                setAccountError(t("Saved connections could not be loaded.")),
+              );
+              void prompts?.refresh().catch(() => {});
+            }}
+          />
+        ) : configured === undefined ? (
+          <ActivityIndicator color={colors.muted} />
+        ) : selected.noAuth ? (
           <Text style={s.muted}>{t("This app is ready to use without an account.")}</Text>
         ) : (
           <>
@@ -321,6 +338,12 @@ export function ConnectionsCatalog({
               {t(serviceAccounts.length ? "Connect another account" : "Connect account")}
             </Button>
           </>
+        )}
+        <ErrorNotice error={accountError} />
+        {!!accountError && (
+          <Button small onPress={() => void reload().catch(() => {})}>
+            {t("Retry")}
+          </Button>
         )}
         <ErrorNotice error={error} />
       </View>
@@ -537,7 +560,11 @@ export function ConnectionsCatalog({
             </View>
           )}
           <IntegrationSettings query={query} />
-          {nativeConnections(query)}
+          {nativeConnections(query, (toolkit) => {
+            setSelected(toolkit);
+            setError("");
+            setConfirmDisconnect(undefined);
+          })}
           <McpConnections query={query} />
           {configured && !query && (
             <>

@@ -100,8 +100,9 @@ export class GoogleAuth {
   async connect(owner: string, write: boolean) {
     if (!this.configured())
       throw new AppError(
-        "Configure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and TOKEN_ENCRYPTION_KEY to connect Google",
+        "Connect Gmail or Google Calendar from the app catalog in Connections.",
         503,
+        "GOOGLE_SETUP_REQUIRED",
       );
     const state = randomBytes(32).toString("base64url"),
       verifier = randomBytes(48).toString("base64url");
