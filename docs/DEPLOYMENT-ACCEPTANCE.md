@@ -24,15 +24,25 @@ configurações de nome/personalidade, cinco avatares 3D animados e editor de
 aparência. O visualizador mantém a imagem durante polling e entrada manual.
 O build anterior permanece em `/opt/okami-web/releases/40390aa-public` para rollback.
 
-A revisão visual inspirada no Muse usa a fonte mobile `abb6f84` e o build web
-`/opt/okami-web/releases/abb6f84-public`. Refez os cinco personagens locais,
+A revisão visual inspirada no Muse usa a fonte mobile `a2845d4` e o build web
+`/opt/okami-web/releases/a2845d4-public`. Refez os cinco personagens locais,
 poses de trabalho/resposta, retrato na conversa, personalização visual, previews
 sem despejo de JSON, histórico de navegador e recibos compactos com detalhes
-preservados. A suíte no pin passou **928/928 testes**, além de TypeScript,
+preservados. Durante a inicialização do 3D, o app mantém uma prévia local com
+indicador de carregamento; a legenda só anuncia movimento quando o renderer está pronto.
+A suíte no pin passou **931/931 testes**, além de TypeScript,
 build web/servidor e verificações focais de interface. O backend permaneceu
 na mesma imagem durante essa publicação. Evidências e referências estão no
 [registro da revisão Muse](superpowers/plans/2026-10-03-muse-experience.md) e
 em `artifacts/muse-rework/` e `artifacts/android/muse-release-evidence/`.
+Os APKs ARM64 e x86_64 foram produzidos da árvore limpa `a2845d4`, com assinatura
+de produção verificada e URL pública embutida. No emulador API 34, os cinco
+personagens, trabalho/resposta, movimento reduzido, funcionamento sem rede e
+personalização salva e reaberta foram observados. O upgrade final preservou
+pareamento e rascunho; a prévia de carregamento apareceu antes do 3D, sem fallback. O design personalizado também apareceu na web.
+Identidade e perfil foram restaurados exatamente ao backup. O APK baixado pelo
+endereço público retornou HTTP 200 e SHA256 idêntico ao artefato assinado.
+Isso não substitui o aceite no celular físico.
 A API continua na imagem `openmuse-server:product-d6fa127`, com fonte registrada
 em `/root/okami-deployment/source-pin`. A publicação anterior dessa imagem drenou o trabalho ativo e
 preservou a pausa na revisão 16, desativada; ao terminar, manutenção encerrada e

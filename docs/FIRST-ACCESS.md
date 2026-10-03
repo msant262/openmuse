@@ -24,9 +24,9 @@ ou executar o projeto na sua máquina.
    agente abre a tela remota; **Assumir controle** habilita entrada e **Devolver
    ao agente** encerra o controle manual.
 6. Em **Settings / Configurações**, ajuste o idioma da interface, nome,
-   personalidade e idioma das respostas. Escolha entre cinco avatares 3D
-   com acabamento de pelúcia (e um robô), ou personalize espécie, corpo, cores e
-   acessórios. A prévia mostra repouso, trabalho com notebook e resposta. Salve as mudanças;
+   personalidade e idioma das respostas. Escolha entre cinco avatares 3D: quatro
+   animais com acabamento de pelúcia e um robô. Personalize espécie, corpo, cores
+   e acessórios. A prévia mostra repouso, trabalho com notebook e resposta. Salve as mudanças;
    preferências podem valer para todas as conversas ou apenas para a atual.
 
 O navegador guarda o pareamento em cookie seguro e renova a sessão. Não use
@@ -34,14 +34,14 @@ janela anônima se quiser manter o acesso; apagar cookies exige novo pareamento.
 Se abriu a versão anterior, use **Ctrl+Shift+R**. O endereço `/api/health` é apenas
 diagnóstico, não a interface.
 
-**Android:** baixe o [APK ARM64 assinado](https://app.okamibot.cloud/downloads/okamibot.apk?v=40390aa)
+**Android:** baixe o [APK ARM64 assinado](https://app.okamibot.cloud/downloads/okamibot.apk?v=a2845d4)
 no telefone e instale. Ele usa o mesmo domínio público e não exige Tailscale.
 Se já tiver o app, instale como atualização para preservar os dados. Caso o
 Android recuse por assinatura diferente, não desinstale nem apague os dados para
 contornar a recusa. Use a mesma chave na primeira entrada.
 
-O APK tem 52.809.546 bytes e SHA256
-`4923208c4255b2a99f6a45598ee80a81308043da1193befb66b10fa7e64a1557`.
+O APK tem 53.079.882 bytes e SHA256
+`31ecf6b5fd99adb02d9f95e5b260c0b28b4947b0d2cff6d6c488b97a7d943671`.
 O parâmetro da versão no link evita que o cache entregue o APK anterior.
 Gmail/Calendar e push ainda precisam da configuração das contas correspondentes;
 não são necessários para abrir o chat.
@@ -69,7 +69,8 @@ Rotas da instalação atual (comandos na VPS):
 ```bash
 sudo tailscale serve --bg --yes --set-path=/api http://100.113.59.40:8787/api
 sudo tailscale serve --bg --yes --set-path=/executor http://100.113.59.40:8787/executor
-sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/abb6f84-public
+sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/a2845d4-public
+sudo tailscale serve --bg --yes --set-path=/downloads/okamibot.apk /opt/okami-web/downloads/okamibot-a2845d4-arm64-v8a.apk
 ```
 
 Mantenha os sufixos `/api` e `/executor` nos destinos: o Serve remove o prefixo
