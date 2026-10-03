@@ -577,6 +577,15 @@ class OrderedModelAdapter implements AnyTextAdapter {
             "provider_stream_incomplete",
             "A resposta do provedor não confirmou conclusão. O progresso foi preservado.",
           );
+        // SIWC can omit streamed function calls from response.completed.output. The
+        // Responses SDK then reports "stop", which skips TanStack's tool phase.
+        // Only recover completed calls after the entire inference is verified.
+        if (
+          current.provider === "chatgpt" &&
+          terminal.finishReason === "stop" &&
+          tools.some((event) => event.type === "TOOL_CALL_END")
+        )
+          terminal = { ...terminal, finishReason: "tool_calls" };
         if (!visible) {
           this.report(lease, current);
           for (const start of pending) yield start;

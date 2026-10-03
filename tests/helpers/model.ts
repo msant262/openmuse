@@ -43,6 +43,9 @@ export async function modelFixture(
     text?: (index: number) => string | undefined;
     lateFailure?: (index: number) => boolean;
     noArgumentDelta?: (index: number) => boolean;
+    emptyCompletedOutput?: (index: number) => boolean;
+    terminalStatus?: (index: number) => "completed" | "incomplete" | "failed" | "eof";
+    toolNamespace?: string;
     chatFinishReason?: (index: number) => string | undefined;
     streamContentType?: string | null;
   } = {},
@@ -217,6 +220,7 @@ export async function modelFixture(
       call_id: `call-${index}`,
       name: call.name,
       arguments: JSON.stringify(call.arguments),
+      ...(options.toolNamespace ? { namespace: options.toolNamespace } : {}),
     };
     if (item) {
       emit("response.output_item.added", { output_index: 0, item: { ...item, arguments: "" } });
@@ -252,23 +256,30 @@ export async function modelFixture(
         delta: text,
       });
     }
-    emit("response.completed", {
+    const terminalStatus = options.terminalStatus?.(index) ?? "completed";
+    if (terminalStatus === "eof") {
+      response.end("data: [DONE]\n\n");
+      return;
+    }
+    emit(`response.${terminalStatus}`, {
       response: {
         ...base,
-        status: "completed",
-        output: item
-          ? [{ ...item, status: "completed" }]
-          : text
-            ? [
-                {
-                  id: `message-${index}`,
-                  type: "message",
-                  role: "assistant",
-                  status: "completed",
-                  content,
-                },
-              ]
-            : [],
+        status: terminalStatus,
+        output: options.emptyCompletedOutput?.(index)
+          ? []
+          : item
+            ? [{ ...item, status: "completed" }]
+            : text
+              ? [
+                  {
+                    id: `message-${index}`,
+                    type: "message",
+                    role: "assistant",
+                    status: "completed",
+                    content,
+                  },
+                ]
+              : [],
         usage: {
           input_tokens: 10,
           output_tokens: 5,

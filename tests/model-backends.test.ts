@@ -253,90 +253,139 @@ test("generic compatible Chat Completions dispatches arbitrary model IDs and loc
   );
 });
 
-test("SIWC inference uses OAuth only, namespace tools/replay, completed streams and full history", async (t) => {
-  let executions = 0;
-  const fixture = await modelFixture(t, (index) =>
-    index === 0 ? { name: "record_step", arguments: { text: "once" } } : undefined,
-  );
-  const providers = modelProviderConfig(await directory(t), {});
-  await writeProtected(providers.chatgptFile, {
-    issuer: "https://auth.openai.com",
-    subject: "account",
-    client_id: "oaiapp_fixture",
-    ext_agent_host_id: "urn:uuid:12345678-1234-4123-8123-123456789abc",
-    access_token: "subscription-access",
-    refresh_token: "subscription-refresh",
-    token_type: "Bearer",
-    expires_in: 3600,
-    scopes: ["chatgpt.tokens.use.direct"],
-    saved_at: new Date().toISOString(),
-  });
-  const originalFetch = globalThis.fetch;
-  const inferenceUrl = process.env.OPENAI_BASE_URL!;
-  const headers: string[] = [];
-  globalThis.fetch = async (input, init) => {
-    const request = new Request(input, init);
-    assert.equal(request.url, "https://api.openai.com/v1/responses");
-    assert.equal(request.redirect, "error");
-    headers.push(request.headers.get("Authorization")!);
-    return originalFetch(`${inferenceUrl}/responses`, {
-      method: request.method,
-      headers: request.headers,
-      body: await request.text(),
-      signal: request.signal,
-    });
-  };
-  t.after(() => {
-    globalThis.fetch = originalFetch;
-  });
-  const outcome = await run(
-    tanstackAgent({
-      model: "chatgpt/account-model",
-      providers,
-      prompt: "Use the tool once.",
-      maxSteps: 4,
-      tools: [
-        defineTool({
-          name: "record_step",
-          description: "Record",
-          parameters: z.object({ text: z.string() }),
-          execute: async () => {
-            executions++;
-            return { receipt: "one" };
-          },
+test("SIWC streamed tools execute once and continue only after verified inference completion", async (t) => {
+  for (const scenario of [
+    "completed with output",
+    "completed with empty output",
+    "eof",
+    "incomplete",
+    "failed",
+    "late failure",
+  ] as const) {
+    await t.test(scenario, async (t) => {
+      let executions = 0;
+      const fixture = await modelFixture(
+        t,
+        (index) => (index === 0 ? { name: "computer_status", arguments: {} } : undefined),
+        {
+          toolNamespace: "openmuse",
+          emptyCompletedOutput: (index) => index === 0 && scenario !== "completed with output",
+          terminalStatus: (index) =>
+            index === 0 &&
+            (scenario === "eof" || scenario === "incomplete" || scenario === "failed")
+              ? scenario
+              : "completed",
+          lateFailure: (index) => index === 0 && scenario === "late failure",
+          text: (index) => (index === 1 ? "Registro confirmado." : undefined),
+        },
+      );
+      const providers = modelProviderConfig(await directory(t), {});
+      await writeProtected(providers.chatgptFile, {
+        issuer: "https://auth.openai.com",
+        subject: "account",
+        client_id: "oaiapp_fixture",
+        ext_agent_host_id: "urn:uuid:12345678-1234-4123-8123-123456789abc",
+        access_token: "subscription-access",
+        refresh_token: "subscription-refresh",
+        token_type: "Bearer",
+        expires_in: 3600,
+        scopes: ["chatgpt.tokens.use.direct"],
+        saved_at: new Date().toISOString(),
+      });
+      const originalFetch = globalThis.fetch;
+      const inferenceUrl = process.env.OPENAI_BASE_URL!;
+      const headers: string[] = [];
+      globalThis.fetch = async (input, init) => {
+        const request = new Request(input, init);
+        assert.equal(request.url, "https://api.openai.com/v1/responses");
+        assert.equal(request.redirect, "error");
+        headers.push(request.headers.get("Authorization")!);
+        return originalFetch(`${inferenceUrl}/responses`, {
+          method: request.method,
+          headers: request.headers,
+          body: await request.text(),
+          signal: request.signal,
+        });
+      };
+      t.after(() => {
+        globalThis.fetch = originalFetch;
+      });
+      const outcome = await run(
+        tanstackAgent({
+          model: "chatgpt/account-model",
+          providers,
+          prompt: "Use the tool once.",
+          maxSteps: 4,
+          tools: [
+            defineTool({
+              name: "computer_status",
+              description: "Read status",
+              parameters: z.object({}),
+              execute: async (args) => {
+                assert.deepEqual(args, {});
+                executions++;
+                return { receipt: "one" };
+              },
+            }),
+          ],
         }),
-      ],
-    }),
-  );
-  assert.equal(outcome.error, undefined);
-  assert.equal(executions, 1);
-  assert.equal(fixture.requests.length, 2);
-  assert.deepEqual(headers, ["Bearer subscription-access", "Bearer subscription-access"]);
-  for (const request of fixture.requests) {
-    const body = JSON.parse(request.body);
-    assert.equal(body.store, false);
-    assert.equal(body.stream, true);
-    assert.ok(Array.isArray(body.input));
-    assert.equal(body.instructions, "Use the tool once.");
-    assert.equal(body.tools[0].type, "namespace");
-    assert.equal(body.tools[0].name, "openmuse");
-    assert.ok(body.tools[0].tools.some((tool: { name: string }) => tool.name === "record_step"));
+      );
+      if (scenario !== "completed with output" && scenario !== "completed with empty output") {
+        assert.ok(outcome.error, "a missing or failed provider terminal must surface an error");
+        assert.equal(outcome.finished, false);
+        assert.equal(executions, 0, "an unconfirmed call must never be executed");
+        assert.equal(fixture.requests.length, 1, "an accepted inference must not be replayed");
+        assert.equal(
+          outcome.events.some((event) => event.type === EventType.TOOL_CALL_RESULT),
+          false,
+        );
+        return;
+      }
+      assert.equal(outcome.error, undefined);
+      assert.equal(executions, 1);
+      assert.equal(outcome.finished, true);
+      assert.equal(
+        outcome.events
+          .filter((event) => event.type === EventType.TEXT_MESSAGE_CHUNK)
+          .map((event) => event.delta)
+          .join(""),
+        "Registro confirmado.",
+      );
+      const receipt = outcome.events.find((event) => event.type === EventType.TOOL_CALL_RESULT);
+      assert.ok(receipt);
+      assert.equal(receipt.toolCallId, "call-0");
+      assert.deepEqual(JSON.parse(String(receipt.content)), { receipt: "one" });
+      assert.equal(fixture.requests.length, 2);
+      assert.deepEqual(headers, ["Bearer subscription-access", "Bearer subscription-access"]);
+      for (const request of fixture.requests) {
+        const body = JSON.parse(request.body);
+        assert.equal(body.store, false);
+        assert.equal(body.stream, true);
+        assert.ok(Array.isArray(body.input));
+        assert.equal(body.instructions, "Use the tool once.");
+        assert.equal(body.tools[0].type, "namespace");
+        assert.equal(body.tools[0].name, "openmuse");
+        assert.ok(
+          body.tools[0].tools.some((tool: { name: string }) => tool.name === "computer_status"),
+        );
+      }
+      const replay = JSON.parse(fixture.requests[1].body).input;
+      assert.ok(
+        replay.some(
+          (item: Record<string, unknown>) =>
+            item.type === "function_call" &&
+            item.namespace === "openmuse" &&
+            item.name === "computer_status",
+        ),
+      );
+      assert.ok(
+        replay.some(
+          (item: Record<string, unknown>) =>
+            item.type === "function_call_output" && item.call_id === "call-0",
+        ),
+      );
+    });
   }
-  const replay = JSON.parse(fixture.requests[1].body).input;
-  assert.ok(
-    replay.some(
-      (item: Record<string, unknown>) =>
-        item.type === "function_call" &&
-        item.namespace === "openmuse" &&
-        item.name === "record_step",
-    ),
-  );
-  assert.ok(
-    replay.some(
-      (item: Record<string, unknown>) =>
-        item.type === "function_call_output" && item.call_id === "call-0",
-    ),
-  );
 });
 
 test("SIWC sanitizes preview fields, rejects audio/video/hosted images, and pins OAuth dispatch", async (t) => {
