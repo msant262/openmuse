@@ -653,18 +653,27 @@ export class LocalThreads extends AgentRunner {
             for (const event of this.canonicalEvents(
               compactEvents(
                 runs.flatMap((run) =>
-                  run.events.map((event) =>
+                  run.events.flatMap((event): BaseEvent[] =>
                     event.type === EventType.RUN_ERROR && run.runId !== expectedRunId
-                      ? {
-                          type: EventType.CUSTOM,
-                          name: "historical_run_error",
-                          value: {
-                            runId: run.runId,
-                            origin: "history",
-                            message: (event as BaseEvent & { message: string }).message,
+                      ? [
+                          {
+                            type: EventType.CUSTOM,
+                            name: "historical_run_error",
+                            value: {
+                              runId: run.runId,
+                              origin: "history",
+                              message: (event as BaseEvent & { message: string }).message,
+                            },
                           },
-                        }
-                      : event,
+                          {
+                            // Historical errors stay diagnostic, but must still close their
+                            // replayed RUN_STARTED before another run or canonical snapshots.
+                            type: EventType.RUN_FINISHED,
+                            threadId: run.threadId,
+                            runId: run.runId,
+                          },
+                        ]
+                      : [event],
                   ),
                 ),
               ),
