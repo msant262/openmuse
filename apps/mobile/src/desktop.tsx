@@ -22,7 +22,7 @@ type Status = DesktopSession & {
   enabled: true;
   runtimePaused?: boolean;
 };
-export function DesktopViewer() {
+export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {}) {
   const { api, refresh } = useWorkspace();
   const { t } = useI18n();
   const [status, setStatus] = useState<Status>();
@@ -36,6 +36,7 @@ export function DesktopViewer() {
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [drag, setDrag] = useState(false);
+  const [addressOpen, setAddressOpen] = useState(false);
   const [width, setWidth] = useState(320);
   const latest = useRef<RenderedDesktop | undefined>(undefined);
   const visible = useRef<RenderedDesktop | undefined>(undefined);
@@ -301,19 +302,23 @@ export function DesktopViewer() {
   const imageWidth = width * zoom,
     imageHeight = status ? (imageWidth * status.height) / status.width : 180;
   return (
-    <Card style={{ gap: 14 }}>
+    <Card style={{ gap: 14, ...(embedded ? { padding: 0, borderRadius: 0 } : {}) }}>
       <Text style={s.heading}>
         {t("Desktop")}{" "}
         {status
           ? `· ${t(human ? "Your control" : status.control === "human" ? "Under human control" : "Observing")}`
           : `· ${t("reconnecting")}`}
       </Text>
-      <Text style={s.small}>
-        {t(
-          "Observe your agent’s own computer. Take control to click, type or drag; hand it back to resume the same task.",
-        )}
-      </Text>
+      {!embedded && (
+        <Text style={s.small}>
+          {t(
+            "Observe your agent’s own computer. Take control to click, type or drag; hand it back to resume the same task.",
+          )}
+        </Text>
+      )}
       <Button
+        small={embedded}
+        style={embedded ? { alignSelf: "flex-start" } : undefined}
         disabled={!viewer.current || busy || status?.runtimePaused}
         onPress={() => void operation("import-downloads", {})}
       >
@@ -332,6 +337,41 @@ export function DesktopViewer() {
           })}
         </Text>
       ) : null}
+      <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+        <Button
+          small={embedded}
+          primary
+          busy={busy}
+          disabled={!viewer.current || status?.runtimePaused}
+          onPress={() =>
+            void operation(
+              human ? "release-control" : "take-control",
+              human ? { grantId: control?.grantId } : {},
+            )
+          }
+        >
+          {t(human ? "Hand back to agent" : "Take control")}
+        </Button>
+        <Button small onPress={() => setZoom(zoom === 1 ? 2 : 1)}>
+          {t(zoom === 1 ? "Zoom in" : "Fit")}
+        </Button>
+        <Button
+          small
+          disabled={busy}
+          onPress={() => {
+            version.current++;
+            latest.current = undefined;
+            setImageLoaded(false);
+            point.current = undefined;
+            refreshFrame.current();
+          }}
+        >
+          {t("Refresh frame")}
+        </Button>
+        <Button small disabled={!human} primary={drag} onPress={() => setDrag(!drag)}>
+          {t(drag ? "Drag mode" : "Click mode")}
+        </Button>
+      </View>
       <View onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
         <ScrollView horizontal nestedScrollEnabled>
           <View
@@ -422,40 +462,6 @@ export function DesktopViewer() {
           </View>
         </ScrollView>
       </View>
-      <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
-        <Button
-          primary
-          busy={busy}
-          disabled={!viewer.current || status?.runtimePaused}
-          onPress={() =>
-            void operation(
-              human ? "release-control" : "take-control",
-              human ? { grantId: control?.grantId } : {},
-            )
-          }
-        >
-          {t(human ? "Hand back to agent" : "Take control")}
-        </Button>
-        <Button small onPress={() => setZoom(zoom === 1 ? 2 : 1)}>
-          {t(zoom === 1 ? "Zoom in" : "Fit")}
-        </Button>
-        <Button
-          small
-          disabled={busy}
-          onPress={() => {
-            version.current++;
-            latest.current = undefined;
-            setImageLoaded(false);
-            point.current = undefined;
-            refreshFrame.current();
-          }}
-        >
-          {t("Refresh frame")}
-        </Button>
-        <Button small disabled={!human} primary={drag} onPress={() => setDrag(!drag)}>
-          {t(drag ? "Drag mode" : "Click mode")}
-        </Button>
-      </View>
       {human ? (
         <>
           <Field
@@ -506,21 +512,35 @@ export function DesktopViewer() {
         </>
       ) : (
         <>
-          <Field
-            label={t("Website address")}
-            value={url}
-            onChangeText={setUrl}
-            autoCapitalize="none"
-            keyboardType="url"
-            placeholder="https://example.com"
-          />
-          <Button
-            disabled={!url.trim() || status?.control !== "agent" || status?.runtimePaused}
-            busy={busy}
-            onPress={() => void operation("open-browser", { url: browserAddress(url) })}
-          >
-            {t("Open in this desktop")}
-          </Button>
+          {embedded && (
+            <Button
+              small
+              style={{ alignSelf: "flex-start" }}
+              onPress={() => setAddressOpen(!addressOpen)}
+              expanded={addressOpen}
+            >
+              {t("Website address")}
+            </Button>
+          )}
+          {(!embedded || addressOpen) && (
+            <>
+              <Field
+                label={t("Website address")}
+                value={url}
+                onChangeText={setUrl}
+                autoCapitalize="none"
+                keyboardType="url"
+                placeholder="https://example.com"
+              />
+              <Button
+                disabled={!url.trim() || status?.control !== "agent" || status?.runtimePaused}
+                busy={busy}
+                onPress={() => void operation("open-browser", { url: browserAddress(url) })}
+              >
+                {t("Open in this desktop")}
+              </Button>
+            </>
+          )}
         </>
       )}
     </Card>

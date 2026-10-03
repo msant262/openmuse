@@ -4,6 +4,7 @@ import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  "Previous questions and answers ({count})": "Perguntas e respostas anteriores ({count})",
   ...museInterfacePTBR,
   ...avatarPTBR,
   ...avatarCharacterPtBR,
@@ -431,6 +432,8 @@ export const ptBR: Record<string, string> = {
   "Answer saved": "Resposta salva",
   "Question closed": "Pergunta encerrada",
   "Send answer": "Enviar resposta",
+  "Stop task": "Parar tarefa",
+  "Your answer": "Sua resposta",
   "Finish authorization in your browser, then refresh the connection.":
     "Conclua a autorização no navegador e atualize a conexão.",
   "Could not connect the app.": "Não foi possível conectar o aplicativo.",

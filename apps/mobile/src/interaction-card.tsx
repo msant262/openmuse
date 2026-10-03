@@ -42,6 +42,20 @@ export function InteractionCard({
     if (request.kind === "question" && request.answer) setValues(request.answer);
   }, [request]);
   const disabled = busy || current.status !== "waiting";
+  async function stopTask() {
+    if (disabled) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.request(`/api/agent/tasks/${current.taskId}/control`, { action: "cancel" });
+      setCurrent({ ...current, status: "superseded" });
+      onAnswered?.();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function submit() {
     setError("");
     setBusy(true);
@@ -127,7 +141,7 @@ export function InteractionCard({
               current.schema.fields.map((field) => (
                 <View key={field.id} style={{ gap: 4 }}>
                   <Text selectable style={s.text}>
-                    {field.label}
+                    {t(field.label)}
                     {field.required ? " *" : ""}
                   </Text>
                   {field.type !== "text" &&
@@ -154,12 +168,12 @@ export function InteractionCard({
       {current.schema.fields.map((field) => (
         <View key={field.id} style={{ gap: 8 }}>
           <Text style={s.text}>
-            {field.label}
+            {t(field.label)}
             {field.required ? " *" : ""}
           </Text>
           {field.type === "text" ? (
             <TextInput
-              accessibilityLabel={field.label}
+              accessibilityLabel={t(field.label)}
               accessibilityState={{ disabled }}
               aria-disabled={disabled}
               aria-required={field.required}
@@ -257,9 +271,14 @@ export function InteractionCard({
       >
         {t("Send answer")}
       </Button>
-      <Button small onPress={() => open({ type: "task", taskId: current.taskId })}>
-        {t("View task")}
-      </Button>
+      <View style={[s.row, { justifyContent: "space-between" }]}>
+        <Button small onPress={() => open({ type: "task", taskId: current.taskId })}>
+          {t("View task")}
+        </Button>
+        <Button small disabled={disabled} onPress={stopTask}>
+          {t("Stop task")}
+        </Button>
+      </View>
     </Card>
   );
 }

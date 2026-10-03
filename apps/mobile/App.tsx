@@ -6,7 +6,7 @@ import {
   type LucideIcon,
   Menu,
   MessageCircle,
-  PanelsTopLeft,
+  Newspaper,
   Settings2,
   Shapes,
   SquareCheck,
@@ -59,7 +59,7 @@ import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "chat", label: "Chat", icon: MessageCircle },
-  { id: "activity", label: "Feed", icon: PanelsTopLeft },
+  { id: "activity", label: "Feed", icon: Newspaper },
   { id: "ideas", label: "Ideas", icon: Lightbulb },
   { id: "goals", label: "Goals", icon: SquareCheck },
   { id: "files", label: "Library", icon: Shapes },
@@ -344,7 +344,7 @@ function WorkspaceShell({
   prompt?: { id: number; text: string };
 }) {
   const { t } = useI18n();
-  const { api, workspace, section, navigate } = useWorkspace();
+  const { api, workspace, section, navigate, close } = useWorkspace();
   const { data } = useAgentWorkspace();
   const {
     selection,
@@ -363,9 +363,10 @@ function WorkspaceShell({
   const navigateSection = useCallback(
     (next: Section) => {
       setSettingsOpen(false);
+      close();
       navigate(next);
     },
-    [navigate],
+    [navigate, close],
   );
   const openThreads = () => {
     setSettingsOpen(false);
@@ -373,6 +374,20 @@ function WorkspaceShell({
   };
   const { width } = useWindowDimensions();
   const desktop = Platform.OS === "web" && width >= 1024;
+  const workspaceDetail =
+    desktop && detail && ["file", "computer", "browser"].includes(detail.type) ? detail : undefined;
+  const workspaceKind = workspaceDetail?.type === "file" ? "document" : "computer";
+  useEffect(() => {
+    if (workspaceDetail && workspaceKind === "computer") navigate("chat");
+  }, [workspaceDetail?.type, workspaceKind, navigate]);
+  useEffect(() => {
+    if (!workspaceDetail || Platform.OS !== "web") return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !document.querySelector('[aria-modal="true"]')) close();
+    };
+    window.addEventListener("keydown", dismiss);
+    return () => window.removeEventListener("keydown", dismiss);
+  }, [workspaceDetail, close]);
   const pending =
     (data?.notifications.filter((n) => !n.read).length || 0) +
     workspace.actions.filter((a) => a.status === "awaiting_review").length;
@@ -596,6 +611,10 @@ function WorkspaceShell({
           desktop={desktop}
           mobileHeader={mobileHeader}
           mobileNavigation={mobileNavigation}
+          workspacePane={
+            workspaceDetail ? <Details detail={workspaceDetail} embedded /> : undefined
+          }
+          workspaceKind={workspaceKind}
         >
           {content}
         </DesktopShell>
@@ -685,7 +704,7 @@ function WorkspaceShell({
             onSettings={() => setSettingsOpen(true)}
           />
         )}
-        {detail && (
+        {detail && !workspaceDetail && (
           <Details
             key={
               detail.type === "task"

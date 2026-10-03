@@ -37,6 +37,7 @@ function fixture(width: number) {
         useWindowDimensions: () => ({ width }),
       },
       "./attachment-ui-copy": { localizedAttachmentLabel: (file: Artifact) => file.mimeType },
+      "./file-content-preview": { FileContentPreview: "FileContentPreview" },
       "./i18n": {
         useI18n: () => ({
           t: (key: string, values?: Record<string, string>) =>
@@ -104,13 +105,14 @@ test("Library desktop filters by type and filename without changing the selected
   const { view, press } = fixture(1440);
   try {
     view.render();
-    for (const file of files) assert.ok(view.text().includes(file.name));
+    assert.match(view.text(), /Report.pdf|Website.html/);
+    assert.doesNotMatch(view.text(), /Garden.png|Trip.mp4|Notes.mp3/);
     press("Documents");
     assert.match(view.text(), /Report.pdf/);
     assert.doesNotMatch(view.text(), /Website.html|Garden.png|Trip.mp4|Notes.mp3/);
     press("List view");
     assert.match(view.text(), /Report.pdf/);
-    press("All artifacts");
+    press("Images");
     const search = view.nodes().find((node) => node.props.accessibilityLabel === "Search library");
     assert.ok(search);
     (search.props.onChangeText as (text: string) => void)("garden");

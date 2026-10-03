@@ -328,6 +328,7 @@ export function Sheet({
   contentStyle,
   headerAccessory,
   footer,
+  embedded = false,
 }: {
   title: string;
   subtitle?: string;
@@ -338,25 +339,21 @@ export function Sheet({
   contentStyle?: ViewStyle;
   headerAccessory?: ReactNode;
   footer?: ReactNode;
+  embedded?: boolean;
 }) {
   const { width } = useWindowDimensions();
   const { t } = useI18n();
   const compact = width < 700;
   const bodyStyle = { padding: compact ? 20 : 26, ...contentStyle };
-  return (
-    <ModalSurface
-      onClose={onClose}
-      label={title}
-      width={wide ? 1040 : 760}
-      height={!scroll ? 760 : undefined}
-    >
+  const contents = (
+    <>
       <View
         style={[
           s.between,
           {
             paddingHorizontal: compact ? 20 : 26,
-            paddingTop: 20,
-            paddingBottom: 20,
+            paddingTop: embedded ? 14 : 20,
+            paddingBottom: embedded ? 14 : 20,
             gap: 16,
             borderBottomWidth: 1,
             borderBottomColor: colors.line,
@@ -366,11 +363,24 @@ export function Sheet({
         <View style={{ flex: 1, gap: 6 }}>
           {headerAccessory}
           <Text
-            style={{ color: colors.text, fontSize: 18, fontWeight: "600", letterSpacing: -0.3 }}
+            numberOfLines={embedded ? 1 : undefined}
+            style={{
+              color: colors.text,
+              fontSize: embedded ? 15 : 18,
+              fontWeight: "600",
+              letterSpacing: -0.3,
+            }}
           >
             {title}
           </Text>
-          {!!subtitle && <Text style={s.muted}>{subtitle}</Text>}
+          {!!subtitle && (
+            <Text
+              numberOfLines={embedded ? 1 : undefined}
+              style={[s.muted, embedded && { fontSize: 12, lineHeight: 17 }]}
+            >
+              {subtitle}
+            </Text>
+          )}
         </View>
         <IconButton icon={X} label={t("Close details")} onPress={onClose} />
       </View>
@@ -391,6 +401,24 @@ export function Sheet({
           {footer}
         </View>
       )}
+    </>
+  );
+  return embedded ? (
+    <View
+      testID="desktop-workspace-surface"
+      accessibilityLabel={title}
+      style={{ flex: 1, minHeight: 0, backgroundColor: colors.canvas }}
+    >
+      {contents}
+    </View>
+  ) : (
+    <ModalSurface
+      onClose={onClose}
+      label={title}
+      width={wide ? 1040 : 760}
+      height={!scroll ? 760 : undefined}
+    >
+      {contents}
     </ModalSurface>
   );
 }

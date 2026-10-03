@@ -5,6 +5,39 @@ import {
   questionSchema,
 } from "../../../packages/domain/src/runtime";
 
+/** Keep obsolete replay cards out of the active conversation, without deleting their receipts. */
+export function partitionInteractions(requests: InteractionRequest[]) {
+  const unique = new Map<string, InteractionRequest>();
+  for (const request of requests) {
+    if (request.kind !== "question" && request.kind !== "credential") continue;
+    const saved = unique.get(request.id);
+    if (!saved || saved.status === "waiting" || request.status !== "waiting")
+      unique.set(request.id, request);
+  }
+  const ordered = [...unique.values()].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  );
+  const latest = new Map<string, InteractionRequest>();
+  for (const request of ordered) {
+    if (request.kind !== "question") continue;
+    const previous = latest.get(request.taskId);
+    if (!previous || request.revision >= previous.revision) latest.set(request.taskId, request);
+  }
+  const pending: InteractionRequest[] = [];
+  const history: InteractionRequest[] = [];
+  for (const request of ordered) {
+    if (request.kind === "question") {
+      if (request.status === "waiting" && latest.get(request.taskId)?.id === request.id)
+        pending.push(request);
+      else
+        history.push(request.status === "waiting" ? { ...request, status: "superseded" } : request);
+    } else if (["connected", "expired", "cancelled", "superseded"].includes(request.status))
+      history.push(request);
+    else pending.push(request);
+  }
+  return { pending, history };
+}
+
 /** React Native Web handles Enter on Pressable, but Space only for button roles. */
 export function questionOptionSpace(
   event: { key: string; repeat?: boolean; preventDefault(): void },

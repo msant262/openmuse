@@ -8,6 +8,7 @@ import {
 } from "../apps/mobile/src/artifact-presentation.ts";
 import { fileResultPresentation } from "../apps/mobile/src/file-result-presentation.ts";
 import {
+  partitionInteractions,
   QuestionSubmission,
   questionAnswerError,
   questionOptionSpace,
@@ -657,5 +658,94 @@ test("result footer exposes expansion explicitly to web and native accessibility
   const opened = node(view, "Pressable", "Show summary: Saved report");
   assert.equal(opened["aria-expanded"], true);
   assert.equal((opened.accessibilityState as { expanded: boolean }).expanded, true);
+  view.close();
+});
+
+test("a user can stop a waiting task directly without answering another question", async () => {
+  const calls: { path: string; body: unknown }[] = [];
+  let refreshed = 0;
+  const view = componentHarness(
+    new URL("../apps/mobile/src/interaction-card.tsx", import.meta.url),
+    "InteractionCard",
+    {
+      "lucide-react-native": {},
+      "react-native": native,
+      "../../../packages/domain/src/runtime": { questionSchema },
+      "./credential-request": {},
+      "./artifact-presentation": { questionReceiptAnswers },
+      "./interaction-state": { QuestionSubmission, questionAnswerError, questionOptionSpace },
+      "./i18n": { useI18n: () => ({ t }) },
+      "./ui": ui,
+      "./workspace": {
+        useWorkspace: () => ({
+          api: {
+            request: async (path: string, body: unknown) => {
+              calls.push({ path, body });
+              return { status: "cancelled" };
+            },
+          },
+          open: () => {},
+        }),
+      },
+    },
+    {
+      request: question,
+      onAnswered: () => {
+        refreshed++;
+      },
+    },
+  );
+  view.render();
+  assert.equal(view.button("Send answer").disabled, true);
+  await view.button("Stop task").onPress();
+  await view.flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    { path: "/api/agent/tasks/task/control", body: { action: "cancel" } },
+  ]);
+  assert.equal(refreshed, 1);
+  assert.equal(view.nodes().filter((entry) => entry.type === "TextInput").length, 0);
+  assert.match(view.text(), /Question closed/);
+  view.close();
+});
+
+test("conversation keeps answered history folded while active questions stay accessible", () => {
+  const requests = [
+    question,
+    {
+      ...question,
+      id: "past",
+      taskId: "past-task",
+      status: "answered",
+      answer: { city: "internal_porto" },
+    },
+  ];
+  const view = componentHarness(
+    new URL("../apps/mobile/src/interaction-list.tsx", import.meta.url),
+    "InteractionList",
+    {
+      "lucide-react-native": {},
+      "react-native": native,
+      "./i18n": { useI18n: () => ({ t }) },
+      "./interaction-card": { InteractionCard: "InteractionCard" },
+      "./interaction-state": { partitionInteractions },
+      "./ui": ui,
+    },
+    { requests },
+  );
+  view.render();
+  const visible = () =>
+    view
+      .nodes()
+      .filter((n) => n.type === "InteractionCard")
+      .map((n) => (n.props.request as InteractionRequest).id);
+  assert.deepEqual(visible(), ["question"]);
+  const disclosure = () => node(view, "Pressable", "Previous questions and answers (1)");
+  assert.equal(disclosure()["aria-expanded"], false);
+  press(disclosure());
+  view.render();
+  assert.deepEqual(visible(), ["question", "past"]);
+  press(disclosure());
+  view.render();
+  assert.deepEqual(visible(), ["question"]);
   view.close();
 });

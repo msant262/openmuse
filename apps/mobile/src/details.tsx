@@ -49,6 +49,7 @@ import { ComputerSheet } from "./computer";
 import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
 import { connectorReviewLines } from "./external-action-preview";
+import { FileContentPreview, hasFileContentPreview } from "./file-content-preview";
 import { useI18n } from "./i18n";
 import PdfReader from "./PdfReader";
 import {
@@ -67,10 +68,10 @@ import {
   timeLabel,
 } from "./ui";
 import { type Detail, useWorkspace } from "./workspace";
-export function Details({ detail }: { detail: Detail }) {
+export function Details({ detail, embedded = false }: { detail: Detail; embedded?: boolean }) {
   const { t } = useI18n();
   const { close, navigate } = useWorkspace();
-  if (detail.type === "computer") return <ComputerSheet />;
+  if (detail.type === "computer") return <ComputerSheet embedded={embedded} />;
   if (detail.type === "task") return <TaskDetail taskId={detail.taskId} />;
   if (detail.type === "delegate") return <DelegateSheet />;
   if (detail.type === "notifications") return <NotificationsSheet />;
@@ -78,9 +79,10 @@ export function Details({ detail }: { detail: Detail }) {
   if (detail.type === "email") return <EmailEditor draft={detail.draft} />;
   if (detail.type === "event")
     return <EventEditor event={detail.event} draft={detail.draft} neighbors={detail.neighbors} />;
-  if (detail.type === "file") return <FileDetail file={detail.file} />;
+  if (detail.type === "file") return <FileDetail file={detail.file} embedded={embedded} />;
   if (detail.type === "review") return <ReviewDetail initial={detail.action} />;
-  if (detail.type === "browser") return <BrowserDetail initial={detail.browser} />;
+  if (detail.type === "browser")
+    return <BrowserDetail initial={detail.browser} embedded={embedded} />;
   return (
     <Sheet
       title={t("Your workspace")}
@@ -876,7 +878,7 @@ function ReviewLine({ label, value }: { label: string; value: string }) {
     </View>
   );
 }
-function FileDetail({ file: initial }: { file: Artifact }) {
+function FileDetail({ file: initial, embedded = false }: { file: Artifact; embedded?: boolean }) {
   const { t } = useI18n();
   const { api, refresh, open, close } = useWorkspace();
   const [f, setFile] = useState(initial);
@@ -978,7 +980,9 @@ function FileDetail({ file: initial }: { file: Artifact }) {
   }
   const { width, height } = useWindowDimensions();
   const split = width >= 900 && Boolean(f.fields?.length);
-  const previewHeight = Math.max(260, Math.min(494, height * 0.9 - 260));
+  const previewHeight = embedded
+    ? Math.max(320, height - 218)
+    : Math.max(260, Math.min(494, height * 0.9 - 260));
   const form =
     f.fields && f.fields.length > 0 ? (
       <View style={{ padding: 22, gap: 8 }}>
@@ -1015,6 +1019,7 @@ function FileDetail({ file: initial }: { file: Artifact }) {
   return (
     <Sheet
       title={f.name}
+      embedded={embedded}
       subtitle={t("{fileType} · {source}", {
         fileType: localizedAttachmentLabel(f, t),
         source: t(f.source),
@@ -1064,6 +1069,8 @@ function FileDetail({ file: initial }: { file: Artifact }) {
                 style={{ width: "100%", height: previewHeight + 46 }}
                 resizeMode="contain"
               />
+            ) : hasFileContentPreview(f) ? (
+              <FileContentPreview file={f} url={url} height={previewHeight + 46} />
             ) : preview ? (
               <PdfReader
                 url={api.url(preview.url)}
@@ -1109,10 +1116,18 @@ function FileDetail({ file: initial }: { file: Artifact }) {
   );
 }
 
-function BrowserDetail({ initial }: { initial: BrowserSession }) {
+function BrowserDetail({
+  initial,
+  embedded = false,
+}: {
+  initial: BrowserSession;
+  embedded?: boolean;
+}) {
   const { t } = useI18n();
   const { height } = useWindowDimensions();
-  const previewHeight = Math.max(260, Math.min(494, height * 0.9 - 275));
+  const previewHeight = embedded
+    ? Math.max(320, height - 240)
+    : Math.max(260, Math.min(494, height * 0.9 - 275));
   const { workspace: w, api, refresh, close, notify } = useWorkspace();
   const [local, setLocal] = useState(initial);
   const [url, setUrl] = useState(initial.url);
@@ -1192,6 +1207,7 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
   return (
     <Sheet
       title={browserSite(browser.url)}
+      embedded={embedded}
       subtitle={t("{control} · {status} · updated {date}", {
         control: browser.control === "human" ? t("You are in control") : t("Watching agent"),
         status: t(browser.status),

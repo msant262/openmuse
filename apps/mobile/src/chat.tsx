@@ -71,7 +71,7 @@ import {
 import { runConversationTurn } from "./conversation-run";
 import { FileToolCard } from "./file-tool-card";
 import { useI18n } from "./i18n";
-import { InteractionCard } from "./interaction-card";
+import { InteractionList } from "./interaction-list";
 import { confirmedJevSelection, displayJevUserMessage, latestJevPanelId } from "./jev-actions";
 import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
 import { MailToolCard } from "./mail-tool-card";
@@ -946,7 +946,7 @@ export function ChatScreen({
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           gap: wide ? 18 : 15,
-          paddingTop: wide ? 24 : 116,
+          paddingTop: wide ? 112 : 116,
           paddingBottom: 22,
           flexGrow: 1,
         }}
@@ -1228,16 +1228,13 @@ export function ChatScreen({
           </>
         )}
         {(!richThreads || selection.id === mainId) && <BackgroundUpdates />}
-        {questions.map((request) => (
-          <InteractionCard
-            key={request.id}
-            request={request}
-            onAnswered={() => {
-              void refreshAgent();
-              void syncReplay();
-            }}
-          />
-        ))}
+        <InteractionList
+          requests={questions}
+          onAnswered={() => {
+            void refreshAgent();
+            void syncReplay();
+          }}
+        />
         {suggestions.map((suggestion) => (
           <ProactivityCard
             key={suggestion.id}

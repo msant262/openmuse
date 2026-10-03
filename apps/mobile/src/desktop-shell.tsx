@@ -1,5 +1,6 @@
 import { useThreads } from "@copilotkit/react-native/headless";
 import {
+  ArrowLeft,
   Bell,
   CheckCircle2,
   ChevronRight,
@@ -9,12 +10,14 @@ import {
   Lightbulb,
   List,
   type LucideIcon,
+  Maximize2,
   Menu,
   MessageCircle,
+  Minimize2,
+  Monitor,
   MoreHorizontal,
+  Newspaper,
   PanelLeftClose,
-  PanelLeftOpen,
-  PanelsTopLeft,
   Pencil,
   Plus,
   Search,
@@ -41,7 +44,6 @@ import type { Section } from "../../../packages/domain/src";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useAvatarPresentation } from "./avatar-presentation";
 import { CompanionHeading } from "./companion-heading";
-import { ComputerEntry } from "./computer";
 import { cachedConversationTitle, isEmptyConversationCache } from "./conversation-label";
 import { desktopStyles as d } from "./desktop-shell-styles";
 import { useI18n } from "./i18n";
@@ -49,7 +51,7 @@ import { MemorySettings } from "./memory-settings";
 import { messageStorage } from "./message-storage";
 import { ProfileSettings } from "./profile-settings";
 import { type Selection, useMuseThread } from "./threads";
-import { Button, Card, CheckRow, colors, ErrorNotice, Mascot, s } from "./ui";
+import { Button, Card, CheckRow, colors, ErrorNotice, HeaderFade, Mascot, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 // Kept together so the workspace language catalog can translate the desktop shell.
@@ -92,7 +94,7 @@ export const desktopCopy = {
 
 const desktopNavigation: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "chat", label: desktopCopy.chat, icon: MessageCircle },
-  { id: "activity", label: desktopCopy.activity, icon: PanelsTopLeft },
+  { id: "activity", label: desktopCopy.activity, icon: Newspaper },
   { id: "ideas", label: desktopCopy.ideas, icon: Lightbulb },
   { id: "goals", label: desktopCopy.goals, icon: SquareCheck },
   { id: "files", label: "Library", icon: Shapes },
@@ -136,6 +138,8 @@ export function DesktopShell({
   desktop = true,
   mobileHeader,
   mobileNavigation,
+  workspacePane,
+  workspaceKind = "computer",
   title,
   subtitle,
   settingsOpen,
@@ -150,6 +154,8 @@ export function DesktopShell({
   desktop?: boolean;
   mobileHeader?: ReactNode;
   mobileNavigation?: ReactNode;
+  workspacePane?: ReactNode;
+  workspaceKind?: "computer" | "document";
   title: string;
   subtitle: string;
   settingsOpen: boolean;
@@ -166,6 +172,7 @@ export function DesktopShell({
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [search, setSearch] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [expandedWorkspace, setExpandedWorkspace] = useState(false);
   const { api, section, open } = useWorkspace();
   const { data } = useAgentWorkspace();
   const { state: companionState } = useAvatarPresentation();
@@ -257,7 +264,14 @@ export function DesktopShell({
         : t("Saved conversation"),
     })),
   ].slice(0, 8);
-  const sideChatsVisible = sideChatsOpen && width >= 1240 && chatOpen;
+  const sideChatsVisible = sideChatsOpen && width >= 1240 && chatOpen && !workspacePane;
+  const inspectorVisible = inspectorOpen && chatOpen && !workspacePane;
+  const readingDocument = !!workspacePane && workspaceKind === "document";
+  const splitWorkspace = !!workspacePane && !readingDocument && !expandedWorkspace;
+  const selectedConversation = conversationList.find((thread) => thread.id === selection.id);
+  useEffect(() => {
+    if (!workspacePane) setExpandedWorkspace(false);
+  }, [!!workspacePane]);
   function newSideChat() {
     if (!enabled) return onThreads();
     onNavigate("chat");
@@ -268,15 +282,7 @@ export function DesktopShell({
       {desktop && (
         <>
           <View testID="desktop-sidebar" style={d.rail}>
-            <View style={{ flex: 1, width: "100%", alignItems: "center" }}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t(desktopCopy.customize)}
-                onPress={onCustomize}
-                style={{ marginBottom: 58, borderRadius: 23, overflow: "hidden" }}
-              >
-                <Mascot size={46} framing="portrait" />
-              </Pressable>
+            <View style={d.railPrimary}>
               <View style={d.railNavigation}>
                 {desktopNavigation.map((item) => (
                   <Fragment key={item.id}>
@@ -301,26 +307,22 @@ export function DesktopShell({
               </View>
             </View>
             <View style={d.railUtilities}>
-              <SidebarItem
-                label={t(desktopCopy.apps)}
-                icon={Settings2}
-                active={!settingsOpen && section === "apps"}
-                onPress={() => onNavigate("apps")}
-              />
               <View style={d.notification}>
                 <SidebarItem
-                  label={t(desktopCopy.notifications, { pending })}
-                  icon={Bell}
-                  onPress={() => open({ type: "notifications" })}
+                  label={t("Agent computer — take control")}
+                  icon={Monitor}
+                  onPress={() => open({ type: "computer" })}
+                />
+              </View>
+              <View style={d.notification}>
+                <SidebarItem
+                  label={t("App menu")}
+                  icon={Menu}
+                  active={settingsOpen}
+                  onPress={() => setMenuOpen(true)}
                 />
                 {pending > 0 && <View pointerEvents="none" style={d.badge} />}
               </View>
-              <SidebarItem
-                label={t("App menu")}
-                icon={Menu}
-                active={settingsOpen}
-                onPress={() => setMenuOpen(true)}
-              />
             </View>
           </View>
           {sideChatsVisible && (
@@ -369,7 +371,7 @@ export function DesktopShell({
                         style={[d.conversationItem, selection.id === thread.id && d.activeItem]}
                       >
                         <MessageCircle size={16} strokeWidth={1.7} color={colors.muted} />
-                        <View style={{ flex: 1, gap: 4 }}>
+                        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                           <Text numberOfLines={1} style={d.conversationLabel}>
                             {thread.name}
                           </Text>
@@ -410,70 +412,136 @@ export function DesktopShell({
         key="workspace-main"
         style={
           desktop
-            ? d.main
+            ? [
+                d.main,
+                splitWorkspace && {
+                  flexGrow: 0,
+                  flexBasis: Math.min(430, width * 0.34),
+                  width: Math.min(430, width * 0.34),
+                  flexShrink: 0,
+                },
+                !!workspacePane && !splitWorkspace && { display: "none" },
+              ]
             : { flex: 1, width: "100%", maxWidth: 760, alignSelf: "center", minHeight: 0 }
         }
       >
-        {desktop && section === "files" ? null : desktop ? (
-          <View style={[d.header, chatOpen && d.chatHeader]}>
-            {chatOpen ? (
-              <>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={t(desktopCopy.conversationMenu)}
-                  accessibilityState={{ expanded: sideChatsVisible }}
-                  onPress={() => (width >= 1240 ? setSideChatsOpen(!sideChatsOpen) : onThreads())}
-                  style={d.menuButton}
-                >
-                  {sideChatsVisible ? (
-                    <PanelLeftClose size={19} color={colors.muted} />
-                  ) : (
-                    <PanelLeftOpen size={19} color={colors.muted} />
-                  )}
-                </Pressable>
-                <View style={d.headerActions}>
-                  <ComputerEntry compact />
+        {desktop
+          ? chatOpen && (
+              <View pointerEvents="box-none" style={d.floatingHeader}>
+                <HeaderFade />
+                <View pointerEvents="box-none" style={d.chatControls}>
+                  <View style={[s.row, { gap: 7, maxWidth: splitWorkspace ? "70%" : "48%" }]}>
+                    {selection.id !== mainId && (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t(desktopCopy.mainChat)}
+                        onPress={() => openThread({ id: mainId, existing: true })}
+                        style={d.titleBack}
+                      >
+                        <ArrowLeft size={17} color={colors.text} />
+                      </Pressable>
+                    )}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={t(desktopCopy.conversationMenu)}
+                      accessibilityState={{ expanded: sideChatsVisible }}
+                      onPress={() =>
+                        width >= 1240 && !workspacePane
+                          ? setSideChatsOpen(!sideChatsOpen)
+                          : onThreads()
+                      }
+                      style={[
+                        d.conversationPill,
+                        sideChatsVisible && { backgroundColor: "transparent", shadowOpacity: 0 },
+                      ]}
+                    >
+                      {sideChatsVisible ? (
+                        <PanelLeftClose size={18} color={colors.muted} />
+                      ) : (
+                        <Menu size={18} color={colors.text} />
+                      )}
+                      {!sideChatsVisible && !splitWorkspace && (
+                        <Text numberOfLines={1} style={d.conversationPillText}>
+                          {selectedConversation?.name || t(desktopCopy.mainChat)}
+                        </Text>
+                      )}
+                    </Pressable>
+                  </View>
                 </View>
-              </>
-            ) : (
-              <>
-                <View accessibilityLabel={title} style={{ flex: 1 }} />
-                <ComputerEntry compact />
-              </>
-            )}
-          </View>
-        ) : (
-          mobileHeader
-        )}
-        {desktop && chatOpen && !inspectorOpen && (
-          <View
-            pointerEvents="box-none"
-            style={{
-              position: "absolute",
-              top: 8,
-              left: 90,
-              right: 90,
-              zIndex: 2,
-              alignItems: "center",
-            }}
-          >
-            <CompanionHeading
-              name={agentName}
-              status={companionStatus}
-              variant={data?.identity.avatar}
-              onPress={() => setInspectorOpen(true)}
-            />
-          </View>
-        )}
+                {!inspectorVisible && (
+                  <View
+                    pointerEvents="box-none"
+                    style={{
+                      position: "absolute",
+                      top: 7,
+                      left: splitWorkspace ? 45 : 160,
+                      right: splitWorkspace ? 45 : 160,
+                      alignItems: "center",
+                    }}
+                  >
+                    <CompanionHeading
+                      name={agentName}
+                      status={companionStatus}
+                      variant={data?.identity.avatar}
+                      onPress={() => {
+                        if (workspacePane) onNavigate("chat");
+                        setInspectorOpen(true);
+                      }}
+                    />
+                  </View>
+                )}
+              </View>
+            )
+          : mobileHeader}
         <View key="workspace-content" style={d.content}>
           {children}
         </View>
         {!desktop && mobileNavigation}
       </View>
-      {desktop && chatOpen && inspectorOpen && (
+      {desktop && workspacePane && (
+        <View
+          testID="desktop-workspace-pane"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            borderLeftWidth: splitWorkspace ? 1 : 0,
+            borderLeftColor: colors.line,
+          }}
+        >
+          {workspaceKind === "computer" && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t(expandedWorkspace ? "Show conversation" : "Expand workspace")}
+              onPress={() => setExpandedWorkspace(!expandedWorkspace)}
+              style={{
+                position: "absolute",
+                top: 18,
+                right: 76,
+                zIndex: 2,
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: colors.canvas,
+              }}
+            >
+              {expandedWorkspace ? (
+                <Minimize2 size={17} color={colors.muted} />
+              ) : (
+                <Maximize2 size={17} color={colors.muted} />
+              )}
+            </Pressable>
+          )}
+          {workspacePane}
+        </View>
+      )}
+      {desktop && inspectorVisible && (
         <AgentInspector
           name={agentName}
           status={companionStatus}
+          width={width >= 1440 ? 340 : width >= 1240 ? 310 : 288}
           onSettings={onCustomize}
           onClose={() => setInspectorOpen(false)}
         />
@@ -561,12 +629,14 @@ export function AgentInspector({
   onSettings,
   onClose,
   compact = false,
+  width,
 }: {
   name: string;
   status: string;
   onSettings: () => void;
   onClose: () => void;
   compact?: boolean;
+  width?: number;
 }) {
   const { t, locale } = useI18n();
   const { data } = useAgentWorkspace();
@@ -597,7 +667,11 @@ export function AgentInspector({
   return (
     <View
       testID="desktop-agent-inspector"
-      style={[d.inspector, compact && { width: "100%", flex: 1, borderLeftWidth: 0 }]}
+      style={[
+        d.inspector,
+        width !== undefined && { width },
+        compact && { width: "100%", flex: 1, borderLeftWidth: 0 },
+      ]}
     >
       <View
         style={[
@@ -630,13 +704,13 @@ export function AgentInspector({
         <View style={[d.inspectorPortrait, compact && { width: 78, height: 78, borderRadius: 39 }]}>
           <View
             style={{
-              width: compact ? 78 : 108,
-              height: compact ? 78 : 108,
+              width: compact ? 78 : 98,
+              height: compact ? 78 : 98,
               borderRadius: 54,
               overflow: "hidden",
             }}
           >
-            <Mascot size={compact ? 78 : 108} variant={data?.identity.avatar} framing="portrait" />
+            <Mascot size={compact ? 78 : 98} variant={data?.identity.avatar} framing="portrait" />
           </View>
           <Pressable
             accessibilityRole="button"

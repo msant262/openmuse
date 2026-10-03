@@ -1,4 +1,9 @@
 export const museInterfacePTBR: Record<string, string> = {
+  "Expand workspace": "Expandir espaço de trabalho",
+  "Show conversation": "Mostrar conversa",
+  "Loading preview…": "Carregando prévia…",
+  "Could not load this preview.": "Não foi possível carregar esta prévia.",
+  "Preview unavailable": "Prévia indisponível",
   "Open task": "Abrir tarefa",
   "For you": "Para você",
   "Feed activity and settings": "Atividade e ajustes do feed",

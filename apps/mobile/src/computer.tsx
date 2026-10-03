@@ -133,7 +133,7 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
     </Card>
   );
 }
-export function ComputerSheet() {
+export function ComputerSheet({ embedded = false }: { embedded?: boolean } = {}) {
   const { t } = useI18n();
   const { workspace, api, refresh, close, open, navigate } = useWorkspace();
   const [url, setUrl] = useState("");
@@ -175,6 +175,7 @@ export function ComputerSheet() {
   return (
     <Sheet
       title={t("Agent computer")}
+      embedded={embedded}
       onClose={close}
       wide
       scroll={false}
@@ -241,7 +242,7 @@ export function ComputerSheet() {
             <LinuxWorkspace tab={tab === "Files" ? "Files" : "Terminal"} />
           </View>
           <ErrorNotice error={t(error)} />
-          {tab === "Desktop" && <DesktopViewer />}
+          {tab === "Desktop" && <DesktopViewer embedded={embedded} />}
           {tab === "Browser" ? (
             <>
               <View>
@@ -306,17 +307,19 @@ export function ComputerSheet() {
               </Button>
             </>
           ) : null}
-          <Button
-            small
-            icon={RefreshCw}
-            onPress={() =>
-              void refresh()
-                .then(() => setError(""))
-                .catch((e) => setError(String(e)))
-            }
-          >
-            {t("Refresh computer")}
-          </Button>
+          {!embedded && (
+            <Button
+              small
+              icon={RefreshCw}
+              onPress={() =>
+                void refresh()
+                  .then(() => setError(""))
+                  .catch((e) => setError(String(e)))
+              }
+            >
+              {t("Refresh computer")}
+            </Button>
+          )}
         </View>
       </ScrollView>
     </Sheet>

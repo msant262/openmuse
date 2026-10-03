@@ -28,6 +28,7 @@ import {
 } from "react-native";
 import type { Artifact } from "../../../packages/domain/src";
 import { localizedAttachmentLabel } from "./attachment-ui-copy";
+import { FileContentPreview } from "./file-content-preview";
 import { useI18n } from "./i18n";
 import { Button, colors, Empty, ErrorNotice, IconButton, LinkRow, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -117,10 +118,22 @@ function LibraryPreview({ file }: { file: Artifact }) {
       {category === "images" && failedUrl !== file.url ? (
         <Image
           source={{ uri: api.url(file.url) }}
-          style={{ width: "100%", height: "100%" }}
+          style={{ width: "100%", height: 182 }}
           resizeMode="cover"
           onError={() => setFailedUrl(file.url)}
         />
+      ) : category === "videos" && Platform.OS === "web" && failedUrl !== file.url ? (
+        <video
+          aria-label={file.name}
+          src={`${api.url(file.url)}#t=0.1`}
+          muted
+          playsInline
+          preload="metadata"
+          onError={() => setFailedUrl(file.url)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }}
+        />
+      ) : category === "web" && Platform.OS === "web" ? (
+        <FileContentPreview file={file} url={api.url(file.url)} height={182} passive />
       ) : file.mimeType === "application/pdf" && Platform.OS === "web" ? (
         <iframe
           title={`${t("Document preview")}: ${file.name}`}
@@ -167,8 +180,8 @@ export function MuseLibrary({
   const visible = [...files]
     .filter((file) => {
       const kind = categoryOf(file);
-      const matchesGroup =
-        desktop || (group === "media") === ["images", "videos", "audio"].includes(kind);
+      const media = ["images", "videos", "audio"].includes(kind);
+      const matchesGroup = desktop ? category !== "all" || !media : (group === "media") === media;
       return (
         matchesGroup &&
         (!desktop || category === "all" || category === kind) &&
@@ -179,6 +192,9 @@ export function MuseLibrary({
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const grid = desktop && layout === "grid";
+  const availableWidth = width - 68 - 228 - 96;
+  const columns = Math.max(2, Math.floor((availableWidth + 20) / 248));
+  const cardWidth = Math.floor((availableWidth - (columns - 1) * 20) / columns);
   function show(file: Artifact) {
     setSelected(undefined);
     open({ type: "file", file });
@@ -311,7 +327,10 @@ export function MuseLibrary({
           {desktop && visible.length > 0 && <Text style={styles.recent}>{t("Recent")}</Text>}
           <View style={grid ? styles.grid : { gap: 0 }}>
             {visible.map((file) => (
-              <View key={file.id} style={grid ? styles.card : styles.listItem}>
+              <View
+                key={file.id}
+                style={grid ? [styles.card, { width: cardWidth }] : styles.listItem}
+              >
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`${t("Open attachment")}: ${file.name}`}
@@ -403,7 +422,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0, flexDirection: "row", backgroundColor: colors.canvas },
   mobileRoot: { paddingTop: 104 },
   sidebar: {
-    width: 204,
+    width: 228,
     paddingHorizontal: 12,
     paddingTop: 17,
     borderRightWidth: 1,
@@ -443,11 +462,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 16,
-    paddingTop: 38,
+    paddingTop: 42,
     paddingBottom: 23,
     paddingHorizontal: 48,
   },
-  title: { color: colors.text, fontSize: 26, fontWeight: "500", letterSpacing: -0.65 },
+  title: { color: colors.text, fontSize: 28, fontWeight: "600", letterSpacing: -0.65 },
   mobileToolbar: { paddingHorizontal: 18, paddingBottom: 8 },
   segments: {
     flexDirection: "row",
