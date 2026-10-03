@@ -15,21 +15,38 @@ Atualização após o primeiro aceite real: o domínio público
 aparelho do usuário. Entrada web com chave e cookie seguro verificada nesse
 domínio. API sem autenticação retorna 401; rotas de executor e manutenção
 retornam 404 no gateway público. O hostname privado continua disponível.
-A imagem API `993e611` recebeu a correção de replay `111ba4e`, em camada imutável
-com o arquivo compilado e hash registrados em `/opt/okami-web/server-replay-111ba4e`.
-Uma falha histórica não deixa mais um RUN_STARTED aberto ao reconectar. O chat
-principal respondeu depois da reconexão; 870/870 testes Node passaram após a
-correção. O limite operacional conservador de contexto foi ajustado para 131072
-em ChatGPT/Grok; 32768 bloqueava o catálogo de ferramentas antes de chamar o
-provedor. Esse número é orçamento de admissão do app, não uma medição da janela
-máxima do modelo. A interface desktop, os idiomas e os avatares estão sendo
-revistos conforme `docs/superpowers/plans/2026-10-03-product-rework.md`.
+O retrabalho de produto está descrito no
+[plano de implementação](superpowers/plans/2026-10-03-product-rework.md) e no
+[registro da retomada](superpowers/plans/2026-10-03-product-rework-resume.md).
 
-Fontes de execução da última instalação técnica: imagem API `993e611`, fonte/scripts VPS `7c899ec`,
-fonte instalada Lenovo `985b51d`; app `ef147e3`. Os commits posteriores
-de integração e documentação preservam esses códigos verificados. A suíte final passou 867/867
-testes Node, os três projetos TypeScript, 92/92 testes Python do computador e
-49/49 testes de scripts (incluindo criptografia age real).
+A web e os APKs usam a fonte mobile `40390aa`: navegação desktop, EN/PT-BR,
+configurações de nome/personalidade, cinco avatares 3D animados e editor de
+aparência. O visualizador mantém a imagem durante polling e entrada manual.
+O build web publicado está em `/opt/okami-web/releases/40390aa-public`.
+A API final usa a imagem `openmuse-server:product-d6fa127`, com fonte registrada
+em `/root/okami-deployment/source-pin`. A publicação drenou o trabalho ativo e
+preservou a pausa na revisão 16, desativada; ao terminar, manutenção encerrada e
+contadores de tarefas, admissões, recursos, operações, entregas e HTTP zerados.
+
+A validação final em `d6fa127` passou **908/908 testes Node**, TypeScript e build
+do servidor. Biome terminou sem erros (189 avisos existentes e duas informações).
+O renderizador 3D e os fluxos reais de web/Android foram verificados separadamente;
+recibos e logs estão em `artifacts/resume-recovery/` e `artifacts/android/`.
+
+O aceite real da retomada concluiu cinco tarefas: quatro planos em texto com
+artefatos da revisão atual e uma consulta `computer_status` com observação nova.
+Quatro tarefas foram observadas em execução simultânea enquanto o chat respondeu
+“chat disponível”. Os pedidos foram retomados por diretivas normais, preservando
+recibos anteriores, sem repetir comandos ou efeitos externos. Evidência local:
+`artifacts/resume-recovery/live-tasks-verified.json`.
+
+
+Na implantação técnica anterior, passaram 867/867 testes Node, os três projetos
+TypeScript, 92/92 testes Python do computador e 49/49 testes de scripts, incluindo
+criptografia age real. A fonte instalada na Lenovo continua `985b51d`; esses
+resultados são do aceite anterior e não equivalem a uma nova execução nesta retomada.
+O limite operacional de contexto em ChatGPT/Grok é 131072: orçamento de admissão
+do app, não medição da janela máxima do modelo.
 
 ## Instalação observada
 
@@ -138,33 +155,43 @@ prolongada dos testes curtos nem latência de chat a partir do healthcheck.
 
 ## Android
 
-Fonte mobile final: `ef147e3`; identificador técnico `app.openmuse.mobile` e scheme
+Fonte mobile final: `40390aa`; identificador técnico `app.openmuse.mobile` e scheme
 `openmuse` preservados. Os APKs usam a chave persistente privada do projeto,
 assinatura verificada, release não debuggable e certificado SHA256
 `e6d8e6aeb25f3c1603efd369b9898dbb865343f4148a1969cd85383331053f8a`.
+Ambos usam `https://app.okamibot.cloud`, sem Tailscale no aparelho.
 
-- [ARM64 para o telefone](../artifacts/android/pin-ef147e3-project-signed/okamibot-release-arm64-v8a.apk):
-  SHA256 `8788bcad0d4896826534037e5bbe0802385c654d7d37e7e52994ce8d5a7a63ae`;
-  endpoint privado ativo `https://srv1667308.tail107988.ts.net`.
-- [x86_64 somente para o emulador](../artifacts/android/pin-ef147e3-project-signed/okamibot-release-x86_64.apk):
-  SHA256 `a08891c531b9f6b85411ddf890c3a4c5c6f13e115ac03808364a966c35d6356c`;
-  endpoint de fixture `http://10.0.2.2:8793`.
-- [Relatório de build](../artifacts/android/pin-ef147e3-build-report.json) e demais
-  evidências ficam em `artifacts/android/`. Artefatos são locais/ignorados pelo Git;
-  os caminhos originais de worktree nos relatórios preservam sua proveniência.
+- [ARM64 para o telefone](https://app.okamibot.cloud/downloads/okamibot.apk?v=40390aa):
+  52.809.546 bytes; SHA256
+  `4923208c4255b2a99f6a45598ee80a81308043da1193befb66b10fa7e64a1557`.
+  O download público foi comparado ao build local assinado.
+- [x86_64 para o emulador](../artifacts/android/public-release/okamibot-release-x86_64.apk):
+  54.554.385 bytes; SHA256
+  `755d6981c5fa1cabdc46920b9d0331987e46368550ba5888acb1473f7df5dff2`.
+- Recibos de assinatura/proveniência ficam junto dos APKs em
+  `artifacts/android/public-release/`. Evidências de interface ficam em
+  `artifacts/android/public-preflight-evidence/` e
+  `artifacts/android/public-release-evidence/`. Esses artefatos são locais e
+  ignorados pelo Git.
 
-O smoke automático em AVD descartável confirmou um pareamento, três leituras de
-workspace, abertura do chat/teclado/Apps e rascunho preservado após force-stop/reabrir.
-O AVD original e aparelhos reais não foram alterados. Instale o ARM64 como atualização
-se já houver app compatível, preservando dados. Se a assinatura não corresponder,
-interrompa sem desinstalar/limpar dados para tentar contornar o problema. Keystore e
-senhas de assinatura não são necessários para instalar o APK.
+A atualização no emulador preservou pareamento e rascunho e acessou o workspace
+real por HTTPS público. Nome, personalidade e avatar foram salvos e conferidos
+após reinício; os valores anteriores foram restaurados e relidos. O log final
+filtrado do processo não apresentou erros. O recibo de aceite é
+`artifacts/android/public-release-evidence/receipt.json`. A verificação nativa cobriu seleção persistente de idioma,
+menu, configurações, cinco espécies, animação 3D e controles do editor; cor
+inválida impede salvar. No navegador, a verificação real cobriu salvar e recarregar
+nome/personalidade, preset e aparência personalizada, além de assumir controle,
+entrada de teclado/mouse e devolução ao agente sem remover a imagem da tela.
+
+Instale o ARM64 como atualização se já houver app compatível, preservando dados.
+Se a assinatura não corresponder, interrompa sem desinstalar/limpar dados para
+contornar o problema. Keystore e senhas não são necessários para instalar o APK.
 
 ## Ativação que ainda depende de contas ou aparelho
 
-1. Conectar o telefone à mesma tailnet e conferir o HTTPS privado já ativo em
-   `https://srv1667308.tail107988.ts.net/api/health`. O Serve encaminha para
-   `http://100.113.59.40:8787`; não há Funnel nem endpoint público do bot.
+1. Instalar o APK ARM64 pelo link público acima e parear com a chave privada do
+   workspace. O telefone não precisa entrar na tailnet.
 2. ChatGPT e Grok já foram autorizados: OAuth oficial com permissão de assinatura
    no ChatGPT, arquivo importado preservando a identidade própria da VPS, e device
    flow no Grok. A cópia temporária com tokens do laptop foi removida após importar.
@@ -173,7 +200,7 @@ senhas de assinatura não são necessários para instalar o APK.
    resposta completa e chamada de ferramenta no namespace `openmuse`. O fallback
    **`grok/grok-4.6`** também respondeu de fato, sem recorrer a outro provedor.
    A API está saudável com `agentConfigured:true`; a manutenção terminou sem pausa
-   ativa (revisão 14). MiMo permanece configurado depois do Grok, aguardando sua chave
+   ativa (revisão 16). MiMo permanece configurado depois do Grok, aguardando sua chave
    Token Plan. As credenciais continuam privadas, sob o usuário da API, e a renovação
    automática está habilitada. Para reautorizar ou adicionar MiMo, seguir
    [MODEL-BACKENDS.md](MODEL-BACKENDS.md). Assinaturas Anthropic/Cursor não foram integradas.

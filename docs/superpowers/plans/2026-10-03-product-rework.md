@@ -30,11 +30,20 @@
 ## Tasks
 
 - [x] **Chat replay:** `apps/server/src/threads.ts`, `tests/local-threads.test.ts`. Preserve terminal transitions when projecting historical failures, without rewriting the journal. Exercise real AG-UI failed-to-success replay and current-run errors.
-- [ ] **Desktop stream:** `apps/mobile/src/desktop.tsx` and its server/executor adapters if evidence warrants. Reproduce missing frames and flashing controls; fix the lifecycle and test real viewing, take control, repeated input, handback and reconnect without disturbing user ownership.
-- [ ] **Desktop shell:** `apps/mobile/App.tsx` plus a dedicated shell module. Persistent navigation, readable wide chat, obvious settings, usable computer panel; preserve Android navigation.
-- [ ] **Localization:** Add a typed EN/PT-BR catalog/provider and persistent selection. Translate sign-in, navigation, chat, activity, connectors, desktop controls, settings, validation and error presentation. Separate app locale from an explicit agent response-language preference.
-- [ ] **Profile/avatar:** Expose name, nickname, speaking style, personality and response language in a direct settings screen. Add five distinct locally rendered animated 3D avatars and a custom avatar editor with saved appearance and preview; preserve existing profile revisions and chat personalization.
+- [x] **Desktop stream:** `apps/mobile/src/desktop.tsx` and its server/executor adapters if evidence warrants. Reproduce missing frames and flashing controls; fix the lifecycle and test real viewing, take control, repeated input, handback and reconnect without disturbing user ownership.
+- [x] **Desktop shell:** `apps/mobile/App.tsx` plus a dedicated shell module. Persistent navigation, readable wide chat, obvious settings, usable computer panel; preserve Android navigation.
+- [x] **Localization:** Add a typed EN/PT-BR catalog/provider and persistent selection. Translate sign-in, navigation, chat, activity, connectors, desktop controls, settings, validation and error presentation. Separate app locale from an explicit agent response-language preference.
+- [x] **Profile/avatar:** Expose name, nickname, speaking style, personality and response language in a direct settings screen. Add five distinct locally rendered animated 3D avatars and a custom avatar editor with saved appearance and preview; preserve existing profile revisions and chat personalization.
 - [x] **Public access:** Use the user's selected domain with HTTPS and strong app authentication; optional Google sign-in requires explicit client configuration and an owner allowlist. Do not expose executor, vault, database or internal admin endpoints through the public gateway. Verify from outside Tailscale.
-- [ ] **Acceptance:** Test login, repeat chat, failure recovery, new/reopened threads, four background tasks, editing preferences, both locales, all avatars/custom creation, files and native viewing/control. Run applicable existing suites, build web/Android as changed, record real evidence and limitations, then remove integrated worktrees.
+- [x] **Acceptance:** Test login, repeat chat, failure recovery, new/reopened threads, four background tasks, editing preferences, both locales, all avatars/custom creation, files and native viewing/control. Run applicable existing suites, build web/Android as changed, record real evidence and limitations, then remove integrated worktrees.
 
 The user has explicitly authorized implementation and supplied the parallel execution method; no extra plan approval is required.
+
+## Final delivery evidence
+
+Public web and signed Android source: `40390aa`. Final server: `d6fa127`.
+Browser and Android acceptance, current validation results, deployment receipts,
+and remaining account/physical-device checks are recorded in
+[the recovery report](2026-10-03-product-rework-resume.md). Integrated worktrees
+were removed after preserving recovered changes. Physical phone and the running
+24-hour soak remain explicit operational acceptance limits, not implemented-feature claims.
