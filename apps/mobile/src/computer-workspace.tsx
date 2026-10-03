@@ -20,6 +20,7 @@ import type {
   ComputerSnapshot,
 } from "../../../packages/domain/src/computer";
 import { useComputerDraft } from "./computer-drafts";
+import { useI18n } from "./i18n";
 import { Button, Card, colors, Empty, ErrorNotice, Field, LinkRow, s, timeLabel } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -27,6 +28,7 @@ const mono = Platform.OS === "ios" ? "Menlo" : "monospace";
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
+  const { t } = useI18n();
   const { api } = useWorkspace();
   const [snapshot, setSnapshot] = useState<ComputerSnapshot>();
   const [error, setError] = useState("");
@@ -126,17 +128,17 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
         <View style={[s.row, { gap: 12 }]}>
           <Terminal size={24} color={colors.blueDark} />
           <View style={{ flex: 1, gap: 4 }}>
-            <Text style={s.heading}>Your Linux workspace</Text>
+            <Text style={s.heading}>{t("Your Linux workspace")}</Text>
             <Text style={s.muted}>
               {running
-                ? "Running · files persist when stopped"
+                ? t("Running · files persist when stopped")
                 : snapshot?.status === "stopped"
-                  ? "Stopped · your files are saved"
+                  ? t("Stopped · your files are saved")
                   : snapshot?.status === "unconfigured"
-                    ? "Set up the computer to get started"
+                    ? t("Set up the computer to get started")
                     : snapshot?.status === "error"
-                      ? "Connection needs attention"
-                      : "Connecting…"}
+                      ? t("Connection needs attention")
+                      : t("Connecting…")}
             </Text>
           </View>
           {!snapshot && !error && <ActivityIndicator color={colors.blueDark} />}
@@ -146,11 +148,11 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
           <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
             {running ? (
               <Button icon={Power} busy={busy} onPress={() => void control("stop")}>
-                Stop computer
+                {t("Stop computer")}
               </Button>
             ) : (
               <Button primary icon={Play} busy={busy} onPress={() => void control("start")}>
-                Start computer
+                {t("Start computer")}
               </Button>
             )}
             <Button
@@ -162,7 +164,7 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                   .catch((e) => setError(message(e)))
               }
             >
-              Refresh
+              {t("Refresh")}
             </Button>
           </View>
         )}
@@ -176,7 +178,7 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
               .catch((e) => setError(message(e)))
           }
         >
-          Retry connection
+          {t("Retry connection")}
         </Button>
       )}
       {snapshot?.enabled && (
@@ -185,10 +187,10 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
             {editingCommand || command.length > 0 || snapshot.commands.length === 0 ? (
               <View style={{ borderRadius: 22, backgroundColor: "#F1F3F4", padding: 18, gap: 8 }}>
                 <Text style={{ color: colors.muted, fontSize: 12, fontFamily: mono }}>
-                  TERMINAL
+                  {t("Terminal").toUpperCase()}
                 </Text>
                 <Field
-                  label="Working directory"
+                  label={t("Working directory")}
                   value={cwd}
                   onChangeText={setCwd}
                   autoCapitalize="none"
@@ -196,10 +198,10 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                   style={{ fontFamily: mono }}
                 />
                 <Field
-                  label="Command"
+                  label={t("Command")}
                   value={command}
                   onChangeText={setCommand}
-                  placeholder="pwd"
+                  placeholder={t("Type a command, such as pwd")}
                   multiline
                   maxLength={16000}
                   autoCapitalize="none"
@@ -216,7 +218,7 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                       setCommand((text) => text.replace(/[‘’]/g, "'").replace(/[“”]/g, '"'))
                     }
                   >
-                    Use straight quotes
+                    {t("Use straight quotes")}
                   </Button>
                 )}
                 <Button
@@ -226,12 +228,12 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                   disabled={!running || !command.trim() || busy}
                   onPress={() => void run()}
                 >
-                  Run command
+                  {t("Run command")}
                 </Button>
                 <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 18 }}>
                   {snapshot.network === "public-only"
-                    ? "Public internet enabled. Your files and background jobs stay here."
-                    : "Offline computer. Use Browser for the web."}
+                    ? t("Public internet enabled. Your files and background jobs stay here.")
+                    : t("Offline computer. Use Browser for the web.")}
                 </Text>
               </View>
             ) : (
@@ -241,19 +243,23 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                 disabled={!running || busy || !!commandRunning}
                 onPress={() => setEditingCommand(true)}
               >
-                New command
+                {t("New command")}
               </Button>
             )}
             {!!commandRunning && (
               <Text style={s.muted}>
-                Working… The result will appear here. Stop the computer to end running commands.
+                {t(
+                  "Working… The result will appear here. Stop the computer to end running commands.",
+                )}
               </Text>
             )}
             {snapshot.commands.length === 0 ? (
               <Empty
                 icon={Terminal}
-                title="Ready for your first command"
-                detail="Run scripts, work with files, or ask your agent to create something here."
+                title={t("Ready for your first command")}
+                detail={t(
+                  "Run scripts, work with files, or ask your agent to create something here.",
+                )}
               />
             ) : (
               [...snapshot.commands]
@@ -263,7 +269,7 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
             )}
             {snapshot.commands.length > 5 && (
               <Button small onPress={() => setShowHistory(!showHistory)}>
-                {showHistory ? "Show recent commands" : "Earlier commands"}
+                {showHistory ? t("Show recent commands") : t("Earlier commands")}
               </Button>
             )}
           </View>
@@ -277,6 +283,7 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
 }
 
 function CommandReceipt({ run }: { run: ComputerCommand }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(true);
   return (
     <Card style={{ gap: 10 }}>
@@ -294,8 +301,8 @@ function CommandReceipt({ run }: { run: ComputerCommand }) {
             },
           ]}
         >
-          {run.status.replace("_", " ")}
-          {run.exitCode !== undefined ? ` · exit ${run.exitCode}` : ""}
+          {t(run.status.replace("_", " "))}
+          {run.exitCode !== undefined ? ` · ${t("exit {code}", { code: run.exitCode })}` : ""}
         </Text>
         <Text style={s.small}>{timeLabel(run.startedAt)}</Text>
       </View>
@@ -323,18 +330,18 @@ function CommandReceipt({ run }: { run: ComputerCommand }) {
             </Text>
           )}
           {!run.stdout && !run.stderr && run.status !== "running" && (
-            <Text style={s.small}>No output</Text>
+            <Text style={s.small}>{t("No output")}</Text>
           )}
           {run.truncated && (
             <Text style={s.small}>
-              Output reached the display limit. Write large results to a file.
+              {t("Output reached the display limit. Write large results to a file.")}
             </Text>
           )}
         </>
       )}
       {!!(run.stdout || run.stderr) && (
         <Button small onPress={() => setExpanded(!expanded)}>
-          {expanded ? "Hide output" : "Show output"}
+          {expanded ? t("Hide output") : t("Show output")}
         </Button>
       )}
     </Card>
@@ -342,6 +349,7 @@ function CommandReceipt({ run }: { run: ComputerCommand }) {
 }
 
 function ComputerFiles({ running, active }: { running: boolean; active: boolean }) {
+  const { t } = useI18n();
   const { api, workspace, open, refresh } = useWorkspace();
   const [path, setPath] = useComputerDraft("path");
   const [directory, setDirectory] = useState<ComputerDirectory>();
@@ -413,7 +421,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
         path: `${path}/${file.name.replace(/[\\/]/g, "_")}`,
       });
       setImporting(false);
-      setNotice("File copied to your computer.");
+      setNotice(t("File copied to your computer."));
       setRetry((value) => value + 1);
     } catch (e) {
       setError(message(e));
@@ -449,7 +457,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
             ? { ...current, saved: sent.text, savedPath: sent.path }
             : current,
         );
-      setNotice("File saved to your computer.");
+      setNotice(t("File saved to your computer."));
       setRetry((value) => value + 1);
     } catch (e) {
       setError(message(e));
@@ -474,7 +482,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
   return (
     <View style={{ gap: 12 }}>
       <View style={s.between}>
-        <Text style={s.heading}>Workspace files</Text>
+        <Text style={s.heading}>{t("Workspace files")}</Text>
         {(busy || loading) && <ActivityIndicator color={colors.blueDark} />}
       </View>
       <Text selectable style={[s.small, { fontFamily: mono }]}>
@@ -483,12 +491,12 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
       <ErrorNotice error={error} />
       {!!notice && <Text style={[s.small, { color: "#248258" }]}>{notice}</Text>}
       {!running && (
-        <Text style={s.muted}>Start the computer to browse or edit its saved files.</Text>
+        <Text style={s.muted}>{t("Start the computer to browse or edit its saved files.")}</Text>
       )}
       {editor ? (
         <>
           <Field
-            label="File path"
+            label={t("File path")}
             value={editor.path}
             onChangeText={(value) => setEditor({ ...editor, path: value })}
             autoCorrect={false}
@@ -496,7 +504,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
             style={{ fontFamily: mono }}
           />
           <Field
-            label="File contents"
+            label={t("File contents")}
             value={editor.text}
             onChangeText={(value) => setEditor({ ...editor, text: value })}
             multiline
@@ -515,7 +523,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
               disabled={!running || !editor.path.trim()}
               onPress={() => void save()}
             >
-              Save file
+              {t("Save file")}
             </Button>
             <Button
               disabled={busy}
@@ -525,7 +533,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                 setNotice("");
               }}
             >
-              {dirty ? "Discard edits" : "Back to files"}
+              {dirty ? t("Discard edits") : t("Back to files")}
             </Button>
           </View>
         </>
@@ -539,7 +547,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                 icon={ArrowLeft}
                 onPress={() => setPath(path.slice(0, path.lastIndexOf("/")) || "/workspace")}
               >
-                Up
+                {t("Up")}
               </Button>
             )}
             <Button
@@ -556,7 +564,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                 });
               }}
             >
-              New file
+              {t("New file")}
             </Button>
             <Button
               small
@@ -564,7 +572,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
               icon={FolderPlus}
               onPress={() => setFolder("")}
             >
-              New folder
+              {t("New folder")}
             </Button>
             <Button
               small
@@ -572,7 +580,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
               icon={RefreshCw}
               onPress={() => setRetry(retry + 1)}
             >
-              Refresh files
+              {t("Refresh files")}
             </Button>
             <Button
               small
@@ -580,14 +588,14 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
               icon={Upload}
               onPress={() => setImporting(!importing)}
             >
-              {importing ? "Hide documents" : "Copy a document here"}
+              {importing ? t("Hide documents") : t("Copy a document here")}
             </Button>
           </View>
           {importing && (
             <Card>
-              <Text style={s.heading}>Choose a saved file</Text>
+              <Text style={s.heading}>{t("Choose a saved file")}</Text>
               <Text style={[s.small, { marginTop: 6 }]}>
-                Copies into this folder. A file with the same name will be replaced.
+                {t("Copies into this folder. A file with the same name will be replaced.")}
               </Text>
               {workspace.files.map((file) => (
                 <LinkRow
@@ -598,14 +606,14 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                 />
               ))}
               {!workspace.files.length && (
-                <Text style={s.muted}>Add a document from mail or Files first.</Text>
+                <Text style={s.muted}>{t("Add a document from mail or Files first.")}</Text>
               )}
             </Card>
           )}
           {folder !== undefined && (
             <Card style={{ gap: 8 }}>
               <Field
-                label="Folder name"
+                label={t("Folder name")}
                 value={folder}
                 onChangeText={setFolder}
                 autoCapitalize="none"
@@ -618,10 +626,10 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                   busy={busy}
                   onPress={() => void mkdir()}
                 >
-                  Create folder
+                  {t("Create folder")}
                 </Button>
                 <Button disabled={busy} onPress={() => setFolder(undefined)}>
-                  Cancel
+                  {t("Cancel")}
                 </Button>
               </View>
             </Card>
@@ -635,9 +643,9 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                 title={entry.name}
                 detail={
                   entry.type === "directory"
-                    ? "Folder"
+                    ? t("Folder")
                     : entry.type === "symlink"
-                      ? "Symbolic link"
+                      ? t("Symbolic link")
                       : `${Math.max(1, Math.ceil(entry.size / 1024))} KB`
                 }
                 onPress={() => {
@@ -663,8 +671,8 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
             directory.entries.length === 0 && (
               <Empty
                 icon={Folder}
-                title="A little space to create"
-                detail="Add a file here, or ask your agent to make one in its workspace."
+                title={t("A little space to create")}
+                detail={t("Add a file here, or ask your agent to make one in its workspace.")}
               />
             )}
         </>

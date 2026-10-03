@@ -5,6 +5,7 @@ import type {
   ProactivitySuggestion,
 } from "../../../packages/domain/src/proactivity";
 import { useAgentWorkspace } from "./agent-workspace";
+import { useI18n } from "./i18n";
 import { messageStorage } from "./message-storage";
 import { ProactivitySubmission, proactivityTaskLabel } from "./proactivity-state";
 import { Button, Card, ErrorNotice, Field, s } from "./ui";
@@ -17,11 +18,9 @@ export function ProactivityCard({
   suggestion: ProactivitySuggestion;
   onAnswered?: () => void;
 }) {
+  const { t, locale } = useI18n();
   const { api, open } = useWorkspace();
   const { data } = useAgentWorkspace();
-  const language = data?.identity.profile?.fields.language ?? "en";
-  const pt = language.startsWith("pt"),
-    de = language.startsWith("de");
   const [current, setCurrent] = useState(suggestion);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -73,29 +72,13 @@ export function ProactivityCard({
       setBusy(false);
     }
   }
-  const labels = pt
-    ? {
-        start: "Iniciar",
-        continue: "Continuar",
-        snooze: "Adiar",
-        resolved: "Resolvido",
-        dismiss: "Não lembrar",
-      }
-    : de
-      ? {
-          start: "Starten",
-          continue: "Fortsetzen",
-          snooze: "Später",
-          resolved: "Erledigt",
-          dismiss: "Nicht erinnern",
-        }
-      : {
-          start: "Start",
-          continue: "Continue",
-          snooze: "Snooze",
-          resolved: "Resolved",
-          dismiss: "Don't remind me",
-        };
+  const labels = {
+    start: t("Start"),
+    continue: t("Continue"),
+    snooze: t("Snooze"),
+    resolved: t("Resolved"),
+    dismiss: t("Don't remind me"),
+  };
   const existingTask =
     current.taskId ??
     (current.target.kind === "task" || current.target.kind === "goal"
@@ -111,10 +94,8 @@ export function ProactivityCard({
         <Text key={e.id} style={s.small}>
           {e.title} ·{" "}
           {e.acquiredAt
-            ? new Date(e.acquiredAt).toLocaleString()
-            : pt
-              ? "data desconhecida"
-              : "date unknown"}
+            ? new Date(e.acquiredAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US")
+            : t("date unknown")}
           {"\n"}
           {e.excerpt}
         </Text>
@@ -148,13 +129,7 @@ export function ProactivityCard({
       {pending && choosingTime && (
         <>
           <Field
-            label={
-              pt
-                ? "Adiar até (data e fuso)"
-                : de
-                  ? "Später bis (Datum und Zeitzone)"
-                  : "Snooze until (date and timezone)"
-            }
+            label={t("Snooze until (date and timezone)")}
             value={until}
             onChangeText={setUntil}
             placeholder="2026-10-03T08:00:00+02:00"
@@ -167,21 +142,21 @@ export function ProactivityCard({
       {current.status === "snoozed" && (
         <Text style={s.small}>
           {labels.snooze}:{" "}
-          {current.snoozeUntil ? new Date(current.snoozeUntil).toLocaleString() : ""}
+          {current.snoozeUntil
+            ? new Date(current.snoozeUntil).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US")
+            : ""}
         </Text>
       )}
       {current.status === "accepted" && (
         <Text style={s.small}>
           {task
-            ? proactivityTaskLabel(task.status, language)
-            : pt
-              ? "Na fila; aguardando estado atual"
-              : "Queued; awaiting current task state"}
+            ? t(proactivityTaskLabel(task.status, "en"))
+            : t("Queued; awaiting current task state")}
         </Text>
       )}
       {existingTask && current.status === "accepted" && (
         <Button small onPress={() => open({ type: "task", taskId: existingTask })}>
-          {pt ? "Ver tarefa" : de ? "Aufgabe öffnen" : "View task"}
+          {t("View task")}
         </Button>
       )}
       {!["pending", "accepted", "snoozed"].includes(current.status) && (
@@ -190,14 +165,12 @@ export function ProactivityCard({
             ? labels.resolved
             : current.status === "suppressed"
               ? labels.dismiss
-              : pt
-                ? "A fonte mudou; cartão encerrado"
-                : "Source changed; card closed"}
+              : t("Source changed; card closed")}
         </Text>
       )}
       {current.status === "suppressed" && (
         <Button busy={busy} onPress={() => void restore()}>
-          {pt ? "Voltar a lembrar" : de ? "Wieder erinnern" : "Restore reminder"}
+          {t("Restore reminder")}
         </Button>
       )}
       <ErrorNotice error={error} />

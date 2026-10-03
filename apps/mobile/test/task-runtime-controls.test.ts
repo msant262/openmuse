@@ -71,6 +71,15 @@ function harness(
     "react-native": { Text: "Text", View: "View" },
     "../../../packages/domain/src/runtime": { taskBudgetSchema },
     "./agent-workspace": { useAgentWorkspace: () => ({ mutate: transport.mutate }) },
+    "./i18n": {
+      useI18n: () => ({
+        locale: "en",
+        t: (key: string, values: Record<string, string | number> = {}) =>
+          key.replace(/\{([\w]+)\}/g, (match, name: string) =>
+            Object.hasOwn(values, name) ? String(values[name]) : match,
+          ),
+      }),
+    },
     "./task-runtime-state": state,
     "./ui": {
       Button: "Button",

@@ -3,6 +3,7 @@ import { useContext } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { z } from "zod";
 import { BrowserRunContext } from "./browser-tool-card";
+import { useI18n } from "./i18n";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -29,6 +30,7 @@ export function MailToolCard({
   loading: boolean;
   search?: boolean;
 }) {
+  const { t } = useI18n();
   const { open } = useWorkspace();
   const { active } = useContext(BrowserRunContext);
   let value = result;
@@ -50,7 +52,11 @@ export function MailToolCard({
           <Mail size={16} color={colors.muted} />
         )}
         <Text style={s.muted}>
-          {!active ? "Mail reading paused" : search ? "Checking your inbox…" : "Reading the email…"}
+          {!active
+            ? t("Mail reading paused")
+            : search
+              ? t("Checking your inbox…")
+              : t("Reading the email…")}
         </Text>
       </View>
     );
@@ -59,15 +65,19 @@ export function MailToolCard({
       .object({ matches: z.array(z.object({ id: z.string() })), truncated: z.boolean() })
       .safeParse(value);
     if (!parsed.success)
-      return <ErrorNotice error="The mailbox did not return readable results." />;
+      return <ErrorNotice error={t("The mailbox did not return readable results.")} />;
     const count = parsed.data.matches.length;
     return (
       <View style={[s.row, { gap: 9, padding: 12 }]}>
         <Search size={16} color={colors.muted} />
         <Text style={s.muted}>
           {count
-            ? `Found ${parsed.data.truncated ? "at least " : ""}${count} ${count === 1 ? "email" : "emails"}`
-            : "No matching emails"}
+            ? parsed.data.truncated
+              ? t(count === 1 ? "Found at least {count} email" : "Found at least {count} emails", {
+                  count,
+                })
+              : t(count === 1 ? "Found {count} email" : "Found {count} emails", { count })
+            : t("No matching emails")}
         </Text>
       </View>
     );
@@ -75,9 +85,9 @@ export function MailToolCard({
   const parsed = z
     .object({ messages: z.array(messageSchema), truncated: z.boolean() })
     .safeParse(value);
-  if (!parsed.success) return <ErrorNotice error="The email could not be displayed." />;
+  if (!parsed.success) return <ErrorNotice error={t("The email could not be displayed.")} />;
   const message = parsed.data.messages.at(-1);
-  if (!message) return <Text style={s.muted}>No messages in this thread.</Text>;
+  if (!message) return <Text style={s.muted}>{t("No messages in this thread.")}</Text>;
   return (
     <Card
       style={{ padding: 18, gap: 14, backgroundColor: "#F0EFF2", maxWidth: 440, width: "100%" }}
@@ -89,10 +99,10 @@ export function MailToolCard({
         <View style={{ flex: 1 }}>
           <Text style={[s.text, { fontWeight: "600" }]}>{message.sender}</Text>
           <Text style={s.small}>
-            Email ·{" "}
+            {t("Email")} ·{" "}
             {parsed.data.messages.length === 1
-              ? "1 message"
-              : `${parsed.data.messages.length} messages`}
+              ? t("1 message")
+              : t("{count} messages", { count: parsed.data.messages.length })}
           </Text>
         </View>
       </View>
@@ -100,9 +110,11 @@ export function MailToolCard({
       <Text style={s.muted} numberOfLines={3}>
         {message.body}
       </Text>
-      {parsed.data.truncated && <Text style={s.small}>Showing an excerpt of this thread.</Text>}
+      {parsed.data.truncated && (
+        <Text style={s.small}>{t("Showing an excerpt of this thread.")}</Text>
+      )}
       <Button small icon={Mail} onPress={() => open({ type: "mail", mail: message })}>
-        Open email
+        {t("Open email")}
       </Button>
     </Card>
   );

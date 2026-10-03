@@ -12,6 +12,7 @@ import {
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { PRODUCT_NAME } from "../../../packages/domain/src/brand";
+import { useI18n } from "./i18n";
 import { messageStorage } from "./message-storage";
 import { navigateFromThreadMenu, parseThreadSelection } from "./thread-selection";
 import { Button, colors, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
@@ -39,6 +40,7 @@ const ThreadContext = createContext<{
   claimPrompt: (id: number) => boolean;
 } | null>(null);
 export function ThreadsProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const { workspace, navigate, api } = useWorkspace();
   const handledPrompt = useRef(0);
   const enabled = workspace.runtime.richThreads === true;
@@ -67,7 +69,7 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
         }
       })
       .catch((cause) => {
-        if (active) setError(`Conversation drafts could not be restored: ${String(cause)}`);
+        if (active) setError(`${t("Conversation drafts could not be restored:")} ${String(cause)}`);
       });
     // Restore the device's choice before a fast server response can persist a default.
     void restoration
@@ -88,7 +90,7 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
     };
-  }, [api, enabled, attempt]);
+  }, [api, enabled, attempt, t]);
   function select(next: Selection) {
     selectionVersion.current++;
     setSelection(next);
@@ -99,8 +101,10 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
     if (!enabled || loading || mainId === "local") return;
     void messageStorage
       .write(`${api.identityKey}\nthread-selection`, JSON.stringify({ mainId, selection, visited }))
-      .catch((cause) => setError(`Conversation selection could not be saved: ${String(cause)}`));
-  }, [api, enabled, loading, mainId, selection, visited]);
+      .catch((cause) =>
+        setError(`${t("Conversation selection could not be saved:")} ${String(cause)}`),
+      );
+  }, [api, enabled, loading, mainId, selection, visited, t]);
   return (
     <ThreadContext.Provider
       value={{
@@ -140,6 +144,7 @@ export function useMuseThread() {
   return context;
 }
 export function ThreadsSheet({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
   const {
     enabled,
     selection,
@@ -172,7 +177,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
   return (
     <Sheet
       title={PRODUCT_NAME}
-      subtitle={workspace.mode === "sample" ? "Your workspace" : workspace.profile.name}
+      subtitle={workspace.mode === "sample" ? t("Your workspace") : workspace.profile.name}
       onClose={onClose}
     >
       <View style={{ gap: 14 }}>
@@ -180,7 +185,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
           <>
             <ErrorNotice error={mainError} />
             {mainError ? (
-              <Button onPress={retry}>Retry main chat</Button>
+              <Button onPress={retry}>{t("Retry main chat")}</Button>
             ) : (
               <ActivityIndicator color={colors.blueDark} />
             )}
@@ -189,8 +194,8 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
           <>
             <LinkRow
               icon={MessageCircle}
-              title="Main chat"
-              detail="Your ongoing conversation"
+              title={t("Main chat")}
+              detail={t("Your ongoing conversation")}
               onPress={() => {
                 navigateFromThreadMenu(onClose, () => select({ id: mainId, existing: true }));
               }}
@@ -202,19 +207,19 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                 navigateFromThreadMenu(onClose, start);
               }}
             >
-              New side chat
+              {t("New side chat")}
             </Button>
             <View style={[s.between, { marginTop: 12 }]}>
-              <Text style={s.heading}>Side chats</Text>
+              <Text style={s.heading}>{t("Side chats")}</Text>
               <Button small onPress={() => setArchived(!archived)}>
-                {archived ? "Show active" : "Archived"}
+                {archived ? t("Show active") : t("Archived")}
               </Button>
             </View>
             {threads.isLoading && <ActivityIndicator color={colors.blueDark} />}
             <ErrorNotice error={error || threads.error?.message} />
             {threads.error && (
               <Button small onPress={threads.refetchThreads}>
-                Retry conversations
+                {t("Retry conversations")}
               </Button>
             )}
             {!archived &&
@@ -227,8 +232,8 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                   <LinkRow
                     key={item.id}
                     icon={MessageCircle}
-                    title={`Side chat ${index + 1}`}
-                    detail="Open in this app"
+                    title={t("Side chat {number}", { number: index + 1 })}
+                    detail={t("Open in this app")}
                     onPress={() => {
                       navigateFromThreadMenu(onClose, () => select(item));
                     }}
@@ -248,7 +253,9 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                 >
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={`Open conversation: ${thread.name || "Untitled conversation"}`}
+                    accessibilityLabel={t("Open conversation: {name}", {
+                      name: thread.name || t("Untitled conversation"),
+                    })}
                     accessibilityState={{ selected: selection.id === thread.id }}
                     onPress={() => {
                       navigateFromThreadMenu(onClose, () =>
@@ -259,11 +266,11 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                   >
                     <MessageCircle size={19} color={colors.text} />
                     <Text style={[s.text, { flex: 1 }]}>
-                      {thread.name || "Untitled conversation"}
+                      {thread.name || t("Untitled conversation")}
                     </Text>
                   </Pressable>
                   {editing === thread.id && (
-                    <Field label="Conversation name" value={name} onChangeText={setName} />
+                    <Field label={t("Conversation name")} value={name} onChangeText={setName} />
                   )}
                   <View style={[s.row, { gap: 8 }]}>
                     <Button
@@ -278,7 +285,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                         }
                       }}
                     >
-                      {editing === thread.id ? "Save name" : "Rename"}
+                      {editing === thread.id ? t("Save name") : t("Rename")}
                     </Button>
                     <Button
                       small
@@ -292,7 +299,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                         )
                       }
                     >
-                      {thread.archived ? "Restore" : "Archive"}
+                      {thread.archived ? t("Restore") : t("Archive")}
                     </Button>
                   </View>
                 </View>
@@ -304,41 +311,45 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
               ) && (
                 <Text style={s.muted}>
                   {archived
-                    ? "No archived conversations."
-                    : "Keep a separate topic here. Your main chat is always available."}
+                    ? t("No archived conversations.")
+                    : t("Keep a separate topic here. Your main chat is always available.")}
                 </Text>
               )}
             <ErrorNotice error={threads.fetchMoreError?.message} />
             {threads.hasMoreThreads && (
               <Button small busy={threads.isFetchingMoreThreads} onPress={threads.fetchMoreThreads}>
-                Load more conversations
+                {t("Load more conversations")}
               </Button>
             )}
             <Text style={s.small}>
-              Side chats keep their own conversation context. Your agent’s saved memory is shared.
+              {t(
+                "Side chats keep their own conversation context. Your agent’s saved memory is shared.",
+              )}
             </Text>
           </>
         ) : (
           <>
             <LinkRow
               icon={MessageCircle}
-              title="Main chat"
-              detail="Saved in this workspace"
+              title={t("Main chat")}
+              detail={t("Saved in this workspace")}
               onPress={() => {
                 navigate("chat");
                 onClose();
               }}
             />
             <Text style={s.muted}>
-              Your conversation is saved in this workspace. You can manage connections in Apps.
+              {t(
+                "Your conversation is saved in this workspace. You can manage connections in Apps.",
+              )}
             </Text>
           </>
         )}
         <View style={s.divider} />
         <LinkRow
           icon={Plus}
-          title="Delegate task"
-          detail="A plan, document, or spending summary"
+          title={t("Delegate task")}
+          detail={t("A plan, document, or spending summary")}
           onPress={() => {
             onClose();
             open({ type: "delegate" });
@@ -346,18 +357,18 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
         />
         <LinkRow
           icon={Monitor}
-          title="Agent computer"
-          detail="Browser, sessions and documents"
+          title={t("Agent computer")}
+          detail={t("Browser, sessions and documents")}
           onPress={() => {
             onClose();
             open({ type: "computer" });
           }}
         />
-        <LinkRow icon={CalendarDays} title="Calendar" onPress={() => go("calendar")} />
-        <LinkRow icon={FileText} title="Files" onPress={() => go("files")} />
-        <LinkRow icon={Settings2} title="Apps & settings" onPress={() => go("apps")} />
+        <LinkRow icon={CalendarDays} title={t("Calendar")} onPress={() => go("calendar")} />
+        <LinkRow icon={FileText} title={t("Files")} onPress={() => go("files")} />
+        <LinkRow icon={Settings2} title={t("Apps & settings")} onPress={() => go("apps")} />
         <Button small icon={RefreshCw} onPress={() => void mutate(refresh)}>
-          Refresh workspace
+          {t("Refresh workspace")}
         </Button>
       </View>
     </Sheet>

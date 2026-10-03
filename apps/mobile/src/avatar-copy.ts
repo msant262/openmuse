@@ -66,6 +66,6 @@ export const avatarPTBR: Record<string, string> = {
   Charcoal: "Carvão",
   Teal: "Verde azulado",
   Hazel: "Avelã",
-  "The avatar changes appearance only. Name and personality are edited below.":
-    "O avatar muda apenas a aparência. O nome e a personalidade são editados abaixo.",
+  "The avatar changes appearance only. Edit name and personality in settings.":
+    "O avatar altera apenas a aparência. Edite o nome e a personalidade nas configurações.",
 };

@@ -44,6 +44,15 @@ function fixture(request: (path: string, body?: unknown) => Promise<unknown>) {
           refresh: async () => {},
         }),
       },
+      "./i18n": {
+        useI18n: () => ({
+          locale: "en",
+          t: (key: string, values: Record<string, string | number> = {}) =>
+            key.replace(/\{([\w]+)\}/g, (match, name: string) =>
+              Object.hasOwn(values, name) ? String(values[name]) : match,
+            ),
+        }),
+      },
       "./threads": { useMuseThread: () => ({ selection, enabled: true }) },
       "./ui": {
         Button: "Button",
@@ -133,7 +142,7 @@ test("ProfileSettings discards history and captured restore actions after thread
       old.resolve(history("conversation:a", "fr-FR"));
       await view.flush();
       assert.doesNotMatch(view.text(), /fr-FR/);
-      assert.equal(view.field("Language / locale"), changed === "identity" ? "en-US" : "pt-BR");
+      assert.equal(view.field("Reply language"), changed === "identity" ? "en-US" : "pt-BR");
     } finally {
       view.close();
     }
@@ -167,7 +176,7 @@ test("ProfileSettings ignores in-flight restore responses when scope, thread or 
       await view.flush();
       restored.resolve(profile("fr-FR"));
       await view.flush();
-      assert.equal(view.field("Language / locale"), changed === "identity" ? "en-US" : "pt-BR");
+      assert.equal(view.field("Reply language"), changed === "identity" ? "en-US" : "pt-BR");
       assert.doesNotMatch(view.text(), /fr-FR/);
     } finally {
       view.close();

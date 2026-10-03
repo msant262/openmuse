@@ -353,7 +353,7 @@ export function AvatarStudio({
         {t(changed ? "Changes are not saved yet" : "Your saved companion")}
       </Text>
       <Text style={styles.hint}>
-        {t("The avatar changes appearance only. Name and personality are edited below.")}
+        {t("The avatar changes appearance only. Edit name and personality in settings.")}
       </Text>
     </View>
   );
