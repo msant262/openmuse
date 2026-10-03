@@ -18,6 +18,7 @@ function fixture(setLocale: (locale: "en" | "pt-BR") => Promise<void>) {
       "./avatar-presentation": {},
       "./avatar-thumbnail": {},
       "./computer": {},
+      "./companion-heading": {},
       "./conversation-label": {},
       "./desktop-shell-styles": { desktopStyles: {} },
       "./i18n": { useI18n: () => ({ locale: "en", setLocale, t: (key: string) => key }) },

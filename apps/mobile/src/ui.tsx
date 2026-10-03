@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,12 +18,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useAvatarPresentation } from "./avatar-presentation";
 import { AvatarRenderer } from "./avatar-renderer";
+import { useI18n } from "./i18n";
 export const colors = {
-  canvas: "#FCFCFC",
+  canvas: "#FFFFFF",
   card: "#FFFFFF",
   text: "#171719",
   muted: "#737376",
-  line: "#EEEEF0",
+  line: "#E9E9EB",
   blue: "#CEE5FC",
   blueDark: "#1473C8",
   sky: "#EDF7FD",
@@ -98,20 +100,23 @@ export const s = StyleSheet.create({
   error: { padding: 16, borderRadius: 14, backgroundColor: "#FBEFED", marginVertical: 10, gap: 4 },
   modalShade: {
     flex: 1,
-    backgroundColor: "rgba(35,48,44,0.25)",
+    backgroundColor: "rgba(0,0,0,0.24)",
     justifyContent: "center",
     alignItems: "center",
-    padding: 20,
+    padding: 28,
   },
   sheet: {
-    backgroundColor: colors.canvas,
-    borderRadius: 26,
+    backgroundColor: "#FAFAFA",
+    borderRadius: 30,
     width: "100%",
-    maxWidth: 790,
-    maxHeight: "94%",
+    maxWidth: 760,
+    maxHeight: "90%",
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: colors.line,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.18,
+    shadowRadius: 48,
+    elevation: 18,
   },
 });
 export function Button({
@@ -248,35 +253,48 @@ export function ErrorNotice({ error }: { error?: string }) {
     </View>
   ) : null;
 }
-export function Sheet({
-  title,
-  subtitle,
+/** Shared dialog surface: a centered desktop window and a safe-area mobile sheet. */
+export function ModalSurface({
   children,
   onClose,
-  wide,
+  label,
+  width: maxWidth = 760,
+  height,
 }: {
-  title: string;
-  subtitle?: string;
   children: ReactNode;
   onClose: () => void;
-  wide?: boolean;
+  label: string;
+  width?: number;
+  height?: number;
 }) {
-  const { width } = useWindowDimensions();
+  const { width, height: viewportHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const compact = width < 600;
+  const compact = width < 700;
   return (
     <Modal transparent animationType={compact ? "slide" : "fade"} visible onRequestClose={onClose}>
       <View style={[s.modalShade, compact && { padding: 0, justifyContent: "flex-end" }]}>
+        <Pressable
+          accessible={false}
+          importantForAccessibility="no"
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+        />
         <View
           accessibilityViewIsModal
+          accessibilityLabel={label}
+          role={Platform.OS === "web" ? "dialog" : undefined}
+          aria-modal={true}
           style={[
             s.sheet,
-            wide && { maxWidth: 1050 },
+            { maxWidth },
+            height !== undefined && { height: Math.min(height, viewportHeight * 0.9) },
             compact && {
+              maxWidth: "100%",
+              maxHeight: viewportHeight - insets.top - 12,
+              ...(height !== undefined ? { height: viewportHeight - insets.top - 12 } : {}),
               borderBottomLeftRadius: 0,
               borderBottomRightRadius: 0,
               paddingBottom: Math.max(insets.bottom, 12),
-              maxHeight: "94%",
             },
           ]}
         >
@@ -287,32 +305,93 @@ export function Sheet({
                 width: 34,
                 height: 4,
                 borderRadius: 3,
-                backgroundColor: "#D8DBDE",
-                marginTop: 10,
+                backgroundColor: "#D8D8DA",
+                marginTop: 9,
+                marginBottom: 3,
               }}
             />
           )}
-          <View
-            style={[
-              s.between,
-              { padding: compact ? 20 : 24, borderBottomWidth: 1, borderBottomColor: colors.line },
-            ]}
-          >
-            <View style={{ flex: 1, gap: 4 }}>
-              <Text style={s.title}>{title}</Text>
-              {!!subtitle && <Text style={s.muted}>{subtitle}</Text>}
-            </View>
-            <IconButton icon={X} label="Close details" onPress={onClose} />
-          </View>
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{ padding: compact ? 20 : 24 }}
-          >
-            {children}
-          </ScrollView>
+          {children}
         </View>
       </View>
     </Modal>
+  );
+}
+
+export function Sheet({
+  title,
+  subtitle,
+  children,
+  onClose,
+  wide,
+  scroll = true,
+  contentStyle,
+  headerAccessory,
+  footer,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+  onClose: () => void;
+  wide?: boolean;
+  scroll?: boolean;
+  contentStyle?: ViewStyle;
+  headerAccessory?: ReactNode;
+  footer?: ReactNode;
+}) {
+  const { width } = useWindowDimensions();
+  const { t } = useI18n();
+  const compact = width < 700;
+  const bodyStyle = { padding: compact ? 20 : 26, ...contentStyle };
+  return (
+    <ModalSurface
+      onClose={onClose}
+      label={title}
+      width={wide ? 1040 : 760}
+      height={!scroll ? 760 : undefined}
+    >
+      <View
+        style={[
+          s.between,
+          {
+            paddingHorizontal: compact ? 20 : 26,
+            paddingTop: 20,
+            paddingBottom: 20,
+            gap: 16,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.line,
+          },
+        ]}
+      >
+        <View style={{ flex: 1, gap: 6 }}>
+          {headerAccessory}
+          <Text
+            style={{ color: colors.text, fontSize: 18, fontWeight: "600", letterSpacing: -0.3 }}
+          >
+            {title}
+          </Text>
+          {!!subtitle && <Text style={s.muted}>{subtitle}</Text>}
+        </View>
+        <IconButton icon={X} label={t("Close details")} onPress={onClose} />
+      </View>
+      {scroll ? (
+        <ScrollView
+          style={{ flexShrink: 1 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={bodyStyle}
+        >
+          {children}
+        </ScrollView>
+      ) : (
+        <View style={[{ flex: 1, minHeight: 0 }, bodyStyle]}>{children}</View>
+      )}
+      {footer && (
+        <View style={{ padding: 20, borderTopWidth: 1, borderTopColor: colors.line }}>
+          {footer}
+        </View>
+      )}
+    </ModalSurface>
   );
 }
 export function CheckRow({
@@ -327,7 +406,9 @@ export function CheckRow({
   return (
     <Pressable
       accessibilityRole="checkbox"
+      accessibilityLabel={label}
       accessibilityState={{ checked }}
+      aria-checked={checked}
       onPress={onPress}
       style={[s.row, { gap: 10, paddingVertical: 9 }]}
     >

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
+  Download,
   Fingerprint,
   Lightbulb,
   List,
@@ -23,9 +24,11 @@ import {
   SquareCheck,
   X,
 } from "lucide-react-native";
-import { type ReactNode, useEffect, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -37,6 +40,7 @@ import {
 import type { Section } from "../../../packages/domain/src";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useAvatarPresentation } from "./avatar-presentation";
+import { CompanionHeading } from "./companion-heading";
 import { ComputerEntry } from "./computer";
 import { cachedConversationTitle, isEmptyConversationCache } from "./conversation-label";
 import { desktopStyles as d } from "./desktop-shell-styles";
@@ -51,7 +55,7 @@ import { useWorkspace } from "./workspace";
 // Kept together so the workspace language catalog can translate the desktop shell.
 export const desktopCopy = {
   chat: "Chat",
-  activity: "Activity",
+  activity: "Feed",
   ideas: "Ideas",
   goals: "Goals",
   apps: "Apps & connections",
@@ -136,6 +140,8 @@ export function DesktopShell({
   subtitle,
   settingsOpen,
   onSettings,
+  onCustomize,
+  onSearch,
   onNavigate,
   onThreads,
   pending,
@@ -148,6 +154,8 @@ export function DesktopShell({
   subtitle: string;
   settingsOpen: boolean;
   onSettings: () => void;
+  onCustomize: () => void;
+  onSearch: () => void;
   onNavigate: (section: Section) => void;
   onThreads: () => void;
   pending: number;
@@ -157,6 +165,7 @@ export function DesktopShell({
   const [sideChatsOpen, setSideChatsOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [search, setSearch] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
   const { api, section, open } = useWorkspace();
   const { data } = useAgentWorkspace();
   const { state: companionState } = useAvatarPresentation();
@@ -209,7 +218,7 @@ export function DesktopShell({
   }, [api, desktop, enabled, identityKey, labelsKey, selection.id]);
   const localLabels = labels?.identityKey === identityKey ? labels.values : {};
   const emptyDrafts = labels?.identityKey === identityKey ? labels.emptyDrafts : [];
-  const chatOpen = !settingsOpen && section === "chat";
+  const chatOpen = section === "chat";
   const companionStatus =
     companionState === "talking"
       ? t("Writing to you…")
@@ -259,23 +268,37 @@ export function DesktopShell({
       {desktop && (
         <>
           <View testID="desktop-sidebar" style={d.rail}>
-            <View style={d.railNavigation}>
-              {desktopNavigation.map((item) => (
-                <SidebarItem
-                  key={item.id}
-                  label={t(item.label)}
-                  icon={item.icon}
-                  active={
-                    !settingsOpen &&
-                    (section === item.id || (item.id === "files" && section === "files"))
-                  }
-                  onPress={() => {
-                    if (item.id === "chat" && enabled && !loading)
-                      openThread({ id: mainId, existing: true });
-                    else onNavigate(item.id);
-                  }}
-                />
-              ))}
+            <View style={{ flex: 1, width: "100%", alignItems: "center" }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t(desktopCopy.customize)}
+                onPress={onCustomize}
+                style={{ marginBottom: 58, borderRadius: 23, overflow: "hidden" }}
+              >
+                <Mascot size={46} framing="portrait" />
+              </Pressable>
+              <View style={d.railNavigation}>
+                {desktopNavigation.map((item) => (
+                  <Fragment key={item.id}>
+                    <SidebarItem
+                      label={t(item.label)}
+                      icon={item.icon}
+                      active={
+                        !settingsOpen &&
+                        (section === item.id || (item.id === "files" && section === "files"))
+                      }
+                      onPress={() => {
+                        if (item.id === "chat" && enabled && !loading)
+                          openThread({ id: mainId, existing: true });
+                        else onNavigate(item.id);
+                      }}
+                    />
+                    {item.id === "chat" && (
+                      <SidebarItem label={t("Search")} icon={Search} onPress={onSearch} />
+                    )}
+                  </Fragment>
+                ))}
+              </View>
             </View>
             <View style={d.railUtilities}>
               <SidebarItem
@@ -293,10 +316,10 @@ export function DesktopShell({
                 {pending > 0 && <View pointerEvents="none" style={d.badge} />}
               </View>
               <SidebarItem
-                label={t(desktopCopy.settings)}
+                label={t("App menu")}
                 icon={Menu}
                 active={settingsOpen}
-                onPress={onSettings}
+                onPress={() => setMenuOpen(true)}
               />
             </View>
           </View>
@@ -391,7 +414,7 @@ export function DesktopShell({
             : { flex: 1, width: "100%", maxWidth: 760, alignSelf: "center", minHeight: 0 }
         }
       >
-        {desktop ? (
+        {desktop && section === "files" ? null : desktop ? (
           <View style={[d.header, chatOpen && d.chatHeader]}>
             {chatOpen ? (
               <>
@@ -409,29 +432,38 @@ export function DesktopShell({
                   )}
                 </Pressable>
                 <View style={d.headerActions}>
-                  <ComputerEntry />
-                  {!inspectorOpen && (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={t("Open {name} activity and approvals", {
-                        name: agentName,
-                      })}
-                      onPress={() => setInspectorOpen(true)}
-                    >
-                      <Mascot size={38} variant={data?.identity.avatar} />
-                    </Pressable>
-                  )}
+                  <ComputerEntry compact />
                 </View>
               </>
             ) : (
               <>
                 <View accessibilityLabel={title} style={{ flex: 1 }} />
-                <ComputerEntry />
+                <ComputerEntry compact />
               </>
             )}
           </View>
         ) : (
           mobileHeader
+        )}
+        {desktop && chatOpen && !inspectorOpen && (
+          <View
+            pointerEvents="box-none"
+            style={{
+              position: "absolute",
+              top: 8,
+              left: 90,
+              right: 90,
+              zIndex: 2,
+              alignItems: "center",
+            }}
+          >
+            <CompanionHeading
+              name={agentName}
+              status={companionStatus}
+              variant={data?.identity.avatar}
+              onPress={() => setInspectorOpen(true)}
+            />
+          </View>
         )}
         <View key="workspace-content" style={d.content}>
           {children}
@@ -442,9 +474,82 @@ export function DesktopShell({
         <AgentInspector
           name={agentName}
           status={companionStatus}
-          onSettings={onSettings}
+          onSettings={onCustomize}
           onClose={() => setInspectorOpen(false)}
         />
+      )}
+      {desktop && menuOpen && (
+        <Modal transparent visible animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+          <View style={{ flex: 1 }}>
+            <Pressable
+              accessible={false}
+              onPress={() => setMenuOpen(false)}
+              style={{ position: "absolute", top: 0, left: 0, bottom: 0, right: 0 }}
+            />
+            <View
+              accessibilityViewIsModal
+              accessibilityLabel={t("App menu")}
+              style={{
+                position: "absolute",
+                left: 76,
+                bottom: 18,
+                width: 264,
+                padding: 7,
+                backgroundColor: "#FFFFFF",
+                borderRadius: 22,
+                borderWidth: 1,
+                borderColor: colors.line,
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.13,
+                shadowRadius: 26,
+              }}
+            >
+              {[
+                {
+                  label: t("Download Android app"),
+                  icon: Download,
+                  action: () =>
+                    void Linking.openURL(
+                      `https://app.okamibot.cloud/downloads/okamibot.apk?v=${Date.now()}`,
+                    ),
+                },
+                { label: t(desktopCopy.apps), icon: Settings2, action: () => onNavigate("apps") },
+                {
+                  label: t("Notifications"),
+                  icon: Bell,
+                  action: () => open({ type: "notifications" }),
+                },
+                { label: t("Settings"), icon: Settings2, action: onSettings },
+              ].map(({ label, icon: Icon, action }, index) => (
+                <Pressable
+                  key={label}
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setMenuOpen(false);
+                    action();
+                  }}
+                  style={({ pressed }) => [
+                    s.row,
+                    {
+                      paddingHorizontal: 14,
+                      minHeight: 46,
+                      gap: 13,
+                      borderRadius: 15,
+                      backgroundColor: pressed ? "#F0F0F1" : "transparent",
+                      ...(index === 3
+                        ? { borderTopWidth: 1, borderTopColor: colors.line, marginTop: 5 }
+                        : {}),
+                    },
+                  ]}
+                >
+                  <Icon size={18} strokeWidth={1.6} color={colors.text} />
+                  <Text style={s.text}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </Modal>
       )}
     </View>
   );
@@ -470,14 +575,11 @@ export function AgentInspector({
   const tabs = [
     { id: "activity", label: t("Activity"), icon: List },
     { id: "approvals", label: t("Approvals"), icon: ShieldCheck },
-    { id: "history", label: t("History"), icon: Clock3 },
+    { id: "upcoming", label: t("Upcoming"), icon: Clock3 },
     { id: "identity", label: t("Personality"), icon: Fingerprint },
   ];
   const tasks = [...(data?.tasks ?? [])].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const shownTasks =
-    tab === "history"
-      ? tasks.filter((task) => ["succeeded", "failed", "cancelled"].includes(task.status))
-      : tasks;
+  const shownTasks = tab === "upcoming" ? tasks.filter((task) => task.status === "queued") : tasks;
   const actions = [...workspace.actions].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   function showDetail(detail: Parameters<typeof open>[0]) {
     if (compact) onClose();
@@ -524,10 +626,17 @@ export function AgentInspector({
           <X size={18} color={colors.muted} />
         </Pressable>
       </View>
-      <View style={d.inspectorProfile}>
-        <View style={d.inspectorPortrait}>
-          <View style={{ width: 108, height: 108, borderRadius: 54, overflow: "hidden" }}>
-            <Mascot size={108} variant={data?.identity.avatar} framing="portrait" />
+      <View style={[d.inspectorProfile, compact && { paddingTop: 24, paddingBottom: 34 }]}>
+        <View style={[d.inspectorPortrait, compact && { width: 78, height: 78, borderRadius: 39 }]}>
+          <View
+            style={{
+              width: compact ? 78 : 108,
+              height: compact ? 78 : 108,
+              borderRadius: 54,
+              overflow: "hidden",
+            }}
+          >
+            <Mascot size={compact ? 78 : 108} variant={data?.identity.avatar} framing="portrait" />
           </View>
           <Pressable
             accessibilityRole="button"
@@ -538,7 +647,7 @@ export function AgentInspector({
             <Pencil size={14} color={colors.text} />
           </Pressable>
         </View>
-        <Text numberOfLines={1} style={d.inspectorName}>
+        <Text numberOfLines={1} style={[d.inspectorName, compact && { fontSize: 25 }]}>
           {name}
         </Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, maxWidth: "100%" }}>
@@ -550,7 +659,10 @@ export function AgentInspector({
               backgroundColor: connected ? "#59A478" : "#A0A0A4",
             }}
           />
-          <Text numberOfLines={2} style={d.inspectorStatus}>
+          <Text
+            numberOfLines={2}
+            style={[d.inspectorStatus, compact && { fontSize: 15, lineHeight: 21 }]}
+          >
             {resting
               ? connected
                 ? t("Connected")
@@ -561,7 +673,10 @@ export function AgentInspector({
           </Text>
         </View>
       </View>
-      <View accessibilityRole="tablist" style={d.inspectorTabs}>
+      <View
+        accessibilityRole="tablist"
+        style={[d.inspectorTabs, compact && { marginHorizontal: 16, padding: 4 }]}
+      >
         {tabs.map(({ id, label, icon: Icon }) => (
           <Pressable
             key={id}
@@ -569,7 +684,7 @@ export function AgentInspector({
             accessibilityLabel={label}
             accessibilityState={{ selected: tab === id }}
             onPress={() => setTab(id)}
-            style={[d.inspectorTab, tab === id && d.inspectorTabActive]}
+            style={[d.inspectorTab, compact && { height: 41 }, tab === id && d.inspectorTabActive]}
           >
             <Icon size={17} strokeWidth={1.6} color={tab === id ? colors.text : colors.muted} />
           </Pressable>
@@ -581,14 +696,18 @@ export function AgentInspector({
       >
         {tab === "identity" ? (
           <View style={{ gap: 16, paddingHorizontal: 4 }}>
-            <Text style={d.inspectorSection}>{t("Name and personality")}</Text>
+            <Text style={[d.inspectorSection, compact && { fontSize: 18 }]}>
+              {t("Name and personality")}
+            </Text>
             <Text style={s.muted}>
               {data?.identity.profile?.fields.personality || t(desktopCopy.customizeCaption)}
             </Text>
             <Button small icon={Pencil} onPress={onSettings}>
               {t(desktopCopy.customize)}
             </Button>
-            <Text style={d.inspectorSection}>{t("Preferences")}</Text>
+            <Text style={[d.inspectorSection, compact && { fontSize: 18 }]}>
+              {t("Preferences")}
+            </Text>
             <Text style={s.muted}>{t(desktopCopy.settingsSubtitle)}</Text>
             <Button small icon={Settings2} onPress={onSettings}>
               {t("Settings")}
@@ -596,7 +715,7 @@ export function AgentInspector({
           </View>
         ) : tab === "approvals" ? (
           <>
-            <Text style={d.inspectorSection}>{t("Approvals")}</Text>
+            <Text style={[d.inspectorSection, compact && { fontSize: 18 }]}>{t("Approvals")}</Text>
             {!actions.length && (
               <Text style={d.inspectorEmpty}>
                 {locale === "pt-BR"
@@ -611,14 +730,20 @@ export function AgentInspector({
                 onPress={() => showDetail({ type: "review", action })}
                 style={({ pressed }) => [d.activityRow, pressed && d.activeItem]}
               >
-                <View style={d.activityIcon}>
+                <View style={[d.activityIcon, compact && { width: 42, height: 42 }]}>
                   <ShieldCheck size={17} color={colors.muted} />
                 </View>
                 <View style={{ flex: 1, gap: 4 }}>
-                  <Text numberOfLines={2} style={d.activityTitle}>
+                  <Text
+                    numberOfLines={2}
+                    style={[d.activityTitle, compact && { fontSize: 16, lineHeight: 22 }]}
+                  >
                     {action.title}
                   </Text>
-                  <Text numberOfLines={2} style={d.activityDetail}>
+                  <Text
+                    numberOfLines={2}
+                    style={[d.activityDetail, compact && { fontSize: 14, lineHeight: 20 }]}
+                  >
                     {action.status === "awaiting_review"
                       ? t("Waiting for approval")
                       : action.result || action.status.replaceAll("_", " ")}
@@ -630,8 +755,8 @@ export function AgentInspector({
           </>
         ) : (
           <>
-            <Text style={d.inspectorSection}>
-              {tab === "history" ? t("History") : t("Activity")}
+            <Text style={[d.inspectorSection, compact && { fontSize: 18 }]}>
+              {tab === "upcoming" ? t("Upcoming") : t("Today")}
             </Text>
             {!shownTasks.length && (
               <Text style={d.inspectorEmpty}>
@@ -655,21 +780,27 @@ export function AgentInspector({
                   onPress={() => showDetail({ type: "task", taskId: task.id })}
                   style={({ pressed }) => [d.activityRow, pressed && d.activeItem]}
                 >
-                  <View style={d.activityIcon}>
+                  <View style={[d.activityIcon, compact && { width: 42, height: 42 }]}>
                     <RowIcon size={17} strokeWidth={1.6} color={colors.muted} />
                   </View>
                   <View style={{ flex: 1, gap: 4 }}>
-                    <Text numberOfLines={2} style={d.activityTitle}>
+                    <Text
+                      numberOfLines={2}
+                      style={[d.activityTitle, compact && { fontSize: 16, lineHeight: 22 }]}
+                    >
                       {task.title}
                     </Text>
-                    <Text numberOfLines={2} style={d.activityDetail}>
+                    <Text
+                      numberOfLines={2}
+                      style={[d.activityDetail, compact && { fontSize: 14, lineHeight: 20 }]}
+                    >
                       {task.question ||
                         task.error ||
                         task.result ||
                         task.plan.find((step) => step.status === "running")?.title ||
                         task.title}
                     </Text>
-                    <Text style={d.activityTime}>
+                    <Text style={[d.activityTime, compact && { fontSize: 13, lineHeight: 19 }]}>
                       {new Date(task.updatedAt).toLocaleTimeString(locale, {
                         hour: "numeric",
                         minute: "2-digit",
@@ -732,7 +863,7 @@ export function AppLanguagePicker({ compact = false }: { compact?: boolean } = {
       </View>
     );
   return (
-    <Card style={{ borderWidth: 1, borderColor: "#E9EDF2", gap: 10 }}>
+    <Card style={{ padding: 0, backgroundColor: "transparent", gap: 10 }}>
       <View
         style={{
           flexDirection: width >= 1024 ? "row" : "column",
@@ -847,7 +978,7 @@ export function AssistantChatPreferences() {
   );
   return (
     <View>
-      <Card style={d.appearance}>
+      <Card style={{ gap: 14, padding: 16, backgroundColor: "#F0F0F1", borderRadius: 18 }}>
         <Text style={s.heading}>{t(desktopCopy.chatPreferences)}</Text>
         <CheckRow
           label={t(desktopCopy.backgroundUpdates)}

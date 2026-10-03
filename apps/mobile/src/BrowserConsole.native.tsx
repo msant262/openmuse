@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { AppState, View } from "react-native";
 import { WebView } from "react-native-webview";
 import { ErrorNotice } from "./ui";
-export default function BrowserConsole({ url }: { url: string }) {
+export default function BrowserConsole({ url, height = 520 }: { url: string; height?: number }) {
   const [error, setError] = useState("");
   const [visible, setVisible] = useState(AppState.currentState === "active");
   useEffect(() => {
@@ -16,7 +16,7 @@ export default function BrowserConsole({ url }: { url: string }) {
         <WebView
           source={{ uri: url }}
           onError={(event) => setError(event.nativeEvent.description)}
-          style={{ height: 520, borderRadius: 12 }}
+          style={{ height, borderRadius: 12 }}
         />
       )}
     </View>

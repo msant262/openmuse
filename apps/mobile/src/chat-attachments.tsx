@@ -1,6 +1,7 @@
 import * as Crypto from "expo-crypto";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import { Camera, FilePlus2 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppState, Text, View } from "react-native";
 import type { Artifact } from "../../../packages/domain/src";
@@ -17,6 +18,7 @@ import {
   type TranscriptFileReference,
 } from "./attachment-queue";
 import { ComputerPendingError } from "./computer-requests";
+import { useI18n } from "./i18n";
 import { sha256 } from "./message-hash";
 import { messageStorage } from "./message-storage";
 import { FileThreadCard } from "./thread-artifacts";
@@ -202,12 +204,15 @@ export function ChatAttachments({
   active: visible,
   attach,
   transcript,
+  voiceRequest = 0,
 }: {
   threadId: string;
   active: boolean;
   attach: (id: string) => Promise<void>;
   transcript: (text: string) => Promise<void>;
+  voiceRequest?: number;
 }) {
+  const { t } = useI18n();
   const { api, refresh } = useWorkspace();
   const key = `${api.identityKey}:chat-uploads:${threadId}`;
   const queue = useMemo(
@@ -432,14 +437,38 @@ export function ChatAttachments({
   }
   return (
     <View style={{ gap: 8 }}>
-      <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
-        <Button small busy={busy} onPress={() => void document()}>
-          Arquivo
+      <View style={{ gap: 0 }}>
+        <Button
+          small
+          icon={FilePlus2}
+          busy={busy}
+          style={{
+            justifyContent: "flex-start",
+            backgroundColor: "transparent",
+            borderRadius: 12,
+            minHeight: 42,
+            paddingHorizontal: 10,
+          }}
+          onPress={() => void document()}
+        >
+          {t("Upload file")}
         </Button>
-        <Button small disabled={busy} onPress={() => void camera()}>
-          Câmera
+        <Button
+          small
+          icon={Camera}
+          disabled={busy}
+          style={{
+            justifyContent: "flex-start",
+            backgroundColor: "transparent",
+            borderRadius: 12,
+            minHeight: 42,
+            paddingHorizontal: 10,
+          }}
+          onPress={() => void camera()}
+        >
+          {t("Camera")}
         </Button>
-        <VoiceInput save={save} active={visible} />
+        <VoiceInput save={save} active={visible} compact startRequest={voiceRequest} />
       </View>
       {items.map((item) => (
         <View key={item.id} style={{ gap: 4 }}>

@@ -18,7 +18,6 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  Upload,
 } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import {
@@ -40,10 +39,10 @@ import type {
 } from "../../../packages/domain/src";
 import { ActionLogScreen } from "./action-log-screen";
 import { API_URL } from "./api";
-import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { localDateTime, zonedInstant } from "./date-time";
 import { useI18n } from "./i18n";
 import { McpConnections } from "./mcp-connections";
+import { MuseLibrary } from "./muse-library";
 import { useInlinePreview } from "./preview";
 import {
   Button,
@@ -1026,93 +1025,15 @@ export function FilesScreen() {
     }
   }
   return (
-    <View style={{ gap: 20 }}>
-      <View style={s.between}>
-        <Text style={[s.muted, { flex: 1, marginRight: 15 }]}>
-          {t("Documents, with a little room to work.")}
-        </Text>
-        <Button primary icon={Upload} busy={busy} onPress={() => void upload()}>
-          {t("Import file")}
-        </Button>
-      </View>
-      <ErrorNotice error={error} />
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 18 }}>
-        {w.files.map((f) => (
-          <Pressable
-            key={f.id}
-            onPress={() => open({ type: "file", file: f })}
-            style={{ flexGrow: 1, flexBasis: 250, maxWidth: 430 }}
-          >
-            <Card style={{ padding: 0, overflow: "hidden" }}>
-              <View
-                style={{
-                  height: 175,
-                  backgroundColor: "#EDEFEA",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <View
-                  style={{
-                    width: 93,
-                    height: 121,
-                    borderRadius: 5,
-                    backgroundColor: "#FFF",
-                    padding: 14,
-                    transform: [{ rotate: "-4deg" }],
-                    borderWidth: 1,
-                    borderColor: "#DDE3DD",
-                  }}
-                >
-                  <View style={[s.row, { gap: 5, marginBottom: 15 }]}>
-                    <FileText size={13} color={colors.blueDark} />
-                    <Text style={{ fontSize: 7, color: colors.blueDark }}>{t("DOCUMENT")}</Text>
-                  </View>
-                  {[100, 75, 90, 95, 60].map((width, i) => (
-                    <View
-                      key={width}
-                      style={{
-                        height: 3,
-                        backgroundColor: i === 0 ? "#A4BED0" : "#E3E7E3",
-                        width: `${width}%`,
-                        marginBottom: 7,
-                        borderRadius: 3,
-                      }}
-                    />
-                  ))}
-                </View>
-                <View style={{ position: "absolute", bottom: 12, right: 14 }}>
-                  <Chip>{f.name.split(".").at(-1)?.toUpperCase() || t("FILE")}</Chip>
-                </View>
-              </View>
-              <View style={{ padding: 21, gap: 6 }}>
-                <Text numberOfLines={1} style={[s.heading, { fontSize: 14 }]}>
-                  {f.name}
-                </Text>
-                <Text style={s.small}>{localizedAttachmentLabel(f, t)}</Text>
-                <View style={[s.between, { marginTop: 9 }]}>
-                  <Chip>{t(f.source)}</Chip>
-                  <Text style={s.small}>{dateLabel(f.createdAt)}</Text>
-                </View>
-              </View>
-            </Card>
-          </Pressable>
-        ))}
-      </View>
-      {!w.files.length && (
-        <Card>
-          <Empty
-            icon={FileText}
-            title={t("Your documents live here")}
-            detail={t(
-              "Import an Office document, PDF, image, audio or video. Read supported previews and save or share a copy.",
-            )}
-          />
-        </Card>
-      )}
-    </View>
+    <MuseLibrary
+      files={w.files}
+      uploading={busy}
+      uploadError={error}
+      onUpload={() => void upload()}
+    />
   );
 }
+
 export function ActivityScreen() {
   const { t } = useI18n();
   const { workspace: w, open } = useWorkspace();
@@ -1234,9 +1155,11 @@ export function ActivityScreen() {
     </View>
   );
 }
-export function ConnectionsScreen({ query = "" }: { query?: string }) {
+export function ConnectionsScreen({ query: externalQuery }: { query?: string }) {
   const { t } = useI18n();
   const { workspace: w, api, refresh, notify, open } = useWorkspace();
+  const [search, setSearch] = useState("");
+  const query = externalQuery ?? search;
   const [selected, setSelected] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1306,21 +1229,45 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
     `${row.name} ${t(row.name)} ${row.group}`.toLowerCase().includes(query.toLowerCase()),
   );
   return (
-    <View style={{ gap: 22 }}>
+    <View style={{ gap: 24 }}>
+      {externalQuery === undefined && (
+        <View
+          style={[
+            s.row,
+            {
+              height: 42,
+              borderRadius: 24,
+              paddingHorizontal: 14,
+              gap: 10,
+              backgroundColor: "#F0F0F1",
+            },
+          ]}
+        >
+          <Search size={16} color={colors.muted} />
+          <TextInput
+            accessibilityLabel={t("Search connectors")}
+            placeholder={t("Search connectors")}
+            placeholderTextColor={colors.muted}
+            value={search}
+            onChangeText={setSearch}
+            style={{ flex: 1, minWidth: 0, fontSize: 13, color: colors.text, paddingVertical: 10 }}
+          />
+        </View>
+      )}
       <McpConnections query={query} />
       {[true, false].map((isConnected) => {
         const group = rows.filter((row) => row.connected === isConnected);
         if (!group.length) return null;
         return (
           <View key={String(isConnected)} style={{ gap: 8 }}>
-            <Text style={[s.small, { marginLeft: 12 }]}>
+            <Text style={[s.muted, { fontSize: 13 }]}>
               {isConnected
                 ? w.mode === "sample"
                   ? t("Your connections")
                   : t("Connected")
-                : t("Available integrations")}
+                : t("Available")}
             </Text>
-            <View style={{ paddingHorizontal: 16, borderRadius: 23, backgroundColor: "#F3F4F5" }}>
+            <View style={{ paddingHorizontal: 16, borderRadius: 16, backgroundColor: "#F0F0F1" }}>
               {group.map((row, index) => (
                 <Pressable
                   key={row.id}
@@ -1332,31 +1279,31 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                   style={[
                     s.row,
                     {
-                      gap: 14,
-                      minHeight: 61,
+                      gap: 11,
+                      minHeight: 49,
                       borderBottomWidth: index < group.length - 1 ? 1 : 0,
-                      borderBottomColor: "#E5E7E9",
+                      borderBottomColor: "#E7E7E9",
                     },
                   ]}
                 >
                   <View
                     style={{
-                      width: 29,
-                      height: 29,
+                      width: 27,
+                      height: 27,
                       borderRadius: 7,
                       backgroundColor: "#FFF",
                       alignItems: "center",
                       justifyContent: "center",
                     }}
                   >
-                    <row.icon size={23} color={row.color} />
+                    <row.icon size={20} color={row.color} strokeWidth={1.8} />
                   </View>
-                  <Text style={[s.text, { flex: 1 }]}>{t(row.name)}</Text>
+                  <Text style={[s.text, { flex: 1, fontSize: 13 }]}>{t(row.name)}</Text>
                   {row.connected && row.group === "google" && w.mode === "sample" && (
                     <Text style={s.small}>{t("Local data")}</Text>
                   )}
                   {row.connected ? (
-                    <ChevronRight size={18} color="#A4A7AA" />
+                    <ChevronRight size={16} color="#A4A4A8" />
                   ) : (
                     <Text
                       style={{

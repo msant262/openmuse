@@ -2,7 +2,6 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import {
   CalendarDays,
-  Check,
   Clock3,
   Download,
   Edit3,
@@ -19,7 +18,16 @@ import {
   X,
 } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Linking, Platform, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Image,
+  Linking,
+  Platform,
+  ScrollView,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import {
   type ActionProposal,
   type Artifact,
@@ -47,7 +55,6 @@ import {
   Button,
   Card,
   CheckRow,
-  Chip,
   colors,
   dateLabel,
   Empty,
@@ -55,7 +62,6 @@ import {
   Field,
   LinkRow,
   resultSummary,
-  SectionHeading,
   Sheet,
   s,
   timeLabel,
@@ -151,6 +157,30 @@ function MailDetail({ mail: m }: { mail: Mail }) {
           : t("{count} messages in this conversation", { count: thread.length })
       }
       onClose={close}
+      footer={
+        <Button
+          primary
+          icon={Reply}
+          style={{ alignSelf: "flex-start" }}
+          onPress={() =>
+            open({
+              type: "email",
+              draft: {
+                to: [m.from],
+                subject: /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`,
+                body: "",
+                cc: [],
+                bcc: [],
+                attachmentIds: [],
+                threadId: m.threadId,
+                replyToMessageId: m.id,
+              },
+            })
+          }
+        >
+          {t("Write a reply")}
+        </Button>
+      }
     >
       {loading && (
         <View style={[s.row, { gap: 10, paddingBottom: 20 }]}>
@@ -159,8 +189,16 @@ function MailDetail({ mail: m }: { mail: Mail }) {
         </View>
       )}
       {thread.map((message) => (
-        <Card key={message.id} style={{ marginBottom: 16 }}>
-          <View style={s.between}>
+        <View
+          key={message.id}
+          style={{
+            paddingBottom: 26,
+            marginBottom: 24,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.line,
+          }}
+        >
+          <View style={[s.between, { gap: 16, alignItems: "flex-start" }]}>
             <View style={{ gap: 4, flex: 1 }}>
               <Text style={s.heading}>{message.sender}</Text>
               <Text style={s.small}>{message.from}</Text>
@@ -172,7 +210,7 @@ function MailDetail({ mail: m }: { mail: Mail }) {
               {dateLabel(message.date)} · {timeLabel(message.date)}
             </Text>
           </View>
-          <View style={s.divider} />
+          <View style={{ height: 18 }} />
           <Text selectable style={[s.text, { lineHeight: 25 }]}>
             {message.body}
           </Text>
@@ -197,32 +235,10 @@ function MailDetail({ mail: m }: { mail: Mail }) {
               </Button>
             );
           })}
-        </Card>
+        </View>
       ))}
       <ErrorNotice error={error} />
       {!!error && <Button onPress={() => setRetry(retry + 1)}>{t("Reload conversation")}</Button>}
-      <Button
-        primary
-        icon={Reply}
-        style={{ alignSelf: "flex-start" }}
-        onPress={() =>
-          open({
-            type: "email",
-            draft: {
-              to: [m.from],
-              subject: /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`,
-              body: "",
-              cc: [],
-              bcc: [],
-              attachmentIds: [],
-              threadId: m.threadId,
-              replyToMessageId: m.id,
-            },
-          })
-        }
-      >
-        {t("Write a reply")}
-      </Button>
     </Sheet>
   );
 }
@@ -299,6 +315,36 @@ function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } 
       title={draft?.threadId ? t("Write a reply") : t("A new message")}
       subtitle={t("From {email} · saved privately in OkamiBot", { email: w.profile.email })}
       onClose={close}
+      footer={
+        <View>
+          <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
+            <Button
+              primary
+              icon={ShieldCheck}
+              busy={busy === "review"}
+              disabled={!!busy}
+              onPress={() => void save(true)}
+            >
+              {w.runtime.approvalPolicy === "money" ? t("Send email") : t("Review email")}
+            </Button>
+            <Button
+              icon={Save}
+              busy={busy === "draft"}
+              disabled={!!busy}
+              onPress={() => void save(false)}
+            >
+              {t("Save draft")}
+            </Button>
+          </View>
+          <Text style={[s.small, { marginTop: 10 }]}>
+            {w.runtime.approvalPolicy === "money"
+              ? t("Sending uses your connected account and is recorded in the action log.")
+              : t(
+                  "You’ll review the recipients, message, and attachments before anything is sent.",
+                )}
+          </Text>
+        </View>
+      }
     >
       <Field
         label={t("To")}
@@ -343,7 +389,14 @@ function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } 
         style={{ minHeight: 210 }}
       />
       {w.files.length > 0 && (
-        <Card style={{ padding: 16, marginBottom: 18 }}>
+        <View
+          style={{
+            paddingTop: 16,
+            marginBottom: 6,
+            borderTopWidth: 1,
+            borderTopColor: colors.line,
+          }}
+        >
           <Text style={[s.heading, { fontSize: 13, marginBottom: 5 }]}>{t("Attachments")}</Text>
           {w.files.map((f) => (
             <CheckRow
@@ -359,33 +412,9 @@ function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } 
               }
             />
           ))}
-        </Card>
+        </View>
       )}
       <ErrorNotice error={error} />
-      <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
-        <Button
-          primary
-          icon={ShieldCheck}
-          busy={busy === "review"}
-          disabled={!!busy}
-          onPress={() => void save(true)}
-        >
-          {w.runtime.approvalPolicy === "money" ? t("Send email") : t("Review email")}
-        </Button>
-        <Button
-          icon={Save}
-          busy={busy === "draft"}
-          disabled={!!busy}
-          onPress={() => void save(false)}
-        >
-          {t("Save draft")}
-        </Button>
-      </View>
-      <Text style={[s.small, { marginTop: 13 }]}>
-        {w.runtime.approvalPolicy === "money"
-          ? t("Sending uses your connected account and is recorded in the action log.")
-          : t("You’ll review the recipients, message, and attachments before anything is sent.")}
-      </Text>
     </Sheet>
   );
 }
@@ -476,9 +505,27 @@ function EventEditor({
   }
   return (
     <Sheet
-      title={e ? t("Make a little time") : t("Something to look forward to")}
+      title={e ? t("Edit event") : t("Create event")}
       subtitle={e ? t("Edit this event in your calendar.") : t("Create an event in your calendar.")}
       onClose={close}
+      footer={
+        <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
+          <Button primary icon={ShieldCheck} busy={busy} onPress={() => void propose()}>
+            {w.runtime.approvalPolicy === "money"
+              ? e
+                ? t("Save changes")
+                : t("Save event")
+              : e
+                ? t("Review changes")
+                : t("Review event")}
+          </Button>
+          {e && (
+            <Button icon={Trash2} disabled={busy} danger onPress={() => void propose(true)}>
+              {w.runtime.approvalPolicy === "money" ? t("Delete event") : t("Review deletion")}
+            </Button>
+          )}
+        </View>
+      }
     >
       <Field
         label={t("Event title")}
@@ -563,22 +610,6 @@ function EventEditor({
         </Card>
       )}
       <ErrorNotice error={error} />
-      <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
-        <Button primary icon={ShieldCheck} busy={busy} onPress={() => void propose()}>
-          {w.runtime.approvalPolicy === "money"
-            ? e
-              ? t("Save changes")
-              : t("Save event")
-            : e
-              ? t("Review changes")
-              : t("Review event")}
-        </Button>
-        {e && (
-          <Button icon={Trash2} disabled={busy} danger onPress={() => void propose(true)}>
-            {w.runtime.approvalPolicy === "money" ? t("Delete event") : t("Review deletion")}
-          </Button>
-        )}
-      </View>
     </Sheet>
   );
 }
@@ -640,27 +671,69 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
   const external = action.kind === "external.action";
   return (
     <Sheet
-      title={pending ? t("One last look") : action.title}
+      title={action.title}
       subtitle={
         w.mode === "sample"
           ? t("This action stays in your local workspace.")
           : t("Review this action before it changes your connected account.")
       }
       onClose={close}
+      footer={
+        pending ? (
+          <>
+            <Text style={[s.small, { marginBottom: 14 }]}>
+              Review expires{" "}
+              {new Date(action.expiresAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US", {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+                timeZoneName: "short",
+              })}
+              {`. ${t("Your approval applies only to the details shown above.")}`}
+            </Text>
+            {action.kind !== "calendar.delete" && (
+              <Button
+                small
+                icon={Edit3}
+                disabled={busy}
+                style={{ alignSelf: "flex-start", marginBottom: 12 }}
+                onPress={() => void edit()}
+              >
+                {t("Edit details")}
+              </Button>
+            )}
+            <View style={[s.row, { gap: 10 }]}>
+              <Button style={{ flex: 1 }} disabled={busy} onPress={() => void decide("deny")}>
+                {t("Deny")}
+              </Button>
+              <Button
+                style={{ flex: 1 }}
+                primary
+                busy={busy}
+                onPress={() => void decide("approve")}
+              >
+                {w.mode === "sample"
+                  ? t("Approve locally")
+                  : email
+                    ? t("Approve & send")
+                    : t("Approve change")}
+              </Button>
+            </View>
+          </>
+        ) : (
+          <Button style={{ alignSelf: "flex-start", marginTop: 19 }} onPress={close}>
+            {t("Done")}
+          </Button>
+        )
+      }
     >
-      <View style={[s.row, { gap: 13, marginBottom: 21 }]}>
-        <View style={[s.iconBox, { backgroundColor: colors.lavender }]}>
-          <ShieldCheck size={22} color={colors.text} />
-        </View>
-        <View style={{ flex: 1, gap: 4 }}>
-          <Text style={s.heading}>{action.title}</Text>
-          <Text style={s.small}>{t(action.kind.replace(".", " · "))}</Text>
-        </View>
-        <Chip tint={pending ? colors.lavender : colors.green}>
-          {t(action.status.replace(/_/g, " "))}
-        </Chip>
+      <View style={[s.row, { gap: 9, paddingBottom: 20 }]}>
+        <ShieldCheck size={17} color={pending ? colors.blueDark : colors.muted} />
+        <Text style={[s.muted, { fontSize: 13 }]}>{t(action.status.replace(/_/g, " "))}</Text>
       </View>
-      <Card style={{ gap: 13 }}>
+      <View style={{ gap: 8 }}>
         {!external && <ReviewLine label={t("Account")} value={action.account || w.profile.email} />}
         {external ? (
           <>
@@ -770,7 +843,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
             </Text>
           </>
         )}
-      </Card>
+      </View>
       <ErrorNotice error={error || action.error} />
       {!!action.result && (
         <Card style={{ marginTop: 16, backgroundColor: colors.green, padding: 18 }}>
@@ -778,43 +851,6 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
             {resultSummary(action.result)}
           </Text>
         </Card>
-      )}
-      {pending ? (
-        <>
-          <Text style={[s.small, { marginVertical: 17 }]}>
-            Review expires{" "}
-            {new Date(action.expiresAt).toLocaleString(locale === "pt-BR" ? "pt-BR" : "en-US", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-              timeZoneName: "short",
-            })}
-            {`. ${t("Your approval applies only to the details shown above.")}`}
-          </Text>
-          <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
-            <Button primary icon={Check} busy={busy} onPress={() => void decide("approve")}>
-              {w.mode === "sample"
-                ? t("Approve locally")
-                : email
-                  ? t("Approve & send")
-                  : t("Approve change")}
-            </Button>
-            {action.kind !== "calendar.delete" && (
-              <Button icon={Edit3} disabled={busy} onPress={() => void edit()}>
-                {t("Edit details")}
-              </Button>
-            )}
-            <Button icon={X} disabled={busy} onPress={() => void decide("deny")}>
-              {t("Don’t proceed")}
-            </Button>
-          </View>
-        </>
-      ) : (
-        <Button style={{ alignSelf: "flex-start", marginTop: 19 }} onPress={close}>
-          {t("Done")}
-        </Button>
       )}
     </Sheet>
   );
@@ -824,9 +860,17 @@ function arrayText(value: unknown) {
 }
 function ReviewLine({ label, value }: { label: string; value: string }) {
   return (
-    <View style={{ gap: 4 }}>
-      <Text style={s.label}>{label}</Text>
-      <Text selectable style={s.text}>
+    <View
+      style={{
+        flexDirection: "row",
+        gap: 18,
+        paddingVertical: 11,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.line,
+      }}
+    >
+      <Text style={{ width: 100, fontSize: 13, lineHeight: 21, color: colors.muted }}>{label}</Text>
+      <Text selectable style={[s.text, { flex: 1, fontSize: 14, lineHeight: 21 }]}>
         {value}
       </Text>
     </View>
@@ -932,6 +976,42 @@ function FileDetail({ file: initial }: { file: Artifact }) {
       setBusy(false);
     }
   }
+  const { width, height } = useWindowDimensions();
+  const split = width >= 900 && Boolean(f.fields?.length);
+  const previewHeight = Math.max(260, Math.min(494, height * 0.9 - 260));
+  const form =
+    f.fields && f.fields.length > 0 ? (
+      <View style={{ padding: 22, gap: 8 }}>
+        <Text style={[s.heading, { fontSize: 15 }]}>{t("Fill this form")}</Text>
+        <Text style={[s.small, { marginBottom: 12 }]}>
+          {t("Add your details below. Saving creates a new copy and keeps the original intact.")}
+        </Text>
+        {f.fields.map((field) =>
+          field.type === "unsupported" ? (
+            <Text key={field.name} style={s.muted}>
+              {t("{field} · this field type is not supported", { field: field.name })}
+            </Text>
+          ) : field.type === "checkbox" ? (
+            <CheckRow
+              key={field.name}
+              checked={!!values[field.name]}
+              label={field.name.replace(/_/g, " ").replace(/^./, (s) => s.toUpperCase())}
+              onPress={() => setValues({ ...values, [field.name]: !values[field.name] })}
+            />
+          ) : (
+            <Field
+              key={field.name}
+              label={field.name.replace(/_/g, " ").replace(/^./, (s) => s.toUpperCase())}
+              value={String(values[field.name] || "")}
+              onChangeText={(value) => setValues({ ...values, [field.name]: value })}
+            />
+          ),
+        )}
+        <Button primary icon={Save} busy={busy} onPress={() => void fill()}>
+          {t("Save filled copy")}
+        </Button>
+      </View>
+    ) : null;
   return (
     <Sheet
       title={f.name}
@@ -941,80 +1021,98 @@ function FileDetail({ file: initial }: { file: Artifact }) {
       })}
       onClose={close}
       wide
-    >
-      {f.mimeType === "application/pdf" ? (
-        <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
-      ) : f.mimeType.startsWith("image/") ? (
-        <Image
-          source={{ uri: url }}
-          style={{ width: "100%", aspectRatio: 1 }}
-          resizeMode="contain"
-        />
-      ) : preview ? (
-        <PdfReader url={api.url(preview.url)} token={api.token} pageCount={preview.pageCount} />
-      ) : (
-        <Card style={{ gap: 12 }}>
-          <Text style={s.muted}>{t("Save or share this file to open it in another app.")}</Text>
-          {/\.(pptx|docx|xlsx|odt|odp|ods)$/i.test(f.name) && (
-            <Button busy={busy} onPress={() => void createPreview()}>
-              {t("Create PDF preview")}
-            </Button>
-          )}
-        </Card>
-      )}
-      <View style={[s.row, { gap: 10, marginVertical: 18, flexWrap: "wrap" }]}>
-        <Button icon={Download} onPress={() => void share()}>
-          {Platform.OS === "web" ? t("Open / download") : t("Save or share")}
-        </Button>
-        <Button
-          icon={Send}
-          onPress={() => open({ type: "email", draft: { attachmentIds: [f.id] } })}
-        >
-          {t("Attach to email")}
-        </Button>
-      </View>
-      {f.fields && f.fields.length > 0 && (
-        <Card>
-          <SectionHeading title={t("Fill this form")} />
-          <Text style={[s.muted, { marginBottom: 18 }]}>
-            {t("Add your details below. Saving creates a new copy and keeps the original intact.")}
+      scroll={false}
+      contentStyle={{ padding: 0 }}
+      footer={
+        <View style={[s.between, { gap: 12, flexWrap: "wrap" }]}>
+          <Text style={s.small}>
+            {t("Added {date}", { date: dateLabel(f.createdAt) })}
+            {f.parentId ? ` · ${t("filled copy")}` : ""}
           </Text>
-          {f.fields.map((field) =>
-            field.type === "unsupported" ? (
-              <Text key={field.name} style={s.muted}>
-                {t("{field} · this field type is not supported", { field: field.name })}
-              </Text>
-            ) : field.type === "checkbox" ? (
-              <CheckRow
-                key={field.name}
-                checked={!!values[field.name]}
-                label={field.name.replace(/_/g, " ").replace(/^./, (s) => s.toUpperCase())}
-                onPress={() => setValues({ ...values, [field.name]: !values[field.name] })}
+          <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+            <Button
+              small
+              icon={Send}
+              onPress={() => open({ type: "email", draft: { attachmentIds: [f.id] } })}
+            >
+              {t("Attach to email")}
+            </Button>
+            <Button small primary icon={Download} onPress={() => void share()}>
+              {Platform.OS === "web" ? t("Open / download") : t("Save or share")}
+            </Button>
+          </View>
+        </View>
+      }
+    >
+      <View style={{ flex: 1, minHeight: 0, flexDirection: split ? "row" : "column" }}>
+        <ScrollView
+          style={{ flex: 1, minWidth: 0, backgroundColor: "#F2F2F3" }}
+          contentContainerStyle={{ flexGrow: 1 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={{ padding: 16, flex: 1, justifyContent: "center" }}>
+            {f.mimeType === "application/pdf" ? (
+              <PdfReader
+                url={url}
+                token={api.token}
+                pageCount={f.pageCount}
+                height={previewHeight}
+              />
+            ) : f.mimeType.startsWith("image/") ? (
+              <Image
+                source={{ uri: url }}
+                style={{ width: "100%", height: previewHeight + 46 }}
+                resizeMode="contain"
+              />
+            ) : preview ? (
+              <PdfReader
+                url={api.url(preview.url)}
+                token={api.token}
+                pageCount={preview.pageCount}
+                height={previewHeight}
               />
             ) : (
-              <Field
-                key={field.name}
-                label={field.name.replace(/_/g, " ").replace(/^./, (s) => s.toUpperCase())}
-                value={String(values[field.name] || "")}
-                onChangeText={(value) => setValues({ ...values, [field.name]: value })}
-              />
-            ),
-          )}
-          <Button primary icon={Save} busy={busy} onPress={() => void fill()}>
-            {t("Save filled copy")}
-          </Button>
-        </Card>
-      )}
-      <ErrorNotice error={error} />
-      <Text style={[s.small, { marginTop: 15 }]}>
-        {t("Added {date}", { date: dateLabel(f.createdAt) })}
-        {f.parentId ? ` · ${t("filled copy")}` : ""}
-      </Text>
+              <View
+                style={{
+                  minHeight: previewHeight,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 28,
+                  gap: 18,
+                }}
+              >
+                <FileText size={44} color={colors.muted} strokeWidth={1.3} />
+                <Text style={[s.muted, { textAlign: "center", maxWidth: 290 }]}>
+                  {t("Save or share this file to open it in another app.")}
+                </Text>
+                {/\.(pptx|docx|xlsx|odt|odp|ods)$/i.test(f.name) && (
+                  <Button busy={busy} onPress={() => void createPreview()}>
+                    {t("Create PDF preview")}
+                  </Button>
+                )}
+              </View>
+            )}
+            <ErrorNotice error={error} />
+          </View>
+          {!split && form && <View style={{ backgroundColor: colors.card }}>{form}</View>}
+        </ScrollView>
+        {split && (
+          <ScrollView
+            style={{ width: 300, flexGrow: 0, borderLeftWidth: 1, borderLeftColor: colors.line }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {form}
+          </ScrollView>
+        )}
+      </View>
     </Sheet>
   );
 }
+
 function BrowserDetail({ initial }: { initial: BrowserSession }) {
   const { t } = useI18n();
+  const { height } = useWindowDimensions();
+  const previewHeight = Math.max(260, Math.min(494, height * 0.9 - 275));
   const { workspace: w, api, refresh, close, notify } = useWorkspace();
   const [local, setLocal] = useState(initial);
   const [url, setUrl] = useState(initial.url);
@@ -1101,86 +1199,102 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
       })}
       onClose={close}
       wide
-    >
-      <View style={[s.row, { gap: 10, marginBottom: 16 }]}>
-        <View style={{ flex: 1 }}>
-          <Field
-            label={t("Website address")}
-            value={url}
-            onChangeText={setUrl}
-            autoCapitalize="none"
-            keyboardType="url"
-            onSubmitEditing={() => void mutate()}
-          />
-        </View>
-        <Button primary busy={busy} disabled={loading || !url.trim()} onPress={() => void mutate()}>
-          {browser.status === "closed"
-            ? t("Reopen")
-            : browser.status === "error"
-              ? t("Reconnect")
-              : t("Go")}
-        </Button>
-      </View>
-      <ErrorNotice error={error} />
-      {loading ? (
-        <View style={[s.row, { gap: 10, paddingVertical: 24 }]}>
-          {error ? (
-            <Button onPress={() => setRetry(retry + 1)}>{t("Retry connection")}</Button>
-          ) : (
-            <>
-              <ActivityIndicator color={colors.blueDark} />
-              <Text style={s.muted}>{t("Connecting to your browser…")}</Text>
-            </>
+      scroll={false}
+      contentStyle={{ padding: 0 }}
+      footer={
+        <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
+          {!loading && browser.status === "active" && browser.consoleUrl && (
+            <Button
+              small
+              icon={ExternalLink}
+              onPress={() => void Linking.openURL(api.url(browser.consoleUrl || ""))}
+            >
+              {t("Open browser in a window")}
+            </Button>
+          )}
+          {!loading && (
+            <Button icon={RotateCw} disabled={busy} onPress={() => setRetry(retry + 1)}>
+              {t("Refresh connection")}
+            </Button>
+          )}
+          {!loading && browser.status !== "closed" && (
+            <Button icon={Download} busy={busy} onPress={() => void importDownloads()}>
+              {t("Import downloads")}
+            </Button>
+          )}
+          {!loading && browser.status !== "closed" && (
+            <Button icon={X} danger busy={busy} onPress={() => void mutate(true)}>
+              {t("Close session")}
+            </Button>
           )}
         </View>
-      ) : browser.status === "active" && browser.consoleUrl ? (
-        <BrowserConsole url={api.url(browser.consoleUrl)} />
-      ) : browser.status === "active" && browser.previewUrl ? (
-        <Image
-          source={{ uri: api.url(browser.previewUrl) }}
-          style={{ width: "100%", height: 450, backgroundColor: colors.canvas }}
-          resizeMode="contain"
-        />
-      ) : (
-        <Empty
-          icon={Globe2}
-          title={
-            browser.status === "closed"
-              ? t("This session is closed")
-              : t("Preview is not available")
-          }
-          detail={
-            browser.status === "closed"
-              ? t("Your profile and downloads are saved. Reopen to continue where you left off.")
-              : t("Reconnect to continue with your saved browser profile.")
-          }
-        />
-      )}
-      <View style={[s.row, { gap: 10, marginTop: 18, flexWrap: "wrap" }]}>
-        {!loading && browser.status === "active" && browser.consoleUrl && (
+      }
+    >
+      <ScrollView
+        style={{ flex: 1, minHeight: 0 }}
+        contentContainerStyle={{ padding: 18 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={[s.row, { gap: 10, marginBottom: 16 }]}>
+          <View style={{ flex: 1 }}>
+            <Field
+              label={t("Website address")}
+              value={url}
+              onChangeText={setUrl}
+              autoCapitalize="none"
+              keyboardType="url"
+              onSubmitEditing={() => void mutate()}
+            />
+          </View>
           <Button
-            icon={ExternalLink}
-            onPress={() => void Linking.openURL(api.url(browser.consoleUrl || ""))}
+            primary
+            busy={busy}
+            disabled={loading || !url.trim()}
+            onPress={() => void mutate()}
           >
-            {t("Open browser in a window")}
+            {browser.status === "closed"
+              ? t("Reopen")
+              : browser.status === "error"
+                ? t("Reconnect")
+                : t("Go")}
           </Button>
+        </View>
+        <ErrorNotice error={error} />
+        {loading ? (
+          <View style={[s.row, { gap: 10, paddingVertical: 24 }]}>
+            {error ? (
+              <Button onPress={() => setRetry(retry + 1)}>{t("Retry connection")}</Button>
+            ) : (
+              <>
+                <ActivityIndicator color={colors.blueDark} />
+                <Text style={s.muted}>{t("Connecting to your browser…")}</Text>
+              </>
+            )}
+          </View>
+        ) : browser.status === "active" && browser.consoleUrl ? (
+          <BrowserConsole url={api.url(browser.consoleUrl)} height={previewHeight} />
+        ) : browser.status === "active" && browser.previewUrl ? (
+          <Image
+            source={{ uri: api.url(browser.previewUrl) }}
+            style={{ width: "100%", height: previewHeight, backgroundColor: colors.canvas }}
+            resizeMode="contain"
+          />
+        ) : (
+          <Empty
+            icon={Globe2}
+            title={
+              browser.status === "closed"
+                ? t("This session is closed")
+                : t("Preview is not available")
+            }
+            detail={
+              browser.status === "closed"
+                ? t("Your profile and downloads are saved. Reopen to continue where you left off.")
+                : t("Reconnect to continue with your saved browser profile.")
+            }
+          />
         )}
-        {!loading && (
-          <Button icon={RotateCw} disabled={busy} onPress={() => setRetry(retry + 1)}>
-            {t("Refresh connection")}
-          </Button>
-        )}
-        {!loading && browser.status !== "closed" && (
-          <Button icon={Download} busy={busy} onPress={() => void importDownloads()}>
-            {t("Import downloads")}
-          </Button>
-        )}
-        {!loading && browser.status !== "closed" && (
-          <Button icon={X} danger busy={busy} onPress={() => void mutate(true)}>
-            {t("Close session")}
-          </Button>
-        )}
-      </View>
+      </ScrollView>
     </Sheet>
   );
 }

@@ -40,14 +40,16 @@ const mergeAssets = (before: AvatarAsset[], next: AvatarAsset[]) => {
 
 export function AvatarStudio({
   onPreviewActiveChange,
+  embedded = false,
 }: {
   onPreviewActiveChange?: (active: boolean) => void;
+  embedded?: boolean;
 } = {}) {
   const { api, notify } = useWorkspace();
   const { refresh } = useAgentWorkspace();
   const { t } = useI18n();
   const { width } = useWindowDimensions();
-  const columns = Platform.OS === "web" && width >= 1180;
+  const columns = Platform.OS === "web" && width >= 900;
   const [studio, setStudio] = useState<Scoped<AvatarStudioState>>();
   const [draft, setDraft] = useState<Scoped<string>>();
   const [focused, setFocused] = useState<Scoped<AvatarGeneration>>();
@@ -321,13 +323,20 @@ export function AvatarStudio({
   }
   const phaseLabel = job?.phase === "videos" ? "Creating animations…" : "Creating four companions…";
   return (
-    <View style={styles.studio}>
-      <View style={styles.introduction}>
-        <Text style={styles.title}>{t("Your companion")}</Text>
-        <Text style={styles.description}>
-          {t("Imagine a companion that feels like you. Describe it, then choose your favorite.")}
-        </Text>
-      </View>
+    <View
+      style={[
+        styles.studio,
+        embedded && { borderWidth: 0, padding: 0, backgroundColor: "transparent" },
+      ]}
+    >
+      {!embedded && (
+        <View style={styles.introduction}>
+          <Text style={styles.title}>{t("Your companion")}</Text>
+          <Text style={styles.description}>
+            {t("Imagine a companion that feels like you. Describe it, then choose your favorite.")}
+          </Text>
+        </View>
+      )}
       <View style={[styles.layout, { flexDirection: columns ? "row" : "column" }]}>
         <View style={[styles.portraitColumn, columns && { width: 280 }]}>
           <View style={styles.preview}>

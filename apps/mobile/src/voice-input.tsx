@@ -5,6 +5,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
+import { Mic, Square } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { AppState, Platform, Text, View } from "react-native";
 import type { PickedAttachment } from "./attachment-cache";
@@ -13,8 +14,12 @@ import { Button, ErrorNotice, s } from "./ui";
 export function VoiceInput({
   save,
   active,
+  compact = false,
+  startRequest = 0,
 }: {
   active: boolean;
+  compact?: boolean;
+  startRequest?: number;
   save: (file: PickedAttachment, transcribe?: boolean, includeSubtitles?: boolean) => Promise<void>;
 }) {
   const { t } = useI18n();
@@ -72,6 +77,14 @@ export function VoiceInput({
   }
   const stopRef = useRef(stop);
   stopRef.current = stop;
+  const startRef = useRef(start);
+  startRef.current = start;
+  const handledStart = useRef(0);
+  useEffect(() => {
+    if (!active || !startRequest || startRequest === handledStart.current) return;
+    handledStart.current = startRequest;
+    if (!recorder.isRecording) void startRef.current();
+  }, [active, startRequest, recorder]);
   useEffect(() => {
     if ((!active || state.durationMillis >= 1800000) && recorder.isRecording)
       void stopRef.current();
@@ -84,7 +97,23 @@ export function VoiceInput({
   }, [recorder]);
   return (
     <View style={{ gap: 6 }}>
-      <Button small busy={busy} onPress={() => void (state.isRecording ? stop() : start())}>
+      <Button
+        small
+        busy={busy}
+        icon={state.isRecording ? Square : Mic}
+        style={
+          compact
+            ? {
+                justifyContent: "flex-start",
+                backgroundColor: "transparent",
+                borderRadius: 12,
+                minHeight: 42,
+                paddingHorizontal: 10,
+              }
+            : undefined
+        }
+        onPress={() => void (state.isRecording ? stop() : start())}
+      >
         {state.isRecording ? t("Stop and transcribe") : t("Record audio")}
       </Button>
       {state.isRecording && (

@@ -1,8 +1,10 @@
 import { avatarCharacterPtBR } from "./avatar-character-copy";
 import { avatarPTBR } from "./avatar-copy";
+import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  ...museInterfacePTBR,
   ...avatarPTBR,
   ...avatarCharacterPtBR,
   "Animation unavailable · showing your companion":

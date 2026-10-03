@@ -4,14 +4,14 @@ import { colors } from "./ui";
 export const desktopStyles = StyleSheet.create({
   shell: { flex: 1, flexDirection: "row", minHeight: 0, backgroundColor: colors.canvas },
   rail: {
-    width: 66,
+    width: 68,
     borderRightWidth: 1,
     borderRightColor: colors.line,
     paddingVertical: 18,
     alignItems: "center",
     justifyContent: "space-between",
   },
-  railNavigation: { gap: 9, paddingTop: 74 },
+  railNavigation: { gap: 8 },
   railUtilities: { gap: 10 },
   railItem: {
     width: 42,
@@ -21,7 +21,7 @@ export const desktopStyles = StyleSheet.create({
     justifyContent: "center",
   },
   sidebar: {
-    width: 218,
+    width: 228,
     flexShrink: 0,
     borderRightWidth: 1,
     borderRightColor: colors.line,
@@ -111,7 +111,7 @@ export const desktopStyles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingBottom: 18,
   },
-  inspector: { width: 294, flexShrink: 0, borderLeftWidth: 1, borderLeftColor: colors.line },
+  inspector: { width: 308, flexShrink: 0, borderLeftWidth: 1, borderLeftColor: colors.line },
   inspectorToolbar: {
     flexDirection: "row",
     justifyContent: "flex-end",
@@ -169,7 +169,13 @@ export const desktopStyles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  inspectorTabActive: { backgroundColor: "#DFDFE1" },
+  inspectorTabActive: {
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
   inspectorSection: {
     fontSize: 13,
     fontWeight: "500",
@@ -183,8 +189,8 @@ export const desktopStyles = StyleSheet.create({
     gap: 10,
     alignItems: "flex-start",
     paddingHorizontal: 5,
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingVertical: 13,
+    borderRadius: 14,
   },
   activityIcon: {
     width: 31,
@@ -194,10 +200,17 @@ export const desktopStyles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#F0F0F1",
   },
-  activityTitle: { color: colors.text, fontSize: 12, lineHeight: 17, fontWeight: "500" },
-  activityDetail: { color: colors.muted, fontSize: 11, lineHeight: 16 },
+  activityTitle: { color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: "500" },
+  activityDetail: { color: colors.muted, fontSize: 12, lineHeight: 18 },
   activityTime: { color: "#929296", fontSize: 10, lineHeight: 15 },
-  page: { width: "100%", maxWidth: 1000, alignSelf: "center", padding: 32, paddingBottom: 44 },
+  page: {
+    width: "100%",
+    maxWidth: 900,
+    alignSelf: "center",
+    paddingHorizontal: 36,
+    paddingTop: 16,
+    paddingBottom: 44,
+  },
   pageTitle: { color: colors.text, fontSize: 26, fontWeight: "600", letterSpacing: -0.8 },
   pageSubtitle: {
     color: colors.muted,

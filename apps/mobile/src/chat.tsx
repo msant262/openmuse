@@ -15,6 +15,7 @@ import {
   ChevronRight,
   FileText,
   FolderOpen,
+  Mic,
   Monitor,
   RotateCcw,
   Square,
@@ -89,7 +90,7 @@ import { suggestionsFromRequests } from "./proactivity-state";
 
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
 import { type Selection, useMuseThread } from "./threads";
-import { Button, Card, CheckRow, colors, ErrorNotice, s } from "./ui";
+import { Button, Card, CheckRow, colors, ErrorNotice, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 const displayParameters = z.record(z.string(), z.unknown());
@@ -374,6 +375,7 @@ export function ChatScreen({
   const [modelNotice, setModelNotice] = useState<string>();
   const [loaded, setLoaded] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [voiceRequest, setVoiceRequest] = useState(0);
   const [attachments, setAttachments] = useState<string[]>([]);
   const composerValues = useRef({ draft, attachments, annotations });
   composerValues.current = { draft, attachments, annotations };
@@ -980,13 +982,6 @@ export function ChatScreen({
             />
           </View>
         )}
-        {annotationSource && (
-          <ConversationAnnotationComposer
-            source={annotationSource}
-            onAdd={(annotation) => void stageAnnotation(annotation)}
-            onCancel={() => setAnnotationSource(undefined)}
-          />
-        )}
         {queue instanceof MessageOutbox && (
           <ErrorNotice error={conversationDeliveryError(queue.getSnapshot().events)} />
         )}
@@ -1115,13 +1110,14 @@ export function ChatScreen({
                 key={message.id}
                 style={{
                   alignSelf: user ? "flex-end" : "flex-start",
-                  maxWidth: user ? "85%" : "94%",
+                  maxWidth: user ? "85%" : "90%",
                   width: toolCalls.length ? "95%" : undefined,
                   gap: 8,
                 }}
               >
                 {!!text && (
                   <MessageBubble
+                    text={text}
                     user={user}
                     contextual={wide}
                     onQuote={
@@ -1317,6 +1313,15 @@ export function ChatScreen({
           </Button>
         )}
       </ScrollView>
+      {annotationSource && (
+        <Sheet title={t("Reply")} onClose={() => setAnnotationSource(undefined)}>
+          <ConversationAnnotationComposer
+            source={annotationSource}
+            onAdd={(annotation) => void stageAnnotation(annotation)}
+            onCancel={() => setAnnotationSource(undefined)}
+          />
+        </Sheet>
+      )}
       {awayFromLatest && (
         <Button
           small
@@ -1332,42 +1337,6 @@ export function ChatScreen({
         </Button>
       )}
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        {queue instanceof MessageOutbox &&
-          !!agentWorkspace?.tasks.some(
-            (task) => !["succeeded", "failed", "cancelled"].includes(task.status),
-          ) && (
-            <View style={{ padding: 12, gap: 6 }}>
-              <Text style={s.small}>{t("Send the next message to")}</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={[s.row, { gap: 8 }]}>
-                  <Button
-                    small
-                    primary={!directionTarget}
-                    onPress={() => setDirectionTarget(undefined)}
-                  >
-                    {t("Chat")}
-                  </Button>
-                  {agentWorkspace.tasks
-                    .filter((task) => !["succeeded", "failed", "cancelled"].includes(task.status))
-                    .map((task) => (
-                      <Button
-                        key={task.id}
-                        small
-                        primary={directionTarget === task.id}
-                        onPress={() => setDirectionTarget(task.id)}
-                      >
-                        {task.title}
-                      </Button>
-                    ))}
-                </View>
-              </ScrollView>
-              {!!directionTarget && (
-                <Text style={s.small}>
-                  {t("This direction applies to the selected task at its next safe point.")}
-                </Text>
-              )}
-            </View>
-          )}
         <ErrorNotice error={saveError} />
         {!!saveError && (
           <Button
@@ -1479,79 +1448,160 @@ export function ChatScreen({
               )}
             </View>
           )}
-        <Card style={{ marginBottom: 12, padding: 15, display: picking ? "flex" : "none" }}>
-          <Text style={s.heading}>{t("Attachments and voice")}</Text>
-          {queue instanceof MessageOutbox && (
-            <Button
-              small
-              icon={FolderOpen}
-              onPress={() => {
-                setPicking(false);
-                setShowResourceLibrary((value) => !value);
+        <Card
+          style={{
+            marginBottom: 10,
+            padding: 12,
+            display: picking ? "flex" : "none",
+            maxHeight: 390,
+            borderRadius: 24,
+            borderWidth: 1,
+            borderColor: colors.line,
+            shadowColor: "#000",
+            shadowOpacity: 0.06,
+            shadowRadius: 20,
+            shadowOffset: { width: 0, height: 4 },
+          }}
+        >
+          <View style={[s.between, { paddingHorizontal: 8, paddingBottom: 8 }]}>
+            <Text style={[s.muted, { fontSize: 13 }]}>{t("Attachments and voice")}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("Close details")}
+              onPress={() => setPicking(false)}
+              style={{ width: 28, height: 28, alignItems: "center", justifyContent: "center" }}
+            >
+              <X size={17} color={colors.muted} />
+            </Pressable>
+          </View>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            {queue instanceof MessageOutbox &&
+              !!agentWorkspace?.tasks.some(
+                (task) => !["succeeded", "failed", "cancelled"].includes(task.status),
+              ) && (
+                <View style={{ padding: 12, gap: 6 }}>
+                  <Text style={s.small}>{t("Send the next message to")}</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View style={[s.row, { gap: 8 }]}>
+                      <Button
+                        small
+                        primary={!directionTarget}
+                        onPress={() => {
+                          setDirectionTarget(undefined);
+                          setPicking(false);
+                        }}
+                      >
+                        {t("Chat")}
+                      </Button>
+                      {agentWorkspace.tasks
+                        .filter(
+                          (task) => !["succeeded", "failed", "cancelled"].includes(task.status),
+                        )
+                        .map((task) => (
+                          <Button
+                            key={task.id}
+                            small
+                            primary={directionTarget === task.id}
+                            onPress={() => {
+                              setDirectionTarget(task.id);
+                              setPicking(false);
+                            }}
+                          >
+                            {task.title}
+                          </Button>
+                        ))}
+                    </View>
+                  </ScrollView>
+                  {!!directionTarget && (
+                    <Text style={s.small}>
+                      {t("This direction applies to the selected task at its next safe point.")}
+                    </Text>
+                  )}
+                </View>
+              )}
+            {queue instanceof MessageOutbox && (
+              <Button
+                small
+                icon={FolderOpen}
+                style={{
+                  justifyContent: "flex-start",
+                  backgroundColor: "transparent",
+                  paddingHorizontal: 10,
+                  borderRadius: 12,
+                }}
+                onPress={() => {
+                  setPicking(false);
+                  setShowResourceLibrary((value) => !value);
+                }}
+              >
+                {showResourceLibrary ? t("Close files and sessions") : t("Files and sessions")}
+              </Button>
+            )}
+            {queue instanceof MessageOutbox && (
+              <ChatAttachments
+                key={`${api.identityKey}:${threadId}`}
+                threadId={threadId}
+                active={active && picking}
+                voiceRequest={voiceRequest}
+                attach={async (id) => {
+                  if (!composerMounted.current)
+                    throw new Error("Reopen this conversation to attach the saved file.");
+                  const current = composerValues.current;
+                  const next = Array.from(new Set([...current.attachments, id]));
+                  await queue.saveDraft(current.draft, next);
+                  if (!composerMounted.current)
+                    throw new Error("Attachment saved in this conversation’s draft.");
+                  draftRevision.current++;
+                  setAttachments((current) => Array.from(new Set([...current, id])));
+                }}
+                transcript={async (text) => {
+                  if (!composerMounted.current)
+                    throw new Error("Reopen this conversation to use the saved transcript.");
+                  const current = composerValues.current;
+                  if (!text || current.draft.includes(text)) return;
+                  const next = [current.draft.trim(), text].filter(Boolean).join("\n\n");
+                  if (next.length > 24000)
+                    throw new Error(
+                      "Long transcript: open the result in Tasks or attach the audio to your request.",
+                    );
+                  await queue.saveDraft(next, current.attachments);
+                  if (!composerMounted.current)
+                    throw new Error("Transcript saved in this conversation’s draft.");
+                  draftRevision.current++;
+                  setDraft((current) =>
+                    current.includes(text)
+                      ? current
+                      : [current.trim(), text].filter(Boolean).join("\n\n"),
+                  );
+                }}
+              />
+            )}
+            <View
+              style={{
+                marginTop: 8,
+                paddingHorizontal: 8,
+                borderTopWidth: 1,
+                borderTopColor: colors.line,
+                paddingTop: 10,
               }}
             >
-              {showResourceLibrary ? t("Close files and sessions") : t("Files and sessions")}
-            </Button>
-          )}
-          {queue instanceof MessageOutbox && (
-            <ChatAttachments
-              key={`${api.identityKey}:${threadId}`}
-              threadId={threadId}
-              active={active && picking}
-              attach={async (id) => {
-                if (!composerMounted.current)
-                  throw new Error("Reopen this conversation to attach the saved file.");
-                const current = composerValues.current;
-                const next = Array.from(new Set([...current.attachments, id]));
-                await queue.saveDraft(current.draft, next);
-                if (!composerMounted.current)
-                  throw new Error("Attachment saved in this conversation’s draft.");
-                draftRevision.current++;
-                setAttachments((current) => Array.from(new Set([...current, id])));
-              }}
-              transcript={async (text) => {
-                if (!composerMounted.current)
-                  throw new Error("Reopen this conversation to use the saved transcript.");
-                const current = composerValues.current;
-                if (!text || current.draft.includes(text)) return;
-                const next = [current.draft.trim(), text].filter(Boolean).join("\n\n");
-                if (next.length > 24000)
-                  throw new Error(
-                    "Long transcript: open the result in Tasks or attach the audio to your request.",
-                  );
-                await queue.saveDraft(next, current.attachments);
-                if (!composerMounted.current)
-                  throw new Error("Transcript saved in this conversation’s draft.");
-                draftRevision.current++;
-                setDraft((current) =>
-                  current.includes(text)
-                    ? current
-                    : [current.trim(), text].filter(Boolean).join("\n\n"),
-                );
-              }}
-            />
-          )}
-          <ScrollView style={{ maxHeight: 230 }} keyboardShouldPersistTaps="handled">
-            {w.files.length ? (
-              w.files.map((f) => (
-                <CheckRow
-                  key={f.id}
-                  checked={attachments.includes(f.id)}
-                  label={f.name}
-                  onPress={() => toggleAttachment(f.id)}
-                />
-              ))
-            ) : (
-              <Text style={s.muted}>{t("Import a PDF in Files to use it in a conversation.")}</Text>
-            )}
+              <Text style={[s.small, { marginBottom: 5 }]}>{t("Saved files")}</Text>
+              {w.files.length ? (
+                w.files.map((f) => (
+                  <CheckRow
+                    key={f.id}
+                    checked={attachments.includes(f.id)}
+                    label={f.name}
+                    onPress={() => toggleAttachment(f.id)}
+                  />
+                ))
+              ) : (
+                <Text style={s.muted}>
+                  {t("Import a PDF in Files to use it in a conversation.")}
+                </Text>
+              )}
+            </View>
           </ScrollView>
-          <Button
-            small
-            onPress={() => setPicking(false)}
-            style={{ alignSelf: "flex-end", marginTop: 8 }}
-          >
-            {t("Done")}
-          </Button>
         </Card>
         <View
           style={{
@@ -1567,6 +1617,33 @@ export function ChatScreen({
             elevation: 4,
           }}
         >
+          {!!directionTarget && (
+            <View
+              style={[s.row, { gap: 8, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 5 }]}
+            >
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setPicking(true)}
+                style={{ flex: 1 }}
+              >
+                <Text numberOfLines={1} style={[s.small, { color: colors.blueDark }]}>
+                  {t("Directing this message to {name}", {
+                    name:
+                      agentWorkspace?.tasks.find((task) => task.id === directionTarget)?.title ||
+                      t("Task"),
+                  })}
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("Send to chat")}
+                onPress={() => setDirectionTarget(undefined)}
+                style={{ padding: 4 }}
+              >
+                <X size={15} color={colors.muted} />
+              </Pressable>
+            </View>
+          )}
           {attachments.length > 0 && (
             <View style={[s.row, { gap: 6, flexWrap: "wrap", padding: 9 }]}>
               {w.files
@@ -1714,32 +1791,55 @@ export function ChatScreen({
                 <Square size={18} fill={colors.text} strokeWidth={0} />
               </Pressable>
             )}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t("Send message")}
-              disabled={
-                !draft.trim() ||
-                (queue instanceof MessageOutbox ? !queue.getSnapshot().loaded : !loaded || !isReady)
-              }
-              onPress={() => void send()}
-              style={({ pressed }) => ({
-                width: 44,
-                height: 44,
-                borderRadius: 24,
-                backgroundColor: replying || draft.trim() ? colors.blue : "transparent",
-                alignItems: "center",
-                justifyContent: "center",
-                transform: [{ scale: pressed ? 0.94 : 1 }],
-              })}
-            >
-              {
-                <ArrowUp
-                  size={25}
-                  strokeWidth={1.8}
-                  color={draft.trim() ? colors.text : "#BFC0C3"}
-                />
-              }
-            </Pressable>
+            {!draft.trim() && queue instanceof MessageOutbox ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("Record audio")}
+                onPress={() => {
+                  setPicking(true);
+                  setVoiceRequest((value) => value + 1);
+                }}
+                style={({ pressed }) => ({
+                  width: 44,
+                  height: 44,
+                  borderRadius: 24,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: pressed ? "#F1F1F3" : "transparent",
+                })}
+              >
+                <Mic size={21} strokeWidth={1.65} color={colors.muted} />
+              </Pressable>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("Send message")}
+                disabled={
+                  !draft.trim() ||
+                  (queue instanceof MessageOutbox
+                    ? !queue.getSnapshot().loaded
+                    : !loaded || !isReady)
+                }
+                onPress={() => void send()}
+                style={({ pressed }) => ({
+                  width: 44,
+                  height: 44,
+                  borderRadius: 24,
+                  backgroundColor: replying || draft.trim() ? colors.blue : "transparent",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transform: [{ scale: pressed ? 0.94 : 1 }],
+                })}
+              >
+                {
+                  <ArrowUp
+                    size={25}
+                    strokeWidth={1.8}
+                    color={draft.trim() ? colors.text : "#BFC0C3"}
+                  />
+                }
+              </Pressable>
+            )}
           </View>
         </View>
       </KeyboardAvoidingView>

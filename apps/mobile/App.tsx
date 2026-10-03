@@ -31,20 +31,16 @@ import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace
 import { API_URL, ApiError, authManager, MuseApi } from "./src/api";
 import type { AuthManager } from "./src/auth-manager";
 import { installRuntimeAuthFetch } from "./src/auth-transport";
-import { AvatarPresentationProvider, useAvatarPresentation } from "./src/avatar-presentation";
-import { AvatarStudio } from "./src/avatar-studio";
+import { AvatarPresentationProvider } from "./src/avatar-presentation";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
+import { CompanionHeading } from "./src/companion-heading";
 import { ComputerDraftProvider } from "./src/computer-drafts";
-import {
-  AgentInspector,
-  AppLanguagePicker,
-  DesktopSettings,
-  DesktopShell,
-  desktopCopy,
-} from "./src/desktop-shell";
+import { AgentInspector, AppLanguagePicker, DesktopShell, desktopCopy } from "./src/desktop-shell";
 import { desktopStyles as d } from "./src/desktop-shell-styles";
 import { Details } from "./src/details";
 import { useI18n } from "./src/i18n";
+import { WorkspaceSearch } from "./src/muse-search";
+import { CompanionDialog, SettingsDialog } from "./src/muse-settings";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ShareReceiver } from "./src/share-receiver";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
@@ -63,13 +59,13 @@ import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "chat", label: "Chat", icon: MessageCircle },
-  { id: "activity", label: "Activity", icon: PanelsTopLeft },
+  { id: "activity", label: "Feed", icon: PanelsTopLeft },
   { id: "ideas", label: "Ideas", icon: Lightbulb },
   { id: "goals", label: "Goals", icon: SquareCheck },
   { id: "files", label: "Library", icon: Shapes },
 ];
 const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
-  activity: { title: "Activity", subtitle: "Plans, progress, decisions and results." },
+  activity: { title: "Feed", subtitle: "" },
   ideas: { title: "Ideas", subtitle: "Useful next steps, grounded in your world." },
   goals: {
     title: "Goals",
@@ -333,66 +329,6 @@ function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError:
     </WorkspaceContext.Provider>
   );
 }
-function CompanionHeading({
-  name,
-  status,
-  variant,
-  onPress,
-}: {
-  name: string;
-  status: string;
-  variant?: "sky" | "sand" | "lilac";
-  onPress: () => void;
-}) {
-  const { t } = useI18n();
-  const { state } = useAvatarPresentation();
-  const showStatus = state !== "idle" || status !== t("Here when you need me");
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={t("Open {name} activity and approvals", { name })}
-      onPress={onPress}
-      style={({ pressed }) => ({
-        alignItems: "center",
-        maxWidth: "70%",
-        opacity: pressed ? 0.65 : 1,
-      })}
-    >
-      <Mascot size={54} variant={variant} />
-      <View
-        style={{
-          paddingHorizontal: 14,
-          paddingVertical: showStatus ? 7 : 8,
-          marginTop: -4,
-          borderRadius: showStatus ? 20 : 24,
-          backgroundColor: "#FFFFFF",
-          shadowColor: "#171719",
-          shadowOffset: { width: 0, height: 6 },
-          shadowOpacity: 0.06,
-          shadowRadius: 14,
-          alignItems: "center",
-          maxWidth: "100%",
-        }}
-      >
-        <Text
-          numberOfLines={1}
-          style={{ fontSize: 15, fontWeight: "600", color: colors.text, letterSpacing: -0.4 }}
-        >
-          {name}
-        </Text>
-        {showStatus && (
-          <Text numberOfLines={1} style={{ fontSize: 11, color: colors.muted, marginTop: 3 }}>
-            {state === "talking"
-              ? t("Writing to you…")
-              : state === "thinking" && status === t("Here when you need me")
-                ? t("Thinking it through…")
-                : status}
-          </Text>
-        )}
-      </View>
-    </Pressable>
-  );
-}
 
 function WorkspaceShell({
   detail,
@@ -420,7 +356,9 @@ function WorkspaceShell({
   } = useMuseThread();
   const [threadsOpen, setThreadsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => setSettingsOpen(false), [section, prompt?.id]);
   const navigateSection = useCallback(
     (next: Section) => {
@@ -472,31 +410,13 @@ function WorkspaceShell({
   const utility = ["mail", "calendar", "browser"].includes(section);
   const content = (
     <View style={{ flex: 1, minHeight: 0 }}>
-      {settingsOpen && (
-        <ScrollView
-          key="settings"
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={
-            desktop ? d.page : { paddingHorizontal: 20, paddingTop: 100, paddingBottom: 28 }
-          }
-        >
-          {desktop && (
-            <>
-              <Text style={d.pageTitle}>{t(desktopCopy.settingsTitle)}</Text>
-              <Text style={d.pageSubtitle}>{t(desktopCopy.settingsSubtitle)}</Text>
-            </>
-          )}
-          <ErrorNotice error={t(error)} />
-          <DesktopSettings appearance={<AvatarStudio />} />
-        </ScrollView>
-      )}
-      {!settingsOpen && section !== "chat" && (
+      {section === "files" && <FilesScreen />}
+      {section !== "chat" && section !== "files" && (
         <ScrollView
           key={section}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={
-            desktop ? d.page : { paddingHorizontal: 20, paddingTop: 100, paddingBottom: 28 }
+            desktop ? d.page : { paddingHorizontal: 20, paddingTop: 110, paddingBottom: 100 }
           }
           keyboardShouldPersistTaps="handled"
         >
@@ -509,18 +429,25 @@ function WorkspaceShell({
               {t("Back to Apps")}
             </Button>
           )}
-          <Text style={desktop ? d.pageTitle : [s.title, { fontSize: 25, marginBottom: 22 }]}>
-            {t(title?.title || "")}
-          </Text>
-          {desktop && <Text style={d.pageSubtitle}>{t(title?.subtitle || "")}</Text>}
+          {section !== "activity" && section !== "ideas" && (
+            <Text
+              style={
+                desktop
+                  ? [d.pageTitle, { marginBottom: 24 }]
+                  : [s.title, { fontSize: 25, marginBottom: 22 }]
+              }
+            >
+              {t(title?.title || "")}
+            </Text>
+          )}
           <ErrorNotice error={t(error)} />
           <Screen />
         </ScrollView>
       )}
       <View
         style={[
-          desktop ? d.chat : { flex: 1, paddingHorizontal: 16 },
-          { display: !settingsOpen && section === "chat" ? "flex" : "none" },
+          desktop ? d.chat : { flex: 1, paddingHorizontal: 16, paddingBottom: 82 },
+          { display: section === "chat" ? "flex" : "none" },
         ]}
       >
         {richThreads ? (
@@ -538,7 +465,12 @@ function WorkspaceShell({
               >
                 <ChatScreen
                   thread={thread}
-                  active={!settingsOpen && section === "chat" && selection.id === thread.id}
+                  active={
+                    !settingsOpen &&
+                    !customizeOpen &&
+                    section === "chat" &&
+                    selection.id === thread.id
+                  }
                   wide={desktop}
                   prompt={selection.id === thread.id ? prompt : undefined}
                 />
@@ -546,7 +478,11 @@ function WorkspaceShell({
             ))}
           </>
         ) : (
-          <ChatScreen prompt={prompt} active={!settingsOpen && section === "chat"} wide={desktop} />
+          <ChatScreen
+            prompt={prompt}
+            active={!settingsOpen && !customizeOpen && section === "chat"}
+            wide={desktop}
+          />
         )}
       </View>
     </View>
@@ -560,7 +496,7 @@ function WorkspaceShell({
         top: 0,
         left: 0,
         right: 0,
-        height: settingsOpen ? 80 : 102,
+        height: 112,
       }}
     >
       <HeaderFade />
@@ -568,26 +504,11 @@ function WorkspaceShell({
         <IconButton icon={Menu} label={t(desktopCopy.conversationMenu)} onPress={openThreads} />
       </View>
       <View pointerEvents="box-none" style={{ alignItems: "center", paddingTop: 1 }}>
-        {settingsOpen ? (
-          <View style={{ height: 72, justifyContent: "center", maxWidth: "58%" }}>
-            <Text numberOfLines={1} style={[s.heading, { textAlign: "center" }]}>
-              {t(desktopCopy.customize)}
-            </Text>
-          </View>
-        ) : (
-          <CompanionHeading
-            name={agentName}
-            status={status}
-            variant={data?.identity.avatar}
-            onPress={() => setAgentOpen(true)}
-          />
-        )}
-      </View>
-      <View style={{ position: "absolute", right: 16, top: 17 }}>
-        <IconButton
-          icon={Settings2}
-          label={t(desktopCopy.settings)}
-          onPress={() => setSettingsOpen(true)}
+        <CompanionHeading
+          name={agentName}
+          status={status}
+          variant={data?.identity.avatar}
+          onPress={() => setAgentOpen(true)}
         />
       </View>
     </View>
@@ -595,9 +516,13 @@ function WorkspaceShell({
   const mobileNavigation = (
     <View
       style={{
-        paddingHorizontal: 18,
+        position: "absolute",
+        bottom: 8,
+        left: 0,
+        right: 0,
+        paddingHorizontal: 20,
         paddingTop: 10,
-        paddingBottom: 8,
+        paddingBottom: 4,
         alignItems: "center",
       }}
     >
@@ -649,7 +574,7 @@ function WorkspaceShell({
       design={data?.identity.avatarDesign}
       asset={data?.identity.avatarAsset}
       state={activeTask?.status === "running" ? "thinking" : "idle"}
-      active={!settingsOpen && !detail}
+      active={!settingsOpen && !customizeOpen && !detail}
       conversationKey={
         !settingsOpen && section === "chat"
           ? `${api.identityKey}\n${richThreads ? selection.id : "local-main"}`
@@ -659,22 +584,12 @@ function WorkspaceShell({
       <WorkspaceTools />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>
         <DesktopShell
-          title={
-            settingsOpen
-              ? t(desktopCopy.settings)
-              : section === "chat"
-                ? agentName
-                : t(title?.title || desktopCopy.apps)
-          }
-          subtitle={
-            settingsOpen
-              ? t(desktopCopy.settingsSubtitle)
-              : section === "chat"
-                ? status
-                : t(title?.subtitle || "")
-          }
+          title={section === "chat" ? agentName : t(title?.title || desktopCopy.apps)}
+          subtitle={section === "chat" ? status : t(title?.subtitle || "")}
           settingsOpen={settingsOpen}
           onSettings={() => setSettingsOpen(true)}
+          onCustomize={() => setCustomizeOpen(true)}
+          onSearch={() => setSearchOpen(true)}
           onNavigate={navigateSection}
           onThreads={openThreads}
           pending={pending}
@@ -695,12 +610,12 @@ function WorkspaceShell({
               style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.12)" }}
             >
               <SafeAreaView
-                edges={["bottom"]}
+                edges={["top", "bottom"]}
                 style={{
-                  height: "94%",
+                  height: "100%",
                   backgroundColor: colors.canvas,
-                  borderTopLeftRadius: 28,
-                  borderTopRightRadius: 28,
+                  borderTopLeftRadius: 0,
+                  borderTopRightRadius: 0,
                   overflow: "hidden",
                 }}
               >
@@ -711,7 +626,7 @@ function WorkspaceShell({
                   onClose={() => setAgentOpen(false)}
                   onSettings={() => {
                     setAgentOpen(false);
-                    setSettingsOpen(true);
+                    setCustomizeOpen(true);
                   }}
                 />
               </SafeAreaView>
@@ -753,7 +668,23 @@ function WorkspaceShell({
             </View>
           </View>
         )}
-        {threadsOpen && <ThreadsSheet onClose={() => setThreadsOpen(false)} />}
+        {searchOpen && <WorkspaceSearch onClose={() => setSearchOpen(false)} />}
+        {settingsOpen && (
+          <SettingsDialog
+            onClose={() => setSettingsOpen(false)}
+            onCustomize={() => {
+              setSettingsOpen(false);
+              setCustomizeOpen(true);
+            }}
+          />
+        )}
+        {customizeOpen && <CompanionDialog onClose={() => setCustomizeOpen(false)} />}
+        {threadsOpen && (
+          <ThreadsSheet
+            onClose={() => setThreadsOpen(false)}
+            onSettings={() => setSettingsOpen(true)}
+          />
+        )}
         {detail && (
           <Details
             key={

@@ -78,6 +78,7 @@ function fixture({ pendingWrites = false } = {}) {
     "@copilotkit/react-native/headless": {},
     "lucide-react-native": {},
     "react-native": {},
+    "react-native-safe-area-context": {},
     "../../../packages/domain/src/brand": { PRODUCT_NAME: "OkamiBot" },
     "./i18n": { useI18n: () => ({ t }) },
     "./thread-selection": { parseThreadSelection },

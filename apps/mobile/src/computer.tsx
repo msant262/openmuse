@@ -8,7 +8,7 @@ import {
   Terminal,
 } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { AppState, Image, Pressable, Text, View } from "react-native";
+import { AppState, Image, Pressable, ScrollView, Text, View } from "react-native";
 import type { BrowserSession } from "../../../packages/domain/src";
 import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { browserAddress } from "./browser-address";
@@ -20,7 +20,7 @@ import { useInlinePreview } from "./preview";
 import { Button, Card, colors, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
-export function ComputerEntry() {
+export function ComputerEntry({ compact = false }: { compact?: boolean } = {}) {
   const { t } = useI18n();
   const { workspace, open } = useWorkspace();
   const available = workspace.connections.some(
@@ -37,26 +37,30 @@ export function ComputerEntry() {
         {
           alignSelf: "center",
           gap: 6,
-          paddingHorizontal: 12,
-          paddingVertical: 7,
+          paddingHorizontal: compact ? 10 : 12,
+          paddingVertical: compact ? 10 : 7,
           borderRadius: 20,
-          backgroundColor: "#F1F3F4",
+          backgroundColor: compact ? "transparent" : "#F1F3F4",
         },
       ]}
     >
-      <Monitor size={13} color={colors.muted} />
-      <Text style={{ fontSize: 12, color: colors.muted }}>
-        {t("Computer")}
-        {` · ${!available ? t("Offline") : active ? t("Take control") : t("Ready")}`}
-      </Text>
-      <View
-        style={{
-          width: 5,
-          height: 5,
-          borderRadius: 3,
-          backgroundColor: available ? "#57AD85" : "#ACB0B5",
-        }}
-      />
+      <Monitor size={compact ? 20 : 13} color={colors.muted} />
+      {!compact && (
+        <Text style={{ fontSize: 12, color: colors.muted }}>
+          {t("Computer")}
+          {` · ${!available ? t("Offline") : active ? t("Take control") : t("Ready")}`}
+        </Text>
+      )}
+      {!compact && (
+        <View
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: 3,
+            backgroundColor: available ? "#57AD85" : "#ACB0B5",
+          }}
+        />
+      )}
     </Pressable>
   );
 }
@@ -171,129 +175,150 @@ export function ComputerSheet() {
   return (
     <Sheet
       title={t("Agent computer")}
-      subtitle={t("Your agent works here. Step in whenever you need.")}
       onClose={close}
       wide
+      scroll={false}
+      contentStyle={{ padding: 0 }}
     >
-      <View style={{ gap: 20 }}>
-        {tab === "Browser" && (
-          <View
-            style={[s.row, { gap: 12, padding: 18, borderRadius: 20, backgroundColor: colors.sky }]}
-          >
-            <Monitor size={28} color={colors.blueDark} />
-            <View style={{ flex: 1 }}>
-              <Text style={s.heading}>
-                {available ? t("Browser connected") : t("Browser offline")}
-              </Text>
-              <Text style={s.muted}>
-                {available
-                  ? t("Your agent’s browser and documents, in one place.")
-                  : t("Start the browser worker to connect this computer.")}
-              </Text>
-            </View>
-          </View>
-        )}
-        <View style={[s.row, { gap: 8 }]}>
-          {(["Desktop", "Browser", "Terminal", "Files"] as const).map((item) => (
-            <Button
-              key={item}
-              primary={tab === item}
-              icon={
-                item === "Desktop"
-                  ? Monitor
-                  : item === "Browser"
-                    ? Globe2
-                    : item === "Terminal"
-                      ? Terminal
-                      : FolderOpen
-              }
-              onPress={() => setTab(item)}
-            >
-              {t(item)}
-            </Button>
-          ))}
-        </View>
-        <View style={{ display: tab === "Browser" || tab === "Desktop" ? "none" : "flex" }}>
-          <LinuxWorkspace tab={tab === "Files" ? "Files" : "Terminal"} />
-        </View>
-        <ErrorNotice error={t(error)} />
-        {tab === "Desktop" && <DesktopViewer />}
-        {tab === "Browser" ? (
-          <>
-            <View>
-              <Field
-                label={t("Website address")}
-                value={url}
-                onChangeText={setUrl}
-                placeholder="https://example.com"
-                autoCapitalize="none"
-                keyboardType="url"
-                onSubmitEditing={() => void create()}
-              />
-              <Button
-                primary
-                icon={Plus}
-                busy={busy}
-                disabled={!available || !url.trim()}
-                onPress={() => void create()}
+      <View style={{ paddingHorizontal: 20, paddingTop: 14, paddingBottom: 10 }}>
+        <View style={[s.row, { gap: 3, padding: 4, borderRadius: 24, backgroundColor: "#EFEFF1" }]}>
+          {(["Desktop", "Browser", "Terminal", "Files"] as const).map((item) => {
+            const Icon =
+              item === "Desktop"
+                ? Monitor
+                : item === "Browser"
+                  ? Globe2
+                  : item === "Terminal"
+                    ? Terminal
+                    : FolderOpen;
+            return (
+              <Pressable
+                key={item}
+                accessibilityRole="tab"
+                accessibilityLabel={t(item)}
+                accessibilityState={{ selected: tab === item }}
+                aria-selected={tab === item}
+                onPress={() => setTab(item)}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  height: 36,
+                  paddingHorizontal: 6,
+                  flexDirection: "row",
+                  gap: 5,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: 19,
+                  backgroundColor: tab === item ? "#FFFFFF" : "transparent",
+                }}
               >
-                {t("Open a browser session")}
-              </Button>
-            </View>
-            {[...workspace.browsers]
-              .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-              .map((browser) => (
-                <BrowserThreadCard key={browser.id} browser={browser} />
-              ))}
-            {!workspace.browsers.length && (
-              <Text style={s.muted}>
+                <Icon
+                  size={15}
+                  color={tab === item ? colors.text : colors.muted}
+                  strokeWidth={1.7}
+                />
+                <Text
+                  numberOfLines={1}
+                  style={{ color: tab === item ? colors.text : colors.muted, fontSize: 12 }}
+                >
+                  {t(item)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+      <ScrollView
+        style={{ flex: 1, minHeight: 0 }}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ padding: 20, paddingTop: 8 }}
+      >
+        <View style={{ gap: 18 }}>
+          {tab === "Browser" && (
+            <Text style={s.small}>{available ? t("Browser connected") : t("Browser offline")}</Text>
+          )}
+          <View style={{ display: tab === "Browser" || tab === "Desktop" ? "none" : "flex" }}>
+            <LinuxWorkspace tab={tab === "Files" ? "Files" : "Terminal"} />
+          </View>
+          <ErrorNotice error={t(error)} />
+          {tab === "Desktop" && <DesktopViewer />}
+          {tab === "Browser" ? (
+            <>
+              <View>
+                <Field
+                  label={t("Website address")}
+                  value={url}
+                  onChangeText={setUrl}
+                  placeholder="https://example.com"
+                  autoCapitalize="none"
+                  keyboardType="url"
+                  onSubmitEditing={() => void create()}
+                />
+                <Button
+                  primary
+                  icon={Plus}
+                  busy={busy}
+                  disabled={!available || !url.trim()}
+                  onPress={() => void create()}
+                >
+                  {t("Open a browser session")}
+                </Button>
+              </View>
+              {[...workspace.browsers]
+                .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+                .map((browser) => (
+                  <BrowserThreadCard key={browser.id} browser={browser} />
+                ))}
+              {!workspace.browsers.length && (
+                <Text style={s.muted}>
+                  {t(
+                    "Open a page here or ask your agent to research something. Its browsing sessions will appear here.",
+                  )}
+                </Text>
+              )}
+              <Text style={s.small}>
                 {t(
-                  "Open a page here or ask your agent to research something. Its browsing sessions will appear here.",
+                  "Browsing sessions keep their own logins and downloads. Open one to take over, then return to your conversation.",
                 )}
               </Text>
-            )}
-            <Text style={s.small}>
-              {t(
-                "Browsing sessions keep their own logins and downloads. Open one to take over, then return to your conversation.",
-              )}
-            </Text>
-          </>
-        ) : tab === "Files" ? (
-          <>
-            <Text style={s.heading}>{t("Documents")}</Text>
-            <Text style={s.small}>{t("Files saved from your agent, mail and uploads.")}</Text>
-            {workspace.files.map((file) => (
-              <LinkRow
-                key={file.id}
-                icon={FileText}
-                title={file.name}
-                detail={attachmentLabel(file)}
-                onPress={() => open({ type: "file", file })}
-              />
-            ))}
-            <Button
-              icon={Plus}
-              onPress={() => {
-                close();
-                navigate("files");
-              }}
-            >
-              {t("Import a document")}
-            </Button>
-          </>
-        ) : null}
-        <Button
-          small
-          icon={RefreshCw}
-          onPress={() =>
-            void refresh()
-              .then(() => setError(""))
-              .catch((e) => setError(String(e)))
-          }
-        >
-          {t("Refresh computer")}
-        </Button>
-      </View>
+            </>
+          ) : tab === "Files" ? (
+            <>
+              <Text style={s.heading}>{t("Documents")}</Text>
+              <Text style={s.small}>{t("Files saved from your agent, mail and uploads.")}</Text>
+              {workspace.files.map((file) => (
+                <LinkRow
+                  key={file.id}
+                  icon={FileText}
+                  title={file.name}
+                  detail={attachmentLabel(file)}
+                  onPress={() => open({ type: "file", file })}
+                />
+              ))}
+              <Button
+                icon={Plus}
+                onPress={() => {
+                  close();
+                  navigate("files");
+                }}
+              >
+                {t("Import a document")}
+              </Button>
+            </>
+          ) : null}
+          <Button
+            small
+            icon={RefreshCw}
+            onPress={() =>
+              void refresh()
+                .then(() => setError(""))
+                .catch((e) => setError(String(e)))
+            }
+          >
+            {t("Refresh computer")}
+          </Button>
+        </View>
+      </ScrollView>
     </Sheet>
   );
 }

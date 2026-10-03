@@ -8,8 +8,9 @@ export interface PdfReaderProps {
   url: string;
   token: string;
   pageCount: number;
+  height?: number;
 }
-export default function PdfReader({ url, token, pageCount }: PdfReaderProps) {
+export default function PdfReader({ url, token, pageCount, height = 530 }: PdfReaderProps) {
   const { t } = useI18n();
   const ref = useRef<React.ComponentRef<typeof Pdf>>(null);
   const [page, setPage] = useState(1);
@@ -68,7 +69,7 @@ export default function PdfReader({ url, token, pageCount }: PdfReaderProps) {
         onLoadComplete={(n) => setPages(n)}
         onPageChanged={(p) => setPage(p)}
         onError={(e) => setError(String(e))}
-        style={{ height: 530, width: "100%", backgroundColor: colors.line, borderRadius: 12 }}
+        style={{ height, width: "100%", backgroundColor: colors.line, borderRadius: 12 }}
       />
     </View>
   );
