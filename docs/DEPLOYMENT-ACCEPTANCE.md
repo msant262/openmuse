@@ -1,6 +1,43 @@
 # OkamiBot: instalação e aceite em 3 de outubro de 2026
 
-**Revisão atual publicada: API `973d120`; web e Android `0df26c4`.** O usuário rejeitou
+**Revisão atual publicada: API, web e Android `249443b`.** A área de Conexões
+consulta o catálogo Composio com busca, categorias e paginação. O mesmo fluxo
+oferece autorização oficial, contas conectadas, reconexão e desconexão. O agente
+descobre schemas sob demanda e executa operações individuais com bindings por
+tarefa, journal e revisão nativa para ações financeiras.
+[Contrato e critérios](superpowers/specs/2026-10-03-composio-connections.md).
+
+Passaram **1.092 testes**, TypeScript do servidor/mobile e Biome sem erros
+(230 avisos e quatro informações). Os testes incluem pausa/retomada da tarefa,
+reutilização, isolamento de proprietários, expiração com recuperação,
+cancelamento após falha, troca de chave, reconexão durante revisão e bloqueio de
+repetição de escrita com resultado incerto. Recibos incompletos não confirmam
+sucesso. Uma falha de revogação remota bloqueia a conta localmente e permite
+repetir a desconexão.
+
+O ensaio de interface usou a API real do app com **transporte Composio simulado**:
+ativação privada, busca de serviço não embutido, paginação, modal desktop/móvel,
+confirmação no servidor e desconexão passaram. **Não houve autorização OAuth
+real de uma conta Composio**: esta instalação ainda precisa da chave de projeto,
+inserida pelo titular no campo privado de ativação do catálogo. Nenhuma conexão
+ou chave sintética foi criada na produção.
+
+A API pública confirmou os novos endpoints e preservou ChatGPT/Codex, GUMC e o
+avatar selecionado. O computador voltou disponível após reiniciar apenas seu
+supervisor, devido ao defeito de reconexão já conhecido. A publicação preservou
+os dois recursos de controle humano retidos e encerrou o modo de manutenção.
+O bundle web público foi comparado ao build local: SHA-256
+`8c7d6c6fe63fee5e58ce980652207015bb69a552a767fc34ab0b8887fc2b1d2c`.
+O APK ARM64 público tem 58.963.289 bytes e SHA-256
+`a24f015797a158f9ad8953f272fdc1a43ba011eb76c76ca0321f36aaa54439ca`.
+Os dois APKs usam a assinatura privada existente e o commit limpo. O upgrade
+x86 no emulador preservou pareamento, identidade GUMC e rascunho local.
+Não houve teste em aparelho físico. Evidências: `artifacts/composio/verification/`
+e `artifacts/android/composio-release/`.
+
+## Histórico: credenciais genéricas (`973d120` / `0df26c4`)
+
+**Revisão anterior: API `973d120`; web e Android `0df26c4`.** O usuário rejeitou
 explicitamente a solução limitada ao Tavily. Esta revisão implementa pedidos de
 credenciais em runtime: o agente informa destino e campos, um modal global abre,
 os valores vão ao cofre e a mesma tarefa continua. Serviços novos não precisam

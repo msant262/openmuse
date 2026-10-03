@@ -79,14 +79,14 @@ janela anônima se quiser manter o acesso; apagar cookies exige novo pareamento.
 Se abriu a versão anterior, use **Ctrl+Shift+R**. O endereço `/api/health` é apenas
 diagnóstico, não a interface.
 
-**Android:** baixe o [APK ARM64 assinado](https://app.okamibot.cloud/downloads/okamibot.apk?v=0df26c4)
+**Android:** baixe o [APK ARM64 assinado](https://app.okamibot.cloud/downloads/okamibot.apk?v=249443b)
 no telefone e instale. Ele usa o mesmo domínio público e não exige Tailscale.
 Se já tiver o app, instale como atualização para preservar os dados. Caso o
 Android recuse por assinatura diferente, não desinstale nem apague os dados para
 contornar a recusa. Use a mesma chave na primeira entrada.
 
-O APK tem 58.926.425 bytes e SHA256
-`c56278eda5b318686739c999918b9f655f44a54099bc78b921a2ea6ad62f0fff`.
+O APK tem 58.963.289 bytes e SHA256
+`a24f015797a158f9ad8953f272fdc1a43ba011eb76c76ca0321f36aaa54439ca`.
 O parâmetro da versão no link evita que o cache entregue o APK anterior.
 Gmail/Calendar e push ainda precisam da configuração das contas correspondentes;
 não são necessários para abrir o chat.
@@ -114,8 +114,8 @@ Rotas da instalação atual (comandos na VPS):
 ```bash
 sudo tailscale serve --bg --yes --set-path=/api http://100.113.59.40:8787/api
 sudo tailscale serve --bg --yes --set-path=/executor http://100.113.59.40:8787/executor
-sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/0df26c4-public
-sudo tailscale serve --bg --yes --set-path=/downloads/okamibot.apk /opt/okami-web/downloads/okamibot-0df26c4-arm64-v8a.apk
+sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/249443b-public
+sudo tailscale serve --bg --yes --set-path=/downloads/okamibot.apk /opt/okami-web/downloads/okamibot-249443b-arm64-v8a.apk
 ```
 
 Mantenha os sufixos `/api` e `/executor` nos destinos: o Serve remove o prefixo
