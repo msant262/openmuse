@@ -4,11 +4,18 @@ import type {
   CredentialInteractionRequest,
   InteractionRequest,
 } from "../../../../packages/domain/src/runtime.ts";
+import type { ComposioService } from "../composio/service.ts";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import type { IntegrationService } from "../integrations.ts";
 import type { CredentialBroker } from "./broker.ts";
 import type { GenericCredentials } from "./generic.ts";
+
+const pending = (item: InteractionRequest) =>
+  ["waiting", "saving", "connecting", "outcome_unknown", "needs_challenge"].includes(item.status) ||
+  (item.kind === "credential" &&
+    item.schema.credentialKind === "composio" &&
+    ["error", "expired"].includes(item.status));
 
 /** One owner-scoped queue drives one modal, independently of mounted chat panes. */
 export function credentialPromptRoutes(
@@ -16,6 +23,7 @@ export function credentialPromptRoutes(
   browser: CredentialBroker,
   api: GenericCredentials,
   legacy: IntegrationService,
+  composio?: Pick<ComposioService, "statusInteraction">,
 ) {
   const routes = new Hono<{ Variables: { owner: string } }>();
   routes.get("/credential-prompts", async (c) => {
@@ -23,11 +31,7 @@ export function credentialPromptRoutes(
     const requests: CredentialInteractionRequest[] = [];
     const candidates = (await db.list<InteractionRequest>(owner, "interaction-requests"))
       .filter(
-        (item): item is CredentialInteractionRequest =>
-          item.kind === "credential" &&
-          ["waiting", "saving", "connecting", "outcome_unknown", "needs_challenge"].includes(
-            item.status,
-          ),
+        (item): item is CredentialInteractionRequest => item.kind === "credential" && pending(item),
       )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     for (const item of candidates) {
@@ -35,7 +39,10 @@ export function credentialPromptRoutes(
         const thread = await db.get<{ deletedAt?: string }>(owner, "threads", item.threadId);
         if (!thread || thread.deletedAt) continue;
       }
-      if (!item.schema.integrationId) {
+      if (
+        !item.schema.integrationId &&
+        !(item.schema.credentialKind === "composio" && item.taskId.startsWith("composio-settings:"))
+      ) {
         const task = await db.get<AgentTask>(owner, "tasks", item.taskId);
         if (
           !task ||
@@ -44,25 +51,23 @@ export function credentialPromptRoutes(
         )
           continue;
         if (
-          item.status === "waiting" &&
+          (item.status === "waiting" || item.schema.credentialKind === "composio") &&
           (task.status !== "waiting_input" || task.attempts !== item.revision)
         )
           continue;
         if (item.status === "needs_challenge" && task.status !== "waiting_input") continue;
       }
       try {
+        if (item.schema.credentialKind === "composio" && !composio) continue;
         const current =
-          item.schema.credentialKind === "api"
-            ? await api.status(owner, item.id)
-            : item.schema.integrationId
-              ? await legacy.status(owner, item.id)
-              : await browser.status(owner, item.id);
-        if (
-          ["waiting", "saving", "connecting", "outcome_unknown", "needs_challenge"].includes(
-            current.status,
-          )
-        )
-          requests.push(current as CredentialInteractionRequest);
+          item.schema.credentialKind === "composio"
+            ? await composio!.statusInteraction(owner, item.id)
+            : item.schema.credentialKind === "api"
+              ? await api.status(owner, item.id)
+              : item.schema.integrationId
+                ? await legacy.status(owner, item.id)
+                : await browser.status(owner, item.id);
+        if (pending(current)) requests.push(current as CredentialInteractionRequest);
       } catch (error) {
         // A concurrently removed chat/request must not hide the other forms.
         if (!(error instanceof AppError) || ![404, 410].includes(error.status)) throw error;

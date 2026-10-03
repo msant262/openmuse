@@ -102,3 +102,23 @@ test("one dynamic form routes new services and preserves browser and legacy comp
     "/api/integrations/tavily/requests/new-service",
   );
 });
+
+test("catalog authorization shares the modal queue and retains terminal recovery", () => {
+  const one = request("catalog-request");
+  one.schema = {
+    ...one.schema,
+    credentialKind: "composio",
+    composio: { flowId: "flow", toolkitSlug: "new-provider" },
+    fields: [],
+  };
+  assert.equal(credentialRequestPath(one), "/api/composio/requests/catalog-request");
+  assert.equal(nextCredentialPrompt([request("other"), one], new Set(), one.id)?.id, one.id);
+  assert.equal(
+    nextCredentialPrompt([{ ...one, status: "expired" }], new Set(), one.id)?.status,
+    "expired",
+  );
+  assert.equal(nextCredentialPrompt([{ ...one, status: "error" }], new Set())?.id, one.id);
+  const dismissed = new Set([credentialPromptKey(one)]);
+  assert.equal(nextCredentialPrompt([{ ...one, status: "expired" }], dismissed), undefined);
+  assert.equal(pendingCredentialPrompts([{ ...one, status: "expired" }]).length, 1);
+});

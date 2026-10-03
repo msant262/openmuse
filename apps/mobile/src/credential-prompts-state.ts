@@ -11,6 +11,7 @@ export function credentialStatusSummary(value: string) {
 
 export function credentialRequestPath(request: CredentialInteractionRequest) {
   const id = encodeURIComponent(request.id);
+  if (request.schema.credentialKind === "composio") return `/api/composio/requests/${id}`;
   if (request.schema.credentialKind === "api") return `/api/service-credentials/requests/${id}`;
   if (request.schema.integrationId)
     return `/api/integrations/${encodeURIComponent(request.schema.integrationId)}/requests/${id}`;
@@ -18,7 +19,11 @@ export function credentialRequestPath(request: CredentialInteractionRequest) {
 }
 
 export function credentialNeedsInput(request: CredentialInteractionRequest) {
-  return request.status === "waiting" || request.status === "needs_challenge";
+  return (
+    request.status === "waiting" ||
+    request.status === "needs_challenge" ||
+    (request.schema.credentialKind === "composio" && ["expired", "error"].includes(request.status))
+  );
 }
 
 /** A repeated poll never becomes a new prompt; an OTP challenge does. */
@@ -57,9 +62,10 @@ export function nextCredentialPrompt(
   const active = latest.find(
     (request) =>
       request.id === activeId &&
-      ["waiting", "needs_challenge", "saving", "connecting", "outcome_unknown"].includes(
-        request.status,
-      ),
+      (request.schema.credentialKind === "composio" ||
+        ["waiting", "needs_challenge", "saving", "connecting", "outcome_unknown"].includes(
+          request.status,
+        )),
   );
   return active ?? pending.find((request) => !dismissed.has(credentialPromptKey(request)));
 }

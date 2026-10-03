@@ -30,6 +30,8 @@ import { AgentProfile } from "../agent-profile.ts";
 import { reconcileComputerAudit } from "../audited-computer.ts";
 import { AvatarService } from "../avatars.ts";
 import type { BrowserService } from "../browser.ts";
+import type { ComposioService } from "../composio/service.ts";
+import { ComposioHarness } from "../composio-tools.ts";
 import { ComputerService } from "../computer.ts";
 import type { ComputerBackend } from "../computer-contract.ts";
 import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
@@ -94,6 +96,10 @@ export class AgentService {
   readonly web = new PublicWeb();
   integrations?: IntegrationService;
   genericCredentials?: GenericCredentials;
+  composio?: ComposioHarness;
+  configureComposio(service: ComposioService) {
+    this.composio = new ComposioHarness(this.db, service, this.actions);
+  }
   configureGenericCredentials(credentials: GenericCredentials) {
     this.genericCredentials = credentials;
     this.actions.registerExternal(
@@ -351,6 +357,7 @@ export class AgentService {
     }, 60000);
   }
   async stop() {
+    this.composio?.close();
     if (this.maintenance) clearInterval(this.maintenance);
     if (this.routineTimer) clearInterval(this.routineTimer);
     this.routineTimer = undefined;
@@ -1517,6 +1524,32 @@ export class AgentService {
           actionId: null,
         });
       } else if (action.status !== "awaiting_review" && action.status !== "executing") {
+        if (
+          action.status === "failed" &&
+          action.data.tool === "composio.execute" &&
+          this.composio
+        ) {
+          const reconnect = await this.composio.reconnection(owner, action.id, task.id);
+          if (reconnect) {
+            const interaction = await this.composio.backend.request(owner, reconnect, {
+              taskId: task.id,
+              revision: task.attempts,
+            });
+            task = await context.checkpoint({
+              actionId: null,
+              state: {
+                ...task.state,
+                interactionRequestId: interaction.id,
+                composioRequestId: interaction.id,
+              },
+            });
+            return {
+              status: "waiting_input",
+              question: `Connect ${interaction.schema.serviceName} to continue.`,
+              state: task.state,
+            };
+          }
+        }
         if (
           action.status === "failed" &&
           action.kind === "external.action" &&

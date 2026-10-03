@@ -16,6 +16,8 @@ import { ApiQuotas, apiQuotaClass } from "./api-quotas.ts";
 import { auditedComputer, currentComputerResourceScope } from "./audited-computer.ts";
 import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
+import { composioRoutes } from "./composio/routes.ts";
+import { ComposioService } from "./composio/service.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
 import { RpcComputerService } from "./computer-rpc.ts";
@@ -82,6 +84,7 @@ export async function createApp(
     docker?: DockerRunner;
     credentialSecretStore?: SecretStore;
     credentialAdapters?: CredentialAdapter[];
+    composioFetch?: typeof fetch;
     apiQuotas?: ApiQuotas;
     nativeAuthority?: ExecutorAuthority;
     nativeContext?: (
@@ -256,6 +259,14 @@ export async function createApp(
   });
   agent.configureGenericCredentials(genericCredentials);
   integrations.configureGenericCredentials(genericCredentials);
+  const composio = new ComposioService(db, credentialSecretStore, {
+    available: Boolean(
+      options.credentialSecretStore ||
+        (config.credentialsOpenBaoAddress && config.credentialsOpenBaoToken),
+    ),
+    fetch: options.composioFetch,
+  });
+  agent.configureComposio(composio);
   const codexConnection = new CodexConnection(
     config.modelProviders ?? modelProviderConfig(config.dataDir),
   );
@@ -718,7 +729,11 @@ export async function createApp(
   app.route("/api", credentialRoutes(credentials, credentialLogin));
   app.route("/api", integrationRoutes(integrations));
   app.route("/api", genericCredentialRoutes(genericCredentials));
-  app.route("/api", credentialPromptRoutes(db, credentials, genericCredentials, integrations));
+  app.route("/api", composioRoutes(composio));
+  app.route(
+    "/api",
+    credentialPromptRoutes(db, credentials, genericCredentials, integrations, composio),
+  );
   app.route("/api", modelPreferenceRoutes(db, config));
   app.route("/api", codexConnectionRoutes(codexConnection));
   app.route("/api/desktop", desktopRoutes(desktop, desktopViewers, auth, browser));
@@ -1099,6 +1114,7 @@ export async function createApp(
     credentialLogin,
     integrations,
     genericCredentials,
+    composio,
     codexConnection,
   };
 }

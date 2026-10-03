@@ -18,7 +18,6 @@ import { useAgentWorkspace } from "./agent-workspace";
 import { AvatarStudio } from "./avatar-studio";
 import { AppLanguagePicker, AssistantChatPreferences } from "./desktop-shell";
 import { useI18n } from "./i18n";
-import { IntegrationSettings } from "./integration-settings";
 import { MemorySettings } from "./memory-settings";
 import { ModelSettings } from "./model-settings";
 import { NativePushSettings } from "./native-push-settings";
@@ -196,12 +195,7 @@ export function SettingsDialog({
                 </>
               )}
               {section === "models" && <ModelSettings />}
-              {section === "connectors" && (
-                <>
-                  <IntegrationSettings />
-                  <ConnectionsScreen />
-                </>
-              )}
+              {section === "connectors" && <ConnectionsScreen />}
               {section === "personality" && <ProfileSettings />}
               {section === "memory" && <MemorySettings />}
               {section === "notifications" && (

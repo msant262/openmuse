@@ -197,7 +197,15 @@ export const questionAnswerSchema = z.record(
 export type QuestionAnswer = z.infer<typeof questionAnswerSchema>;
 export type CredentialFormSchema = {
   /** Generic vault-backed fields requested at runtime, independent of a provider catalog. */
-  credentialKind?: "api";
+  credentialKind?: "api" | "composio";
+  /** Server-created authorization attempt; never a URL supplied by the model. */
+  composio?: {
+    flowId: string;
+    toolkitSlug: string;
+    authorizationUrl?: string;
+    expiresAt?: string;
+    setupRequired?: boolean;
+  };
   /** API integrations use the vault directly, without a browser login task. */
   integrationId?: "tavily";
   title: string;

@@ -15,7 +15,7 @@ type SavedConnection = {
   updatedAt?: string;
 };
 
-export function IntegrationSettings() {
+export function IntegrationSettings({ query = "" }: { query?: string }) {
   const { api, ask } = useWorkspace();
   const { t } = useI18n();
   const [items, setItems] = useState<SavedConnection[]>();
@@ -67,13 +67,19 @@ export function IntegrationSettings() {
       setBusy(undefined);
     }
   }
+  const matching = items?.filter((item) =>
+    `${item.serviceName} ${item.origin}`.toLowerCase().includes(query.toLowerCase()),
+  );
+  const showCodex =
+    !query || "chatgpt codex openai assinatura subscription".includes(query.toLowerCase());
+  if (items && !matching?.length && !showCodex) return null;
   return (
     <View style={{ gap: 14 }}>
       <View style={[s.row, { gap: 9 }]}>
         <KeyRound size={19} color={colors.muted} />
         <Text style={s.heading}>{t("Connected services")}</Text>
       </View>
-      <CodexConnection />
+      {showCodex && <CodexConnection />}
       <Text style={s.muted}>
         {t(
           "When your agent needs a credential, a secure form opens automatically. Saved connections appear here.",
@@ -81,7 +87,7 @@ export function IntegrationSettings() {
       </Text>
       {!items && !error && <ActivityIndicator color={colors.muted} />}
       {items?.length === 0 && <Text style={s.small}>{t("No saved service credentials yet.")}</Text>}
-      {items?.map((item) => (
+      {matching?.map((item) => (
         <View
           key={`${item.kind}:${item.id}`}
           style={{ padding: 16, gap: 12, borderRadius: 18, backgroundColor: "#F3F3F4" }}

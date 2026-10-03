@@ -39,9 +39,9 @@ import type {
 } from "../../../packages/domain/src";
 import { ActionLogScreen } from "./action-log-screen";
 import { API_URL } from "./api";
+import { ConnectionsCatalog } from "./connections-catalog";
 import { localDateTime, zonedInstant } from "./date-time";
 import { useI18n } from "./i18n";
-import { McpConnections } from "./mcp-connections";
 import { MuseLibrary } from "./muse-library";
 import { useInlinePreview } from "./preview";
 import {
@@ -1155,11 +1155,18 @@ export function ActivityScreen() {
     </View>
   );
 }
-export function ConnectionsScreen({ query: externalQuery }: { query?: string }) {
+export function ConnectionsScreen({ query }: { query?: string }) {
+  return (
+    <ConnectionsCatalog
+      query={query}
+      nativeConnections={(search) => <NativeConnections query={search} />}
+    />
+  );
+}
+
+function NativeConnections({ query }: { query: string }) {
   const { t } = useI18n();
   const { workspace: w, api, refresh, notify, open } = useWorkspace();
-  const [search, setSearch] = useState("");
-  const query = externalQuery ?? search;
   const [selected, setSelected] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1217,44 +1224,11 @@ export function ConnectionsScreen({ query: externalQuery }: { query?: string }) 
       connected: w.connections.some((c) => c.id === "browser" && c.status === "connected"),
       group: "browser",
     },
-    {
-      id: "openbot",
-      name: "OpenBot",
-      icon: Sparkles,
-      color: "#6866A6",
-      connected: false,
-      group: "openbot",
-    },
   ].filter((row) =>
     `${row.name} ${t(row.name)} ${row.group}`.toLowerCase().includes(query.toLowerCase()),
   );
   return (
     <View style={{ gap: 24 }}>
-      {externalQuery === undefined && (
-        <View
-          style={[
-            s.row,
-            {
-              height: 42,
-              borderRadius: 24,
-              paddingHorizontal: 14,
-              gap: 10,
-              backgroundColor: "#F0F0F1",
-            },
-          ]}
-        >
-          <Search size={16} color={colors.muted} />
-          <TextInput
-            accessibilityLabel={t("Search connectors")}
-            placeholder={t("Search connectors")}
-            placeholderTextColor={colors.muted}
-            value={search}
-            onChangeText={setSearch}
-            style={{ flex: 1, minWidth: 0, fontSize: 13, color: colors.text, paddingVertical: 10 }}
-          />
-        </View>
-      )}
-      <McpConnections query={query} />
       {[true, false].map((isConnected) => {
         const group = rows.filter((row) => row.connected === isConnected);
         if (!group.length) return null;
@@ -1320,118 +1294,48 @@ export function ConnectionsScreen({ query: externalQuery }: { query?: string }) 
           </View>
         );
       })}
-      {!rows.length && <Text style={s.muted}>{t("No matching connectors.")}</Text>}
       {selected && (
         <Sheet
-          title={selected === "google" ? t("Google connections") : t("OpenBot")}
-          subtitle={selected === "google" ? google?.account : t("A computer for your agent")}
+          title={t("Google connections")}
+          subtitle={google?.account}
           onClose={() => setSelected(undefined)}
         >
-          {selected === "google" ? (
-            <View style={{ gap: 18 }}>
-              <Text style={s.muted}>
-                {t(
-                  "Bring Gmail and Google Calendar into your conversations. Choose read access, then enable sending and editing when you need it.",
-                )}
-              </Text>
-              <View style={[s.row, { gap: 7, flexWrap: "wrap" }]}>
-                {google?.capabilities.map((cap) => (
-                  <Chip key={cap}>{t(capabilityLabel(cap))}</Chip>
-                ))}
-              </View>
-              <ErrorNotice error={error} />
-              <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
-                {t("Connect Google")}
-              </Button>
-              <Button busy={busy} onPress={() => void connect("write")}>
-                {t("Enable sending & editing")}
-              </Button>
-              {connected && (
-                <Button busy={busy} danger onPress={() => void disconnect()}>
-                  {t("Disconnect Google")}
-                </Button>
+          <View style={{ gap: 18 }}>
+            <Text style={s.muted}>
+              {t(
+                "Bring Gmail and Google Calendar into your conversations. Choose read access, then enable sending and editing when you need it.",
               )}
-              <SettingsLine
-                label={t("Environment")}
-                value={w.mode === "sample" ? t("Local · example data") : t("Live workspace")}
-              />
-              <SettingsLine
-                label={t("Assistant")}
-                value={
-                  w.runtime.provider === "sample"
-                    ? t("Guided workflows")
-                    : w.runtime.configured
-                      ? t("Model connected")
-                      : t("Model not configured")
-                }
-              />
-              <SettingsLine
-                label={t("Rich Threads")}
-                value={
-                  w.runtime.threadStorage === "intelligence"
-                    ? "CopilotKit Intelligence"
-                    : w.runtime.richThreads
-                      ? t("Saved on your server")
-                      : t("Not connected")
-                }
-              />
-              {w.runtime.modelRouting?.active && (
-                <SettingsLine
-                  label={t("Active provider")}
-                  value={`${w.runtime.modelRouting.active.provider} · ${w.runtime.modelRouting.active.model}${w.runtime.modelRouting.active.fallback ? ` · ${t("fallback")}` : ""}`}
-                />
-              )}
-              {w.runtime.modelRouting?.models
-                .filter((model) => model.failures > 0 && model.message)
-                .map((model) => (
-                  <Text key={model.model} style={s.small}>
-                    {t("Last notice · {model}: {message}", {
-                      model: model.model,
-                      message: model.message ?? "",
-                    })}
-                  </Text>
-                ))}
-              <Button
-                small
-                icon={ArrowDownToLine}
-                onPress={() => void refresh().catch((e) => setError(String(e)))}
-              >
-                {t("Refresh connections")}
+            </Text>
+            <View style={[s.row, { gap: 7, flexWrap: "wrap" }]}>
+              {google?.capabilities.map((cap) => (
+                <Chip key={cap}>{t(capabilityLabel(cap))}</Chip>
+              ))}
+            </View>
+            <ErrorNotice error={error} />
+            <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
+              {t("Connect Google")}
+            </Button>
+            <Button busy={busy} onPress={() => void connect("write")}>
+              {t("Enable sending & editing")}
+            </Button>
+            {connected && (
+              <Button busy={busy} danger onPress={() => void disconnect()}>
+                {t("Disconnect Google")}
               </Button>
-            </View>
-          ) : (
-            <View style={{ gap: 14 }}>
-              <Text style={s.text}>
-                {t(
-                  "The OpenBot adapter is available in this open-source project. A live OpenBot backend has not been configured.",
-                )}
-              </Text>
-              <Text style={s.muted}>
-                {t(
-                  "Your current computer uses OkamiBot’s persistent Chromium worker. OpenBot integration will expand the execution backend while keeping this interface.",
-                )}
-              </Text>
-            </View>
-          )}
+            )}
+            <Button
+              small
+              icon={ArrowDownToLine}
+              onPress={() => void refresh().catch((e) => setError(String(e)))}
+            >
+              {t("Refresh connections")}
+            </Button>
+          </View>
         </Sheet>
       )}
     </View>
   );
 }
-function SettingsLine({ label, value }: { label: string; value: string }) {
-  return (
-    <View
-      style={[
-        s.between,
-        { gap: 15, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.line },
-      ]}
-    >
-      <Text style={s.muted}>{label}</Text>
-      <Text style={[s.text, { fontSize: 12, flexShrink: 1, textAlign: "right" }]}>{value}</Text>
-    </View>
-  );
-}
-
 function capabilityLabel(value: string) {
   const scope = value.split("/").at(-1) || value;
   const names: Record<string, string> = {

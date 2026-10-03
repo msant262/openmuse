@@ -52,6 +52,18 @@ encerra o pedido dependente. As conexões salvas aparecem em **Configurações �
 Conexões**, onde podem ser atualizadas ou removidas. OAuth, como a conexão ChatGPT,
 continua usando a autorização oficial do provedor.
 
+**Catálogo de apps:** em **Apps e conexões** ou **Configurações → Conexões**, use
+**Explorar apps** para buscar os serviços do Composio, filtrar por categoria e
+carregar mais resultados. A primeira ativação exige uma chave de projeto do
+[Composio](https://dashboard.composio.dev), inserida no campo privado do app.
+Essa chave é guardada no cofre; não a envie no chat. Depois, escolha um serviço
+e autorize sua conta na janela oficial. **Suas conexões** reúne as contas e os
+controles para reconectar ou desconectar, junto das conexões já existentes.
+Quando o agente precisar de uma conta, o modal abre na tarefa correspondente;
+confirmar a autorização retoma essa mesma tarefa. Links expirados podem ser
+reiniciados pelo modal. A integração depende do serviço hospedado Composio;
+a geração de imagens pela assinatura ChatGPT continua com sua conexão própria.
+
 O menu de cada conversa permite renomear, arquivar, restaurar e excluir.
 **Arquivadas** mostra as conversas guardadas. Excluir remove a transcrição;
 arquivos, tarefas e memórias salvos têm seu próprio ciclo de vida. Tarefas ativas

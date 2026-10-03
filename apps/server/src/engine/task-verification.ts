@@ -335,7 +335,11 @@ function actionMatches(
   action: ActionProposal,
   binding?: McpBinding,
 ) {
-  if (action.kind === "external.action" && action.data.tool === "mcp.call" && !binding)
+  if (
+    action.kind === "external.action" &&
+    ["mcp.call", "composio.execute"].includes(String(action.data.tool)) &&
+    !binding
+  )
     return false;
   const args = binding?.args ?? action.data;
   if (!useful(action.result) || !required(criterion, { args, result: action.result })) return false;
@@ -423,6 +427,53 @@ export class TaskVerification {
     private readonly journal: TaskJournal,
   ) {}
   private async mcpBinding(owner: string, action: ActionProposal): Promise<McpBinding | undefined> {
+    if (action.kind === "external.action" && action.data.tool === "composio.execute") {
+      const saved = await this.db.get<{
+        hash: string;
+        tool: string;
+        binding: {
+          taskId: string;
+          tool: string;
+          args: Record<string, unknown>;
+          signature: string;
+          discoveryId: string;
+        };
+      }>(owner, "external-action-bindings", action.id);
+      const receipt = await this.db.get<{
+        status: string;
+        actionHash: string;
+        bindingHash: string;
+        tool: string;
+        result: unknown;
+      }>(owner, "composio-receipts", action.id);
+      if (
+        saved?.tool !== "composio.execute" ||
+        saved.hash !== action.hash ||
+        saved.binding?.taskId !== action.taskId ||
+        !receipt ||
+        receipt.status !== "succeeded" ||
+        receipt.actionHash !== action.hash ||
+        receipt.tool !== saved.binding.tool ||
+        receipt.bindingHash !== bindingHash(saved.binding)
+      )
+        return undefined;
+      try {
+        if (
+          !action.result ||
+          bindingHash(receipt.result) !== bindingHash(JSON.parse(action.result))
+        )
+          return undefined;
+      } catch {
+        return undefined;
+      }
+      return {
+        serverId: "composio",
+        tool: saved.binding.tool,
+        args: saved.binding.args,
+        signature: saved.binding.signature,
+        fingerprint: saved.binding.discoveryId,
+      };
+    }
     if (action.kind !== "external.action" || action.data.tool !== "mcp.call") return undefined;
     const saved = await this.db.get<{ hash: string; tool: string; binding: McpBinding }>(
       owner,
@@ -615,11 +666,16 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(web_fetch$|read_|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
+                    !/^(execute_app_tool$|web_fetch$|read_|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
                       op.toolName,
                     ) ||
                     !useful(op.receipt) ||
                     (op.receipt as { error?: unknown })?.error
+                  )
+                    return false;
+                  if (
+                    op.toolName === "execute_app_tool" &&
+                    (op.receipt as { kind?: string })?.kind !== "composio.read"
                   )
                     return false;
                   if (

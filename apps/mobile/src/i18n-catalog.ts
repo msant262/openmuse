@@ -1,9 +1,11 @@
 import { avatarCharacterPtBR } from "./avatar-character-copy";
 import { avatarPTBR } from "./avatar-copy";
+import { connectionsPtBR } from "./connections-copy";
 import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  ...connectionsPtBR,
   "Secure connection": "Conexão segura",
   "A secure connection is needed to continue.": "É necessária uma conexão segura para continuar.",
   "Close secure connection": "Fechar conexão segura",

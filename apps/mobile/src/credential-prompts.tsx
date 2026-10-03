@@ -12,6 +12,7 @@ import { AppState, Platform, ScrollView, Text, useWindowDimensions, View } from 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { CredentialInteractionRequest } from "../../../packages/domain/src/runtime";
 import { useAgentWorkspace } from "./agent-workspace";
+import { ComposioConnectionContent } from "./composio-connection";
 import {
   credentialNeedsInput,
   credentialPromptKey,
@@ -30,9 +31,13 @@ type CredentialPrompts = {
 };
 const CredentialPromptsContext = createContext<CredentialPrompts | null>(null);
 
+export function useCredentialPrompts() {
+  return useContext(CredentialPromptsContext);
+}
+
 /** One owner-scoped modal for every credential request, regardless of the visible screen. */
 export function CredentialPromptsProvider({ children }: { children: ReactNode }) {
-  const { api, notify } = useWorkspace();
+  const { api, notify, navigate } = useWorkspace();
   const { refresh: refreshAgent } = useAgentWorkspace();
   const { t } = useI18n();
   const { width } = useWindowDimensions();
@@ -47,9 +52,17 @@ export function CredentialPromptsProvider({ children }: { children: ReactNode })
 
   const receive = useCallback((next: CredentialInteractionRequest[]) => {
     setRequests(next);
-    const selected = nextCredentialPrompt(next, dismissed.current, activeId.current);
-    activeId.current = selected?.id;
-    setActive(selected);
+    setActive((previous) => {
+      // Keep the hosted form mounted until it verifies its own terminal response.
+      // The aggregate queue may already omit a finished or expired request.
+      const keep =
+        previous?.schema.credentialKind === "composio" && previous.id === activeId.current;
+      const candidates =
+        keep && !next.some((item) => item.id === previous.id) ? [...next, previous] : next;
+      const selected = nextCredentialPrompt(candidates, dismissed.current, activeId.current);
+      activeId.current = selected?.id;
+      return selected;
+    });
   }, []);
 
   const refresh = useCallback(async () => {
@@ -111,17 +124,26 @@ export function CredentialPromptsProvider({ children }: { children: ReactNode })
     setActive(undefined);
   }
 
-  function settled(request: CredentialInteractionRequest) {
-    dismissed.current.add(credentialPromptKey(request));
-    activeId.current = undefined;
-    setActive(undefined);
-    setBusy(false);
-    setRequests((previous) => previous.filter((item) => item.id !== request.id));
-    void refreshAgent().catch(() => {});
-    void refresh().catch(() => {});
-    if (request.status === "saved" || request.status === "connected")
-      notify(t("Credential saved. Your task will continue."));
-  }
+  const settled = useCallback(
+    (request: CredentialInteractionRequest) => {
+      dismissed.current.add(credentialPromptKey(request));
+      activeId.current = undefined;
+      setActive(undefined);
+      setBusy(false);
+      setRequests((previous) => previous.filter((item) => item.id !== request.id));
+      void refreshAgent().catch(() => {});
+      void refresh().catch(() => {});
+      if (request.status === "saved" || request.status === "connected")
+        notify(
+          t(
+            request.schema.credentialKind === "composio"
+              ? "Account connected."
+              : "Credential saved. Your task will continue.",
+          ),
+        );
+    },
+    [notify, refresh, refreshAgent, t],
+  );
 
   const pending = pendingCredentialPrompts(requests);
   return (
@@ -161,14 +183,27 @@ export function CredentialPromptsProvider({ children }: { children: ReactNode })
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={{ padding: 24, paddingTop: 20 }}
           >
-            <CredentialRequestCard
-              key={`${active.id}:${active.revision}`}
-              request={active}
-              embedded
-              onBusy={setBusy}
-              onSaved={settled}
-              onCancelled={settled}
-            />
+            {active.schema.credentialKind === "composio" ? (
+              <ComposioConnectionContent
+                key={active.id}
+                request={active}
+                onBusy={setBusy}
+                onSettled={settled}
+                onSetup={() => {
+                  hide();
+                  navigate("connections");
+                }}
+              />
+            ) : (
+              <CredentialRequestCard
+                key={`${active.id}:${active.revision}`}
+                request={active}
+                embedded
+                onBusy={setBusy}
+                onSaved={settled}
+                onCancelled={settled}
+              />
+            )}
             <View style={{ marginTop: 10 }}>
               <Button small disabled={busy} onPress={hide}>
                 {t("Do this later")}
@@ -231,7 +266,7 @@ export function CredentialRequestReceipt({ request }: { request: CredentialInter
       </View>
       {needed && (
         <Button small busy={busy} onPress={() => void reopen()}>
-          {t("Enter securely")}
+          {t(current.schema.credentialKind === "composio" ? "Connect account" : "Enter securely")}
         </Button>
       )}
     </View>

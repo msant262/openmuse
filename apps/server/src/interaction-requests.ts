@@ -193,7 +193,12 @@ export class InteractionRequests {
     if (
       request.status === "waiting" &&
       request.kind !== "proactivity" &&
-      !(request.kind === "credential" && request.schema.integrationId)
+      !(
+        request.kind === "credential" &&
+        (request.schema.integrationId ||
+          (request.schema.credentialKind === "composio" &&
+            request.taskId.startsWith("composio-settings:")))
+      )
     ) {
       const task = await this.db.get<AgentTask>(owner, "tasks", request.taskId);
       if (
