@@ -1,3 +1,4 @@
+import { captchaActionSchema } from "../../../../packages/domain/src/credential-challenge.ts";
 import { BrowserError } from "../browser-contract.ts";
 import { browserInstructions, browserTools } from "../browser-tools.ts";
 import { desktopInstructions, desktopTools } from "../desktop-tools.ts";
@@ -349,6 +350,190 @@ export async function executeModelTask(
         return { plan: task.plan };
       },
     ),
+    ...(service.credentials?.catalog().length
+      ? [
+          tool(
+            "request_site_connection",
+            "Pause this task and show the trusted inline credential form for a configured site. Never ask for, accept, or repeat credential values in tool arguments, chat, or messages.",
+            z
+              .object({
+                adapterId: z.enum(
+                  service.credentials.catalog().map((adapter) => adapter.id) as [
+                    string,
+                    ...string[],
+                  ],
+                ),
+                purpose: z.string().trim().min(1).max(400),
+              })
+              .strict(),
+            async ({ adapterId, purpose }) => {
+              if (!service.credentials) throw new Error("Credential forms are unavailable");
+              const request = await service.credentials.request(owner, {
+                taskId: task.id,
+                revision: task.attempts,
+                adapterId,
+                purpose,
+              });
+              const adapter = service.credentials.adapter(adapterId);
+              task = await ctx.checkpoint({
+                state: {
+                  ...task.state,
+                  interactionRequestId: request.id,
+                  credentialRequestId: request.id,
+                },
+              });
+              outcome = {
+                status: "waiting_input",
+                question: `Waiting for a secure ${adapter.serviceName} connection form.`,
+                state: task.state,
+              };
+              return {
+                paused: true,
+                requestId: request.id,
+                status: request.status,
+                serviceName: adapter.serviceName,
+                origin: adapter.origin,
+              };
+            },
+          ),
+          ...(service.credentialLogin
+            ? [
+                tool(
+                  "authenticate_connection",
+                  "Use a saved credential reference to sign in through its fixed browser adapter. The tool returns only connection status. For a human verification step, pause and let the person enter it in the secure inline card; never request or pass a password or verification code.",
+                  z
+                    .object({
+                      credentialRefId: z.uuid(),
+                      challengeId: z.uuid().optional(),
+                    })
+                    .strict(),
+                  async ({ credentialRefId, challengeId }) => {
+                    if (!service.credentialLogin)
+                      throw new Error("Credential login is unavailable");
+                    const activeChallengeId =
+                      challengeId ??
+                      (typeof task.state.credentialChallengeId === "string"
+                        ? task.state.credentialChallengeId
+                        : undefined);
+                    const result = await service.credentialLogin.authenticate(
+                      owner,
+                      task.id,
+                      credentialRefId,
+                      ctx.signal,
+                      undefined,
+                      activeChallengeId,
+                    );
+                    if (result.status === "needs_challenge" && result.challengeId) {
+                      task = await ctx.checkpoint({
+                        state: {
+                          ...task.state,
+                          credentialRef: task.state.credentialRef,
+                          credentialChallengeId: result.challengeId,
+                        },
+                      });
+                      if (result.challengeKind === "captcha" && result.agentAttempt)
+                        return {
+                          ...result,
+                          instruction:
+                            "Try connection_challenge observe and solve this CAPTCHA first. Use its numbered controls or visual click only with vision; never guess OTP. It enforces three submissions/60 seconds. Use help when unavailable.",
+                        };
+                      outcome = {
+                        status: "waiting_input",
+                        question: "Waiting for the service verification card.",
+                        state: task.state,
+                      };
+                      return { ...result, paused: true };
+                    }
+                    if (result.status === "connected") {
+                      const { credentialChallengeId: _completedChallenge, ...state } = task.state;
+                      task = await ctx.checkpoint({
+                        state: {
+                          ...state,
+                          credentialRef: task.state.credentialRef,
+                          credentialStatus: "connected",
+                        },
+                      });
+                    } else if (result.status === "outcome_unknown") {
+                      task = await ctx.checkpoint({
+                        state: { ...task.state, credentialStatus: "outcome_unknown" },
+                      });
+                    }
+                    return result;
+                  },
+                ),
+                tool(
+                  "connection_challenge",
+                  "Observe and solve the active CAPTCHA inside its trusted region. Actions bind to a fresh frame. Use submit for the final answer, check after human handback, or help when unable. This never supplies or guesses MFA codes.",
+                  z.object({ challengeId: z.uuid(), input: captchaActionSchema }).strict(),
+                  async ({ challengeId, input }) => {
+                    if (
+                      !service.credentialLogin ||
+                      task.state.credentialChallengeId !== challengeId
+                    )
+                      throw new Error("Challenge belongs to another task or revision");
+                    if (
+                      ["visual_click", "visual_drag"].includes(input.action) &&
+                      !routingCapabilities(
+                        selectedModel,
+                        config.modelProviders ?? modelProviderConfig(config.dataDir),
+                      ).capabilities.vision
+                    )
+                      return {
+                        error:
+                          "This provider cannot see the challenge image. Use numbered DOM controls or help.",
+                        dispatched: false,
+                      };
+                    const result = await service.credentialLogin.captcha.step(
+                      owner,
+                      task.id,
+                      challengeId,
+                      input,
+                      signal,
+                    );
+                    if (result.status === "manual_required") {
+                      outcome = {
+                        status: "waiting_input",
+                        question:
+                          "O bot não concluiu a verificação. Use Assumir controle e depois devolva para continuar.",
+                        state: task.state,
+                      };
+                      return { ...result, paused: true };
+                    }
+                    if (result.status === "authenticated") {
+                      const { credentialChallengeId: _challenge, ...state } = task.state;
+                      task = await ctx.checkpoint({
+                        state: { ...state, credentialStatus: "connected" },
+                      });
+                    }
+                    if (
+                      !routingCapabilities(
+                        selectedModel,
+                        config.modelProviders ?? modelProviderConfig(config.dataDir),
+                      ).capabilities.vision
+                    ) {
+                      const {
+                        screenshotId: _image,
+                        browserScreenshot: _marker,
+                        imageInput: _input,
+                        ...dom
+                      } = result as typeof result & {
+                        screenshotId?: string;
+                        browserScreenshot?: boolean;
+                        imageInput?: string;
+                      };
+                      return {
+                        ...dom,
+                        imageUnavailable:
+                          "This model can use DOM controls; use help for visual-only challenges.",
+                      };
+                    }
+                    return result;
+                  },
+                ),
+              ]
+            : []),
+        ]
+      : []),
     tool(
       "read_workspace",
       "Read the authorized workspace sources",

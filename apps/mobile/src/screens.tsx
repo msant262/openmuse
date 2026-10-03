@@ -42,6 +42,7 @@ import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import { ActionLogScreen } from "./action-log-screen";
 import { API_URL } from "./api";
 import { localDateTime, zonedInstant } from "./date-time";
+import { McpConnections } from "./mcp-connections";
 import { useInlinePreview } from "./preview";
 import {
   Button,
@@ -1270,6 +1271,7 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
   ].filter((row) => `${row.name} ${row.group}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <View style={{ gap: 22 }}>
+      <McpConnections query={query} />
       {[true, false].map((isConnected) => {
         const group = rows.filter((row) => row.connected === isConnected);
         if (!group.length) return null;

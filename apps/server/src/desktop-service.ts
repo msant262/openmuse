@@ -565,8 +565,25 @@ export class DesktopService {
     return parsed;
   }
   async act(owner: string, id: string, raw: unknown, signal?: AbortSignal) {
-    const session = await this.session(owner, id),
-      input = this.input(session, raw);
+    const session = await this.session(owner, id);
+    if (
+      (
+        await this.db.list<{ status: string; kind: string; sessionId: string }>(
+          owner,
+          "credential-challenges",
+        )
+      ).some(
+        (item) =>
+          item.sessionId === session.browserSessionId &&
+          item.kind === "captcha" &&
+          ["waiting", "outcome_unknown"].includes(item.status),
+      )
+    )
+      throw new AppError(
+        "Use connection_challenge for CAPTCHA, or let the person Take control",
+        409,
+      );
+    const input = this.input(session, raw);
     return this.run(
       owner,
       session,
@@ -811,6 +828,7 @@ export class DesktopService {
       "agent-navigate",
       "close",
       "upload",
+      "challenge",
       "search",
     ].includes(operation);
     const result = await this.run(

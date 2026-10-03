@@ -52,7 +52,9 @@ export class ContextBudget {
     return messages.flatMap((message) => {
       if (
         message.role !== "tool" ||
-        calls.get(message.toolCallId ?? "") !== "desktop_observe" ||
+        !["desktop_observe", "connection_challenge"].includes(
+          calls.get(message.toolCallId ?? "") ?? "",
+        ) ||
         typeof message.content !== "string" ||
         message.content.length > 16000
       )
@@ -61,7 +63,7 @@ export class ContextBudget {
         const value = JSON.parse(message.content);
         if (
           value?.browserScreenshot !== true ||
-          value?.desktopScreenshot !== true ||
+          (value?.desktopScreenshot !== true && value?.challengeScreenshot !== true) ||
           typeof value.observedAt !== "string" ||
           !Number.isFinite(Date.parse(value.observedAt)) ||
           typeof value.screenshotId !== "string" ||

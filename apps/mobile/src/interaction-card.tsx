@@ -6,6 +6,7 @@ import {
   questionSchema,
 } from "../../../packages/domain/src/runtime";
 import { QuestionSubmission, questionAnswerError, questionOptionSpace } from "./interaction-state";
+import { CredentialRequestCard } from "./credential-request";
 import { Button, Card, colors, ErrorNotice, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -18,7 +19,9 @@ export function InteractionCard({
 }) {
   const { api } = useWorkspace();
   const [current, setCurrent] = useState(request);
-  const [values, setValues] = useState<QuestionAnswer>(request.answer ?? {});
+  const [values, setValues] = useState<QuestionAnswer>(() =>
+    request.kind === "question" ? (request.answer ?? {}) : {},
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const submission = useMemo(
@@ -31,7 +34,7 @@ export function InteractionCard({
   );
   useEffect(() => {
     setCurrent(request);
-    if (request.answer) setValues(request.answer);
+    if (request.kind === "question" && request.answer) setValues(request.answer);
   }, [request]);
   const disabled = busy || current.status !== "waiting";
   async function submit() {
@@ -51,12 +54,14 @@ export function InteractionCard({
         .catch(() => undefined);
       if (latest) {
         setCurrent(latest);
-        if (latest.answer) setValues(latest.answer);
+        if (latest.kind === "question" && latest.answer) setValues(latest.answer);
       }
     } finally {
       setBusy(false);
     }
   }
+  if (current.kind === "credential")
+    return <CredentialRequestCard request={current} onSaved={onAnswered} />;
   if (current.kind !== "question") return null;
   if (!questionSchema.safeParse(current.schema).success)
     return (

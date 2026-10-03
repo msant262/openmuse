@@ -19,6 +19,14 @@ import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
 import { RpcComputerService } from "./computer-rpc.ts";
 import type { Config } from "./config.ts";
+import { CredentialBroker } from "./credentials/broker.ts";
+import type { CredentialAdapter, SecretStore } from "./credentials/contracts.ts";
+import { CredentialGrantBroker } from "./credentials/grants.ts";
+import { CredentialLoginService } from "./credentials/login.ts";
+import { configureNativeCredentialInjector } from "./credentials/native.ts";
+import { credentialNodeRoutes } from "./credentials/node-routes.ts";
+import { OpenBaoSecretStore } from "./credentials/openbao-store.ts";
+import { credentialRoutes } from "./credentials/routes.ts";
 import type { Store } from "./db.ts";
 import { desktopRoutes } from "./desktop-routes.ts";
 import { DesktopService, nativeDesktopTransport } from "./desktop-service.ts";
@@ -49,6 +57,7 @@ import { fileVersionRoutes } from "./file-versions.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
 import { backgroundFailure } from "./log.ts";
+import { McpAuth } from "./mcp-auth.ts";
 import { LocalThreads } from "./threads.ts";
 import { WorkspaceService } from "./workspace.ts";
 
@@ -57,6 +66,8 @@ export async function createApp(
   config: Config,
   options: {
     docker?: DockerRunner;
+    credentialSecretStore?: SecretStore;
+    credentialAdapters?: CredentialAdapter[];
     nativeAuthority?: ExecutorAuthority;
     nativeContext?: (
       owner: string,
@@ -89,6 +100,39 @@ export async function createApp(
   });
   const browser = new BrowserService(db, config, auth, files);
   browser.configureActions(actions);
+  const unavailableSecretStore: SecretStore = {
+    async write() {
+      throw new AppError("Credential vault is not configured", 503, "VAULT_UNAVAILABLE");
+    },
+    async read() {
+      throw new AppError("Credential vault is not configured", 503, "VAULT_UNAVAILABLE");
+    },
+    async delete() {
+      throw new AppError("Credential vault is not configured", 503, "VAULT_UNAVAILABLE");
+    },
+  };
+  const credentialSecretStore =
+    options.credentialSecretStore ??
+    (config.credentialsOpenBaoAddress && config.credentialsOpenBaoToken
+      ? new OpenBaoSecretStore({
+          address: config.credentialsOpenBaoAddress,
+          token: config.credentialsOpenBaoToken,
+          mount: config.credentialsOpenBaoMount ?? "secret",
+        })
+      : unavailableSecretStore);
+  const credentials = new CredentialBroker(
+    db,
+    credentialSecretStore,
+    options.credentialAdapters ?? config.credentialAdapters ?? [],
+  );
+  const credentialGrants = new CredentialGrantBroker(credentials);
+  credentials.configureGrantInvalidator((owner, credentialRefId) =>
+    credentialGrants.invalidateCredentialRef(owner, credentialRefId),
+  );
+  const credentialLogin = new CredentialLoginService(db, credentials, browser, credentialGrants, {
+    captchaAttemptMs: config.captchaAttemptMs,
+    captchaMaxSubmissions: config.captchaMaxSubmissions,
+  });
   const registryOptions = {
     registrations: config.nativeExecutors ?? [],
     authority: options.nativeAuthority,
@@ -107,6 +151,8 @@ export async function createApp(
         {},
         { state: { nativeAdmissionPending: true } },
       );
+      if (operation.kind === "browser" && operation.args.operation === "credentials")
+        credentialGrants.bindNativeOperation(owner, operation);
     },
   };
   const executors = new ExecutorRegistry(db, registryOptions);
@@ -167,7 +213,21 @@ export async function createApp(
       : (config.resourceHostId ?? "openmuse-server"),
     runtimePause,
   );
-  const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
+  const agent = new AgentService(
+    db,
+    config,
+    workspace,
+    files,
+    actions,
+    browser,
+    computer,
+    undefined,
+    credentials,
+    credentialLogin,
+  );
+  const mcpAuth = new McpAuth(db, credentialSecretStore, config.mcpServers ?? [], config.publicUrl);
+  agent.mcp.configureAuthentication(mcpAuth);
+  credentialLogin.configureWake((owner, taskId) => agent.actor.wake(owner, taskId, "provider"));
   taskAuthority = new TaskExecutorAuthority(agent.journal, {
     executor: (owner, executorId) => {
       const registration = executors.registration(executorId);
@@ -193,8 +253,10 @@ export async function createApp(
   const desktopViewers = desktop ? new DesktopViewers(agent, desktop) : undefined;
   if (desktop) {
     browser.configureNative(desktop);
+    configureNativeCredentialInjector(desktop, credentialGrants);
     agent.configureDesktop(desktop);
-    desktop.configureWake(async () => {
+    desktop.configureWake(async (owner, sessionId) => {
+      await credentialLogin.handback(owner, sessionId);
       void agent.worker.tick().catch((error) => backgroundFailure("desktop handback", error));
     });
     await desktopViewers!.recover();
@@ -276,6 +338,7 @@ export async function createApp(
     );
   });
   app.route("/executor", executorRoutes(executors));
+  app.route("/executor", credentialNodeRoutes(executors, credentialGrants));
   app.get("/api/health", (c) =>
     c.json({
       ok: true,
@@ -370,6 +433,14 @@ export async function createApp(
       "<h1>Google is connected</h1><p>Return to OpenMuse and refresh your workspace.</p>",
     );
   });
+  app.get("/api/mcp/oauth/callback", async (c) => {
+    await mcpAuth.callbackCode(c.req.query("state") ?? "", c.req.query("code") ?? "");
+    c.header("Cache-Control", "no-store");
+    c.header("Referrer-Policy", "no-referrer");
+    return c.text(
+      "Aplicativo conectado ao OkamiBot. Você pode fechar esta janela e voltar ao chat.",
+    );
+  });
   app.use("/api/*", async (c, next) => {
     const signedRoute =
       /^\/api\/files\/[^/]+\/content$|^\/api\/browsers\/[^/]+\/(?:preview|console)$/.test(
@@ -411,6 +482,14 @@ export async function createApp(
     return c.json(snapshot);
   });
   app.route("/api/agent", agentRoutes(agent));
+  app.get("/api/mcp/connections", async (c) => c.json(await mcpAuth.status(c.get("owner"))));
+  app.post("/api/mcp/connections/:id/connect", async (c) =>
+    c.json(await mcpAuth.start(c.get("owner"), c.req.param("id"))),
+  );
+  app.post("/api/mcp/connections/:id/disconnect", async (c) =>
+    c.json(await mcpAuth.disconnect(c.get("owner"), c.req.param("id"))),
+  );
+  app.route("/api", credentialRoutes(credentials, credentialLogin));
   app.route("/api/desktop", desktopRoutes(desktop, desktopViewers, auth, browser));
   app.post("/api/conversations/:threadId/messages", async (c) => {
     if (!(threads instanceof LocalThreads))
@@ -637,7 +716,9 @@ export async function createApp(
       .object({ control: z.enum(["agent", "human"]) })
       .strict()
       .parse(await c.req.json());
-    return c.json(await browser.control(c.get("owner"), c.req.param("id"), body.control));
+    const result = await browser.control(c.get("owner"), c.req.param("id"), body.control);
+    if (body.control === "agent") await credentialLogin.handback(c.get("owner"), c.req.param("id"));
+    return c.json(result);
   });
   app.post("/api/browsers/:id/close", async (c) =>
     c.json(await browser.close(c.get("owner"), c.req.param("id"))),
@@ -670,8 +751,12 @@ export async function createApp(
     const body = await c.req.json();
     if (body.operation === "status")
       return c.json(await browser.control(c.get("owner"), c.req.param("id")));
-    if (body.control === "agent" || body.control === "human")
-      return c.json(await browser.control(c.get("owner"), c.req.param("id"), body.control));
+    if (body.control === "agent" || body.control === "human") {
+      const result = await browser.control(c.get("owner"), c.req.param("id"), body.control);
+      if (body.control === "agent")
+        await credentialLogin.handback(c.get("owner"), c.req.param("id"));
+      return c.json(result);
+    }
     await browser.input(c.get("owner"), c.req.param("id"), body);
     return c.json({ ok: true });
   });
@@ -723,5 +808,8 @@ export async function createApp(
     desktopViewers,
     threads,
     inbox,
+    credentials,
+    credentialGrants,
+    credentialLogin,
   };
 }

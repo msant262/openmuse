@@ -11,7 +11,8 @@ Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-
 | 5 — Capability-aware model fallback | Reviewed and integrated; real subscription acceptance pending |
 | 6 — Native Linux executor and file recovery | Reviewed and integrated; physical deployment acceptance pending |
 | 7 — Native desktop and browser | Reviewed and integrated; physical deployment acceptance pending |
-| 8–9 | Pending integration |
+| 8 — Private credentials and connector OAuth | Reviewed and integrated; real account/device acceptance pending |
+| 9 — Capability-aware browser fallback | Pending integration |
 | 10 — Bounded context and long-term memory | Reviewed and integrated; physical/provider acceptance pending |
 | 11–12 | Pending integration |
 
@@ -223,3 +224,29 @@ Docker-layout import/backup checks passed 3/3. The delivery also passed 21/21 re
 Chromium fixtures, 18/18 Python desktop checks and server/mobile/worker type checks.
 Real login, spreadsheet editing, phone intervention and file transfer on the deployed
 Lenovo remain physical acceptance work in milestone 12.
+
+## Milestone 8
+
+Private credential cards send directly to the OpenBao-backed broker. Passwords and
+verification codes bypass chat messages, mobile outboxes, model context and action
+logs. Native injection uses a one-use, exact-operation grant; the VPS uses its
+existing browser worker. Revocation, task direction, pause and session generation
+are checked before dispatch. Same-UID/full-sudo desktop access remains full trust.
+
+MCP connections now use the official SDK OAuth flow with PKCE, state validation,
+owner/config binding, private token persistence and serialized refresh. The phone
+Connections screen starts authorization and disconnects locally. Provider-side
+revocation is not claimed. Provider redirect/registration compatibility and real
+accounts still require deployment acceptance; see [MCP-OAUTH.md](MCP-OAUTH.md).
+
+CAPTCHA handling gives the agent a bounded attempt using a trusted adapter region,
+numbered controls or observed visual coordinates. Three submissions or 60 seconds
+lead to phone handback; provider retries do not reset the budget. Unknown input
+outcomes are retained. Cross-origin challenges that cannot be isolated need the
+person. MFA codes are never guessed.
+
+Root completed missing OAuth and bounded-challenge behavior after the implementer's
+two deliveries, composed the final desktop/context changes and fixed Docker memory
+accounting for the co-located vault. The complete suite passed **724/724**
+(148.8 seconds), with server/mobile/worker type checks and four real Chromium
+challenge fixtures, on 2026-10-03. No physical vault/login/phone acceptance is claimed.

@@ -13,6 +13,7 @@ import { bindingHash } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
 import { authorizeTaskEffect, taskOperationId } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
+import type { McpAuth } from "./mcp-auth.ts";
 import { mcpRequestPreview } from "./mcp-preview.ts";
 
 const executor =
@@ -32,6 +33,25 @@ const serverSchema = z
     headerEnv: z
       .record(z.string().regex(/^[\w-]+$/), z.string().regex(/^[A-Z][A-Z0-9_]*$/))
       .default({}),
+    oauth: z
+      .object({
+        authorizationOrigins: z
+          .array(
+            z.url().refine((value) => {
+              const url = new URL(value);
+              return url.protocol === "https:" && url.origin === value;
+            }),
+          )
+          .max(8)
+          .default([]),
+        clientId: z.string().min(1).max(512).optional(),
+        clientSecretEnv: z
+          .string()
+          .regex(/^[A-Z][A-Z0-9_]*$/)
+          .optional(),
+      })
+      .strict()
+      .optional(),
     tools: z.record(
       z
         .string()
@@ -51,6 +71,15 @@ export function parseMcpConfig(raw: unknown): McpServerConfig[] {
     const url = new URL(server.url);
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash)
       throw new Error("MCP URL must be HTTP(S) without embedded credentials or fragments");
+    if (
+      server.oauth &&
+      (url.protocol !== "https:" ||
+        Object.keys(server.headerEnv).some((name) => name.toLowerCase() === "authorization") ||
+        (server.oauth.clientSecretEnv && !server.oauth.clientId))
+    )
+      throw new Error(
+        "MCP OAuth requires HTTPS, a client ID for its client secret and no competing Authorization header",
+      );
     for (const [name, effect] of Object.entries(server.tools)) {
       if (executor.test(name))
         throw new Error("Broad MCP meta executors are disabled; allow direct app tools");
@@ -117,7 +146,13 @@ function mcpToolName(server: string, name: string) {
   );
 }
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-type Connection = { client: Client; tools: Tool[]; fingerprint: string };
+type Connection = {
+  client: Client;
+  tools: Tool[];
+  fingerprint: string;
+  configFingerprint: string;
+  authGeneration?: string;
+};
 type Binding = {
   serverId: string;
   tool: string;
@@ -126,6 +161,10 @@ type Binding = {
   signature: string;
 };
 export class McpService {
+  private authentication?: McpAuth;
+  configureAuthentication(authentication: McpAuth) {
+    this.authentication = authentication;
+  }
   private connections = new Map<string, Promise<Connection>>();
   private readonly abort = new AbortController();
   private active = new Set<Promise<unknown>>();
@@ -138,7 +177,7 @@ export class McpService {
     actions.registerExternal("mcp.call", (owner, raw, proposal, beforeDispatch) =>
       this.track(async () => {
         const binding = raw as Binding;
-        const { server, connection } = await this.bound(binding);
+        const { server, connection } = await this.bound(owner, binding);
         const signal = this.signals.get(proposal.id);
         signal?.throwIfAborted();
         // Durable approval authority must survive the awaited remote catalogue
@@ -147,7 +186,15 @@ export class McpService {
         await beforeDispatch();
         let result: unknown;
         try {
-          result = await this.dispatch(connection, binding.tool, binding.args, true, signal, true);
+          result = await this.dispatch(
+            connection,
+            binding.tool,
+            binding.args,
+            true,
+            signal,
+            true,
+            () => this.assertCurrent(owner, server, connection, binding.tool),
+          );
         } catch (error) {
           await this.db
             .put(owner, "mcp-receipts", { id: proposal.id, status: "outcome_unknown" })
@@ -190,10 +237,13 @@ export class McpService {
   private fingerprint(server: McpServerConfig) {
     return digest({ server, headers: this.headers(server) });
   }
-  private connection(server: McpServerConfig): Promise<Connection> {
+  private async connection(owner: string, server: McpServerConfig): Promise<Connection> {
     this.abort.signal.throwIfAborted();
-    const fingerprint = this.fingerprint(server);
-    const key = `${server.id}:${fingerprint}`;
+    if (server.oauth && !this.authentication) throw new AppError("MCP OAuth is unavailable", 503);
+    const authorization = await this.authentication?.access(owner, server);
+    const configFingerprint = this.fingerprint(server);
+    const fingerprint = digest({ config: configFingerprint, authorization });
+    const key = `${owner}:${server.id}:${fingerprint}`;
     let pending = this.connections.get(key);
     if (!pending) {
       pending = (async () => {
@@ -202,7 +252,11 @@ export class McpService {
           if (this.connections.get(key) === pending) this.connections.delete(key);
         };
         const url = new URL(server.url),
-          fetcher = guardedMcpFetch(url, this.headers(server), this.abort.signal);
+          fetcher = guardedMcpFetch(
+            url,
+            { ...this.headers(server), ...authorization?.headers },
+            this.abort.signal,
+          );
         const transport =
           server.transport === "sse"
             ? new SSEClientTransport(url, { fetch: fetcher })
@@ -242,7 +296,13 @@ export class McpService {
             );
           });
           const tools = await this.listAllowed(client, server);
-          return { client, tools, fingerprint };
+          return {
+            client,
+            tools,
+            fingerprint,
+            configFingerprint,
+            authGeneration: server.oauth ? authorization?.generation : undefined,
+          };
         } catch {
           await client.close().catch(() => {});
           throw new AppError(
@@ -258,8 +318,8 @@ export class McpService {
     }
     return pending;
   }
-  private async catalogue(server: McpServerConfig) {
-    const connection = await this.connection(server);
+  private async catalogue(owner: string, server: McpServerConfig) {
+    const connection = await this.connection(owner, server);
     try {
       connection.tools = await this.listAllowed(connection.client, server);
       return connection;
@@ -287,17 +347,15 @@ export class McpService {
     }
     throw new AppError("MCP tool catalogue exceeds the supported page limit", 502);
   }
-  private async bound(binding: Binding) {
+  private async bound(owner: string, binding: Binding) {
     const server = this.servers.find((s) => s.id === binding.serverId);
-    if (
-      !server ||
-      !Object.hasOwn(server.tools, binding.tool) ||
-      executor.test(binding.tool) ||
-      this.fingerprint(server) !== binding.fingerprint
-    )
+    if (!server || !Object.hasOwn(server.tools, binding.tool) || executor.test(binding.tool))
       throw new AppError("MCP account/configuration changed; create a fresh action", 409);
-    const connection = await this.connection(server);
+    const connection = await this.connection(owner, server);
+    if (connection.fingerprint !== binding.fingerprint)
+      throw new AppError("MCP authorization changed; create a fresh action", 409);
     const current = await this.listAllowed(connection.client, server);
+    this.assertCurrent(owner, server, connection, binding.tool);
     const tool = current.find((t) => t.name === binding.tool);
     if (!tool || digest(tool.inputSchema) !== binding.signature)
       throw new AppError("MCP tool definition changed; create a fresh action", 409);
@@ -306,6 +364,23 @@ export class McpService {
     );
     return { server, connection, tool };
   }
+  private assertCurrent(
+    owner: string,
+    server: McpServerConfig,
+    connection: Connection,
+    tool: string,
+  ) {
+    const configured = this.servers.find((value) => value.id === server.id);
+    if (
+      !configured ||
+      !Object.hasOwn(configured.tools, tool) ||
+      executor.test(tool) ||
+      this.fingerprint(configured) !== connection.configFingerprint
+    )
+      throw new AppError("MCP account/configuration changed; create a fresh action", 409);
+    if (server.oauth && connection.authGeneration)
+      this.authentication!.assertCurrent(owner, server.id, connection.authGeneration);
+  }
   private async dispatch(
     connection: Connection,
     name: string,
@@ -313,10 +388,12 @@ export class McpService {
     write: boolean,
     signal?: AbortSignal,
     actionAuthorized = false,
+    guard?: () => void,
   ) {
     this.abort.signal.throwIfAborted();
     signal?.throwIfAborted();
     if (write && !actionAuthorized) await authorizeTaskEffect();
+    guard?.();
     try {
       const result = await connection.client.callTool({ name, arguments: args }, undefined, {
         timeout: 30000,
@@ -343,7 +420,10 @@ export class McpService {
   }
   private clean(server: McpServerConfig, value: unknown): unknown {
     const text = JSON.stringify(
-      scrubConfiguredValue(value, configuredSecretScrubber(Object.values(this.headers(server)))),
+      scrubConfiguredValue(
+        this.authentication?.scrub(value) ?? value,
+        configuredSecretScrubber(Object.values(this.headers(server))),
+      ),
     );
     return text.length <= 32000
       ? JSON.parse(text)
@@ -366,7 +446,7 @@ export class McpService {
       if (!Object.keys(server.tools).length) continue;
       let connection: Connection;
       try {
-        connection = await this.catalogue(server);
+        connection = await this.catalogue(owner, server);
       } catch {
         options.signal?.throwIfAborted();
         definitions.push(
@@ -408,7 +488,7 @@ export class McpService {
                   fingerprint: connection.fingerprint,
                   signature: digest(remote.inputSchema),
                 };
-                await this.bound(binding);
+                const validated = await this.bound(owner, binding);
                 options.signal?.throwIfAborted();
                 await options.before?.();
                 if (effect === "read")
@@ -422,7 +502,16 @@ export class McpService {
                     async () =>
                       this.clean(
                         server,
-                        await this.dispatch(connection, remote.name, args, false, options.signal),
+                        await this.dispatch(
+                          validated.connection,
+                          remote.name,
+                          args,
+                          false,
+                          options.signal,
+                          false,
+                          () =>
+                            this.assertCurrent(owner, server, validated.connection, remote.name),
+                        ),
                       ),
                   );
                 const key =

@@ -79,7 +79,7 @@ export async function createWorkerServer(options: {
         return;
       }
       const match =
-        /^\/sessions\/([^/]+)\/(navigate|agent-navigate|close|screenshot|agent-screenshot|snapshot|act|inspect|reviewed-act|control|read|input|downloads|search|upload)(?:\/([^/]+))?$/.exec(
+        /^\/sessions\/([^/]+)\/(navigate|agent-navigate|close|screenshot|agent-screenshot|snapshot|act|inspect|reviewed-act|control|read|input|downloads|credentials|credential-challenge|challenge|search|upload)(?:\/([^/]+))?$/.exec(
           pathname,
         );
       if (!match) throw new WorkerError("NOT_FOUND", "Worker endpoint not found.", 404);
@@ -120,6 +120,12 @@ export async function createWorkerServer(options: {
         json(200, await browser.input(id, await readBody(request)));
       else if (action === "read" && !downloadId && request.method === "GET")
         json(200, await browser.read(id));
+      else if (action === "challenge" && !downloadId && request.method === "POST")
+        json(200, await browser.challenge(id, await readBody(request)));
+      else if (action === "credentials" && !downloadId && request.method === "POST")
+        json(200, await browser.credentials(id, await readBody(request)));
+      else if (action === "credential-challenge" && !downloadId && request.method === "POST")
+        json(200, await browser.credentials(id, await readBody(request)));
       else if (action === "screenshot" && !downloadId && request.method === "GET") {
         const bytes = await browser.screenshot(id);
         response.writeHead(200, { "content-type": "image/png", "content-length": bytes.length });

@@ -105,6 +105,7 @@ export class InteractionRequests {
   async forTask(owner: string, task: AgentTask) {
     const existing = (await this.db.list<InteractionRequest>(owner, "interaction-requests")).find(
       (request) =>
+        request.kind === "question" &&
         request.taskId === task.id &&
         request.status === "waiting" &&
         request.revision === task.attempts,

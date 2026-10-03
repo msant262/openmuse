@@ -35,6 +35,8 @@ import type { ComputerBackend } from "../computer-contract.ts";
 import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Config } from "../config.ts";
 import { ConversationInbox } from "../conversation-inbox.ts";
+import type { CredentialBroker } from "../credentials/broker.ts";
+import type { CredentialLoginService } from "../credentials/login.ts";
 import type { Store } from "../db.ts";
 import type { DesktopService } from "../desktop-service.ts";
 import { AppError } from "../errors.ts";
@@ -93,6 +95,8 @@ export class AgentService {
   readonly actor: TaskActor;
   readonly timing: TaskTimingService;
   readonly verification: TaskVerification;
+  readonly credentials?: CredentialBroker;
+  readonly credentialLogin?: CredentialLoginService;
   readonly toolOperations = new OperationDrain(() => this.db.persistenceFailed);
   private nativeExecution?: (
     owner: string,
@@ -179,7 +183,11 @@ export class AgentService {
     readonly browser: BrowserService,
     readonly computer: ComputerBackend = new ComputerService(db, config),
     readonly media: MediaService = new MediaService(db, files, config),
+    credentials?: CredentialBroker,
+    credentialLogin?: CredentialLoginService,
   ) {
+    this.credentials = credentials;
+    this.credentialLogin = credentialLogin;
     this.search = new BrowserSearchBackend(browser);
     this.journal = new TaskJournal(db);
     this.inbox = new ConversationInbox(db, (owner, id) => files.get(owner, id));
@@ -696,6 +704,8 @@ export class AgentService {
     if (task.status !== "waiting_input")
       throw new AppError("This task is not waiting for input", 409);
     const request = await this.interactions.forTask(owner, task);
+    if (request.kind !== "question")
+      throw new AppError("Use the trusted credential or action approval channel", 409);
     let typedAnswer: Record<string, string>;
     if (request.fieldBindings) {
       const names = Object.values(request.fieldBindings).map((binding) => binding.name);

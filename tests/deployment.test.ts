@@ -43,16 +43,18 @@ test("VPS Compose has an exact decimal-safe budget and enforceable isolated serv
     "browser",
     "computer",
     "computer-egress",
+    "openbao",
     "server",
   ]);
   const bytes = (value: string) =>
     Number(value.slice(0, -1)) * (value.endsWith("g") ? 1024 ** 3 : 1024 ** 2);
   const total = Object.values(services).reduce((sum, service) => sum + bytes(service.mem_limit), 0);
-  assert.equal(total, 6845104128);
+  assert.equal(total, 6979321856);
   assert(total <= 7000000000);
   assert.equal(bytes(services.browser.mem_limit), 2147483648);
   assert.equal(bytes(String(services.browser.shm_size)), 1073741824);
-  assert.equal(bytes(services.computer.mem_limit), 3221225472);
+  assert.equal(bytes(services.computer.mem_limit), 2944 * 1024 ** 2);
+  assert.equal(bytes(services.openbao.mem_limit), 256 * 1024 ** 2);
   assert.equal(bytes(services["computer-egress"].mem_limit), 134217728);
   for (const [name, value] of Object.entries(services)) {
     assert(value.init && value.read_only && value.healthcheck.test);
@@ -65,7 +67,7 @@ test("VPS Compose has an exact decimal-safe budget and enforceable isolated serv
     assert.equal(value.env_file, undefined);
     assert(!JSON.stringify(value.volumes ?? []).includes("docker.sock"));
     if (name !== "server") assert.equal(value.ports, undefined);
-    if (name !== "computer-egress") assert.equal(value.cap_add, undefined);
+    if (!["computer-egress", "openbao"].includes(name)) assert.equal(value.cap_add, undefined);
   }
   assert.deepEqual(services.server.ports, ["127.0.0.1:8787:8787"]);
   assert.equal(services.server.environment.TASK_WORKER_ENABLED, "true");
@@ -100,7 +102,9 @@ test("VPS Compose has an exact decimal-safe budget and enforceable isolated serv
   const env = await readFile(".env.example", "utf8");
   for (const match of source.matchAll(/\$\{([A-Z][A-Z0-9_]*)/g))
     assert(env.includes(`${match[1]}=`), `Missing ${match[1]} example`);
-  assert.equal(Object.keys(config.volumes).length, 4);
+  assert.deepEqual(services.openbao.cap_add, ["IPC_LOCK"]);
+  assert.deepEqual(services.openbao.networks, ["vault-control"]);
+  assert.equal(Object.keys(config.volumes).length, 5);
 });
 
 test("root browser image layout loads actual worker/shared modules with native strip-types", async () => {

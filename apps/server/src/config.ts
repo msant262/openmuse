@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseEnv } from "node:util";
 import { z } from "zod";
+import { type CredentialAdapter, credentialAdapterSchema } from "./credentials/contracts.ts";
 import { type ExecutorRegistration, executorRegistrationSchema } from "./executors/protocol.ts";
 import { type McpServerConfig, readMcpConfig } from "./mcp.ts";
 import {
@@ -81,6 +82,12 @@ export interface Config {
   fileVersionMaxBytes?: number;
   allowedOrigins: string[];
   sessionDeviceIdleDays?: number;
+  credentialsOpenBaoAddress?: string;
+  credentialsOpenBaoToken?: string;
+  credentialsOpenBaoMount?: string;
+  credentialAdapters?: CredentialAdapter[];
+  captchaAttemptMs?: number;
+  captchaMaxSubmissions?: number;
 }
 
 /** Pinned so live rankings do not shift when TypeSafe moves the `jev-latest` alias. */
@@ -156,6 +163,28 @@ export function readConfig(): Config {
   const policy = process.env.APPROVAL_POLICY ?? "money";
   if (policy !== "money" && policy !== "all")
     throw new Error("APPROVAL_POLICY must be money or all");
+  const credentialsOpenBaoAddress = process.env.CREDENTIALS_OPENBAO_ADDR?.trim();
+  const credentialsOpenBaoToken = process.env.CREDENTIALS_OPENBAO_TOKEN?.trim();
+  const credentialsOpenBaoMount = process.env.CREDENTIALS_OPENBAO_MOUNT?.trim() || "secret";
+  if (Boolean(credentialsOpenBaoAddress) !== Boolean(credentialsOpenBaoToken))
+    throw new Error(
+      "CREDENTIALS_OPENBAO_ADDR and CREDENTIALS_OPENBAO_TOKEN must be configured together",
+    );
+  if (mode === "live" && (!credentialsOpenBaoAddress || !credentialsOpenBaoToken))
+    throw new Error(
+      "WORKSPACE_MODE=live requires CREDENTIALS_OPENBAO_ADDR and CREDENTIALS_OPENBAO_TOKEN",
+    );
+  if (!/^[a-zA-Z0-9_-]+$/.test(credentialsOpenBaoMount))
+    throw new Error("CREDENTIALS_OPENBAO_MOUNT must be one mount name");
+  let credentialAdapters: CredentialAdapter[] = [];
+  try {
+    credentialAdapters = z
+      .array(credentialAdapterSchema)
+      .max(100)
+      .parse(JSON.parse(process.env.CREDENTIAL_ADAPTERS_JSON ?? "[]")) as CredentialAdapter[];
+  } catch {
+    throw new Error("CREDENTIAL_ADAPTERS_JSON must be a valid array of trusted login adapters");
+  }
   const config: Config = {
     approvalPolicy: policy,
     routineTimezone: process.env.ROUTINE_TIMEZONE?.trim() || "UTC",
@@ -193,6 +222,24 @@ export function readConfig(): Config {
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRedirectUri: `${publicUrl}/api/google/callback`,
+    credentialsOpenBaoAddress,
+    credentialsOpenBaoToken,
+    credentialsOpenBaoMount,
+    credentialAdapters,
+    captchaAttemptMs: z.coerce
+      .number()
+      .int()
+      .min(1000)
+      .max(60_000)
+      .default(60_000)
+      .parse(process.env.CAPTCHA_ATTEMPT_MS),
+    captchaMaxSubmissions: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(3)
+      .default(3)
+      .parse(process.env.CAPTCHA_MAX_SUBMISSIONS),
     workerUrl: browserWorkerUrl(process.env.BROWSER_WORKER_URL),
     workerToken: process.env.WORKER_TOKEN,
     taskWorkerEnabled: process.env.TASK_WORKER_ENABLED !== "false",

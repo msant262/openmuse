@@ -274,6 +274,8 @@ async function handle(raw: Record<string, unknown>): Promise<unknown> {
         return browser.upload(id, body);
       case "downloads":
         return browser.downloads(id);
+      case "challenge":
+        return browser.challenge(id, body);
       case "download": {
         const result = await browser.download(id, String(body.downloadId));
         if (result.bytes.length > nativeDownloadLimit)

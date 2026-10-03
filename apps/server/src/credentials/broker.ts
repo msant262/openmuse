@@ -1,0 +1,611 @@
+import { createHash, randomUUID } from "node:crypto";
+import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
+import type { InteractionRequest } from "../../../../packages/domain/src/runtime.ts";
+import { bindingHash } from "../conversation-inbox.ts";
+import type { Store } from "../db.ts";
+import { AppError } from "../errors.ts";
+import {
+  credentialAdapterSchema,
+  type CredentialAdapter,
+  type CredentialBrowserBinding,
+  type CredentialConnection,
+  type CredentialFormSchema,
+  type CredentialRef,
+  type CredentialRequestRecord,
+  type CredentialStatus,
+  type SecretStore,
+  type ValidCredentialAdapter,
+} from "./contracts.ts";
+
+const nowIso = () => new Date().toISOString();
+const equalData = (left: Record<string, string>, right: Record<string, string>) =>
+  Object.keys(left).length === Object.keys(right).length &&
+  Object.keys(left).every((key) => left[key] === right[key]);
+
+function stableId(value: string) {
+  const bytes = createHash("sha256").update(value).digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  return `${bytes.subarray(0, 4).toString("hex")}-${bytes.subarray(4, 6).toString("hex")}-${bytes.subarray(6, 8).toString("hex")}-${bytes.subarray(8, 10).toString("hex")}-${bytes.subarray(10).toString("hex")}`;
+}
+
+export class CredentialBroker {
+  private readonly adapters: Map<string, ValidCredentialAdapter>;
+  private grantInvalidator?: (owner: string, credentialRefId: string) => void;
+  constructor(
+    private readonly db: Store,
+    private readonly secretStore: SecretStore,
+    adapters: CredentialAdapter[],
+    private readonly options: { now?: () => number; requestTtlMs?: number } = {},
+  ) {
+    const parsed = adapters.map((adapter) => credentialAdapterSchema.parse(adapter));
+    if (new Set(parsed.map((adapter) => adapter.id)).size !== parsed.length)
+      throw new Error("Credential adapter IDs must be unique");
+    this.adapters = new Map(parsed.map((adapter) => [adapter.id, adapter]));
+  }
+
+  private now() {
+    return this.options.now?.() ?? Date.now();
+  }
+
+  configureGrantInvalidator(invalidator: (owner: string, credentialRefId: string) => void) {
+    this.grantInvalidator = invalidator;
+  }
+
+  adapter(id: string) {
+    const value = this.adapters.get(id);
+    if (!value) throw new AppError("This service does not have a supported login adapter", 404);
+    return value;
+  }
+
+  catalog() {
+    return [...this.adapters.values()].map((adapter) => ({
+      id: adapter.id,
+      serviceName: adapter.serviceName,
+      origin: adapter.origin,
+      fields: adapter.fields,
+    }));
+  }
+
+  async request(
+    owner: string,
+    input: { taskId: string; revision: number; adapterId: string; purpose: string },
+  ) {
+    const adapter = this.adapter(input.adapterId);
+    if (!input.purpose.trim() || input.purpose.length > 400)
+      throw new AppError("Describe why this service is needed", 422);
+    const task = await this.db.get<AgentTask>(owner, "tasks", input.taskId);
+    if (!task) throw new AppError("Task not found", 404);
+    if (task.attempts !== input.revision)
+      throw new AppError("This task revision is no longer current", 409);
+    if (!["running", "waiting_input"].includes(task.status))
+      throw new AppError("This task is no longer waiting for a connection", 409);
+    const id = stableId(`${input.taskId}\n${input.revision}\n${input.adapterId}`);
+    const previous = await this.db.get<CredentialRequestRecord>(owner, "credential-requests", id);
+    if (previous) {
+      if (previous.purpose !== input.purpose)
+        throw new AppError(
+          "A different connection request already exists for this task revision",
+          409,
+        );
+      return this.interaction(owner, previous);
+    }
+    const timestamp = new Date(this.now()).toISOString();
+    const record: CredentialRequestRecord = {
+      id,
+      taskId: input.taskId,
+      revision: input.revision,
+      ...(task.originThreadId ? { threadId: task.originThreadId } : {}),
+      adapterId: adapter.id,
+      purpose: input.purpose.trim(),
+      credentialRefId: randomUUID(),
+      status: "waiting",
+      createdAt: timestamp,
+      expiresAt: new Date(this.now() + (this.options.requestTtlMs ?? 10 * 60_000)).toISOString(),
+    };
+    const request = this.card(adapter, record);
+    const result = await this.db.durableMutation<CredentialRequestRecord | InteractionRequest>(
+      owner,
+      `credential-request:${id}`,
+      bindingHash({
+        taskId: input.taskId,
+        revision: input.revision,
+        adapterId: adapter.id,
+        purpose: record.purpose,
+      }),
+      [
+        { kind: "credential-requests", id, mode: "insert", value: record },
+        { kind: "interaction-requests", id, mode: "insert", value: request },
+      ],
+      record.threadId
+        ? [
+            {
+              id: `credential-request:${id}`,
+              threadId: record.threadId,
+              origin: "task",
+              kind: "interaction",
+              payload: request,
+            },
+          ]
+        : [],
+    );
+    if (result.status === "binding_conflict")
+      throw new AppError("A different connection request already exists", 409);
+    if (result.status === "revision_conflict") {
+      const existing = await this.db.get<CredentialRequestRecord>(owner, "credential-requests", id);
+      if (!existing) throw new AppError("The task changed; reopen its connection card", 409);
+      return this.interaction(owner, existing);
+    }
+    return result.values[1] as InteractionRequest;
+  }
+
+  private card(
+    adapter: ValidCredentialAdapter,
+    record: CredentialRequestRecord,
+  ): InteractionRequest {
+    const schema: CredentialFormSchema = {
+      title: `Connect ${adapter.serviceName}`,
+      serviceName: adapter.serviceName,
+      origin: adapter.origin,
+      purpose: record.purpose,
+      fields: adapter.fields,
+    };
+    return {
+      id: record.id,
+      taskId: record.taskId,
+      revision: record.revision,
+      ...(record.threadId ? { threadId: record.threadId } : {}),
+      kind: "credential",
+      schema,
+      status: record.status,
+      createdAt: record.createdAt,
+      ...(record.credentialRef ? { credentialRef: record.credentialRef } : {}),
+      ...(record.challengeId ? { challengeId: record.challengeId } : {}),
+      ...(record.challengeKind ? { challengeKind: record.challengeKind } : {}),
+    } as InteractionRequest;
+  }
+
+  private async interaction(owner: string, record: CredentialRequestRecord) {
+    const existing = await this.db.get<InteractionRequest>(
+      owner,
+      "interaction-requests",
+      record.id,
+    );
+    if (existing) return existing;
+    return this.card(this.adapter(record.adapterId), record);
+  }
+
+  async status(owner: string, id: string) {
+    const record = await this.db.get<CredentialRequestRecord>(owner, "credential-requests", id);
+    if (!record) throw new AppError("Credential request not found", 404);
+    if (record.status === "waiting" && Date.parse(record.expiresAt) <= this.now()) {
+      const expired = await this.db.compareAndSwap<CredentialRequestRecord>(
+        owner,
+        "credential-requests",
+        id,
+        { status: "waiting" },
+        { status: "expired" },
+      );
+      if (expired) {
+        await this.db.compareAndSwap(
+          owner,
+          "interaction-requests",
+          id,
+          { status: "waiting" },
+          { status: "expired" },
+        );
+        return this.card(this.adapter(record.adapterId), expired);
+      }
+    }
+    return this.interaction(owner, record);
+  }
+
+  private validateValues(adapter: ValidCredentialAdapter, raw: unknown) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+      throw new AppError("Enter the requested connection fields", 422);
+    const values = raw as Record<string, unknown>;
+    const declared = new Set(adapter.fields.map((field) => field.id));
+    if (Object.keys(values).some((key) => !declared.has(key)))
+      throw new AppError("This form contains an unsupported field", 422);
+    const data: Record<string, string> = {};
+    for (const field of adapter.fields) {
+      const value = values[field.id];
+      if (value === undefined && !field.required) continue;
+      if (typeof value !== "string" || value.length > 4096 || (field.required && !value.trim()))
+        throw new AppError(`Enter ${field.label}`, 422);
+      data[field.id] = value;
+    }
+    return data;
+  }
+
+  async submit(owner: string, id: string, input: { clientResponseId: string; values: unknown }) {
+    const record = await this.db.get<CredentialRequestRecord>(owner, "credential-requests", id);
+    if (!record) throw new AppError("Credential request not found", 404);
+    if (record.status === "saved" && record.clientResponseId === input.clientResponseId)
+      return (await this.status(owner, id)) as InteractionRequest;
+    if (
+      record.status !== "waiting" &&
+      record.status !== "saving" &&
+      record.status !== "outcome_unknown"
+    )
+      throw new AppError("This credential request is no longer open", 409);
+    if (Date.parse(record.expiresAt) <= this.now()) {
+      await this.status(owner, id);
+      throw new AppError("This credential request expired; reopen it to continue", 409);
+    }
+    const task = await this.db.get<AgentTask>(owner, "tasks", record.taskId);
+    if (!task || task.attempts !== record.revision || task.status !== "waiting_input") {
+      await this.db.compareAndSwap(
+        owner,
+        "credential-requests",
+        id,
+        { status: record.status },
+        { status: "superseded" },
+      );
+      await this.db.compareAndSwap(
+        owner,
+        "interaction-requests",
+        id,
+        { status: record.status },
+        { status: "superseded" },
+      );
+      throw new AppError("This task changed; reopen the latest connection card", 409);
+    }
+    if (task.state.interactionRequestId !== id)
+      throw new AppError("Wait for this task to pause before saving the connection", 409);
+    const adapter = this.adapter(record.adapterId);
+    const data = this.validateValues(adapter, input.values);
+    if (record.status === "waiting") {
+      const saving = await this.db.compareAndSwap<CredentialRequestRecord>(
+        owner,
+        "credential-requests",
+        id,
+        { status: "waiting" },
+        { status: "saving", clientResponseId: input.clientResponseId },
+      );
+      if (!saving) throw new AppError("This credential request changed; reopen the card", 409);
+    } else if (record.clientResponseId !== input.clientResponseId) {
+      throw new AppError("This credential request is already being saved", 409);
+    } else if (record.status === "outcome_unknown") {
+      const saving = await this.db.compareAndSwap<CredentialRequestRecord>(
+        owner,
+        "credential-requests",
+        id,
+        { status: "outcome_unknown", clientResponseId: input.clientResponseId },
+        { status: "saving" },
+      );
+      if (!saving) throw new AppError("This credential request changed; reopen the card", 409);
+    }
+    const prior = await this.secretStore.read(owner, record.credentialRefId);
+    let version: number;
+    if (prior) {
+      if (!equalData(prior.data, data))
+        throw new AppError(
+          "The original save is still being confirmed; reopen this card if needed",
+          409,
+        );
+      version = prior.version;
+    } else {
+      try {
+        version = await this.secretStore.write(owner, record.credentialRefId, data, 0);
+      } catch {
+        const confirmed = await this.secretStore
+          .read(owner, record.credentialRefId)
+          .catch(() => null);
+        if (!confirmed || !equalData(confirmed.data, data)) {
+          await this.db.compareAndSwap(
+            owner,
+            "credential-requests",
+            id,
+            { status: "saving" },
+            { status: "outcome_unknown" },
+          );
+          await this.db.compareAndSwap(
+            owner,
+            "interaction-requests",
+            id,
+            { status: "waiting" },
+            { status: "outcome_unknown" },
+          );
+          throw new AppError(
+            "The vault could not confirm this save. Reconcile the request before retrying.",
+            409,
+            "CREDENTIAL_OUTCOME_UNKNOWN",
+          );
+        }
+        version = confirmed.version;
+      }
+    }
+    return this.finishSave(owner, record, adapter, task, version, input.clientResponseId);
+  }
+
+  private async finishSave(
+    owner: string,
+    record: CredentialRequestRecord,
+    adapter: ValidCredentialAdapter,
+    task: AgentTask,
+    version: number,
+    clientResponseId: string,
+  ) {
+    const timestamp = new Date(this.now()).toISOString();
+    const credentialRef: CredentialRef = { id: record.credentialRefId, version };
+    const connection: CredentialConnection = {
+      id: credentialRef.id,
+      adapterId: adapter.id,
+      serviceName: adapter.serviceName,
+      origin: adapter.origin,
+      credentialRef,
+      status: "saved",
+      updatedAt: timestamp,
+    };
+    const savedRecord: CredentialRequestRecord = {
+      ...record,
+      status: "saved",
+      clientResponseId,
+      credentialRef,
+    };
+    const interaction = this.card(adapter, savedRecord);
+    const mutations = [
+      {
+        kind: "credential-requests",
+        id: record.id,
+        mode: "replace" as const,
+        expected: { status: "saving", clientResponseId },
+        value: savedRecord,
+      },
+      {
+        kind: "interaction-requests",
+        id: record.id,
+        mode: "replace" as const,
+        expected: { status: "waiting" },
+        value: interaction,
+      },
+      { kind: "credentials", id: credentialRef.id, mode: "insert" as const, value: connection },
+      {
+        kind: "tasks",
+        id: task.id,
+        mode: "merge" as const,
+        expected: { status: task.status, attempts: record.revision, state: task.state },
+        value: {
+          status: "queued",
+          question: null,
+          state: {
+            ...task.state,
+            credentialRef,
+            credentialStatus: "saved" satisfies CredentialStatus,
+            interactionRequestId: record.id,
+          },
+          updatedAt: timestamp,
+        },
+      },
+    ];
+    const threadId = record.threadId;
+    const result = await this.db.durableMutation<
+      CredentialRequestRecord | InteractionRequest | CredentialConnection | AgentTask
+    >(
+      owner,
+      `credential-save:${clientResponseId}`,
+      bindingHash({ requestId: record.id, clientResponseId, version }),
+      mutations,
+      threadId
+        ? [
+            {
+              id: `credential-saved:${record.id}:${clientResponseId}`,
+              threadId,
+              origin: "user",
+              kind: "interaction",
+              payload: interaction,
+            },
+          ]
+        : [],
+    );
+    if (result.status === "binding_conflict")
+      throw new AppError("This response ID already belongs to another credential save", 409);
+    if (result.status === "revision_conflict") {
+      const latest = await this.db.get<AgentTask>(owner, "tasks", task.id);
+      if (
+        latest?.attempts !== record.revision ||
+        latest.status === "succeeded" ||
+        latest.status === "cancelled"
+      ) {
+        await this.db.compareAndSwap(
+          owner,
+          "credential-requests",
+          record.id,
+          { status: "saving" },
+          { status: "superseded", credentialRef },
+        );
+        await this.db.compareAndSwap(
+          owner,
+          "interaction-requests",
+          record.id,
+          { status: "waiting" },
+          { status: "superseded", credentialRef },
+        );
+        await this.db.insertIfAbsent(owner, "credentials", connection);
+        throw new AppError(
+          "The credential was saved, but this task changed before it resumed",
+          409,
+        );
+      }
+      const duplicate = await this.db.get<CredentialRequestRecord>(
+        owner,
+        "credential-requests",
+        record.id,
+      );
+      if (duplicate?.status === "saved") return this.status(owner, record.id);
+      throw new AppError("The task changed while the credential was saved; reopen its card", 409);
+    }
+    return result.values[1] as InteractionRequest;
+  }
+
+  async getForTask(owner: string, taskId: string, refId: string) {
+    const authorized = await this.authorizeForTask(owner, taskId, refId);
+    const record = await this.secretStore.read(owner, refId);
+    if (!record || record.version !== authorized.connection.credentialRef.version)
+      throw new AppError("The saved credential is unavailable or was revoked", 409);
+    return { ...authorized, values: record.data };
+  }
+
+  /** Validate ownership/reference without reading plaintext from the vault. */
+  async authorizeForTask(owner: string, taskId: string, refId: string) {
+    const task = await this.db.get<AgentTask>(owner, "tasks", taskId);
+    if (!task || !this.referencesTask(task, refId))
+      throw new AppError("This task is not authorized to use that connection", 403);
+    const connection = await this.db.get<CredentialConnection>(owner, "credentials", refId);
+    if (!connection) throw new AppError("Connection not found", 404);
+    return { task, connection, adapter: this.adapter(connection.adapterId) };
+  }
+
+  private referencesTask(task: AgentTask, refId: string) {
+    const ref = task.state.credentialRef;
+    return Boolean(
+      ref && typeof ref === "object" && !Array.isArray(ref) && (ref as CredentialRef).id === refId,
+    );
+  }
+
+  async setConnectionStatus(
+    owner: string,
+    id: string,
+    status: CredentialStatus,
+    details: {
+      challengeId?: string;
+      challengeKind?: CredentialConnection["challengeKind"];
+      authenticatedAt?: string;
+    } = {},
+  ) {
+    const current = await this.db.get<CredentialConnection>(owner, "credentials", id);
+    if (!current) throw new AppError("Connection not found", 404);
+    const updated: CredentialConnection = {
+      ...current,
+      status,
+      updatedAt: new Date(this.now()).toISOString(),
+      ...(details.challengeId ? { challengeId: details.challengeId } : { challengeId: undefined }),
+      ...(details.challengeKind
+        ? { challengeKind: details.challengeKind }
+        : { challengeKind: undefined }),
+      ...(details.authenticatedAt ? { lastAuthenticatedAt: details.authenticatedAt } : {}),
+    };
+    await this.db.put(owner, "credentials", updated);
+    const request = (
+      await this.db.list<CredentialRequestRecord>(owner, "credential-requests")
+    ).find((value) => value.credentialRefId === id && value.status !== "superseded");
+    if (request) {
+      const requestStatus = status === "saved" ? "saved" : status;
+      const revised = {
+        ...request,
+        status: requestStatus,
+        ...(details.challengeId
+          ? { challengeId: details.challengeId }
+          : { challengeId: undefined }),
+        ...(details.challengeKind
+          ? { challengeKind: details.challengeKind }
+          : { challengeKind: undefined }),
+      } satisfies CredentialRequestRecord;
+      await this.db.put(owner, "credential-requests", revised);
+      const interaction = this.card(this.adapter(request.adapterId), revised);
+      await this.db.put(owner, "interaction-requests", interaction);
+      if (request.threadId && request.status !== requestStatus) {
+        await this.db.appendConversationEvent(owner, {
+          id: `credential-status:${request.id}:${requestStatus}:${this.now()}`,
+          threadId: request.threadId,
+          origin: "task",
+          kind: "interaction",
+          payload: interaction,
+        });
+      }
+    }
+    return updated;
+  }
+
+  async connection(owner: string, id: string) {
+    const connection = await this.db.get<CredentialConnection>(owner, "credentials", id);
+    if (!connection) throw new AppError("Connection not found", 404);
+    return connection;
+  }
+
+  async recordBrowserBinding(
+    owner: string,
+    id: string,
+    input: Omit<
+      CredentialBrowserBinding,
+      "id" | "credentialRefId" | "accountId" | "adapterId" | "origin"
+    >,
+  ) {
+    const connection = await this.connection(owner, id);
+    if (
+      !input.executorId ||
+      input.executorId.length > 80 ||
+      !input.profileId ||
+      input.profileId.length > 200 ||
+      !input.sessionId ||
+      input.sessionId.length > 200 ||
+      (input.sessionGeneration !== undefined && !/^[\w:-]{1,200}$/.test(input.sessionGeneration)) ||
+      !Number.isFinite(Date.parse(input.authenticatedAt))
+    )
+      throw new AppError("Authenticated browser binding is invalid", 422);
+    const bindingKey = createHash("sha256")
+      .update(
+        `${id}\n${input.executorId}\n${input.profileId}\n${input.sessionId}\n${input.sessionGeneration ?? ""}`,
+      )
+      .digest("hex");
+    const binding: CredentialBrowserBinding = {
+      id: bindingKey,
+      credentialRefId: id,
+      accountId: id,
+      adapterId: connection.adapterId,
+      origin: connection.origin,
+      ...input,
+    };
+    await this.db.put(owner, "credential-browser-bindings", binding);
+    return binding;
+  }
+
+  async browserBindings(owner: string, id: string) {
+    await this.connection(owner, id);
+    return (await this.db.list<CredentialBrowserBinding>(owner, "credential-browser-bindings"))
+      .filter((binding) => binding.credentialRefId === id)
+      .sort((left, right) => right.authenticatedAt.localeCompare(left.authenticatedAt));
+  }
+
+  async browserBinding(
+    owner: string,
+    id: string,
+    target: {
+      executorId: string;
+      profileId: string;
+      sessionId: string;
+      sessionGeneration?: string;
+    },
+  ) {
+    return (await this.browserBindings(owner, id)).find(
+      (binding) =>
+        binding.executorId === target.executorId &&
+        binding.profileId === target.profileId &&
+        binding.sessionId === target.sessionId &&
+        binding.sessionGeneration === target.sessionGeneration,
+    );
+  }
+
+  async getChallenge(owner: string, taskId: string, refId: string, challengeId: string) {
+    const challenge = await this.db.get<import("./contracts.ts").CredentialChallenge>(
+      owner,
+      "credential-challenges",
+      challengeId,
+    );
+    if (!challenge || challenge.taskId !== taskId || challenge.credentialRefId !== refId)
+      throw new AppError("Credential challenge not found for this task", 404);
+    if (challenge.status !== "waiting" || Date.parse(challenge.expiresAt) <= this.now())
+      throw new AppError("Credential challenge is no longer open", 409);
+    return challenge;
+  }
+
+  async revoke(owner: string, id: string) {
+    const current = await this.db.get<CredentialConnection>(owner, "credentials", id);
+    if (!current) throw new AppError("Connection not found", 404);
+    await this.secretStore.delete(owner, id, current.credentialRef.version);
+    await this.db.remove(owner, "credentials", id);
+    this.grantInvalidator?.(owner, id);
+    return { revoked: true, browserSessionRevoked: false };
+  }
+}

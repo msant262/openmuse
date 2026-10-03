@@ -5,6 +5,13 @@ import type { BrowserContext, Page } from "playwright";
 import { browserUploadSchema } from "../../../packages/domain/src/browser-file.ts";
 import { defaultSearchEndpoint, searchInputSchema } from "../../../packages/domain/src/search.ts";
 import { AgentPage, browserAction } from "./agent-page.ts";
+import { BrowserChallenge } from "./challenge.ts";
+import {
+  type CredentialLoginInput,
+  type CredentialLoginResult,
+  credentialLogin,
+  credentialLoginInputSchema,
+} from "./credential-login.ts";
 import {
   capturePdfDownload,
   MAX_DOWNLOAD_BYTES,
@@ -33,6 +40,8 @@ type Running = {
   pending: Set<Promise<void>>;
   downloadError?: boolean;
   agent: AgentPage;
+  challenge: BrowserChallenge;
+  captchaActive?: boolean;
   interruptions: {
     popupsBlocked: number;
     dialogsDismissed: number;
@@ -166,6 +175,12 @@ export async function createBrowserManager(options: {
       );
   }
   async function navigate(id: string, url: string, agent = true) {
+    if (agent && running.get(id)?.captchaActive)
+      throw new WorkerError(
+        "CHALLENGE_TOOL_REQUIRED",
+        "Resolve the current challenge or hand back control; navigation cannot reset its attempt budget.",
+        409,
+      );
     if (agent) guardAgent(id);
     await running.get(id)?.agent.invalidate();
     const target = await validatePublicUrl(url);
@@ -343,7 +358,8 @@ export async function createBrowserManager(options: {
         page,
         touched: Date.now(),
         pending: new Set(),
-        agent: new AgentPage(page),
+        agent: new AgentPage(page, options.protect),
+        challenge: new BrowserChallenge(page),
         interruptions: { popupsBlocked: 0, dialogsDismissed: 0 },
       };
       running.set(id, instance);
@@ -534,6 +550,58 @@ export async function createBrowserManager(options: {
           uploaded: { name: file.name, size: file.size, sha256: file.sha256 },
         };
       }),
+    challenge: (id: string, raw: unknown) =>
+      serial(id, async () => {
+        guardAgent(id);
+        options.beforeEffect?.();
+        const instance = active(id);
+        await validatePage(instance);
+        const result = await instance.challenge.execute(
+          raw,
+          () => {
+            guardAgent(id);
+            options.beforeEffect?.();
+          },
+          (selectors) => instance.agent.protect(selectors, false),
+        );
+        if (result.status === "authenticated") instance.captchaActive = false;
+        return { ...result, sessionId: id };
+      }),
+    credentials: (id: string, raw: unknown): Promise<CredentialLoginResult> =>
+      serial(id, async () => {
+        guardAgent(id);
+        options.beforeEffect?.();
+        const instance = active(id);
+        await validatePage(instance);
+        const input: CredentialLoginInput = credentialLoginInputSchema.parse(raw);
+        const result = await credentialLogin(instance.page, input, {
+          sessionId: id,
+          ...(options.native ? { sessionGeneration: options.native.sessionGeneration } : {}),
+          guard: () => {
+            guardAgent(id);
+            options.beforeEffect?.();
+          },
+          protect: (selectors, suspended) => instance.agent.protect(selectors, suspended),
+        });
+        instance.captchaActive =
+          result.status === "challenge" && result.challengeKind === "captcha";
+        // Persist only safe session metadata. Any failed confirmation after the
+        // fixed submit point is reported as uncertain; callers never replay it.
+        if (result.status === "outcome_unknown") return result;
+        try {
+          await validatePage(instance);
+          await refresh(id);
+          return result;
+        } catch {
+          return {
+            status: "outcome_unknown",
+            origin: input.origin,
+            sessionId: id,
+            ...(options.native ? { sessionGeneration: options.native.sessionGeneration } : {}),
+            reasonCode: "POST_LOGIN_REFRESH_UNCONFIRMED",
+          };
+        }
+      }),
     reviewedAct: (id: string, authorization: unknown) =>
       serial(id, async () => {
         if (!options.token)
@@ -575,6 +643,12 @@ export async function createBrowserManager(options: {
       return serial(id, async () => {
         guardAgent(id);
         const instance = active(id);
+        if (instance.captchaActive)
+          throw new WorkerError(
+            "CHALLENGE_TOOL_REQUIRED",
+            "Use the bounded connection_challenge tool for this verification.",
+            409,
+          );
         await validatePage(instance);
         await instance.agent.act(action, () => guardAgent(id));
         try {
@@ -597,6 +671,7 @@ export async function createBrowserManager(options: {
       serial(id, async () => {
         const instance = active(id);
         await validatePage(instance);
+        await instance.agent.prepareObservation();
         const bytes = await instance.page.screenshot({
           type: "jpeg",
           quality: 60,
@@ -615,10 +690,16 @@ export async function createBrowserManager(options: {
       }),
     closeSession: (id: string) => serial(id, () => closeSession(id)),
     screenshot: (id: string) =>
-      serial(id, () => active(id).page.screenshot({ type: "png", timeout: 10_000 })),
+      serial(id, async () => {
+        const instance = active(id);
+        await instance.agent.prepareObservation();
+        return instance.page.screenshot({ type: "png", timeout: 10_000 });
+      }),
     read: (id: string) =>
       serial(id, async () => {
-        const { page } = active(id);
+        const instance = active(id);
+        await instance.agent.prepareObservation();
+        const { page } = instance;
         await validatePublicUrl(page.url());
         // Evaluation is fixed by the worker; callers cannot inject JavaScript.
         const result = await page.evaluate(() => {
@@ -642,6 +723,11 @@ export async function createBrowserManager(options: {
         sessions.set(id, session);
         await persist(session);
         return result;
+      }),
+    refreshProtection: (id: string) =>
+      serial(id, async () => {
+        const instance = active(id);
+        await instance.agent.refreshProtection();
       }),
     input: (id: string, input: Record<string, unknown>) =>
       serial(id, async () => {

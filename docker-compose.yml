@@ -21,7 +21,10 @@ services:
     networks:
       control:
         ipv4_address: ${COMPUTER_SERVER_IP:-172.30.88.2}
+      vault-control: {}
     depends_on:
+      openbao:
+        condition: service_healthy
       browser:
         condition: service_healthy
       computer:
@@ -39,6 +42,12 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       OPENMUSE_ACCESS_KEY: ${OPENMUSE_ACCESS_KEY:?Set a random access key of at least 24 characters}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set 32 random bytes encoded as base64}
+      CREDENTIALS_OPENBAO_ADDR: http://openbao:8200
+      CREDENTIALS_OPENBAO_TOKEN: ${CREDENTIALS_OPENBAO_TOKEN:?Set a scoped OpenBao credentials-broker token}
+      CREDENTIALS_OPENBAO_MOUNT: secret
+      CAPTCHA_MAX_SUBMISSIONS: ${CAPTCHA_MAX_SUBMISSIONS:-3}
+      CAPTCHA_ATTEMPT_MS: ${CAPTCHA_ATTEMPT_MS:-60000}
+      CREDENTIAL_ADAPTERS_JSON: ${CREDENTIAL_ADAPTERS_JSON:-[]}
       MODEL: ${MODEL:?Choose a configured provider/model-id}
       MODEL_FALLBACKS: ${MODEL_FALLBACKS:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -107,6 +116,42 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+  openbao:
+    image: openbao/openbao:2.7.1
+    command: ["server", "-config=/openbao/config/openbao.hcl"]
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [IPC_LOCK]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 128
+    stop_grace_period: 30s
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    networks: [vault-control]
+    group_add: ["0"]
+    volumes:
+      - openbao-data:/openbao/data
+      - type: bind
+        source: ./deploy/openbao/openbao.hcl
+        target: /openbao/config/openbao.hcl
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deployment-secrets/openbao-unseal.key
+        target: /openbao/secrets/unseal.key
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD-SHELL, "BAO_ADDR=http://127.0.0.1:8200 bao status -format=json >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
   browser:
     image: openmuse-browser:local
     build:
@@ -175,8 +220,8 @@ services:
     user: "1000:1000"
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 3g
-    memswap_limit: 3g
+    mem_limit: 2944m
+    memswap_limit: 2944m
     pids_limit: 256
     stop_grace_period: 15s
     tmpfs: ["/tmp:size=256m,mode=1777"]
@@ -207,6 +252,10 @@ networks:
     ipam:
       config:
         - subnet: ${COMPUTER_CONTROL_SUBNET:-172.30.88.0/24}
+  vault-control:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
 volumes:
   server-data:
     name: ${OPENMUSE_SERVER_VOLUME:-openmuse-server-data}
@@ -216,3 +265,5 @@ volumes:
     name: ${OPENMUSE_WORKSPACE_VOLUME:-openmuse-workspace}
   computer-home:
     name: ${OPENMUSE_HOME_VOLUME:-openmuse-computer-home}
+  openbao-data:
+    name: ${OPENMUSE_OPENBAO_VOLUME:-openmuse-openbao-data}

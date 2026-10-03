@@ -118,6 +118,7 @@ function details(node: Element) {
     label,
     href: node.getAttribute("href") || undefined,
     disabled: input.disabled === true || node.getAttribute("aria-disabled") === "true",
+    sensitive: node.hasAttribute("data-openmuse-credential-sensitive"),
     form: form
       ? JSON.stringify([
           form.id,
@@ -130,7 +131,8 @@ function details(node: Element) {
         ])
       : undefined,
     value:
-      tag === "input" && input.type === "password"
+      node.hasAttribute("data-openmuse-credential-sensitive") ||
+      (tag === "input" && input.type === "password")
         ? undefined
         : ["input", "textarea", "select"].includes(tag)
           ? input.value.slice(0, 1000)
@@ -192,8 +194,21 @@ export class AgentPage {
   private url?: string;
   private targets = new Map<number, Target>();
   private readonly page: Page;
-  constructor(page: Page) {
+  private readonly sensitiveSelectors = new Set<string>();
+  private observationsSuspended = false;
+  private readonly physicalProtection?: (
+    masks: [number, number, number, number][],
+    state: { suspended: boolean; screenOffset?: { x: number; y: number; scale: number } },
+  ) => Promise<void>;
+  constructor(
+    page: Page,
+    physicalProtection?: (
+      masks: [number, number, number, number][],
+      state: { suspended: boolean; screenOffset?: { x: number; y: number; scale: number } },
+    ) => Promise<void>,
+  ) {
     this.page = page;
+    this.physicalProtection = physicalProtection;
   }
   async invalidate() {
     this.snapshotId = undefined;
@@ -201,7 +216,133 @@ export class AgentPage {
     this.targets.clear();
     await Promise.allSettled(targets.flatMap((t) => [t.handle.dispose(), t.document.dispose()]));
   }
+  async protect(selectors: string[], suspended: boolean) {
+    if (
+      selectors.length > 12 ||
+      selectors.some((selector) => !selector.trim() || selector.length > 500)
+    )
+      throw new WorkerError(
+        "INVALID_SENSITIVE_SELECTOR",
+        "Trusted sensitive-field mask is invalid.",
+        422,
+      );
+    for (const selector of selectors) this.sensitiveSelectors.add(selector);
+    this.observationsSuspended = suspended;
+    await this.invalidate();
+    await this.applySensitiveMarks();
+    await this.refreshProtection();
+  }
+  async refreshProtection() {
+    if (!this.physicalProtection) {
+      if (this.sensitiveSelectors.size && this.observationsSuspended)
+        throw new WorkerError(
+          "SENSITIVE_MASK_UNAVAILABLE",
+          "Physical credential masking is unavailable.",
+          503,
+        );
+      return;
+    }
+    if (!this.sensitiveSelectors.size) {
+      await this.physicalProtection([], { suspended: this.observationsSuspended });
+      return;
+    }
+    const viewport = this.page.viewportSize();
+    const full = [
+      [0, 0, viewport?.width ?? 1280, viewport?.height ?? 800] as [number, number, number, number],
+    ];
+    try {
+      const screenOffset = await this.page.evaluate(() => ({
+        x: window.screenX,
+        y: window.screenY + (window.outerHeight - window.innerHeight),
+        scale: window.devicePixelRatio,
+      }));
+      const masks: [number, number, number, number][] = [];
+      let uncertainFrame = false;
+      for (const frame of this.page.frames()) {
+        if (frame.isDetached()) continue;
+        for (const selector of this.sensitiveSelectors) {
+          const rects = await frame.locator(selector).evaluateAll((nodes) =>
+            nodes
+              .filter((node) => {
+                const style = getComputedStyle(node);
+                const rect = node.getBoundingClientRect();
+                return (
+                  style.display !== "none" &&
+                  style.visibility !== "hidden" &&
+                  rect.width > 0 &&
+                  rect.height > 0
+                );
+              })
+              .map((node) => {
+                const rect = node.getBoundingClientRect();
+                return [rect.x, rect.y, rect.width, rect.height] as [
+                  number,
+                  number,
+                  number,
+                  number,
+                ];
+              }),
+          );
+          if (rects.length && frame !== this.page.mainFrame()) uncertainFrame = true;
+          if (frame === this.page.mainFrame()) masks.push(...rects);
+        }
+      }
+      await this.physicalProtection(uncertainFrame ? full : masks, {
+        suspended: this.observationsSuspended,
+        screenOffset,
+      });
+    } catch {
+      // If selectors or the native projection cannot be verified, cover the
+      // entire display. A failed mask update blocks observations and typing.
+      await this.physicalProtection(full, { suspended: this.observationsSuspended }).catch(
+        () => {},
+      );
+      throw new WorkerError(
+        "SENSITIVE_MASK_UNAVAILABLE",
+        "Physical credential masking could not be verified.",
+        503,
+      );
+    }
+  }
+  async prepareObservation() {
+    if (this.observationsSuspended)
+      throw new WorkerError(
+        "SENSITIVE_OBSERVATION_SUSPENDED",
+        "Browser observations are paused during protected credential entry.",
+        409,
+      );
+    await this.applySensitiveMarks();
+    await this.refreshProtection();
+  }
+  private async applySensitiveMarks() {
+    if (!this.sensitiveSelectors.size) return;
+    for (const frame of this.page.frames()) {
+      if (frame.isDetached()) continue;
+      for (const selector of this.sensitiveSelectors) {
+        try {
+          await frame.locator(selector).evaluateAll((nodes) => {
+            for (const node of nodes) {
+              node.setAttribute("data-openmuse-credential-sensitive", "true");
+              if (
+                node instanceof HTMLInputElement ||
+                node instanceof HTMLTextAreaElement ||
+                node instanceof HTMLSelectElement
+              ) {
+                node.style.setProperty("-webkit-text-security", "disc", "important");
+                node.style.setProperty("opacity", "0", "important");
+                node.style.setProperty("color", "transparent", "important");
+                node.style.setProperty("caret-color", "transparent", "important");
+              }
+            }
+          });
+        } catch {
+          // Masks remain registered and are reapplied after site transitions.
+        }
+      }
+    }
+  }
   async snapshot() {
+    await this.prepareObservation();
     await this.invalidate();
     const snapshotId = randomUUID();
     const elements = [];
@@ -247,6 +388,7 @@ export class AgentPage {
           implicitSubmitter: _implicitSubmitter,
           formText: _formText,
           submits: _submits,
+          sensitive: _sensitive,
           ...safe
         } = value;
         elements.push({ number, ...safe, frameUrl: frame.url() });
@@ -263,6 +405,7 @@ export class AgentPage {
     return { ...page, snapshotId, elements, truncatedElements };
   }
   async inspect(action: BrowserAction) {
+    await this.prepareObservation();
     const target = this.targets.get(action.element);
     const stale = () =>
       new WorkerError(
@@ -286,6 +429,12 @@ export class AgentPage {
       )
         throw stale();
       const live = await target.handle.evaluate(details);
+      if (live.sensitive)
+        throw new WorkerError(
+          "SENSITIVE_CONTROL",
+          "Protected credential controls can only be filled by the trusted login flow.",
+          403,
+        );
       if (!live.connected || fingerprint(live) !== target.fingerprint) throw stale();
       const activates =
         action.action === "click" ||

@@ -75,6 +75,7 @@ export const nativeBrowserArgsSchema = z
       "upload",
       "search",
       "credentials",
+      "challenge",
     ]),
     body: z.record(z.string(), z.unknown()),
   })

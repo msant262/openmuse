@@ -178,19 +178,63 @@ export const questionAnswerSchema = z.record(
   z.union([z.string().max(12000), z.array(runtimeId).max(20)]),
 );
 export type QuestionAnswer = z.infer<typeof questionAnswerSchema>;
-export type InteractionRequest = {
+export type CredentialFormSchema = {
+  title: string;
+  serviceName: string;
+  origin: string;
+  purpose: string;
+  fields: {
+    id: string;
+    label: string;
+    type: "text" | "password";
+    required: boolean;
+  }[];
+};
+type InteractionRequestBase = {
   id: string;
   taskId: string;
   revision: number;
   threadId?: string;
-  kind: "question" | "credential" | "oauth" | "approval";
-  schema: QuestionSchema;
-  status: "waiting" | "answered" | "superseded";
   createdAt: string;
   answeredAt?: string;
-  answer?: QuestionAnswer;
   fieldBindings?: Record<string, { name: string; checkbox: boolean }>;
 };
+export type QuestionInteractionRequest = InteractionRequestBase & {
+  kind: "question";
+  schema: QuestionSchema;
+  status: "waiting" | "answered" | "superseded";
+  answer?: QuestionAnswer;
+};
+export type CredentialInteractionRequest = InteractionRequestBase & {
+  kind: "credential";
+  schema: CredentialFormSchema;
+  status:
+    | "waiting"
+    | "saving"
+    | "saved"
+    | "connecting"
+    | "connected"
+    | "needs_challenge"
+    | "invalid_credentials"
+    | "outcome_unknown"
+    | "error"
+    | "expired"
+    | "cancelled"
+    | "superseded";
+  credentialRef?: { id: string; version: number };
+  challengeId?: string;
+  challengeKind?: "totp" | "otp" | "push" | "captcha" | "webauthn" | "unknown";
+};
+export type OtherInteractionRequest = InteractionRequestBase & {
+  kind: "oauth" | "approval";
+  schema: QuestionSchema;
+  status: "waiting" | "answered" | "superseded";
+  answer?: QuestionAnswer;
+};
+export type InteractionRequest =
+  | QuestionInteractionRequest
+  | CredentialInteractionRequest
+  | OtherInteractionRequest;
 export const conversationEventSchema = z
   .object({
     id: z.string().min(1),

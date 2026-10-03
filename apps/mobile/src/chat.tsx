@@ -379,7 +379,8 @@ export function ChatScreen({
             "id" in event.payload
           ) {
             const request = event.payload as InteractionRequest;
-            if (request.kind === "question") cards.set(request.id, request);
+            if (request.kind === "question" || request.kind === "credential")
+              cards.set(request.id, request);
           }
         setQuestions([...cards.values()]);
         setLoaded(true);

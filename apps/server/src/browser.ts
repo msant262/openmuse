@@ -311,7 +311,8 @@ export class BrowserService {
         path.endsWith("/upload") ||
         path.endsWith("/reviewed-act") ||
         path.endsWith("/credentials") ||
-        path.endsWith("/credential-challenge")
+        path.endsWith("/credential-challenge") ||
+        path.endsWith("/challenge")
       )
         throw new BrowserError(
           "OUTCOME_UNKNOWN",
@@ -669,6 +670,25 @@ export class BrowserService {
   ) {
     return this.serial(id, async () => {
       await this.get(owner, id);
+      if (
+        (
+          await this.db.list<{ sessionId: string; status: string; kind: string }>(
+            owner,
+            "credential-challenges",
+          )
+        ).some(
+          (item) =>
+            item.sessionId === id &&
+            item.kind === "captcha" &&
+            ["waiting", "outcome_unknown"].includes(item.status),
+        )
+      )
+        throw new BrowserError(
+          "CHALLENGE_TOOL_REQUIRED",
+          "Use the bounded connection_challenge tool or Take control.",
+          409,
+          id,
+        );
       const parsed = browserActionSchema.parse(action);
       const prepareReview = async () => {
         if (!this.actions)
@@ -786,6 +806,54 @@ export class BrowserService {
       ).json(),
       id,
     );
+  }
+  async challenge(
+    owner: string,
+    id: string,
+    plan: import("../../../packages/domain/src/credential-challenge.ts").CaptchaPlan,
+    signal?: AbortSignal,
+  ) {
+    await this.get(owner, id);
+    const result = z
+      .object({
+        status: z.enum(["pending", "authenticated", "manual_required"]),
+        sessionId: z.uuid(),
+        frameId: z.uuid().optional(),
+        image: z.string().max(1_398_104).optional(),
+        mimeType: z.literal("image/png").optional(),
+        width: z.number().int().positive().optional(),
+        height: z.number().int().positive().optional(),
+        observedAt: z.iso.datetime().optional(),
+        elements: z
+          .array(
+            z.object({
+              number: z.number().int().positive(),
+              label: z.string().max(200),
+              type: z.string(),
+            }),
+          )
+          .max(80)
+          .optional(),
+      })
+      .parse(
+        await (await this.ownedRequest(owner, `/sessions/${id}/challenge`, plan, signal)).json(),
+      );
+    if (result.sessionId !== id)
+      throw new BrowserError(
+        "CHALLENGE_SESSION_CHANGED",
+        "The challenge returned another session",
+        409,
+      );
+    const { image, ...safe } = result;
+    if (!image) return safe;
+    const asset = await this.assets.save(owner, Buffer.from(image, "base64"), "image/png");
+    return {
+      ...safe,
+      screenshotId: asset.id,
+      browserScreenshot: true,
+      challengeScreenshot: true,
+      imageInput: "model-dependent",
+    };
   }
   async screenshotForAgent(owner: string, id: string, signal?: AbortSignal) {
     await this.get(owner, id);
