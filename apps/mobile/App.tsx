@@ -154,11 +154,19 @@ export default function App() {
             padding: 24,
           }}
         >
-          <View
-            style={{ position: "absolute", top: 24, right: 24, left: 24, alignItems: "flex-end" }}
+          <SafeAreaView
+            edges={["top", "left", "right"]}
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              left: 0,
+              padding: 24,
+              alignItems: "flex-end",
+            }}
           >
             <AppLanguagePicker compact />
-          </View>
+          </SafeAreaView>
           <View style={{ width: "100%", maxWidth: 420, gap: 22, alignItems: "center" }}>
             <Mascot size={72} />
             <Text
