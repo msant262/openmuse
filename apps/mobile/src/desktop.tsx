@@ -11,6 +11,7 @@ import { ApiError } from "./api-errors";
 import { browserAddress } from "./browser-address";
 import { readDesktop } from "./desktop-requests";
 import { desktopPoint, type RenderedDesktop, renderDesktopFrame } from "./desktop-state";
+import { useI18n } from "./i18n";
 import { desktopPollDelay } from "./preview-policy";
 import { Button, Card, ErrorNotice, Field, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -23,6 +24,7 @@ type Status = DesktopSession & {
 };
 export function DesktopViewer() {
   const { api, refresh } = useWorkspace();
+  const { t } = useI18n();
   const [status, setStatus] = useState<Status>();
   const [rendered, setRendered] = useState<RenderedDesktop>();
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -36,6 +38,7 @@ export function DesktopViewer() {
   const [drag, setDrag] = useState(false);
   const [width, setWidth] = useState(320);
   const latest = useRef<RenderedDesktop | undefined>(undefined);
+  const visible = useRef<RenderedDesktop | undefined>(undefined);
   const displayed = useRef<string | undefined>(undefined);
   const viewer = useRef<{ id: string; session: DesktopSession } | undefined>(undefined);
   const unchanged = useRef(0);
@@ -46,6 +49,10 @@ export function DesktopViewer() {
   const version = useRef(0);
   const refreshFrame = useRef<() => void>(() => {});
   const human = control?.control === "human" && Boolean(control.grantId);
+  function showFrame(next?: RenderedDesktop) {
+    visible.current = next;
+    setRendered(next);
+  }
   useEffect(() => {
     active.current = true;
     version.current++;
@@ -81,6 +88,8 @@ export function DesktopViewer() {
         );
         if (!currentRequest()) return;
         if (!current.enabled) {
+          latest.current = undefined;
+          setImageLoaded(false);
           setConnectionError("A registered desktop is not connected yet.");
           return;
         }
@@ -95,7 +104,7 @@ export function DesktopViewer() {
           displayed.current = undefined;
           setImageLoaded(false);
           grant.current = undefined;
-          setRendered(undefined);
+          showFrame();
           setControl(undefined);
           request = ++version.current;
           void api.request(`/api/desktop/viewers/${old.id}/close`, {}).catch(() => {});
@@ -108,7 +117,7 @@ export function DesktopViewer() {
           latest.current = undefined;
           displayed.current = undefined;
           setImageLoaded(false);
-          setRendered(undefined);
+          showFrame();
           setControl(undefined);
         }
         setStatus(current);
@@ -153,23 +162,24 @@ export function DesktopViewer() {
         if (!currentRequest() || viewer.current?.id !== connected.id) return;
         const next = renderDesktopFrame(connected.session, previous, frame);
         if (!next)
-          throw new Error(
+          throw new ApiError(
             "Desktop pixels no longer match this session. Reconnect before sending input.",
+            409,
+            "FRAME_SESSION_CHANGED",
           );
         unchanged.current =
           latest.current?.frame.imageHash === frame.imageHash ? unchanged.current + 1 : 0;
         latest.current = next;
-        if (next.uri !== displayed.current) setImageLoaded(false);
-        setRendered(next);
+        // Identical pixels need no second onLoad: the URI is already displayed.
+        setImageLoaded(next.uri === displayed.current);
+        showFrame(next);
         setConnectionError("");
       } catch (failure) {
         if (currentRequest()) {
           const message = failure instanceof Error ? failure.message : String(failure);
           setConnectionError(message);
           latest.current = undefined;
-          displayed.current = undefined;
           setImageLoaded(false);
-          setRendered(undefined);
           const denied = failure instanceof ApiError && [401, 403].includes(failure.status);
           const expiredViewer =
             failure instanceof ApiError &&
@@ -182,15 +192,18 @@ export function DesktopViewer() {
             viewer.current = undefined;
             if (old) void api.request(`/api/desktop/viewers/${old.id}/close`, {}).catch(() => {});
           }
-          if (
+          const authorityChanged =
             denied ||
+            (failure instanceof ApiError && failure.code === "FRAME_SESSION_CHANGED") ||
             (expiredViewer && message.includes("generation/epoch")) ||
             (stage === "heartbeat" &&
               failure instanceof ApiError &&
               failure.status === 409 &&
-              !expiredViewer)
-          ) {
+              !expiredViewer);
+          if (authorityChanged) {
             grant.current = undefined;
+            displayed.current = undefined;
+            showFrame();
             setControl(undefined);
           }
         }
@@ -210,7 +223,7 @@ export function DesktopViewer() {
         latest.current = undefined;
         displayed.current = undefined;
         setImageLoaded(false);
-        setRendered(undefined);
+        showFrame();
         point.current = undefined;
       }
     });
@@ -221,6 +234,7 @@ export function DesktopViewer() {
       subscription.remove();
       latest.current = undefined;
       displayed.current = undefined;
+      visible.current = undefined;
       point.current = undefined;
       const current = viewer.current;
       viewer.current = undefined;
@@ -237,9 +251,7 @@ export function DesktopViewer() {
     setBusy(true);
     setError("");
     latest.current = undefined;
-    displayed.current = undefined;
     setImageLoaded(false);
-    setRendered(undefined);
     point.current = undefined;
     try {
       const result = await api.request<DesktopControl>(
@@ -257,7 +269,6 @@ export function DesktopViewer() {
         setControl(result);
       }
       latest.current = undefined;
-      setRendered(undefined);
       void refresh().catch(() => {});
     } catch (failure) {
       if (active.current) setError(failure instanceof Error ? failure.message : String(failure));
@@ -292,26 +303,33 @@ export function DesktopViewer() {
   return (
     <Card style={{ gap: 14 }}>
       <Text style={s.heading}>
-        Desktop{" "}
+        {t("Desktop")}{" "}
         {status
-          ? `· ${human ? "Your control" : status.control === "human" ? "Under human control" : "Observing"}`
-          : "· reconnecting"}
+          ? `· ${t(human ? "Your control" : status.control === "human" ? "Under human control" : "Observing")}`
+          : `· ${t("reconnecting")}`}
       </Text>
       <Text style={s.small}>
-        Observe your agent’s own computer. Take control to click, type or drag; hand it back to
-        resume the same task.
+        {t(
+          "Observe your agent’s own computer. Take control to click, type or drag; hand it back to resume the same task.",
+        )}
       </Text>
       <Button
         disabled={!viewer.current || busy || status?.runtimePaused}
         onPress={() => void operation("import-downloads", {})}
       >
-        Add browser downloads to Files
+        {t("Add browser downloads to Files")}
       </Button>
-      <ErrorNotice error={error || connectionError} />
+      <ErrorNotice error={t(error || connectionError)} />
+      {rendered && !imageLoaded ? (
+        <Text style={s.small}>
+          {t("Updating desktop image… Input is disabled until a fresh frame arrives.")}
+        </Text>
+      ) : null}
       {rendered?.frame.paused ? (
         <Text style={s.small}>
-          Paused · last masked frame from {rendered.frame.observedAt}. Resume to refresh or send
-          input.
+          {t("Paused · last masked frame from {observedAt}. Resume to refresh or send input.", {
+            observedAt: rendered.frame.observedAt,
+          })}
         </Text>
       ) : null}
       <View onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
@@ -366,30 +384,40 @@ export function DesktopViewer() {
               <Image
                 accessibilityLabel={
                   rendered.frame.paused
-                    ? "Last masked agent desktop before pause"
-                    : "Current masked agent desktop"
+                    ? t("Last masked agent desktop before pause")
+                    : t("Current masked agent desktop")
                 }
                 source={{ uri: rendered.uri }}
                 style={{ width: imageWidth, height: imageHeight }}
                 resizeMode="contain"
                 onLoad={() => {
-                  if (latest.current?.uri !== rendered.uri) return;
+                  if (
+                    visible.current?.uri !== rendered.uri ||
+                    visible.current.frame.sessionGeneration !== rendered.frame.sessionGeneration
+                  )
+                    return;
                   displayed.current = rendered.uri;
-                  setImageLoaded(true);
+                  setImageLoaded(latest.current?.uri === rendered.uri);
                 }}
                 onError={() => {
-                  if (latest.current?.uri !== rendered.uri) return;
+                  if (
+                    visible.current?.uri !== rendered.uri ||
+                    visible.current.frame.sessionGeneration !== rendered.frame.sessionGeneration
+                  )
+                    return;
                   latest.current = undefined;
                   displayed.current = undefined;
                   setImageLoaded(false);
-                  setRendered(undefined);
+                  showFrame();
                   setConnectionError(
                     "Desktop image could not be displayed. Retrying a fresh frame…",
                   );
                 }}
               />
             ) : (
-              <Text style={{ color: "#FFF", padding: 24 }}>Waiting for a fresh desktop frame…</Text>
+              <Text style={{ color: "#FFF", padding: 24 }}>
+                {t("Waiting for a fresh desktop frame…")}
+              </Text>
             )}
           </View>
         </ScrollView>
@@ -406,10 +434,10 @@ export function DesktopViewer() {
             )
           }
         >
-          {human ? "Hand back to agent" : "Take control"}
+          {t(human ? "Hand back to agent" : "Take control")}
         </Button>
         <Button small onPress={() => setZoom(zoom === 1 ? 2 : 1)}>
-          {zoom === 1 ? "Zoom in" : "Fit"}
+          {t(zoom === 1 ? "Zoom in" : "Fit")}
         </Button>
         <Button
           small
@@ -417,23 +445,21 @@ export function DesktopViewer() {
           onPress={() => {
             version.current++;
             latest.current = undefined;
-            displayed.current = undefined;
             setImageLoaded(false);
-            setRendered(undefined);
             point.current = undefined;
             refreshFrame.current();
           }}
         >
-          Refresh frame
+          {t("Refresh frame")}
         </Button>
         <Button small disabled={!human} primary={drag} onPress={() => setDrag(!drag)}>
-          {drag ? "Drag mode" : "Click mode"}
+          {t(drag ? "Drag mode" : "Click mode")}
         </Button>
       </View>
       {human ? (
         <>
           <Field
-            label="Type into the focused control"
+            label={t("Type into the focused control")}
             value={text}
             onChangeText={setText}
             autoCapitalize="none"
@@ -449,7 +475,7 @@ export function DesktopViewer() {
               input({ action: "type", text: value });
             }}
           >
-            Type text
+            {t("Type text")}
           </Button>
           <View style={[s.row, { gap: 6, flexWrap: "wrap" }]}>
             {(["Enter", "Tab", "Escape", "Backspace", "Control+l"] as const).map((key) => (
@@ -467,21 +493,21 @@ export function DesktopViewer() {
               disabled={!rendered || !imageLoaded || busy}
               onPress={() => input({ action: "scroll", deltaY: -360 })}
             >
-              Scroll up
+              {t("Scroll up")}
             </Button>
             <Button
               small
               disabled={!rendered || !imageLoaded || busy}
               onPress={() => input({ action: "scroll", deltaY: 360 })}
             >
-              Scroll down
+              {t("Scroll down")}
             </Button>
           </View>
         </>
       ) : (
         <>
           <Field
-            label="Website address"
+            label={t("Website address")}
             value={url}
             onChangeText={setUrl}
             autoCapitalize="none"
@@ -493,7 +519,7 @@ export function DesktopViewer() {
             busy={busy}
             onPress={() => void operation("open-browser", { url: browserAddress(url) })}
           >
-            Open in this desktop
+            {t("Open in this desktop")}
           </Button>
         </>
       )}
