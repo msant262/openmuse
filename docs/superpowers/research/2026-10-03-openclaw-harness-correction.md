@@ -99,3 +99,22 @@ essa corrida, isolamento entre usuários e limpeza de caches da conversa.
 A verificação visual e de interação cobriu desktop e celular, ações de chats,
 rascunhos preservados, exclusão em outro dispositivo, conexão Codex e formulários
 Tavily/modelos. Recibos: `artifacts/desktop-usability-v2/`.
+
+
+## Publicação
+
+API, web e APKs usam a fonte limpa `7ec9235`. Web e APK ARM64 foram publicados em
+`https://app.okamibot.cloud` e seus hashes foram conferidos por download público.
+A conexão Codex autorizada pelo titular aparece ativa no app publicado. O teste
+público autenticado passou em desktop/mobile sem gravações de conteúdo nem erros
+JavaScript; o upgrade x86 preservou pareamento, avatar e rascunho no emulador.
+A primeira repetição de uma automação local interrompida foi preservada em
+`checks-aborted-rerun.json`; `checks.json` contém a execução completa posterior
+aprovada, não uma alteração manual do resultado da tentativa interrompida.
+
+O reinício da API exigiu novamente a recuperação do supervisor nativo, sem
+reiniciar a sessão gráfica. O computador voltou pronto no epoch 19, com controle
+humano/revisão 6 e pausa/revisão 16 preservados. A falha de reconexão permanece
+uma limitação conhecida, registrada em `DEPLOYMENT-ACCEPTANCE.md`.
+Somente os pareamentos temporários dos testes foram revogados; a autorização
+Codex e os dispositivos do titular foram preservados.

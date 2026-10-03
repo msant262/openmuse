@@ -1,5 +1,46 @@
 # OkamiBot: instalação e aceite em 3 de outubro de 2026
 
+**Revisão atual publicada: API, web e Android `7ec9235`.** A revisão anterior
+foi novamente rejeitada no uso real. Esta correção adiciona geração de imagens
+pela assinatura ChatGPT via conexão Codex OAuth, seleção de modelo em
+Configurações, Tavily com formulário seguro, gestão de conversas e limpeza dos
+eventos internos no Feed/painel/notificações.
+[Diagnóstico, referências OpenClaw e ensaios](superpowers/research/2026-10-03-openclaw-harness-correction.md).
+
+O titular autorizou o device auth. Um ensaio real isolado, com Grok desabilitado,
+gerou um infográfico PNG usando GPT Image 2 e publicou o arquivo na conversa,
+sem navegador ou perguntas. O pedido de conectar Tavily abriu diretamente o
+formulário privado em um chat real. A gravação/uso da API key teve teste com cofre
+e endpoint controlados; a chave Tavily real ainda não foi fornecida.
+
+A suíte completa passou em **1.034 testes**. Depois da última revisão da exclusão,
+mais **29 testes focados** passaram, incluindo a corrida com um formulário tardio.
+TypeScript e Biome terminaram sem erros. A navegação pública autenticada conferiu
+modelos, ChatGPT conectado, Tavily, Feed e Objetivos, nas larguras 1440/1024/390,
+sem overflow, erros JavaScript ou alterações de conteúdo. Ações de conversas e
+preservação de rascunhos foram verificadas com API isolada, incluindo exclusão em
+outro dispositivo e rotação da conversa principal. Esses testes não representam
+aceite visual do usuário nem equivalência pixel a pixel com Muse.
+
+O bundle web público tem SHA-256
+`caf6d7299c82dd3acc834473b5d78e891379a99a9eccd2eba0e4455c3dc15ddf`.
+O APK ARM64 tem 58.926.425 bytes e SHA-256
+`c56278eda5b318686739c999918b9f655f44a54099bc78b921a2ea6ad62f0fff`.
+Os dois downloads públicos foram comparados com os builds limpos e assinados.
+O upgrade do APK x86 no emulador preservou pareamento, avatar GUMC e rascunho;
+modelos, Codex conectado e campo seguro Tavily foram conferidos na instalação
+Android. Nenhuma chave Tavily foi inserida; não houve teste em celular físico.
+Evidências: `artifacts/harness-v2/`, `artifacts/desktop-usability-v2/` e
+`artifacts/android/harness-v2-release/`.
+
+A troca da API reproduziu a quarentena de reconexão do supervisor nativo.
+Reiniciar somente `okami-executor@lenovo-okami.service` recuperou todas as
+capacidades no epoch 19. A sessão gráfica, o controle humano na revisão 6,
+a pausa desativada na revisão 16 e o avatar GUMC foram preservados. A causa desse
+defeito de reconexão continua aberta; não foi apresentada como corrigida.
+
+## Histórico das revisões anteriores
+
 **Revisão publicada após o incidente de uso real:** web/Android `20c310d`, API
 `8171783`. A revisão anterior `f4eec06` foi rejeitada pelo usuário. Esta entrega
 corrige pesquisa HTTP, ciclos de perguntas e a contaminação do prompt dos

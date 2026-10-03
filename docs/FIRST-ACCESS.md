@@ -25,7 +25,7 @@ ou executar o projeto na sua máquina.
    **Configurações**. O botão do computador do agente abre a tela remota;
    **Assumir controle** habilita entrada e **Devolver ao agente** encerra o
    controle manual.
-6. As configurações têm categorias para idioma, conectores, personalização,
+6. As configurações têm categorias para idioma, modelos, conexões, personalização,
    permissões, memória e notificações. Toque no lápis junto ao avatar ou em
    **Personalizar seu companheiro**, dentro de **Geral**, para abrir aparência
    e personalidade. No estúdio do companheiro, descreva o
@@ -35,6 +35,23 @@ ou executar o projeto na sua máquina.
    no estúdio. Os personagens ficam salvos na galeria e podem ser reutilizados,
    assim como o companheiro padrão. A criação usa a conta Grok conectada,
    independentemente do modelo escolhido para conversar.
+
+Em **Configurações → Modelos**, escolha um modelo disponível na conta conectada;
+a preferência vale para as próximas conversas e tarefas. Em **Conexões → Imagens
+com ChatGPT**, a assinatura já está conectada por Codex OAuth. Pedidos de imagens
+e infográficos podem usar GPT Image sem depender do Grok nem de uma chave de API
+paga. Se desconectar, o app oferece um código para autorizar no site oficial da
+OpenAI. Essa conexão é independente do modelo usado para conversar.
+
+Para Tavily, use **Conexões → Conectar Tavily** ou peça a conexão na conversa.
+O agente abre um formulário privado; insira a API key nesse campo. A chave é
+validada e guardada no cofre, fora do histórico enviado ao modelo. Tavily ainda
+não está configurado com uma chave real nesta instalação.
+
+O menu de cada conversa permite renomear, arquivar, restaurar e excluir.
+**Arquivadas** mostra as conversas guardadas. Excluir remove a transcrição;
+arquivos, tarefas e memórias salvos têm seu próprio ciclo de vida. Tarefas ativas
+precisam ser encerradas antes de excluir sua conversa.
 
 A pesquisa pública agora usa busca HTTP e `web_fetch` antes de recorrer ao
 navegador. Perguntas anteriores ficam recolhidas no histórico; **Parar tarefa**
@@ -46,14 +63,14 @@ janela anônima se quiser manter o acesso; apagar cookies exige novo pareamento.
 Se abriu a versão anterior, use **Ctrl+Shift+R**. O endereço `/api/health` é apenas
 diagnóstico, não a interface.
 
-**Android:** baixe o [APK ARM64 assinado](https://app.okamibot.cloud/downloads/okamibot.apk?v=20c310d)
+**Android:** baixe o [APK ARM64 assinado](https://app.okamibot.cloud/downloads/okamibot.apk?v=7ec9235)
 no telefone e instale. Ele usa o mesmo domínio público e não exige Tailscale.
 Se já tiver o app, instale como atualização para preservar os dados. Caso o
 Android recuse por assinatura diferente, não desinstale nem apague os dados para
 contornar a recusa. Use a mesma chave na primeira entrada.
 
-O APK tem 58.336.319 bytes e SHA256
-`9c08f6074a4046f416fa204c2327c8785f8ef950aa01402b733b082692933375`.
+O APK tem 58.926.425 bytes e SHA256
+`c56278eda5b318686739c999918b9f655f44a54099bc78b921a2ea6ad62f0fff`.
 O parâmetro da versão no link evita que o cache entregue o APK anterior.
 Gmail/Calendar e push ainda precisam da configuração das contas correspondentes;
 não são necessários para abrir o chat.
@@ -81,8 +98,8 @@ Rotas da instalação atual (comandos na VPS):
 ```bash
 sudo tailscale serve --bg --yes --set-path=/api http://100.113.59.40:8787/api
 sudo tailscale serve --bg --yes --set-path=/executor http://100.113.59.40:8787/executor
-sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/20c310d-public
-sudo tailscale serve --bg --yes --set-path=/downloads/okamibot.apk /opt/okami-web/downloads/okamibot-20c310d-arm64-v8a.apk
+sudo tailscale serve --bg --yes --set-path=/ /opt/okami-web/releases/7ec9235-public
+sudo tailscale serve --bg --yes --set-path=/downloads/okamibot.apk /opt/okami-web/downloads/okamibot-7ec9235-arm64-v8a.apk
 ```
 
 Mantenha os sufixos `/api` e `/executor` nos destinos: o Serve remove o prefixo
