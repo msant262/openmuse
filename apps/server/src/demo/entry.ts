@@ -81,6 +81,9 @@ const api = spawn(
       ...(jevMode === "live" && process.env.JEV_MODEL ? { JEV_MODEL: process.env.JEV_MODEL } : {}),
       AGENT_BACKEND: "model",
       MODEL: demoModel,
+      MODEL_CAPABILITIES: JSON.stringify({
+        [demoModel]: { tools: true, vision: false, structuredOutput: true, contextTokens: 131072 },
+      }),
       OPENAI_API_KEY: "local-aimock-demo-only",
       OPENAI_BASE_URL: `${mock.url}/v1`,
       PORT: String(port),

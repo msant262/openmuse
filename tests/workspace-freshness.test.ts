@@ -9,7 +9,7 @@ import type { Config } from "../apps/server/src/config.ts";
 import { createStore } from "../apps/server/src/db.ts";
 import type { CalendarEvent, Mail, ProposalInput } from "../packages/domain/src/index.ts";
 import { encryptSecret } from "../packages/integrations/src/vault.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
 const cachedEvent: CalendarEvent = {
   id: "cached-event",
@@ -49,6 +49,7 @@ async function fixture(t: TestContext) {
     dataDir: directory,
     agentBackend: "model",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(directory),
     allowedOrigins: [],
     googleRedirectUri: "http://localhost:8787/api/google/callback",
     googleClientId: "fixture-client",

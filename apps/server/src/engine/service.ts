@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   type AgentArtifact,
   type AgentIdentity,
-  type AgentMemory,
   type AgentNotification,
   type AgentTask,
   type AgentWorkspace,
@@ -44,12 +43,15 @@ import { backgroundFailure } from "../log.ts";
 import { McpService } from "../mcp.ts";
 import { MediaService } from "../media-tools.ts";
 import { MemoryService } from "../memory.ts";
+import { modelProviderConfig } from "../providers/config.ts";
+import { sharedModelRouter } from "../providers/model-router.ts";
 import { nativePushAdapters, PushService } from "../push.ts";
 import { RoutinesService } from "../routines.ts";
 import { OperationDrain } from "../shutdown.ts";
 import type { LocalThreads } from "../threads.ts";
 import type { WorkspaceService } from "../workspace.ts";
 import { readComputerCommand, reconcileWaitingComputerTasks } from "./computer-jobs.ts";
+import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
 import { ResourceLeases } from "./resource-leases.ts";
@@ -74,6 +76,8 @@ export class AgentService {
   readonly workAdmission: WorkAdmission;
   readonly routines: RoutinesService;
   readonly memory: MemoryService;
+  readonly contextBudget: ContextBudget;
+  contextModel?: ContextModelResolver;
   readonly mcp: McpService;
   readonly push: PushService;
   readonly journal: TaskJournal;
@@ -201,6 +205,21 @@ export class AgentService {
         ).then(() => {}),
     );
     this.memory = new MemoryService(db);
+    this.contextBudget = new ContextBudget(db);
+    if (config.model) {
+      const providers = config.modelProviders ?? modelProviderConfig(config.dataDir);
+      const models = [config.model, ...(config.modelFallbacks ?? [])];
+      const router = sharedModelRouter(providers);
+      this.contextModel = (requirements) => ({
+        id: "compatible-context-capacity",
+        contextTokens: router.contextCapacity(
+          { ...requirements, contextTokens: requirements.contextTokens ?? 0 },
+          models,
+        ),
+        outputReserveTokens: 4096,
+        imageContextTokens: providers.routing?.imageContextTokens ?? 8192,
+      });
+    }
     this.mcp = new McpService(db, actions, config.mcpServers ?? []);
     this.push = new PushService(
       db,
@@ -380,9 +399,11 @@ export class AgentService {
       this.db.list<Goal>(owner, "goals"),
       this.db.list<Monitor>(owner, "monitors"),
       this.db.list<Idea>(owner, "ideas"),
-      this.db.list<AgentMemory>(owner, "memories"),
+      this.memory.recall(owner),
       this.db.list<AgentArtifact>(owner, "agent-artifacts"),
-      this.db.list<AgentNotification>(owner, "notifications"),
+      this.db
+        .recordPage<AgentNotification>(owner, "notifications", { limit: 100, order: "createdAt" })
+        .then((page) => page.entries),
       this.db.get<AgentIdentity>(owner, "agent-settings", "identity"),
       this.runtimePause.get(owner),
       this.db.list<ActionProposal>(owner, "actions"),

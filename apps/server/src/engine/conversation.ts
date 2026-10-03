@@ -196,7 +196,10 @@ export class ConversationAgent extends AbstractAgent {
       let subscription: { unsubscribe(): void } | undefined;
       const latest = input.messages.filter((message) => message.role === "user").at(-1);
       void Promise.all([
-        this.service.memory.context(this.owner),
+        this.service.memory.context(
+          this.owner,
+          typeof latest?.content === "string" ? latest.content : "",
+        ),
         this.service.mcp.tools(this.owner, `chat:${input.threadId}:${latest?.id ?? input.runId}`, {
           signal: abort.signal,
         }),
@@ -536,6 +539,7 @@ export class ConversationAgent extends AbstractAgent {
       ...delegateTools(remoteTools),
     ];
     const agent = tanstackAgent({
+      contextModel: this.service.contextModel,
       trackTool: (execute) => this.service.toolOperations.run(execute),
       onModelSelected: (model) => {
         selectedModel = `${model.provider}/${model.model}`;

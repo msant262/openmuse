@@ -144,6 +144,7 @@ test("the model worker keeps the text a model replies with when it calls no tool
     agentBackend: "model",
     intelligenceApiKey: "test-project-key-never-sent",
     model: demoModel,
+    modelProviders: richChatFixtureProviders(directory, [demoModel]),
     googleRedirectUri: "http://localhost:8787/api/google/callback",
     allowedOrigins: [],
   });
@@ -188,6 +189,7 @@ test("replaying a completed prepared action returns its receipt without reopenin
     agentBackend: "model",
     intelligenceApiKey: "test-project-key-never-sent",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(directory),
     googleRedirectUri: "http://localhost:8787/api/google/callback",
     allowedOrigins: [],
   });
@@ -273,6 +275,7 @@ test("browser reads keep observation identity distinct while reusing one session
     ...browser.config,
     agentBackend: "model",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
   });
   t.after(() => app.agent.stop());
 
@@ -348,6 +351,7 @@ test("model browser takeover pauses without later tools and handback resumes the
     ...browser.config,
     agentBackend: "model",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
   });
   t.after(() => server.agent.stop());
   const task = await server.agent.createTask("owner", {

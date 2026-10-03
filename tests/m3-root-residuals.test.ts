@@ -13,7 +13,7 @@ import { ResourceLeases } from "../apps/server/src/engine/resource-leases.ts";
 import { RuntimePause } from "../apps/server/src/engine/runtime-pause.ts";
 import { browserFixture } from "./helpers/browser.ts";
 import { config as offline } from "./helpers/computer.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const rpcConfig: Config = {
@@ -391,6 +391,7 @@ test("model read_web releases its tracked profile on task completion", async (t)
     ...browser.config,
     agentBackend: "model",
     model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
   });
   t.after(() => app.agent.stop());
   const task = await app.agent.createTask("owner", { prompt: "Read the public source." });

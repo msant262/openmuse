@@ -103,7 +103,11 @@ test("remembering an edited fact saves the requested text and deduplicates curre
     assert.equal(concurrent[0].id, concurrent[1].id);
     await memory.forget("wife", concurrent[0].id);
     await memory.forget("wife", original.id);
-    assert.equal((await memory.recall("wife"))[0].id, remembered.id);
+    // Forgetting suppresses both the raw current text and its recorded prior version,
+    // including the old-text copy recovered before the forget.
+    assert.deepEqual(await memory.recall("wife"), []);
+    await assert.rejects(memory.save("wife", remembered.text), /forgotten|suppressed/i);
+    await assert.rejects(memory.save("wife", "I prefer evening meetings"), /forgotten|suppressed/i);
     assert.equal((await memory.save("other", "I prefer morning meetings")).text, remembered.text);
   } finally {
     await db.close();

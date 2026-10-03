@@ -1,21 +1,23 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type {
-  AgentIdentity,
-  AgentMemory,
-  AgentNotification,
-} from "../../../../packages/domain/src/agent.ts";
+import type { AgentIdentity, AgentNotification } from "../../../../packages/domain/src/agent.ts";
 import {
   agentProfilePatchSchema,
   profileScopeSchema,
 } from "../../../../packages/domain/src/agent.ts";
 import { AppError } from "../errors.ts";
+import { memoryInput } from "../memory.ts";
 import { routineInput } from "../routines.ts";
 import type { AgentService } from "./service.ts";
 import { taskTimingUpdateSchema } from "./task-timing.ts";
 
-const text = z.string().trim().min(1).max(4000);
-const memorySchema = z.object({ text, source: z.string().trim().min(1).max(200).optional() });
+const memorySchema = memoryInput.omit({ source: true }).extend({
+  source: memoryInput.shape.source.removeDefault().optional(),
+  text: memoryInput.shape.text.max(4000),
+});
+const revisionChange = z
+  .object({ expectedRevision: z.number().int().min(0), requestId: z.string().min(1).max(256) })
+  .strict();
 const goalPatchSchema = z.object({
   status: z.enum(["active", "paused", "completed"]).optional(),
   milestones: z
@@ -56,6 +58,36 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     c.json(
       await service.profiles.reset(c.get("owner"), {
         ...profileChange.omit({ patch: true }).parse(await c.req.json()),
+        origin: { kind: "settings" },
+      }),
+    ),
+  );
+  app.get("/profile/history", async (c) =>
+    c.json(
+      await service.profiles.history(
+        c.get("owner"),
+        c.req.query("threadId")
+          ? { kind: "conversation", threadId: c.req.query("threadId") ?? "" }
+          : { kind: "global" },
+        {
+          cursor: c.req.query("cursor"),
+          limit: z.coerce
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .parse(c.req.query("limit") ?? 20),
+        },
+      ),
+    ),
+  );
+  app.post("/profile/restore", async (c) =>
+    c.json(
+      await service.profiles.restore(c.get("owner"), {
+        ...profileChange
+          .omit({ patch: true })
+          .extend({ revision: z.number().int().min(0) })
+          .parse(await c.req.json()),
         origin: { kind: "settings" },
       }),
     ),
@@ -185,24 +217,68 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
   });
   app.post("/memories", async (c) => {
     const body = memorySchema.parse(await c.req.json());
-    return c.json(await service.memory.save(c.get("owner"), body.text, body.source ?? "You"), 201);
-  });
-  app.post("/memories/:id", async (c) => {
-    const body = memorySchema.parse(await c.req.json());
-    const memory = await service.db.compareAndSwap<AgentMemory>(
-      c.get("owner"),
-      "memories",
-      c.req.param("id"),
-      {},
-      body,
+    return c.json(
+      await service.memory.save(c.get("owner"), body.text, body.source ?? "You", {
+        validUntil: body.validUntil,
+        timezone: body.timezone,
+        origin: { kind: "settings" },
+      }),
+      201,
     );
-    if (!memory) throw new AppError("Memory not found", 404);
-    return c.json(memory);
+  });
+  app.get("/memories", async (c) =>
+    c.json(
+      await service.memory.page(c.get("owner"), {
+        cursor: c.req.query("cursor"),
+        query: c.req.query("query"),
+        limit: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .parse(c.req.query("limit") ?? 40),
+        includeInactive: c.req.query("includeInactive") === "true",
+      }),
+    ),
+  );
+  app.post("/memories/:id", async (c) => {
+    const body = memorySchema
+      .extend(revisionChange.shape)
+      .strict()
+      .parse(await c.req.json());
+    return c.json(
+      await service.memory.update(c.get("owner"), c.req.param("id"), body, { kind: "settings" }),
+    );
   });
   app.post("/memories/:id/forget", async (c) => {
-    await service.memory.forget(c.get("owner"), c.req.param("id"));
+    await service.memory.forget(
+      c.get("owner"),
+      c.req.param("id"),
+      revisionChange.parse(await c.req.json()),
+    );
     return c.json({ ok: true });
   });
+  app.get("/memories/:id/history", async (c) =>
+    c.json(
+      await service.memory.history(c.get("owner"), c.req.param("id"), {
+        cursor: c.req.query("cursor"),
+        limit: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .parse(c.req.query("limit") ?? 20),
+      }),
+    ),
+  );
+  app.post("/memories/:id/restore", async (c) =>
+    c.json(
+      await service.memory.restore(c.get("owner"), c.req.param("id"), {
+        ...revisionChange.extend({ revision: z.number().int().min(0) }).parse(await c.req.json()),
+        allowForgotten: true,
+      }),
+    ),
+  );
   app.get("/routines", async (c) =>
     c.json({
       routines: await service.routines.list(c.get("owner")),
@@ -270,7 +346,28 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     return c.json(identity);
   });
   app.get("/notifications", async (c) =>
-    c.json((await service.snapshot(c.get("owner"))).notifications),
+    c.json(
+      (
+        await service.db.recordPage<AgentNotification>(c.get("owner"), "notifications", {
+          limit: 100,
+          order: "createdAt",
+        })
+      ).entries,
+    ),
+  );
+  app.get("/notifications/page", async (c) =>
+    c.json(
+      await service.db.recordPage<AgentNotification>(c.get("owner"), "notifications", {
+        order: "createdAt",
+        cursor: c.req.query("cursor"),
+        limit: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .parse(c.req.query("limit") ?? 40),
+      }),
+    ),
   );
   app.post("/notifications/:id/read", async (c) => {
     const notification = await service.db.compareAndSwap<AgentNotification>(

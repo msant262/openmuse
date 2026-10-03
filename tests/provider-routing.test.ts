@@ -498,6 +498,9 @@ test("a worker parks provider interruption with completed tool receipts and save
   const providers = modelProviderConfig(dir, {
     LOCAL_BASE_URL: process.env.OPENAI_BASE_URL,
     LOCAL_API: "responses",
+    MODEL_CAPABILITIES: JSON.stringify({
+      "local/worker": { tools: true, vision: false, structuredOutput: true, contextTokens: 131072 },
+    }),
   });
   const app = await createApp(db, {
     mode: "sample",

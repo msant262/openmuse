@@ -10,7 +10,9 @@ Execution of the [approved twelve-milestone plan](plans/2026-10-02-lenovo-agent-
 | 4 — Task direction, recovery and verified completion | Reviewed and integrated; native/provider composition follows |
 | 5 — Capability-aware model fallback | Reviewed and integrated; real subscription acceptance pending |
 | 6 — Native Linux executor and file recovery | Reviewed and integrated; physical deployment acceptance pending |
-| 7–12 | Pending integration |
+| 7–9 | Pending integration |
+| 10 — Bounded context and long-term memory | Reviewed and integrated; physical/provider acceptance pending |
+| 11–12 | Pending integration |
 
 ## Milestone 1
 
@@ -172,3 +174,28 @@ that account's own privileges. Desktop lifecycle/Take control, private login,
 browser fallback and final installation remain in milestones 7–9/12. Native media
 and physical Android/account acceptance are not claimed here. See
 [the native deployment guide](../apps/computer/deployment/README.md).
+
+
+## Milestone 10
+
+Memory facts have scope, provenance, revision, edit/forget controls and explicit
+retention settings. Past-thread search and compaction preserve source references;
+profile settings use current revisions and Unicode-safe normalized matching.
+Context projection retains the current request, system policy, complete tool
+pairs and required journal receipts inside the selected models' shared capacity.
+A provider with insufficient capacity waits for configuration instead of silently
+dropping required evidence or repeating a completed operation.
+
+Fresh desktop observations hydrate masked pixels through owned assets. Captures
+older than five minutes remain audit references, with pixels excluded from active
+model context. The original transcript and user-uploaded images remain intact.
+The capture timestamp, not a deduplicated asset's creation time, determines age.
+
+After the implementer's deliveries, root corrected Unicode and actual model/
+journal integration and connected M7's observation receipt format. The final
+source tree passed the complete existing test glob at concurrency 4 on 2026-10-03
+(685/685, 141.6 seconds), server/mobile types, and nine provider/context composition
+regressions. No live subscription or physical desktop acceptance is claimed.
+
+This independent milestone was integrated ahead of 7–9 while their connected
+browser/credential corrections were still in review. See [MEMORY-CONTEXT.md](MEMORY-CONTEXT.md).

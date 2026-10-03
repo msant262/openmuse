@@ -2,7 +2,11 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import pg from "pg";
-import type { AgentMemory, AgentNotification } from "../../../packages/domain/src/agent.ts";
+import type {
+  AgentMemory,
+  AgentNotification,
+  RevisionEntry,
+} from "../../../packages/domain/src/agent.ts";
 import type { ActionLogEntry } from "../../../packages/domain/src/index.ts";
 import type {
   ConversationEvent,
@@ -13,7 +17,10 @@ import type {
 } from "../../../packages/domain/src/runtime.ts";
 import { initializeDurableConversations } from "./durable-schema.ts";
 import { initializeTaskRuntime } from "./engine/task-schema.ts";
+import { AppError } from "./errors.ts";
 import { backgroundFailure } from "./log.ts";
+import { memoryFingerprintFields } from "./memory-fingerprint.ts";
+import { initializeThreadCompaction, type ThreadMessagePage } from "./thread-compaction.ts";
 
 type Row = { data: Record<string, unknown> };
 interface Database {
@@ -115,6 +122,32 @@ export class Store {
       status: "applied" | "duplicate" | "binding_conflict" | "revision_conflict";
       values: T[];
       events: ConversationEvent[];
+    };
+  }
+  /** Suppression and CAS share the owner transaction lock with automatic saves. */
+  async memoryMutation(
+    owner: string,
+    receiptId: string,
+    bindingHash: string,
+    mutations: Parameters<Store["durableMutation"]>[3],
+    allowRestoration: boolean,
+  ) {
+    await this.repairMemoryFingerprints(owner);
+    mutations = mutations.map((mutation) => {
+      if (mutation.kind === "memories" && typeof mutation.value.text === "string")
+        return {
+          ...mutation,
+          value: { ...mutation.value, ...memoryFingerprintFields(mutation.value.text) },
+        };
+      return mutation;
+    });
+    const result = await this.write(
+      "SELECT openmuse_memory_mutation($1,$2,$3,$4::jsonb,$5::boolean) AS data",
+      [owner, receiptId, bindingHash, JSON.stringify(mutations), allowRestoration],
+    );
+    return result.rows[0].data as unknown as {
+      status: "applied" | "duplicate" | "binding_conflict" | "revision_conflict" | "suppressed";
+      values: AgentMemory[];
     };
   }
   async conversationEvents(owner: string, threadId: string, cursor: number, limit = 500) {
@@ -287,6 +320,62 @@ export class Store {
       [owner, kind],
     );
     return result.rows.map((row) => row.data as T);
+  }
+  async recordPage<T>(
+    owner: string,
+    kind: string,
+    options: {
+      cursor?: string;
+      limit?: number;
+      field?: string;
+      value?: string;
+      order?: "createdAt";
+    } = {},
+  ) {
+    const limit = Math.min(100, Math.max(1, options.limit ?? 40));
+    const result = await this.db.query(
+      `SELECT data FROM records WHERE owner=$1 AND kind=$2
+       AND ($3::text IS NULL OR (NOT $7::boolean AND id>$3) OR ($7::boolean AND (
+         data->>'createdAt'<(SELECT data->>'createdAt' FROM records WHERE owner=$1 AND kind=$2 AND id=$3) OR
+         (data->>'createdAt'=(SELECT data->>'createdAt' FROM records WHERE owner=$1 AND kind=$2 AND id=$3) AND id>$3))))
+       AND ($5::text IS NULL OR data->>$5=$6)
+       ORDER BY CASE WHEN $7::boolean THEN data->>'createdAt' ELSE NULL END DESC,id LIMIT $4`,
+      [
+        owner,
+        kind,
+        options.cursor ?? null,
+        limit + 1,
+        options.field ?? null,
+        options.value ?? null,
+        options.order === "createdAt",
+      ],
+    );
+    const entries = result.rows.slice(0, limit).map((row) => row.data as T);
+    return {
+      entries,
+      ...(result.rows.length > limit
+        ? { nextCursor: (result.rows[limit - 1].data as { id: string }).id }
+        : {}),
+    };
+  }
+  async revisionPage<T>(
+    owner: string,
+    kind: string,
+    entityId: string,
+    options: { cursor?: string; limit?: number } = {},
+  ) {
+    const limit = Math.min(100, Math.max(1, options.limit ?? 20));
+    const result = await this.db.query(
+      `SELECT data FROM records WHERE owner=$1 AND kind=$2 AND data->>'entityId'=$3
+       AND ($4::text IS NULL OR (data->>'revision')::integer <
+         (SELECT (data->>'revision')::integer FROM records WHERE owner=$1 AND kind=$2 AND id=$4 AND data->>'entityId'=$3))
+       ORDER BY (data->>'revision')::integer DESC LIMIT $5`,
+      [owner, kind, entityId, options.cursor ?? null, limit + 1],
+    );
+    const entries = result.rows
+      .slice(0, limit)
+      .map((row) => row.data as unknown as RevisionEntry<T>);
+    return { entries, ...(result.rows.length > limit ? { nextCursor: entries.at(-1)?.id } : {}) };
   }
   async put<T extends { id: string }>(owner: string, kind: string, value: T): Promise<T> {
     await this.write(
@@ -559,6 +648,12 @@ export class Store {
   }
   /** Atomic append avoids losing streamed events to another database connection. */
   async appendRecordEvent(owner: string, id: string, event: unknown): Promise<void> {
+    if (event && typeof event === "object" && "type" in event && event.type === "RUN_STARTED") {
+      const { input: _input, ...publicEvent } = event as Record<string, unknown>;
+      event = publicEvent;
+    }
+    if (Buffer.byteLength(JSON.stringify(event)) > 1024 * 1024)
+      throw new Error("Conversation event exceeds the 1 MiB retention envelope");
     await this.write("SELECT openmuse_thread_event($1,$2,$3::jsonb) AS data", [
       owner,
       id,
@@ -603,14 +698,18 @@ export class Store {
   async threadSnapshot<T>(
     owner: string,
     id: string,
+    onlyRunning = false,
   ): Promise<{ runs: T[]; activeRunToken: string | null }> {
     const result = await this.db.query(
       `WITH ordered AS (
          SELECT run.id,run.data,row_number() OVER (ORDER BY run.data->>'createdAt' DESC,run.id DESC) AS position
          FROM records run WHERE run.owner=$1 AND run.kind='thread-runs' AND run.data->>'threadId'=$2
+           AND (NOT $3::boolean OR run.data->>'status'='running')
        ), projected AS (
          SELECT id,CASE WHEN data->>'status'='running' THEN data ELSE
-           (CASE WHEN position=1 THEN data - 'inputMessages' - 'initialState'
+           (CASE WHEN position=1 THEN (data - 'inputMessages' - 'initialState') ||
+             CASE WHEN data ? 'messages' THEN '{}'::jsonb ELSE jsonb_build_object('messages',
+               COALESCE((SELECT jsonb_agg(message.data ORDER BY message.position) FROM thread_messages message WHERE message.owner=$1 AND message.thread_id=$2),'[]'::jsonb)) END
              ELSE data - 'messages' - 'inputMessages' - 'state' - 'initialState' END)
            || jsonb_build_object('events',COALESCE((SELECT jsonb_agg(
              CASE WHEN event->>'type'='RUN_STARTED' THEN event - 'input' ELSE event END ORDER BY n)
@@ -620,7 +719,7 @@ export class Store {
          'runs',COALESCE((SELECT jsonb_agg(run.data ORDER BY run.data->>'createdAt',run.id) FROM projected run),'[]'::jsonb),
          'activeRunToken',CASE WHEN (data->>'leaseUntil')::timestamptz>clock_timestamp() THEN data->>'runToken' ELSE NULL END
        ) AS data FROM records WHERE owner=$1 AND kind='threads' AND id=$2`,
-      [owner, id],
+      [owner, id, onlyRunning],
     );
     return (
       (result.rows[0]?.data as { runs: T[]; activeRunToken: string | null } | undefined) ?? {
@@ -628,6 +727,77 @@ export class Store {
         activeRunToken: null,
       }
     );
+  }
+  async latestUncompactedThreadRun<T>(owner: string, threadId: string): Promise<T | undefined> {
+    const result = await this.db.query(
+      `WITH latest AS (SELECT data FROM records WHERE owner=$1 AND kind='thread-runs' AND data->>'threadId'=$2
+         ORDER BY data->>'createdAt' DESC,id DESC LIMIT 1)
+       SELECT data FROM latest WHERE data->>'status'='running' OR data ? 'messages'`,
+      [owner, threadId],
+    );
+    return result.rows[0]?.data as unknown as T | undefined;
+  }
+  async compactThread(owner: string, threadId: string): Promise<boolean> {
+    const result = await this.write("SELECT openmuse_compact_thread($1,$2) AS data", [
+      owner,
+      threadId,
+    ]);
+    return (result.rows[0]?.data as unknown) === true;
+  }
+  async threadContextMessages(
+    owner: string,
+    threadId: string,
+    requiredOperationIds: readonly string[] = [],
+  ) {
+    const result = await this.db.query(
+      `WITH recent AS (
+      SELECT position,data FROM thread_messages WHERE owner=$1 AND thread_id=$2 ORDER BY position DESC LIMIT 200
+    ), required AS (
+      SELECT position,data FROM thread_messages WHERE owner=$1 AND thread_id=$2 AND
+       (data->>'toolCallId'=ANY($3::text[]) OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(data->'toolCalls','[]'::jsonb)) call WHERE call->>'id'=ANY($3::text[])))
+    ) SELECT data FROM (SELECT * FROM recent UNION SELECT * FROM required) messages ORDER BY position`,
+      [owner, threadId, requiredOperationIds],
+    );
+    return result.rows.map((row) => row.data as unknown as ThreadMessagePage["messages"][number]);
+  }
+  async threadMessagePage(
+    owner: string,
+    threadId: string,
+    options: { cursor?: string; limit?: number } = {},
+  ): Promise<ThreadMessagePage> {
+    const limit = Math.min(100, Math.max(1, options.limit ?? 50));
+    const cursorValid = options.cursor
+      ? (
+          await this.db.query(
+            "SELECT data FROM thread_messages WHERE owner=$1 AND thread_id=$2 AND id=$3",
+            [owner, threadId, options.cursor],
+          )
+        ).rows.length > 0
+      : true;
+    const result = await this.db.query(
+      `SELECT data FROM thread_messages WHERE owner=$1 AND thread_id=$2
+      AND ($3::text IS NULL OR position>(SELECT position FROM thread_messages WHERE owner=$1 AND thread_id=$2 AND id=$3))
+      ORDER BY position LIMIT $4`,
+      [owner, threadId, cursorValid ? (options.cursor ?? null) : null, limit + 1],
+    );
+    const messages = result.rows
+      .slice(0, limit)
+      .map((row) => row.data as unknown as ThreadMessagePage["messages"][number]);
+    return {
+      messages,
+      snapshotRequired: !cursorValid,
+      ...(result.rows.length > limit ? { nextCursor: messages.at(-1)?.id } : {}),
+    };
+  }
+  /** Serialized fixture bytes, not PostgreSQL allocation or host RAM measurements. */
+  async threadStorageBytes(owner: string, threadId: string): Promise<number> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('bytes',
+      COALESCE((SELECT sum(octet_length(data::text)) FROM records WHERE owner=$1 AND kind='thread-runs' AND data->>'threadId'=$2),0)+
+      COALESCE((SELECT sum(octet_length(data::text)) FROM thread_messages WHERE owner=$1 AND thread_id=$2),0)) AS data`,
+      [owner, threadId],
+    );
+    return Number(result.rows[0].data.bytes);
   }
   /** Recover the run and release only its matching lease in one crash-atomic SQL statement. */
   async recoverThreadRun(
@@ -651,20 +821,82 @@ export class Store {
     );
     return result.rows.length === 1;
   }
-  async findMemories(owner: string, query: string, limit: number): Promise<AgentMemory[]> {
+  private readonly memoryRepairs = new Map<string, Promise<void>>();
+  /** Bounded legacy repair, without changing revision, history or pagination timestamps. */
+  repairMemoryFingerprints(owner: string): Promise<void> {
+    const pending = this.memoryRepairs.get(owner);
+    if (pending) return pending;
+    const repair = this.repairMemoryBatch(owner).finally(() => this.memoryRepairs.delete(owner));
+    this.memoryRepairs.set(owner, repair);
+    return repair;
+  }
+  private async repairMemoryBatch(owner: string) {
+    let cursor: string | null = null;
+    for (;;) {
+      const result = await this.db.query(
+        `SELECT jsonb_build_object('id',id,'text',data->'text') AS data FROM records WHERE owner=$1 AND kind='memories'
+         AND NOT openmuse_memory_fingerprint_valid(data)
+         AND ($2::text IS NULL OR id>$2) ORDER BY id LIMIT 100`,
+        [owner, cursor],
+      );
+      if (!result.rows.length) return;
+      const repairs = result.rows.flatMap(({ data }) =>
+        typeof data.text === "string"
+          ? [{ id: data.id, text: data.text, ...memoryFingerprintFields(data.text) }]
+          : [],
+      );
+      if (repairs.length)
+        await this.write(
+          `UPDATE records fact SET data=fact.data ||
+          (repair - 'id' - 'text') || jsonb_build_object('suppressionOverride',
+            CASE WHEN fact.data->>'suppressionOverride'=repair->>'fingerprint'
+              THEN fact.data->>'suppressionOverride' ELSE NULL END)
+         FROM jsonb_array_elements($2::jsonb) repair
+         WHERE fact.owner=$1 AND fact.kind='memories' AND fact.id=repair->>'id'
+         AND fact.data->>'text'=repair->>'text'
+         AND NOT openmuse_memory_fingerprint_valid(fact.data)`,
+          [owner, JSON.stringify(repairs)],
+        );
+      cursor = result.rows.at(-1)?.data.id as string;
+      if (result.rows.length < 100) return;
+    }
+  }
+  async findMemories(
+    owner: string,
+    query: string,
+    limit: number,
+    now = new Date().toISOString(),
+    cursor?: string,
+    includeInactive = false,
+  ): Promise<AgentMemory[]> {
+    await this.repairMemoryFingerprints(owner);
     const result = await this.db.query(
-      "SELECT data FROM records WHERE owner=$1 AND kind='memories' AND strpos(lower(data->>'text'),lower($2))>0 ORDER BY updated_at DESC,id LIMIT $3",
-      [owner, query, Math.min(40, limit)],
+      `SELECT data FROM records fact WHERE owner=$1 AND kind='memories'
+       AND ($6::boolean OR (openmuse_memory_fingerprint_valid(data) AND COALESCE(data->>'status','active')='active'
+       AND (data->>'validUntil' IS NULL OR (data->>'validUntil')::timestamptz>$4::timestamptz)
+       AND NOT EXISTS(SELECT 1 FROM records suppression WHERE suppression.owner=fact.owner
+         AND suppression.kind='memory-suppressions'
+         AND suppression.id=fact.data->>'fingerprint'
+         AND fact.data->>'suppressionOverride' IS DISTINCT FROM suppression.id)))
+       AND strpos(lower(data->>'text'),lower($2))>0
+       AND ($5::text IS NULL OR (updated_at,id)<(SELECT updated_at,id FROM records WHERE owner=$1 AND kind='memories' AND id=$5))
+       ORDER BY updated_at DESC,id DESC LIMIT $3`,
+      [owner, query, Math.min(101, Math.max(1, limit)), now, cursor ?? null, includeInactive],
     );
     return result.rows.map((row) => row.data as unknown as AgentMemory);
   }
   /** Fact IDs survive edits; deduplication compares the current text atomically. */
   async saveMemory(owner: string, value: AgentMemory): Promise<AgentMemory> {
+    await this.repairMemoryFingerprints(owner);
+    value = { ...value, ...memoryFingerprintFields(value.text) };
     const result = await this.write("SELECT openmuse_save_memory($1,$2::jsonb) AS data", [
       owner,
       JSON.stringify(value),
     ]);
-    return result.rows[0].data as unknown as AgentMemory;
+    const saved = result.rows[0].data;
+    if (saved.status === "repair_pending")
+      throw new AppError("Memory changed during migration. Retry the save", 409);
+    return saved as unknown as AgentMemory;
   }
   /** Latest canonical transcript per thread, filtered in SQL; never load cumulative run copies. */
   async searchThreads(owner: string, query: string, limit: number, archived: boolean) {
@@ -673,13 +905,17 @@ export class Store {
       SELECT DISTINCT ON (data->>'threadId') data FROM records
       WHERE owner=$1 AND kind='thread-runs' AND data->>'status'<>'running'
       ORDER BY data->>'threadId',data->>'createdAt' DESC,id DESC
+    ), transcript AS (
+      SELECT thread_id, data AS message, acquired_at AS date FROM thread_messages WHERE owner=$1
+      UNION ALL SELECT latest.data->>'threadId', message, latest.data->>'createdAt' FROM latest,
+        jsonb_array_elements(COALESCE(latest.data->'messages','[]'::jsonb)) message
+        WHERE NOT EXISTS(SELECT 1 FROM thread_messages canonical WHERE canonical.owner=$1 AND canonical.thread_id=latest.data->>'threadId')
     ) SELECT jsonb_build_object('threadId',thread.id,'name',thread.data->>'name',
-      'messageId',message->>'id','role',message->>'role','excerpt',substring(message->>'content' FROM greatest(1,strpos(lower(message->>'content'),lower($2))-80) FOR 500),'date',latest.data->>'createdAt') AS data
-      FROM latest JOIN records thread ON thread.owner=$1 AND thread.kind='threads' AND thread.id=latest.data->>'threadId',
-      jsonb_array_elements(COALESCE(latest.data->'messages','[]'::jsonb)) message
+      'messageId',message->>'id','role',message->>'role','excerpt',substring(message->>'content' FROM greatest(1,strpos(lower(message->>'content'),lower($2))-80) FOR 500),'date',transcript.date) AS data
+      FROM transcript JOIN records thread ON thread.owner=$1 AND thread.kind='threads' AND thread.id=transcript.thread_id
       WHERE ($4::boolean OR thread.data->>'archived'='false') AND message->>'role' IN ('user','assistant')
       AND jsonb_typeof(message->'content')='string' AND strpos(lower(message->>'content'),lower($2))>0
-      ORDER BY latest.data->>'createdAt' DESC,message->>'id' LIMIT $3`,
+      ORDER BY transcript.date DESC,message->>'id' LIMIT $3`,
       [owner, query, Math.min(30, Math.max(1, limit)), archived],
     );
     return result.rows.map((row) => row.data);
@@ -772,6 +1008,7 @@ export async function createStore(
     "CREATE TABLE IF NOT EXISTS records(owner text NOT NULL,kind text NOT NULL,id text NOT NULL,data jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,kind,id))",
   );
   await initializeDurableConversations((sql) => database.query(sql));
+  await initializeThreadCompaction((sql) => database.query(sql));
   await initializeTaskRuntime((sql) => database.query(sql));
   await database.query(
     "CREATE INDEX IF NOT EXISTS task_scheduler_due ON records(kind,(data->>'status'),(data->>'nextRunAt')) WHERE kind='tasks'",
@@ -884,20 +1121,76 @@ export async function createStore(
       END LOOP;
       RETURN output;
     END $$`);
-  // A transaction-scoped owner lock serializes concurrent saves. Locking the
-  // matching row also makes a concurrent edit/forget observe a consistent fact.
+  await database.query(`CREATE OR REPLACE FUNCTION openmuse_memory_fingerprint_valid(fact jsonb)
+    RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+    SELECT COALESCE(jsonb_typeof(fact->'text')='string'
+      AND fact->>'fingerprintVersion'='js-v1' AND fact->>'fingerprint' ~ '^[0-9a-f]{64}$'
+      AND fact->>'fingerprintBinding'=encode(sha256(convert_to(
+        (fact->>'fingerprint') || ':' || (fact->>'text'),'UTF8')),'hex'),false)
+    $$`);
+  // A future fingerprint-version migration must rebuild this predicate index.
+  await database.query(`CREATE INDEX IF NOT EXISTS memory_fingerprint_repair ON records(owner,id)
+    WHERE kind='memories' AND NOT openmuse_memory_fingerprint_valid(data)`);
+  await database.query(`CREATE OR REPLACE FUNCTION openmuse_memory_mutation(fact_owner text, receipt_id text, binding_hash text, mutations jsonb, allow_restoration boolean)
+    RETURNS jsonb LANGUAGE plpgsql AS $$
+    DECLARE fact jsonb; previous jsonb;
+    BEGIN
+      PERFORM pg_advisory_xact_lock(hashtextextended('openmuse-durable:' || fact_owner,0));
+      -- A committed request remains retryable even after a later forget.
+      IF EXISTS(SELECT 1 FROM records WHERE owner=fact_owner AND kind='mutation-receipts' AND id=receipt_id) THEN
+        RETURN openmuse_durable_mutation(fact_owner,receipt_id,binding_hash,mutations,'[]'::jsonb);
+      END IF;
+      fact := mutations->0->'value';
+      SELECT data INTO previous FROM records WHERE owner=fact_owner AND kind='memories' AND id=fact->>'id' FOR UPDATE;
+      IF fact->>'status'='active' AND NOT allow_restoration
+        AND EXISTS(SELECT 1 FROM records WHERE owner=fact_owner AND kind='memory-suppressions' AND id=fact->>'fingerprint')
+        AND NOT (COALESCE(previous->>'suppressionOverride','')=fact->>'fingerprint'
+          AND openmuse_memory_fingerprint_valid(previous)
+          AND previous->>'fingerprint'=fact->>'fingerprint') THEN
+        RETURN jsonb_build_object('status','suppressed');
+      END IF;
+      RETURN openmuse_durable_mutation(fact_owner,receipt_id,binding_hash,mutations,'[]'::jsonb);
+    END $$`);
+  // Saves, corrections, forgetting and restoration use one transaction-scoped owner lock.
   await database.query(
     `CREATE OR REPLACE FUNCTION openmuse_save_memory(fact_owner text, fact jsonb) RETURNS jsonb LANGUAGE plpgsql AS $$
      DECLARE saved jsonb;
      BEGIN
-       PERFORM pg_advisory_xact_lock(hashtextextended('openmuse-memory:' || fact_owner,0));
+       PERFORM pg_advisory_xact_lock(hashtextextended('openmuse-durable:' || fact_owner,0));
+       -- A concurrent raw/older-writer edit may miss the byte-bound repair CAS.
+       -- Do not deduplicate against an incomplete normalized view or create a second copy.
+       IF EXISTS(SELECT 1 FROM records WHERE owner=fact_owner AND kind='memories'
+         AND COALESCE(data->>'status','active')='active' AND NOT openmuse_memory_fingerprint_valid(data)) THEN
+         RETURN jsonb_build_object('status','repair_pending');
+       END IF;
+       IF EXISTS(SELECT 1 FROM records WHERE owner=fact_owner AND kind='memory-suppressions' AND id=fact->>'fingerprint') THEN
+         SELECT data INTO saved FROM records WHERE owner=fact_owner AND kind='memories'
+           AND data->>'status'='active' AND openmuse_memory_fingerprint_valid(data)
+           AND data->>'fingerprint'=fact->>'fingerprint'
+           AND data->>'suppressionOverride'=fact->>'fingerprint' ORDER BY updated_at DESC,id LIMIT 1 FOR UPDATE;
+         IF FOUND THEN RETURN saved; END IF;
+         RETURN fact || '{"status":"forgotten"}'::jsonb;
+       END IF;
        SELECT data INTO saved FROM records WHERE owner=fact_owner AND kind='memories'
-         AND lower(normalize(data->>'text',NFKC))=lower(normalize(fact->>'text',NFKC))
+         AND COALESCE(data->>'status','active')='active'
+         AND openmuse_memory_fingerprint_valid(data) AND data->>'fingerprint'=fact->>'fingerprint'
          ORDER BY updated_at DESC,id LIMIT 1 FOR UPDATE;
        IF FOUND THEN RETURN saved; END IF;
        INSERT INTO records(owner,kind,id,data) VALUES(fact_owner,'memories',fact->>'id',fact);
+       INSERT INTO records(owner,kind,id,data) VALUES(fact_owner,'memory-history',(fact->>'id') || ':1',
+         jsonb_build_object('id',(fact->>'id') || ':1','entityId',fact->>'id','revision',1,'value',fact,'action','save','changedAt',fact->>'createdAt'));
        RETURN fact;
      END $$`,
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS memory_current_fingerprint ON records(owner,(data->>'fingerprint')) WHERE kind='memories' AND COALESCE(data->>'status','active')='active'",
+  );
+  await database.query("DROP INDEX IF EXISTS memory_current_text");
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS revision_history_entity ON records(owner,kind,(data->>'entityId'),((data->>'revision')::integer) DESC) WHERE kind IN ('memory-history','profile-history')",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS records_thread_runs ON records(owner,(data->>'threadId'),(data->>'createdAt'),id) WHERE kind='thread-runs'",
   );
   await database.query(
     "CREATE TABLE IF NOT EXISTS external_action_log(owner text NOT NULL,id text NOT NULL,time timestamptz NOT NULL,data jsonb NOT NULL,PRIMARY KEY(owner,id))",

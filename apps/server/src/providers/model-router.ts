@@ -122,6 +122,21 @@ export class ModelRouter {
         ),
     );
   }
+  /** The smallest compatible fallback that can hold mandatory context. Selection
+   * and quota admission still happen only in select(), after context projection. */
+  contextCapacity(requirements: ModelRequirements, models: readonly string[]) {
+    const eligible = this.eligibleModels(requirements, models);
+    if (!eligible.length) throw this.unavailable([], "capability");
+    return Math.min(
+      ...eligible.map(
+        (model) =>
+          (
+            this.verified.get(canonicalModel(model)) ??
+            routingCapabilities(model, this.config).capabilities
+          ).contextTokens,
+      ),
+    );
+  }
   private eligible(request: ModelSelectionRequest, models: string[]) {
     return this.eligibleModels(request.requirements, models, request.excludedModels);
   }

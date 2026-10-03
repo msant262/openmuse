@@ -11,6 +11,7 @@ import { DEFAULT_AGENT_PROFILE } from "../../../packages/domain/src/brand.ts";
 import { bindingHash, type InboxMessage } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
+import { RevisionHistory } from "./memory-history.ts";
 
 type ProfileRecord = {
   id: string;
@@ -18,6 +19,7 @@ type ProfileRecord = {
   fields: AgentProfilePatch;
   origin?: ProfileOrigin;
   updatedAt: string;
+  restoredFrom?: number;
 };
 const originSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("settings") }).strict(),
@@ -163,7 +165,10 @@ function resetIntent(text: string): { conversation: boolean } | null {
   return { conversation: explicit.conversation };
 }
 export class AgentProfile {
-  constructor(private readonly db: Store) {}
+  private readonly revisions: RevisionHistory<ProfileRecord>;
+  constructor(private readonly db: Store) {
+    this.revisions = new RevisionHistory(db, "profile-history");
+  }
   private id(scope: ProfileScope) {
     return scope.kind === "global" ? "global" : `conversation:${scope.threadId}`;
   }
@@ -198,6 +203,76 @@ export class AgentProfile {
       origin: conversation?.origin ?? global.origin,
     };
   }
+  async history(
+    owner: string,
+    rawScope: ProfileScope,
+    options: { cursor?: string; limit?: number } = {},
+  ) {
+    const scope = profileScopeSchema.parse(rawScope);
+    await this.get(owner, scope.kind === "conversation" ? scope.threadId : undefined);
+    const value = await this.db.get<ProfileRecord>(owner, "agent-profiles", this.id(scope));
+    if (value)
+      await this.db.insertIfAbsent(
+        owner,
+        "profile-history",
+        this.revisions.entry(value.id, value.revision, value, "migrate", value.updatedAt),
+      );
+    return this.revisions.page(owner, this.id(scope), options);
+  }
+  async restore(
+    owner: string,
+    raw: {
+      scope: ProfileScope;
+      revision: number;
+      expectedRevision: number;
+      requestId: string;
+      origin: ProfileOrigin;
+    },
+  ) {
+    const input = changeSchema
+      .omit({ patch: true })
+      .extend({ revision: z.number().int().min(0) })
+      .parse(raw);
+    // The authenticated settings channel is the deliberate restoration authority.
+    if (input.origin.kind !== "settings")
+      throw new AppError("Restore profile revisions in authenticated settings", 403);
+    await this.authorizeOrigin(owner, input.origin, input.scope);
+    await this.ensure(owner);
+    const id = this.id(input.scope);
+    const entry = await this.revisions.get(owner, id, input.revision);
+    if (!entry) throw new AppError("Profile revision not found", 404);
+    const previous = await this.db.get<ProfileRecord>(owner, "agent-profiles", id);
+    if (!previous) throw new AppError("Profile not found", 404);
+    const value = {
+      id,
+      fields: agentProfilePatchSchema.parse(entry.value.fields),
+      revision: input.expectedRevision + 1,
+      origin: input.origin,
+      updatedAt: new Date().toISOString(),
+      restoredFrom: input.revision,
+    };
+    const history = this.revisions.entry(id, value.revision, value, "restore", value.updatedAt);
+    const result = await this.db.durableMutation(
+      owner,
+      `profile:${input.requestId}`,
+      bindingHash({ ...input, action: "restore" }),
+      [
+        {
+          kind: "agent-profiles",
+          id,
+          mode: "replace",
+          expected: { revision: input.expectedRevision },
+          value,
+        },
+        { kind: "profile-history", id: history.id, mode: "insert", value: history },
+      ],
+    );
+    if (result.status === "binding_conflict")
+      throw new AppError("This profile request ID was already used", 409);
+    if (result.status === "revision_conflict")
+      throw new AppError("Agent preferences changed. Refresh before restoring", 409);
+    return this.get(owner, input.scope.kind === "conversation" ? input.scope.threadId : undefined);
+  }
   private async authorizeOrigin(
     owner: string,
     origin: ProfileOrigin,
@@ -212,13 +287,17 @@ export class AgentProfile {
     }
     if (!source)
       throw new AppError("Chat profile changes require the current conversation and run", 403);
-    const messages = await this.db.list<InboxMessage>(owner, "conversation-inbox");
-    const message = messages.find(
-      (item) =>
-        item.messageId === origin.messageId &&
-        (!source || (item.threadId === source.threadId && item.runId === source.runId)) &&
-        (scope.kind !== "conversation" || item.threadId === scope.threadId),
+    const candidate = await this.db.get<InboxMessage>(
+      owner,
+      "conversation-inbox",
+      `${source.threadId}:${origin.messageId}`,
     );
+    const message =
+      candidate?.messageId === origin.messageId &&
+      candidate.runId === source.runId &&
+      (scope.kind !== "conversation" || candidate.threadId === scope.threadId)
+        ? candidate
+        : null;
     const intent = message ? profileIntent(message.text) : null;
     if (
       !message ||
@@ -287,6 +366,11 @@ export class AgentProfile {
       updatedAt: new Date().toISOString(),
     });
     const previous = (await this.db.get<ProfileRecord>(owner, "agent-profiles", id))!;
+    await this.db.insertIfAbsent(
+      owner,
+      "profile-history",
+      this.revisions.entry(id, previous.revision, previous, "migrate", previous.updatedAt),
+    );
     const value = {
       id,
       revision: input.expectedRevision + 1,
@@ -295,6 +379,13 @@ export class AgentProfile {
       ...(source ? { source } : {}),
       updatedAt: new Date().toISOString(),
     };
+    const history = this.revisions.entry(
+      id,
+      value.revision,
+      value,
+      reset ? "reset" : "edit",
+      value.updatedAt,
+    );
     const result = await this.db.durableMutation<ProfileRecord>(
       owner,
       `profile:${input.requestId}`,
@@ -307,6 +398,7 @@ export class AgentProfile {
           expected: { revision: input.expectedRevision },
           value,
         },
+        { kind: "profile-history", id: history.id, mode: "insert", value: history },
       ],
     );
     if (result.status === "binding_conflict")

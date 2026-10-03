@@ -196,14 +196,33 @@ test("memories can be edited and forgotten while identity changes persist", asyn
   );
   const updated = await read<AgentMemory>(`/memories/${memory.id}`, {
     text: "I prefer afternoon meetings",
+    expectedRevision: memory.revision,
+    requestId: "memory-api-edit",
   });
   assert.equal(updated.id, memory.id);
   assert.equal(updated.createdAt, memory.createdAt);
   assert.equal(updated.source, "You");
   await db.put("other-user", "memories", { ...memory, id: "private-memory" });
   const privateIdentity = await db.get("other-user", "agent-settings", "identity");
-  assert.equal((await request("/memories/private-memory", { text: "Overwrite" })).status, 404);
-  assert.equal((await request("/memories/private-memory/forget", {})).status, 404);
+  assert.equal(
+    (
+      await request("/memories/private-memory", {
+        text: "Overwrite",
+        expectedRevision: 1,
+        requestId: "private-edit",
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await request("/memories/private-memory/forget", {
+        expectedRevision: 1,
+        requestId: "private-forget",
+      })
+    ).status,
+    404,
+  );
   await read("/identity", {
     name: "Nova",
     tone: "concise",
@@ -239,7 +258,13 @@ test("memories can be edited and forgotten while identity changes persist", asyn
   assert.equal(large.text.length, 4000);
   assert.equal((await request("/memories", { text: "z".repeat(4001) })).status, 422);
   assert.equal((await request(`/memories/${memory.id}`, { text: "z".repeat(4001) })).status, 422);
-  assert.deepEqual(await read(`/memories/${memory.id}/forget`, {}), { ok: true });
+  assert.deepEqual(
+    await read(`/memories/${memory.id}/forget`, {
+      expectedRevision: updated.revision,
+      requestId: "memory-api-forget",
+    }),
+    { ok: true },
+  );
   assert.ok(!(await read<AgentWorkspace>("")).memories.some((item) => item.id === memory.id));
   assert.ok(await db.get("other-user", "memories", "private-memory"));
   assert.equal(

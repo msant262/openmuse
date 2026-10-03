@@ -21,9 +21,11 @@ import { z } from "zod";
 import type { ModelRequirements, WorkClass } from "../../../../packages/domain/src/runtime.ts";
 import type { BrowserImageLoader } from "../providers/browser-images.ts";
 import type { ModelProviderConfig } from "../providers/config.ts";
+import { ModelUnavailableError } from "../providers/errors.ts";
 import type { ModelRouter } from "../providers/model-router.ts";
 import type { ModelSelection, ProviderContinuationCheckpoint } from "../providers/models.ts";
-import { modelAdapter } from "../providers/models.ts";
+import { continuationMessages, modelAdapter } from "../providers/models.ts";
+import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
 
 export { unknownProvider } from "../providers/models.ts";
 
@@ -69,6 +71,9 @@ export function tanstackAgent(options: {
   prompt: string;
   /** Re-read trusted profile/steering at each model safe point without restarting work. */
   promptContext?: () => Promise<string>;
+  /** M5 supplies actual compatible/fallback capacity; never choose another provider here. */
+  contextModel?: ContextModelResolver;
+  requiredOperationIds?: () => Promise<readonly string[]>;
   /** The process owner joins tool receipts after an observable is canceled. */
   trackTool?: (execute: () => Promise<unknown>) => Promise<unknown>;
   executeTool?: (
@@ -137,15 +142,57 @@ export function tanstackAgent(options: {
         messages: converted.messages,
         systemPrompts: system ? [system] : [],
         middleware:
-          options.promptContext || options.onMessages
+          options.promptContext || options.contextModel || options.onMessages
             ? ([
                 {
-                  name: "openmuse-profile",
+                  name: "openmuse-context",
                   onConfig: async (ctx: ChatMiddlewareContext, config: ChatMiddlewareConfig) => {
                     await options.onMessages?.(config.messages, ctx.phase);
-                    return options.promptContext
-                      ? { systemPrompts: [(await options.promptContext()) + system] }
-                      : {};
+                    const systemPrompts = [((await options.promptContext?.()) ?? "") + system];
+                    const requiredOperationIds = (await options.requiredOperationIds?.()) ?? [];
+                    const observations = ContextBudget.observations(config.messages);
+                    const imageContextTokens =
+                      options.providers?.routing?.imageContextTokens ?? 8192;
+                    let model: ReturnType<ContextModelResolver>;
+                    try {
+                      model = options.contextModel?.({
+                        tools: Boolean(config.tools.length),
+                        vision: ContextBudget.currentVision(config.messages, observations),
+                        structuredOutput: false,
+                        contextTokens: ContextBudget.minimumTokens(config.messages, {
+                          systemPrompts,
+                          tools: config.tools,
+                          requiredOperationIds,
+                          observations,
+                          imageContextTokens,
+                        }),
+                      });
+                    } catch (error) {
+                      if (error instanceof ModelUnavailableError)
+                        await options.onProviderInterrupted?.({
+                          version: 1,
+                          messages: continuationMessages(config.messages),
+                          partialText: "",
+                          rejectedModel: options.model,
+                          accepted: false,
+                          code: error.code,
+                        });
+                      throw error;
+                    }
+                    return {
+                      systemPrompts,
+                      ...(model
+                        ? {
+                            providerMessages: ContextBudget.limit(config.messages, {
+                              model,
+                              systemPrompts,
+                              tools: config.tools,
+                              requiredOperationIds,
+                              observations,
+                            }),
+                          }
+                        : {}),
+                    };
                   },
                 },
               ] as ChatMiddleware[])

@@ -118,7 +118,22 @@ export interface AgentMemory {
   text: string;
   source: string;
   createdAt: string;
+  revision?: number;
+  updatedAt?: string;
+  origin?: { kind: "settings" | "chat" | "local"; messageId?: string; taskId?: string };
+  validUntil?: string;
+  timezone?: string;
+  status?: "active" | "forgotten";
+  restoredFrom?: number;
 }
+export type RevisionEntry<T> = {
+  id: string;
+  entityId: string;
+  revision: number;
+  value: T;
+  changedAt: string;
+  action: "save" | "edit" | "forget" | "restore" | "reset" | "migrate";
+};
 export interface AgentArtifact {
   id: string;
   taskId: string;

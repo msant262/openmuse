@@ -6,17 +6,22 @@ import { modelProviderConfig } from "../../apps/server/src/providers/config.ts";
 
 /** The synthetic endpoint accepts the complete rich chat/tool history. Its
  * declared capacity is fixture metadata, not a production model assumption. */
-export function richChatFixtureProviders(dataDir: string) {
+export function richChatFixtureProviders(dataDir: string, models = ["openai/fixture"]) {
   return modelProviderConfig(dataDir, {
     ...process.env,
-    MODEL_CAPABILITIES: JSON.stringify({
-      "openai/fixture": {
-        tools: true,
-        vision: false,
-        structuredOutput: true,
-        contextTokens: 131072,
-      },
-    }),
+    MODEL_CAPABILITIES: JSON.stringify(
+      Object.fromEntries(
+        models.map((model) => [
+          model,
+          {
+            tools: true,
+            vision: false,
+            structuredOutput: true,
+            contextTokens: 131072,
+          },
+        ]),
+      ),
+    ),
   });
 }
 

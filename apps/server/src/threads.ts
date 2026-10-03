@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  AbstractAgent,
+  type AbstractAgent,
   type BaseEvent,
   compactEvents,
   EventType,
@@ -16,11 +16,12 @@ import {
   finalizeRunEvents,
   type LocalThreadEndpointRecord,
 } from "@copilotkit/runtime/v2";
-import { Observable, of, ReplaySubject } from "rxjs";
+import { Observable, ReplaySubject } from "rxjs";
 import { z } from "zod";
 import { type ConversationInbox, messageContentHash } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
+import { replayThreadSnapshot, ThreadCompaction } from "./thread-compaction.ts";
 
 type Thread = LocalThreadEndpointRecord & {
   runToken: string | null;
@@ -52,6 +53,7 @@ const mutation = z.object({
 
 /** Store-backed AG-UI runner. Request identity never comes from client thread/user arguments. */
 export class LocalThreads extends AgentRunner {
+  private readonly compaction: ThreadCompaction;
   private inbox?: ConversationInbox;
   private createAgent?: (owner: string) => AbstractAgent;
   private inboxTimer?: ReturnType<typeof setInterval>;
@@ -187,6 +189,7 @@ export class LocalThreads extends AgentRunner {
     private readonly leaseMs = 30_000,
   ) {
     super();
+    this.compaction = new ThreadCompaction(db);
   }
   withOwner<T>(owner: string, action: () => T): T {
     return this.context.run(owner, action);
@@ -230,25 +233,11 @@ export class LocalThreads extends AgentRunner {
     return (await this.db.threadSnapshot<Run>(owner, id)).runs;
   }
   private async replaySnapshot(run: Run, events = run.events) {
-    class ReplayAgent extends AbstractAgent {
-      run() {
-        return of(...events);
-      }
-    }
-    const reader = new ReplayAgent();
-    reader.setMessages(run.inputMessages ?? []);
-    reader.setState(run.initialState ?? {});
-    reader.threadId = run.threadId;
-    try {
-      await reader.runAgent({ runId: run.runId });
-    } catch {
-      /* RUN_ERROR still leaves the applied partial snapshot. */
-    }
-    return { messages: reader.messages, state: reader.state };
+    return replayThreadSnapshot(run, events);
   }
   /** Close expired runs without restarting tools or presenting interruption as success. */
   private async recover(owner: string, threadId: string) {
-    const snapshot = await this.db.threadSnapshot<Run>(owner, threadId);
+    const snapshot = await this.db.threadSnapshot<Run>(owner, threadId, true);
     // Also recover orphan records left by a prior crash or a replaced expired lease.
     for (const run of snapshot.runs.filter(
       (run) => run.status === "running" && run.id !== snapshot.activeRunToken,
@@ -269,6 +258,7 @@ export class LocalThreads extends AgentRunner {
   async history(owner: string, id: string) {
     const thread = await this.get(owner, id);
     await this.recover(owner, thread.id);
+    await this.compaction.resume(owner, thread.id);
     const runs = await this.runs(owner, id);
     const events = compactEvents(runs.flatMap((run) => run.events));
     const last = runs.at(-1);
@@ -318,7 +308,7 @@ export class LocalThreads extends AgentRunner {
         Math.max(Date.now(), Date.parse(latest?.createdAt ?? "") + 1 || 0),
       ).toISOString();
       const state = latest?.state ?? {};
-      return await this.db.insertThreadPublication(owner, threadId, token, {
+      const saved = await this.db.insertThreadPublication(owner, threadId, token, {
         id,
         threadId,
         runId: id,
@@ -337,6 +327,8 @@ export class LocalThreads extends AgentRunner {
           { type: EventType.RUN_FINISHED, threadId, runId: id },
         ],
       });
+      if (saved) await this.compaction.resume(owner, threadId);
+      return saved;
     } finally {
       await this.db.compareAndSwap(
         owner,
@@ -442,6 +434,7 @@ export class LocalThreads extends AgentRunner {
     }
     // A competing claimant may have replaced an expired run while its recovery was pending.
     await this.recover(owner, threadId);
+    await this.compaction.resume(owner, threadId);
     const historic = await this.runs(owner, threadId);
     const previous = historic.at(-1);
     const previousSnapshot =
@@ -598,6 +591,7 @@ export class LocalThreads extends AgentRunner {
           updatedAt: new Date().toISOString(),
         },
       );
+      await this.compaction.resume(owner, threadId);
     } catch {
       this.drainFailed = true;
       subject.next({
@@ -627,6 +621,7 @@ export class LocalThreads extends AgentRunner {
         try {
           const thread = await this.get(owner, request.threadId);
           await this.recover(owner, thread.id);
+          await this.compaction.resume(owner, thread.id);
           const snapshot = await this.db.threadSnapshot<Run>(owner, request.threadId);
           const runs = snapshot.runs;
           if (cancelled) return;
@@ -759,6 +754,23 @@ export class LocalThreads extends AgentRunner {
     const id = identifier.parse(decodeURIComponent(match[1]));
     await this.get(owner, id);
     if (request.method === "GET" && match[2] && match[2] !== "archive") {
+      if (
+        match[2] === "messages" &&
+        (url.searchParams.has("limit") || url.searchParams.has("cursor"))
+      ) {
+        await this.recover(owner, id);
+        return Response.json(
+          await this.compaction.messages(owner, id, {
+            limit: z.coerce
+              .number()
+              .int()
+              .min(1)
+              .max(100)
+              .parse(url.searchParams.get("limit") ?? 50),
+            cursor: url.searchParams.get("cursor") ?? undefined,
+          }),
+        );
+      }
       const history = await this.history(owner, id);
       return Response.json({ [match[2]]: history[match[2] as "messages" | "events" | "state"] });
     }

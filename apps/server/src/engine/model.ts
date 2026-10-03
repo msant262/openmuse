@@ -562,7 +562,7 @@ export async function executeModelTask(
       },
     ),
   ];
-  const personalContext = await service.memory.context(owner);
+  const personalContext = await service.memory.context(owner, task.prompt);
   const recordBlocked = async (error: unknown) => {
     if (error instanceof Error && "outcomeUnknown" in error && error.outcomeUnknown === true)
       error = new TaskOutcomeUnknownError(
@@ -618,6 +618,8 @@ export async function executeModelTask(
     };
   };
   const agent = tanstackAgent({
+    contextModel: service.contextModel,
+    requiredOperationIds: () => service.journal.requiredHistoryIds(owner, task.id),
     workClass: "background",
     onProviderInterrupted: async (checkpoint) => {
       const saved = providerContinuationCheckpointSchema.parse(checkpoint);
@@ -656,6 +658,7 @@ export async function executeModelTask(
         throw error;
       }
     },
+
     trackTool: (execute) => {
       clearTimeout(inferenceTimer);
       const pending = service.toolOperations.run(async () => {

@@ -151,7 +151,14 @@ export function personalTools(
       description:
         "Save a personal fact or preference explicitly supplied or confirmed by the user",
       parameters: z.object({ text: z.string().trim().min(1).max(4000) }).strict(),
-      execute: ({ text }) => run(() => service.memory.save(owner, text, "User confirmed in chat")),
+      execute: ({ text }) =>
+        run(() =>
+          service.memory.save(owner, text, "User confirmed in chat", {
+            origin: options.profileSource
+              ? { kind: "chat", messageId: options.profileSource.messageId }
+              : { kind: "local" },
+          }),
+        ),
     }),
     defineTool({
       name: "recall_memory",
@@ -161,10 +168,36 @@ export function personalTools(
       execute: ({ query }) => run(() => service.memory.recall(owner, query)),
     }),
     defineTool({
+      name: "correct_memory",
+      description:
+        "Correct a saved fact with the revision from recall_memory. Old facts remain in version history; conflicts require a fresh read.",
+      parameters: z
+        .object({
+          id: z.string().min(1).max(256),
+          text: z.string().trim().min(1).max(4000),
+          expectedRevision: z.number().int().min(0),
+          requestId: z.string().min(1).max(200),
+        })
+        .strict(),
+      execute: ({ id, ...input }) =>
+        run(() =>
+          service.memory.update(owner, id, { ...input, requestId: `${scope}:${input.requestId}` }),
+        ),
+    }),
+    defineTool({
       name: "forget_memory",
       description: "Forget one saved fact using its ID returned by recall_memory",
-      parameters: z.object({ id: z.string().min(1).max(100) }).strict(),
-      execute: ({ id }) => run(() => service.memory.forget(owner, id)),
+      parameters: z
+        .object({
+          id: z.string().min(1).max(100),
+          expectedRevision: z.number().int().min(0),
+          requestId: z.string().min(1).max(200),
+        })
+        .strict(),
+      execute: ({ id, ...input }) =>
+        run(() =>
+          service.memory.forget(owner, id, { ...input, requestId: `${scope}:${input.requestId}` }),
+        ),
     }),
     defineTool({
       name: "prioritize_task",
