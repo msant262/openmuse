@@ -1,5 +1,8 @@
 /** Interface copy only. User messages, filenames and model output are never translated here. */
+import { avatarPTBR } from "./avatar-copy";
+
 export const ptBR: Record<string, string> = {
+  ...avatarPTBR,
   Settings: "Configurações",
   Customize: "Personalizar",
   "Customize your assistant": "Personalize seu assistente",
@@ -141,4 +144,27 @@ export const ptBR: Record<string, string> = {
     "Não foi possível salvar o idioma do aplicativo. Tente novamente.",
   "Notifications, {pending} unread or pending": "Notificações, {pending} não lidas ou pendentes",
   "Open conversation: {name}": "Abrir conversa: {name}",
+  "Enter your access key to continue.": "Insira sua chave de acesso para continuar.",
+  "Your language choice is saved on this device.":
+    "Sua escolha de idioma fica salva neste dispositivo.",
+  "Try again": "Tentar novamente",
+  "Opening your workspace…": "Abrindo seu espaço…",
+  "Plans, progress, decisions and results.": "Planos, progresso, decisões e resultados.",
+  "Useful next steps, grounded in your world.": "Próximos passos úteis para o seu dia a dia.",
+  "Longer-term goals and things to keep an eye on.":
+    "Objetivos de longo prazo e assuntos para acompanhar.",
+  "Connections, capabilities and what your agent remembers.":
+    "Conexões, recursos e o que seu assistente lembra.",
+  "Connections and capabilities.": "Conexões e recursos.",
+  "The conversations behind your work.": "As conversas por trás do seu trabalho.",
+  "Time for what matters.": "Tempo para o que importa.",
+  "Your connected browsing sessions.": "Suas sessões de navegação conectadas.",
+  "Documents, forms and filled copies.": "Documentos, formulários e cópias preenchidas.",
+  "Back to Apps": "Voltar para aplicativos",
+  "Retry main chat": "Tentar conversa principal novamente",
+  "Open {name} activity and approvals": "Abrir atividade e aprovações de {name}",
+  "Ready to review · {title}": "Pronto para revisar · {title}",
+  "Needs your input · {title}": "Precisa de você · {title}",
+  "Picking up your next task…": "Começando sua próxima tarefa…",
+  "Dismiss notification": "Dispensar notificação",
 };

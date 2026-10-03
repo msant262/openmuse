@@ -37,6 +37,8 @@ import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace
 import { API_URL, ApiError, authManager, MuseApi } from "./src/api";
 import type { AuthManager } from "./src/auth-manager";
 import { installRuntimeAuthFetch } from "./src/auth-transport";
+import { AvatarPresentationProvider } from "./src/avatar-presentation";
+import { AvatarStudio } from "./src/avatar-studio";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
@@ -406,7 +408,7 @@ function WorkspaceShell({
             {t(desktopCopy.settingsSubtitle)}
           </Text>
           <ErrorNotice error={t(error)} />
-          <DesktopSettings />
+          <DesktopSettings appearance={<AvatarStudio />} />
         </ScrollView>
       )}
       {!settingsOpen && section !== "chat" && (
@@ -592,7 +594,11 @@ function WorkspaceShell({
     </View>
   );
   return (
-    <>
+    <AvatarPresentationProvider
+      design={data?.identity.avatarDesign}
+      state={activeTask?.status === "running" ? "thinking" : "idle"}
+      active={!settingsOpen && !detail}
+    >
       <WorkspaceTools />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>
         <DesktopShell
@@ -680,6 +686,6 @@ function WorkspaceShell({
           />
         )}
       </SafeAreaView>
-    </>
+    </AvatarPresentationProvider>
   );
 }

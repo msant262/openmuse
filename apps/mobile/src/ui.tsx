@@ -2,7 +2,6 @@ import { ArrowUpRight, Check, ChevronRight, type LucideIcon, X } from "lucide-re
 import type { ReactNode } from "react";
 import {
   ActivityIndicator,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -15,6 +14,8 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAvatarPresentation } from "./avatar-presentation";
+import { AvatarRenderer } from "./avatar-renderer";
 export const colors = {
   canvas: "#FCFCFC",
   card: "#FFFFFF",
@@ -399,7 +400,7 @@ export function LinkRow({
     </Pressable>
   );
 }
-/** OpenMuse's original capybara, shared by every assistant surface. */
+/** Shared companion appearance; legacy background tints remain supported. */
 export function Mascot({
   size = 42,
   variant = "sky",
@@ -407,13 +408,14 @@ export function Mascot({
   size?: number;
   variant?: "sky" | "sand" | "lilac";
 }) {
+  const presentation = useAvatarPresentation();
   const palette = {
     sky: "#ECF5FA",
     sand: "#FAF0DF",
     lilac: "#F1ECF9",
   }[variant];
   return (
-    <View accessibilityLabel="OkamiBot capybara" style={{ width: size, height: size }}>
+    <View style={{ width: size, height: size }}>
       <View
         style={{
           position: "absolute",
@@ -425,11 +427,11 @@ export function Mascot({
           backgroundColor: palette,
         }}
       />
-      <Image
-        source={require("../assets/capybara.png")}
-        resizeMode="contain"
-        style={{ width: size, height: size }}
-        accessible={false}
+      <AvatarRenderer
+        size={size}
+        design={presentation.design}
+        state={presentation.state}
+        active={presentation.active}
       />
     </View>
   );

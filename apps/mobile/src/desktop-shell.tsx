@@ -162,7 +162,7 @@ export function DesktopShell({
       {desktop && (
         <View testID="desktop-sidebar" style={d.sidebar}>
           <View style={d.brand}>
-            <Mascot size={38} variant={data?.identity.avatar} />
+            <Mascot size={56} variant={data?.identity.avatar} />
             <View style={{ flex: 1 }}>
               <Text numberOfLines={1} style={d.brandName}>
                 {agentName}
@@ -397,7 +397,7 @@ export function AppLanguagePicker({ compact = false }: { compact?: boolean } = {
 /** The appearance slot can be replaced by the animated avatar creator. */
 export function DesktopSettings({ appearance }: { appearance?: ReactNode } = {}) {
   const { width } = useWindowDimensions();
-  const columns = width >= 1024;
+  const columns = width >= 1280;
   const appearancePanel = (
     <View style={{ gap: 22 }}>
       {appearance ?? <AssistantAppearance />}
@@ -413,9 +413,7 @@ export function DesktopSettings({ appearance }: { appearance?: ReactNode } = {})
           {!columns && <View style={{ width: "100%" }}>{appearancePanel}</View>}
           <MemorySettings />
         </View>
-        {columns && (
-          <View style={[d.settingsAside, width < 1280 && { width: 248 }]}>{appearancePanel}</View>
-        )}
+        {columns && <View style={[d.settingsAside, { width: 360 }]}>{appearancePanel}</View>}
       </View>
     </View>
   );
