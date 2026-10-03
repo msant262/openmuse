@@ -102,7 +102,7 @@ test("chat browse_web emits real SDK tool events and returns observed source con
   assert.equal((await fixture.db.list("local-user", "tasks")).length, 0);
   assert.equal(requests.length, 2);
   assert.ok(requests[0].body.includes('"name":"browse_web"'));
-  assert.match(requests[0].body, /For public-page summaries.*browse_web/);
+  assert.match(requests[0].body, /For public-page summaries.*web_fetch/);
   assert.match(requests[0].body, /untrusted/);
   assert.ok(requests[1].body.includes(observed.text));
 

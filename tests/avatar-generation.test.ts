@@ -460,3 +460,74 @@ test("Grok media uses its own grant, creates a working reference, pins video fra
     await f.close();
   }
 });
+
+test("avatar image requests do not seed unrelated anatomy and preserve requested features and exclusions", async () => {
+  const f = await fixture();
+  try {
+    await mkdir(join(f.config.dataDir, "credentials"), { mode: 0o700 });
+    await writeFile(
+      join(f.config.dataDir, "credentials/grok.json"),
+      JSON.stringify({
+        version: 1,
+        provider: "grok",
+        token_endpoint: "https://auth.x.ai/oauth2/token",
+        access_token: "test-avatar-token",
+        refresh_token: "test-refresh-token",
+        expires_in: 3600,
+        saved_at: new Date().toISOString(),
+        token_type: "Bearer",
+      }),
+      { mode: 0o600 },
+    );
+    const requests: Record<string, unknown>[] = [];
+    const upstream: typeof fetch = async (input, init) => {
+      assert.equal(new URL(String(input)).pathname, "/v1/images/generations");
+      const body = JSON.parse(String(init?.body));
+      requests.push(body);
+      return Response.json({
+        data: Array.from({ length: Number(body.n) }, () => ({
+          b64_json: png.toString("base64"),
+        })),
+      });
+    };
+    const provider = new GrokAvatarProvider(f.config, upstream);
+    const descriptions = [
+      "um coelho rosa cientista usando um jaleco fechado e com coisas na mao",
+      "um gato roxo com mechas coloridas",
+      "Um coelho branco de orelhas caídas e olhos pretos.",
+      "Um gato lilás com cabelo colorido.",
+      "Um gatinho rosa, sem chifres, sem asas e sem cauda.",
+      "Um dragão verde sem chifres e sem asas, com uma cauda curta.",
+      "A teal dragon with tiny horns, broad wings and a long tail.",
+      "A soft white rabbit with a blue scarf.",
+    ];
+    for (const description of descriptions) {
+      const images = await provider.images(description);
+      assert.equal(images.length, 4);
+      const request = requests.at(-1);
+      assert.ok(request);
+      const prompt = String(request.prompt);
+      assert.ok(prompt.includes(description), "The full user's description reaches the model");
+      const direction = prompt.replace(description, "");
+      assert.doesNotMatch(
+        direction,
+        /\b(?:dragons?|horns?|wings?|tails?|hood(?:ed)?|rabbits?|cats?)\b/i,
+        "Shared art direction must not seed any species or creature features",
+      );
+      assert.match(direction, /explicit exclusions override.*species/i);
+      assert.match(direction, /only.*requested.*normal anatomy/i);
+      assert.match(direction, /3D plush/);
+      assert.match(direction, /soft studio light/);
+      assert.ok(
+        prompt.indexOf(description) < prompt.indexOf("3D plush"),
+        "Requested anatomy is specified before the common rendering style",
+      );
+      assert.equal(request.image, undefined, "New characters must not inherit another avatar");
+      assert.equal(request.seed, undefined);
+      assert.equal(request.n, 4);
+    }
+    assert.equal(requests.length, descriptions.length);
+  } finally {
+    await f.close();
+  }
+});

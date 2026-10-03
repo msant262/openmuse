@@ -90,7 +90,7 @@ test("search backend and tool reuse profile authority, return typed failure and 
   assert.equal(paths.length, count);
   assert.equal((await fixture.db.list("owner", "browsers")).length, 1);
 });
-test("conversation search delegates one task; worker runs search through common journal and exposes source provenance", async (t) => {
+test("conversation search reads over HTTP immediately; delegated research journals reads without effects", async (t) => {
   let phase: "chat" | "task" = "chat";
   const { requests } = await modelFixture(t, (index) =>
     phase === "chat"
@@ -129,6 +129,16 @@ test("conversation search delegates one task; worker runs search through common 
   } as const;
   const server = await createApp(fixture.db, config);
   t.after(() => server.agent.stop());
+  t.mock.method(server.agent.web, "document", async () => ({
+    url: "https://html.duckduckgo.com/html/?q=fixture",
+    contentType: "text/html",
+    body: '<div class="result"><a class="result__a" href="https://example.org/source">Primary fixture</a><div class="result__snippet">Index evidence</div></div>',
+  }));
+  t.mock.method(server.agent.web, "validate", async (url: string) => ({
+    url: new URL(url),
+    address: "93.184.216.34",
+    family: 4,
+  }));
   const input: RunAgentInput = {
     threadId: "search-chat",
     runId: randomUUID(),
@@ -143,13 +153,16 @@ test("conversation search delegates one task; worker runs search through common 
   const result = events.find((event) => event.type === EventType.TOOL_CALL_RESULT);
   assert.ok(result && result.type === EventType.TOOL_CALL_RESULT);
   const receipt = JSON.parse(String(result.content));
-  assert.equal(receipt.delegated, true);
-  assert.equal(paths.length, 0, "chat may not dispatch native work without its admitted task");
+  assert.equal(receipt.status, "ok");
+  assert.equal(receipt.provenance.backend, "http");
+  assert.equal((await fixture.db.list("owner", "tasks")).length, 0);
+  assert.equal(paths.length, 0, "public search does not dispatch browser work");
+  const delegated = await server.agent.createTask("owner", { prompt: "Find fixture sources" });
   phase = "task";
   requests.length = 0;
   await server.agent.worker.tick();
-  const task = await server.agent.getTask("owner", receipt.taskId);
-  assert.equal(task.status, "succeeded", task.error ?? task.question);
+  const task = await server.agent.getTask("owner", delegated.id);
+  assert.equal(task.status, "failed", "An index alone cannot verify a source claim");
   const operations = await server.agent.journal.operations("owner", task.id);
   assert.equal(operations.filter((op) => op.toolName === "search_web").length, 1);
   assert.ok(
@@ -158,5 +171,6 @@ test("conversation search delegates one task; worker runs search through common 
         request.body.includes("Index evidence") && request.body.includes("fullPagesRead"),
     ),
   );
-  assert.equal(paths.filter((path) => path.endsWith("/search")).length, 1);
+  assert.equal(operations.find((op) => op.toolName === "search_web")?.effect, false);
+  assert.equal(paths.length, 0);
 });

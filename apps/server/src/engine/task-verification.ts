@@ -10,6 +10,7 @@ import { inspectPdf } from "../../../../packages/integrations/src/pdf.ts";
 import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import type { Files } from "../files.ts";
+import { readablePage } from "../public-web.ts";
 import type { JournalOperation, TaskJournal } from "./task-journal.ts";
 import { officeContent } from "./task-office.ts";
 
@@ -66,6 +67,53 @@ export function mandatoryTaskCriteria(
     criteria.push({ ...criterion, id });
   }
   return criteria.map((criterion) => completionCriterionSchema.parse(criterion));
+}
+
+function offerResearch(prompt: string) {
+  return (
+    /(?:buscar|busque|pesquis|find|search|look for|suche|compare|mostre|show)/i.test(prompt) &&
+    /(?:promo[çc][oõ]es|ofertas|deals|discounts|angebote)/i.test(prompt)
+  );
+}
+function offerAmounts(text: string): Set<string> {
+  const prices = new Set<string>();
+  const add = (currency: string, raw: string) => {
+    const unit =
+      ({ "€": "EUR", "£": "GBP", $: "USD", US$: "USD", R$: "BRL" } as Record<string, string>)[
+        currency.toUpperCase()
+      ] ?? currency.toUpperCase();
+    const decimal = raw.match(/[.,](\d{1,2})$/);
+    const digits = raw.replace(/[.,]/g, "");
+    const amount = Number(digits) / (decimal ? 10 ** decimal[1].length : 1);
+    if (Number.isFinite(amount)) prices.add(`${unit}:${amount}`);
+  };
+  for (const match of text.matchAll(
+    /(€|£|R\$|US\$|\$|EUR|USD|BRL|GBP)\s*(\d+(?:[.,]\d+)*)|(\d+(?:[.,]\d+)*)\s*(€|£|EUR\b|USD\b|BRL\b|GBP\b)/gi,
+  )) {
+    const prefix = text.slice(Math.max(0, (match.index ?? 0) - 80), match.index);
+    if (/(?:frete|entrega|shipping|versand|delivery)[^.!?€£\d]{0,45}$/i.test(prefix)) continue;
+    add(match[1] ?? match[4], match[2] ?? match[3]);
+  }
+  for (const match of text.matchAll(
+    /"(?:price|lowPrice|highPrice)"\s*:\s*"?(\d+(?:[.,]\d+)*)"?[^{}]{0,300}"priceCurrency"\s*:\s*"(EUR|USD|BRL|GBP)"/gi,
+  ))
+    add(match[2], match[1]);
+  for (const match of text.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)) {
+    const discount = Number(match[1].replace(",", "."));
+    if (discount > 0 && discount <= 100) prices.add(`DISCOUNT:${discount}`);
+  }
+  return prices;
+}
+function deliveredOffer(source: string, report: string) {
+  const plainReport = report.replace(/[*_`]/g, "");
+  if (
+    /(?:não|nao)\s+(?:encontrei|consegui(?:\s+(?:verificar|confirmar|encontrar))?)\s+(?:nenhuma?\s+)?(?:ofertas?|promo[çc][oõ]es)|(?:could not|couldn.t|unable to|did not|didn.t)\s+(?:find|verify|confirm)\s+(?:any\s+|current\s+|verified\s+)*(?:offers?|deals?|promotions?)/i.test(
+      plainReport,
+    )
+  )
+    return false;
+  const reported = offerAmounts(report);
+  return [...offerAmounts(source)].some((price) => reported.has(price));
 }
 
 export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): CompletionCriterion[] {
@@ -169,6 +217,13 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       kind: "receipt",
       effect: "external",
       description: "The requested external effect has a confirmed receipt",
+      requiredItems: [],
+    });
+  if (offerResearch(prompt))
+    criteria.push({
+      id: "current-offer",
+      kind: "observation",
+      description: "A current offer with an observed price or discount from a source page",
       requiredItems: [],
     });
   return criteria.length
@@ -374,7 +429,12 @@ export class TaskVerification {
     }
     return saved.binding;
   }
-  async assess(owner: string, taskId: string, revision: number): Promise<CompletionAssessment> {
+  async assess(
+    owner: string,
+    taskId: string,
+    revision: number,
+    delivery?: string,
+  ): Promise<CompletionAssessment> {
     const task = await this.db.get<AgentTask>(owner, "tasks", taskId);
     if (!task) throw new Error("Task not found");
     const current =
@@ -492,6 +552,10 @@ export class TaskVerification {
                   (evidence.revision ?? 0) === revision &&
                   Boolean(evidence.acquiredAt) &&
                   Boolean(evidence.excerpt.trim()) &&
+                  !/^Search index:/.test(evidence.title) &&
+                  (criterion.id !== "current-offer" ||
+                    (evidence.kind === "web" &&
+                      deliveredOffer(evidence.excerpt, delivery ?? task.result ?? ""))) &&
                   (!criterion.referenceId || criterion.referenceId === evidence.id) &&
                   criterion.requiredItems.every((item) =>
                     evidence.excerpt.toLowerCase().includes(item.toLowerCase()),
@@ -504,11 +568,25 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(read_|computer_status$|browser_(navigate|snapshot|screenshot))/.test(
+                    !/^(web_fetch$|read_|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
                       op.toolName,
                     ) ||
                     !useful(op.receipt) ||
                     (op.receipt as { error?: unknown })?.error
+                  )
+                    return false;
+                  if (
+                    criterion.id === "current-offer" &&
+                    (!/^(web_fetch|read_web|browser_research|browser_snapshot)$/.test(
+                      op.toolName,
+                    ) ||
+                      !readablePage(op.receipt) ||
+                      !deliveredOffer(op.receipt.text, delivery ?? task.result ?? ""))
+                  )
+                    return false;
+                  if (
+                    /^(web_fetch|read_web|browser_research|browser_snapshot)$/.test(op.toolName) &&
+                    !readablePage(op.receipt)
                   )
                     return false;
                   if (op.toolName === "read_workspace") {

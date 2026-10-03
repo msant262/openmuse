@@ -27,8 +27,8 @@ export const searchResultSchema = z
     truncated: z.boolean(),
     provenance: z
       .object({
-        backend: z.literal("browser"),
-        provider: z.literal("duckduckgo-html"),
+        backend: z.enum(["http", "browser"]),
+        provider: z.enum(["duckduckgo-html", "duckduckgo-lite", "bing-rss"]),
         searchUrl: z.url(),
         sessionId: z.uuid().optional(),
         fullPagesRead: z.literal(false),

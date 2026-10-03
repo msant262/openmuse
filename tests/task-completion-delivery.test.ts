@@ -72,7 +72,8 @@ test("a failed computer status lookup cannot verify an observation", async (t) =
     (op) => op.toolName === "computer_status",
   );
   assert.equal(lookup?.status, "failed");
-  assert.equal(saved.status, "waiting_input");
+  assert.equal(saved.status, "failed");
+  assert.equal((await server.db.list("owner", "interaction-requests")).length, 0);
   assert.equal(saved.completion?.status, "unverified");
 });
 
@@ -159,7 +160,8 @@ test("a text plan completion claim without its steps is still unverified", async
   const task = await server.agent.createTask("owner", { kind: "plan", prompt: textPlanPrompt });
   await server.agent.worker.tick();
   const detail = await server.agent.detail("owner", task.id);
-  assert.equal(detail.task.status, "waiting_input");
+  assert.equal(detail.task.status, "failed");
+  assert.equal((await server.db.list("owner", "interaction-requests")).length, 0);
   assert.equal(detail.task.completion?.status, "unverified");
   assert.equal(detail.artifacts.length, 0);
 });
@@ -173,7 +175,8 @@ test("a persisted text plan cannot substitute for a requested external receipt",
   });
   await server.agent.worker.tick();
   const saved = await server.agent.getTask("owner", task.id);
-  assert.equal(saved.status, "waiting_input");
+  assert.equal(saved.status, "failed");
+  assert.equal((await server.db.list("owner", "interaction-requests")).length, 0);
   assert.notEqual(saved.completion?.status, "verified");
   assert.ok(
     saved.completion?.checks.some(

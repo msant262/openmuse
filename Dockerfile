@@ -8,6 +8,8 @@ COPY apps/mobile/package.json ./apps/mobile/package.json
 COPY apps/worker/package.json ./apps/worker/package.json
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter openmuse
 COPY apps/server ./apps/server
+# Share the existing public-address validator and its error type with the HTTP reader.
+COPY apps/worker/src/network.ts apps/worker/src/errors.ts ./apps/worker/src/
 COPY packages ./packages
 RUN pnpm build:server
 

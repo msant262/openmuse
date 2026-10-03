@@ -67,6 +67,8 @@ export function tanstackAgent(options: {
   fallbacks?: readonly string[];
   providers?: ModelProviderConfig;
   maxSteps: number;
+  /** Reserve the last allowed model turn for a chat answer without any tools. */
+  finalResponseOnStepLimit?: boolean;
   tools: ToolDefinition[];
   prompt: string;
   /** Re-read trusted profile/steering at each model safe point without restarting work. */
@@ -142,13 +144,23 @@ export function tanstackAgent(options: {
         messages: converted.messages,
         systemPrompts: system ? [system] : [],
         middleware:
-          options.promptContext || options.contextModel || options.onMessages
+          options.promptContext ||
+          options.contextModel ||
+          options.onMessages ||
+          options.finalResponseOnStepLimit
             ? ([
                 {
                   name: "openmuse-context",
                   onConfig: async (ctx: ChatMiddlewareContext, config: ChatMiddlewareConfig) => {
                     await options.onMessages?.(config.messages, ctx.phase);
                     const systemPrompts = [((await options.promptContext?.()) ?? "") + system];
+                    const finalResponse =
+                      options.finalResponseOnStepLimit && ctx.iteration >= options.maxSteps - 1;
+                    const tools = finalResponse ? [] : config.tools;
+                    if (finalResponse)
+                      systemPrompts.push(
+                        "This is the final response for this chat run. Tools are unavailable. Answer the user's request now using the observations already returned. Cite source URLs for verified details and prices. If research is incomplete, give the useful verified results and briefly explain what could not be verified. Do not invent findings or claim that pending delegated work has finished. Do not ask more questions or ask the user to say continue, restart, or repeat the request.",
+                      );
                     const requiredOperationIds = (await options.requiredOperationIds?.()) ?? [];
                     const observations = ContextBudget.observations(config.messages);
                     const imageContextTokens =
@@ -156,12 +168,12 @@ export function tanstackAgent(options: {
                     let model: ReturnType<ContextModelResolver>;
                     try {
                       model = options.contextModel?.({
-                        tools: Boolean(config.tools.length),
+                        tools: Boolean(tools.length),
                         vision: ContextBudget.currentVision(config.messages, observations),
                         structuredOutput: false,
                         contextTokens: ContextBudget.minimumTokens(config.messages, {
                           systemPrompts,
-                          tools: config.tools,
+                          tools,
                           requiredOperationIds,
                           observations,
                           imageContextTokens,
@@ -181,12 +193,13 @@ export function tanstackAgent(options: {
                     }
                     return {
                       systemPrompts,
+                      tools,
                       ...(model
                         ? {
                             providerMessages: ContextBudget.limit(config.messages, {
                               model,
                               systemPrompts,
-                              tools: config.tools,
+                              tools,
                               requiredOperationIds,
                               observations,
                             }),
@@ -243,7 +256,7 @@ export function tanstackAgent(options: {
       finalize(() => modelNotices.delete(input.runId)),
     );
     const events = splitTextAtToolCalls(attributed);
-    return options.stepLimitNote
+    return options.stepLimitNote && !options.finalResponseOnStepLimit
       ? reportStepLimit(events, options.maxSteps, options.stepLimitNote)
       : events;
   };

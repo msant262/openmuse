@@ -55,9 +55,10 @@ import {
 import { ProactivityService } from "../proactivity/service.ts";
 import { modelProviderConfig } from "../providers/config.ts";
 import { sharedModelRouter } from "../providers/model-router.ts";
+import { PublicWeb } from "../public-web.ts";
 import { nativePushAdapters, PushService } from "../push.ts";
 import { RoutinesService } from "../routines.ts";
-import { BrowserSearchBackend } from "../search.ts";
+import { HttpSearchBackend } from "../search.ts";
 import { OperationDrain } from "../shutdown.ts";
 import type { LocalThreads } from "../threads.ts";
 import type { WorkspaceService } from "../workspace.ts";
@@ -86,7 +87,8 @@ export class AgentService {
     );
   }
   desktop?: DesktopService;
-  readonly search: BrowserSearchBackend;
+  readonly search: HttpSearchBackend;
+  readonly web = new PublicWeb();
   configureDesktop(desktop: DesktopService) {
     this.desktop = desktop;
   }
@@ -208,7 +210,7 @@ export class AgentService {
     this.credentials = credentials;
     this.avatars = new AvatarService(db, files, config);
     this.credentialLogin = credentialLogin;
-    this.search = new BrowserSearchBackend(browser);
+    this.search = new HttpSearchBackend(this.web);
     this.journal = new TaskJournal(db);
     this.inbox = new ConversationInbox(db, (owner, id) => files.get(owner, id));
     this.mailbox = new TaskMailbox(db, this.inbox);
@@ -1607,6 +1609,7 @@ export class AgentService {
       owner,
       task.id,
       Number(task.state.appliedRevision ?? 0),
+      result,
     );
     await context.event(
       "result",
@@ -1614,11 +1617,14 @@ export class AgentService {
       result,
     );
     return {
-      status:
-        completion.status === "verified" ? ("succeeded" as const) : ("waiting_input" as const),
+      status: completion.status === "verified" ? ("succeeded" as const) : ("failed" as const),
       result,
       completion,
-      ...(completion.status !== "verified" ? { question: completion.remaining.join("\n") } : {}),
+      question: "",
+      error:
+        completion.status === "verified"
+          ? null
+          : "The available result is partial; some requested facts or actions could not be verified.",
       state: { ...task.state, verificationRevision: Number(task.state.appliedRevision ?? 0) },
     };
   }
@@ -1750,6 +1756,17 @@ export class AgentService {
         }
       }
     } else if (task.status === "failed") {
+      if (task.originThreadId && task.result) {
+        await this.db.insertIfAbsent(owner, "thread-publications", {
+          id: `partial-result:${task.id}:${hash(task.result)}`,
+          threadId: task.originThreadId,
+          taskId: task.id,
+          title: task.title,
+          text: task.result,
+          status: this.localThreads ? "pending" : "unsupported_cloud_mode",
+        });
+        await this.flushPublications();
+      }
       await this.notify(
         owner,
         "Task needs attention",
@@ -1759,22 +1776,7 @@ export class AgentService {
       );
     } else if (task.status === "waiting_input") {
       await this.interactions.forTask(owner, task);
-      const delivery = [
-        task.result,
-        task.artifactIds.length ? `Saved artifacts: ${task.artifactIds.join(", ")}` : undefined,
-        task.completion?.checks.some((check) => check.passed)
-          ? `Verified criteria: ${task.completion.checks
-              .filter((check) => check.passed)
-              .map((check) => check.criterionId)
-              .join(", ")}`
-          : undefined,
-        task.completion?.remaining.length
-          ? `Remaining: ${task.completion.remaining.join("; ")}`
-          : undefined,
-        `Needs attention: ${task.question ?? task.error ?? "More information is required"}`,
-      ]
-        .filter(Boolean)
-        .join("\n");
+      const delivery = task.question ?? "More information is required to continue.";
       if (task.originThreadId) {
         await this.db.insertIfAbsent(owner, "thread-publications", {
           id: `partial:${task.id}:${task.attempts}:${Number(task.state.appliedRevision ?? 0)}`,

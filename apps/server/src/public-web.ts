@@ -1,0 +1,363 @@
+import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { type DefaultTreeAdapterMap, parse } from "parse5";
+import { type Resolver, validatePublicUrl } from "../../worker/src/network.ts";
+
+const maxBytes = 2 * 1024 * 1024;
+const maxText = 30000;
+type Target = Awaited<ReturnType<typeof validatePublicUrl>>;
+type Response = { status: number; headers: IncomingHttpHeaders; body: string };
+export class WebReadError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Every request connects to the validated address, preserving Host/TLS hostname.
+ * No cookies, ambient authentication, proxy credentials or browser session are used. */
+export function requestPublicPage(target: Target, signal: AbortSignal): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const request = target.url.protocol === "https:" ? httpsRequest : httpRequest;
+    const outgoing = request(
+      target.url,
+      {
+        method: "GET",
+        signal,
+        agent: false,
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Accept: "text/html,application/xhtml+xml,text/plain,application/json;q=0.8",
+          "Accept-Encoding": "identity",
+        },
+        lookup: (_host, options, callback) => {
+          if (options.all) callback(null, [{ address: target.address, family: target.family }]);
+          else callback(null, target.address, target.family);
+        },
+      },
+      (incoming) => {
+        const status = incoming.statusCode ?? 502;
+        if (status >= 300 && status < 400) {
+          incoming.destroy();
+          resolve({ status, headers: incoming.headers, body: "" });
+          return;
+        }
+        if (Number(incoming.headers["content-length"]) > maxBytes) {
+          incoming.destroy();
+          reject(
+            new WebReadError("PAGE_TOO_LARGE", "The public page exceeds the 2 MiB read limit."),
+          );
+          return;
+        }
+        if (
+          incoming.headers["content-encoding"] &&
+          incoming.headers["content-encoding"] !== "identity"
+        ) {
+          incoming.destroy();
+          reject(
+            new WebReadError(
+              "UNSUPPORTED_ENCODING",
+              "The public page returned an unsupported content encoding.",
+            ),
+          );
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        incoming.on("data", (chunk: Buffer) => {
+          bytes += chunk.length;
+          if (bytes > maxBytes) {
+            incoming.destroy();
+            reject(
+              new WebReadError("PAGE_TOO_LARGE", "The public page exceeds the 2 MiB read limit."),
+            );
+          } else chunks.push(chunk);
+        });
+        incoming.on("error", reject);
+        incoming.on("end", () => {
+          try {
+            const charset =
+              String(incoming.headers["content-type"] ?? "").match(
+                /charset\s*=\s*["']?([^;"'\s]+)/i,
+              )?.[1] ?? "utf-8";
+            resolve({
+              status,
+              headers: incoming.headers,
+              body: new TextDecoder(charset, { fatal: true }).decode(Buffer.concat(chunks)),
+            });
+          } catch {
+            reject(
+              new WebReadError(
+                "UNSUPPORTED_ENCODING",
+                "The public page could not be decoded as the declared text encoding.",
+              ),
+            );
+          }
+        });
+      },
+    );
+    outgoing.on("error", reject);
+    outgoing.end();
+  });
+}
+
+type Node = DefaultTreeAdapterMap["node"];
+const children = (node: Node) => ("childNodes" in node ? node.childNodes : []);
+export const htmlAttribute = (node: Node, name: string) =>
+  "attrs" in node ? node.attrs.find((attr) => attr.name === name)?.value : undefined;
+export function htmlNodes(node: Node, predicate: (node: Node) => boolean): Node[] {
+  const found: Node[] = [],
+    pending = [node];
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (predicate(current)) found.push(current);
+    const next = children(current);
+    for (let i = next.length - 1; i >= 0; i--) pending.push(next[i]);
+  }
+  return found;
+}
+export function htmlText(node: Node): string {
+  const text: string[] = [],
+    pending = [node];
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (
+      "tagName" in current &&
+      /^(script|style|noscript|template|svg|canvas|iframe)$/.test(current.tagName)
+    )
+      continue;
+    if (
+      htmlAttribute(current, "hidden") !== undefined ||
+      htmlAttribute(current, "aria-hidden") === "true"
+    )
+      continue;
+    if (current.nodeName === "#text" && "value" in current) text.push(current.value);
+    else {
+      const next = children(current);
+      for (let i = next.length - 1; i >= 0; i--) pending.push(next[i]);
+    }
+  }
+  return text.join(" ").replace(/\s+/g, " ").trim();
+}
+function productData(root: Node) {
+  const result: Record<string, unknown>[] = [];
+  const keys = [
+    "@type",
+    "name",
+    "price",
+    "lowPrice",
+    "highPrice",
+    "priceCurrency",
+    "availability",
+    "url",
+    "validFrom",
+    "priceValidUntil",
+  ];
+  const visit = (value: unknown, depth: number) => {
+    if (depth > 12 || result.length >= 20 || !value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 100)) visit(item, depth + 1);
+      return;
+    }
+    const object = value as Record<string, unknown>;
+    if (
+      [object["@type"]]
+        .flat()
+        .some((type) => ["Product", "Offer", "AggregateOffer"].includes(String(type)))
+    ) {
+      const record = Object.fromEntries(
+        keys.flatMap((key) =>
+          typeof object[key] === "string" || typeof object[key] === "number"
+            ? [[key, String(object[key]).slice(0, 1000)]]
+            : [],
+        ),
+      );
+      result.push(record);
+    }
+    for (const key of ["@graph", "offers", "itemListElement", "item", "mainEntity"])
+      if (object[key]) visit(object[key], depth + 1);
+  };
+  for (const script of htmlNodes(
+    root,
+    (node) =>
+      node.nodeName === "script" &&
+      htmlAttribute(node, "type")?.toLowerCase() === "application/ld+json",
+  ).slice(0, 30)) {
+    const raw = children(script)
+      .map((node) => ("value" in node ? node.value : ""))
+      .join("");
+    try {
+      visit(JSON.parse(raw), 0);
+    } catch {
+      /* Malformed structured data is not evidence. */
+    }
+  }
+  return result;
+}
+async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation;
+  if (signal.aborted) {
+    void operation.catch(() => {});
+    signal.throwIfAborted();
+  }
+  let abort = () => {};
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      }),
+    ]);
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+}
+
+export function readablePage(
+  value: unknown,
+): value is { url: string; title: string; text: string; sessionId?: string; observedAt?: string } {
+  if (!value || typeof value !== "object") return false;
+  const page = value as Record<string, unknown>;
+  return (
+    typeof page.url === "string" &&
+    /^https?:\/\//.test(page.url) &&
+    typeof page.title === "string" &&
+    typeof page.text === "string" &&
+    Boolean(page.text.trim()) &&
+    !page.error &&
+    !/^a required part of this site couldn.t load/i.test(page.text.trim()) &&
+    !/^(access denied|client challenge|just a moment|attention required|verify you are human|checking your browser|(?:403 )?forbidden|security check)(?:\b|[.!])/i.test(
+      page.title.trim(),
+    )
+  );
+}
+
+export class PublicWeb {
+  constructor(
+    private readonly dependencies: { resolve?: Resolver; request?: typeof requestPublicPage } = {},
+  ) {}
+  async validate(url: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    return abortable(validatePublicUrl(url, this.dependencies.resolve), signal);
+  }
+  async document(rawUrl: string, externalSignal?: AbortSignal) {
+    const signal = AbortSignal.any([
+      ...(externalSignal ? [externalSignal] : []),
+      AbortSignal.timeout(20000),
+    ]);
+    let url = rawUrl;
+    for (let redirects = 0; redirects <= 4; redirects++) {
+      signal.throwIfAborted();
+      const target = await this.validate(url, signal);
+      signal.throwIfAborted();
+      const request = this.dependencies.request ?? requestPublicPage;
+      let response: Response;
+      try {
+        response = await request(target, signal);
+      } catch (error) {
+        signal.throwIfAborted();
+        if (
+          !error ||
+          typeof error !== "object" ||
+          !("code" in error) ||
+          !["ECONNRESET", "EPIPE"].includes(String(error.code))
+        )
+          throw error;
+        response = await request(await this.validate(url, signal), signal);
+      }
+      signal.throwIfAborted();
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.location;
+        if (!location)
+          throw new WebReadError("INVALID_REDIRECT", "The public page returned an empty redirect.");
+        url = new URL(location, target.url).href;
+        continue;
+      }
+      if (response.status < 200 || response.status >= 300)
+        throw new WebReadError(
+          `HTTP_${response.status}`,
+          `The public page returned HTTP ${response.status}; its content was not verified.`,
+        );
+      if (Buffer.byteLength(response.body) > maxBytes)
+        throw new WebReadError("PAGE_TOO_LARGE", "The public page exceeds the 2 MiB read limit.");
+      const contentType = String(response.headers["content-type"] ?? "")
+        .split(";")[0]
+        .trim()
+        .toLowerCase();
+      if (
+        ![
+          "text/html",
+          "application/xhtml+xml",
+          "text/plain",
+          "application/json",
+          "text/xml",
+          "application/xml",
+          "application/rss+xml",
+        ].includes(contentType)
+      )
+        throw new WebReadError(
+          "UNSUPPORTED_CONTENT",
+          "This URL is not a supported public text page.",
+        );
+      return { url: target.url.href, body: response.body, contentType };
+    }
+    throw new WebReadError("TOO_MANY_REDIRECTS", "The public page exceeded the redirect limit.");
+  }
+  async read(url: string, signal?: AbortSignal) {
+    const document = await this.document(url, signal);
+    const root = parse(document.body);
+    const html = /html/.test(document.contentType);
+    const title = html
+      ? htmlText(htmlNodes(root, (node) => node.nodeName === "title")[0] ?? root).slice(0, 300)
+      : new URL(document.url).hostname;
+    const main = htmlNodes(root, (node) => ["main", "article"].includes(node.nodeName))[0];
+    const visibleText = html
+      ? htmlText(main ?? htmlNodes(root, (node) => node.nodeName === "body")[0] ?? root)
+      : document.body.trim();
+    const products = html ? productData(root) : [];
+    const structured = products.length
+      ? "\nStructured product data from this page (untrusted): " + JSON.stringify(products)
+      : "";
+    const text = structured
+      ? visibleText.slice(0, 19000) + structured.slice(0, 11000)
+      : visibleText;
+    if (!readablePage({ url: document.url, title, text }))
+      throw new WebReadError(
+        "PAGE_BLOCKED",
+        "The site returned a challenge or no readable public text. Use another source, or browser only if interactive rendering is necessary.",
+      );
+    const links = html
+      ? htmlNodes(main ?? root, (node) => node.nodeName === "a")
+          .flatMap((node) => {
+            try {
+              const target = new URL(htmlAttribute(node, "href") ?? "", document.url);
+              const label = htmlText(node).slice(0, 200);
+              return label &&
+                ["http:", "https:"].includes(target.protocol) &&
+                !target.username &&
+                !target.password
+                ? [{ title: label, url: target.href.slice(0, 4096) }]
+                : [];
+            } catch {
+              return [];
+            }
+          })
+          .slice(0, 80)
+      : [];
+    return {
+      url: document.url,
+      title,
+      text: text.slice(0, maxText),
+      links,
+      truncated:
+        text.length > maxText ||
+        (Boolean(structured) && (visibleText.length > 19000 || structured.length > 11000)),
+      observedAt: new Date().toISOString(),
+      provenance: { backend: "http" as const, authenticated: false as const },
+    };
+  }
+}

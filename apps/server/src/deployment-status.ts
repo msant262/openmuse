@@ -17,11 +17,14 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
       db.scan<{ hold?: boolean; expiresAt: string }>("resource-leases"),
       db.list<ExecutorDelivery>("__executors__", "deliveries"),
       db.scan<{
+        id: string;
         status: string;
         toolName?: string;
         effect?: boolean;
+        nativeEnvelope?: { id?: string; kind?: string };
         receipt?: {
           cleanupConfirmed?: boolean;
+          data?: { cleanupConfirmed?: boolean };
           enabled?: boolean;
           provider?: string;
           status?: string;
@@ -71,7 +74,18 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
           Array.isArray(value.receipt.commands)
         ) &&
         (["dispatching", "running"].includes(value.status) ||
-          (value.status === "outcome_unknown" && value.receipt?.cleanupConfirmed !== true)),
+          (value.status === "outcome_unknown" &&
+            value.receipt?.cleanupConfirmed !== true &&
+            !(
+              // Native cleanup confirms resources are released, not that the
+              // original effect succeeded. Its immutable result stays uncertain.
+              (
+                value.nativeEnvelope?.id === value.id &&
+                value.toolName === `native.${value.nativeEnvelope?.kind}` &&
+                value.receipt?.status === "outcome_unknown" &&
+                value.receipt.data?.cleanupConfirmed === true
+              )
+            ))),
     ).length;
   const nativeDeliveries = deliveries.filter(
     (value) =>

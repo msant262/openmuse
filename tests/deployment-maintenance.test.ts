@@ -126,3 +126,39 @@ test("maintenance ignores a completed legacy computer-status read without hiding
   assert.equal(busy.activeOperations, 4);
   assert.equal(busy.readyForStoppedWriterBackup, false);
 });
+
+test("native cleanup stops counting an uncertain operation while preserving its history and human leases", async (t) => {
+  const server = await browserFallbackFixture(t);
+  const { deploymentStatus } = await import("../apps/server/src/deployment-status.ts");
+  const operation = {
+    id: "native-read",
+    toolName: "native.browser",
+    effect: true,
+    status: "outcome_unknown",
+    nativeEnvelope: { id: "native-read", kind: "browser" },
+    receipt: { status: "outcome_unknown", data: { cleanupConfirmed: true } },
+  };
+  await server.db.put("local-user", "task-operations", operation);
+  await new DeploymentMaintenance(server.db).update("local-user", randomUUID(), "begin");
+  assert.equal((await deploymentStatus(server.db)).activeOperations, 0);
+  assert.deepEqual(await server.db.get("local-user", "task-operations", operation.id), operation);
+  await server.db.put("local-user", "resource-leases", {
+    id: "human-control",
+    hold: true,
+    expiresAt: "1970-01-01T00:00:00.000Z",
+  });
+  assert.equal((await deploymentStatus(server.db)).readyForStoppedWriterBackup, false);
+  for (const row of [
+    { ...operation, id: "not-native", nativeEnvelope: undefined },
+    { ...operation, id: "wrong-envelope" },
+    { ...operation, id: "still-running", status: "running" },
+    {
+      ...operation,
+      id: "not-cleaned",
+      nativeEnvelope: { id: "not-cleaned", kind: "browser" },
+      receipt: { status: "outcome_unknown", data: {} },
+    },
+  ])
+    await server.db.put("local-user", "task-operations", row);
+  assert.equal((await deploymentStatus(server.db)).activeOperations, 4);
+});

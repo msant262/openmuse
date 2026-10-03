@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -152,12 +153,12 @@ test("the model worker keeps the text a model replies with when it calls no tool
     const task = await server.agent.createTask("owner", { prompt: "Plan my week" });
     await server.agent.worker.tick();
     const result = await server.agent.detail("owner", task.id);
-    assert.equal(result.task.status, "waiting_input");
+    assert.equal(result.task.status, "failed");
     assert.match(String(result.task.state.lastUpdate), /Find cool stuff on Hacker News/);
     assert.ok(
       result.events.some(
         (event) =>
-          event.title === "Agent update" && /Find cool stuff on Hacker News/.test(event.detail),
+          event.title === "Partial delivery" && /Find cool stuff on Hacker News/.test(event.detail),
       ),
       "the reply is recorded in the task timeline",
     );
@@ -377,4 +378,74 @@ test("model browser takeover pauses without later tools and handback resumes the
   assert.equal(resumed.state.browserId, sessionId);
   assert.equal(navigations, 1);
   assert.equal(resumed.attempts, 2);
+});
+
+test("browser research fallback records real offers and excludes access-denied pages", async (t) => {
+  let currentUrl = "https://shop.example/denied";
+  const browser = await browserFixture(t, (path, body) => {
+    if (path === "/sessions") {
+      currentUrl = String(body.url);
+      return {
+        data: {
+          id: body.id,
+          title: currentUrl,
+          url: currentUrl,
+          status: "active",
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    }
+    if (path.endsWith("/snapshot")) {
+      const denied = currentUrl.endsWith("denied");
+      return {
+        data: {
+          sessionId: path.split("/")[2],
+          snapshotId: randomUUID(),
+          url: currentUrl,
+          title: denied ? "Access Denied" : "Make-up Sale",
+          text: denied
+            ? "Access Denied. You do not have permission."
+            : "Batom por €12 em estoque na Alemanha",
+          truncated: false,
+          truncatedElements: false,
+          control: "agent",
+          elements: [],
+        },
+      };
+    }
+    throw new Error(`Unexpected browser route ${path}`);
+  });
+  const calls = [
+    { name: "browser_research", arguments: { url: "https://shop.example/denied" } },
+    { name: "browser_research", arguments: { url: "https://shop.example/sale" } },
+    { name: "finish_task", arguments: { summary: "Batom por €12; a outra loja bloqueou acesso." } },
+  ];
+  await modelFixture(t, (index) => calls[index]);
+  const app = await createApp(browser.db, {
+    ...browser.config,
+    agentBackend: "model",
+    model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
+  });
+  t.after(() => app.agent.stop());
+  const task = await app.agent.createTask("owner", {
+    prompt: "Pesquisar promoções de maquiagem",
+    criteria: [
+      {
+        id: "offers",
+        kind: "observation",
+        description: "Ofertas verificadas",
+        requiredItems: ["Batom", "€12"],
+      },
+    ],
+  });
+  await app.agent.worker.tick();
+  const saved = await app.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.question ?? saved.error ?? undefined);
+  assert.deepEqual(
+    saved.evidence.map((item) => item.url),
+    ["https://shop.example/sale"],
+  );
+  assert.match(saved.evidence[0].excerpt, /€12/);
+  assert.equal((await browser.db.list("owner", "interaction-requests")).length, 0);
 });

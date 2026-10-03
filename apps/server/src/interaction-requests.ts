@@ -4,6 +4,7 @@ import {
   type InteractionRequest,
   isCredentialIdentifier,
   type QuestionAnswer,
+  type QuestionInteractionRequest,
   type QuestionSchema,
   questionAnswerSchema,
   questionSchema,
@@ -167,6 +168,14 @@ export class InteractionRequests {
       },
     });
   }
+  async answeredForTask(owner: string, taskId: string) {
+    return (await this.db.list<InteractionRequest>(owner, "interaction-requests"))
+      .filter(
+        (request): request is QuestionInteractionRequest =>
+          request.kind === "question" && request.taskId === taskId && request.status === "answered",
+      )
+      .sort((a, b) => a.revision - b.revision || a.createdAt.localeCompare(b.createdAt));
+  }
   async status(owner: string, id: string): Promise<InteractionRequest> {
     const request = await this.db.get<InteractionRequest>(owner, "interaction-requests", id);
     if (!request) throw new AppError("Question not found", 404);
@@ -265,6 +274,17 @@ export class InteractionRequests {
         answer: options.text ?? JSON.stringify(answer),
         interactionAnswer: answer,
         interactionRequestId: id,
+        userRequestedStop:
+          !request.fieldBindings &&
+          request.schema.fields.length === 1 &&
+          request.schema.fields.some(
+            (field) =>
+              field.type === "text" &&
+              typeof answer[field.id] === "string" &&
+              /^(?:(?:por favor|please)[, ]+)?(?:(?:pode parar por aqui|pare por aqui|pare agora|stop here|stop now|cancel the task|cancele a tarefa|cancela a tarefa|that(?:’|')?s enough|isso (?:já |ja )?(?:basta|é suficiente))(?:[.!?, ]|$)|(?:pode parar|pare|stop|cancel|cancele|cancela)[.!?\s]*$)/i.test(
+                String(answer[field.id]).trim(),
+              ),
+          ),
       },
       updatedAt: new Date().toISOString(),
     };
