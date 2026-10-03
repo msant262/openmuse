@@ -1,5 +1,36 @@
 # OkamiBot: instalação e aceite em 3 de outubro de 2026
 
+**Revisão publicada após o incidente de uso real:** web/Android `20c310d`, API
+`8171783`. A revisão anterior `f4eec06` foi rejeitada pelo usuário. Esta entrega
+corrige pesquisa HTTP, ciclos de perguntas e a contaminação do prompt dos
+avatares, além de reconstruir a composição completa do desktop.
+[Registro das causas e ensaios](superpowers/research/2026-10-03-product-incident-correction.md).
+O ensaio de tarefa produziu cinco ofertas usando somente HTTP, sem perguntas;
+três preços foram corroborados por leituras independentes. A conversa direta
+foi ensaiada na imagem final com data atual e limitações explícitas das fontes.
+A suíte completa passou em 1.002 testes; após a inclusão da data confiável,
+mais 15 testes focados e o build passaram. TypeScript passou; Biome terminou sem
+erros (195 avisos e quatro informações).
+
+O bundle web público tem SHA256
+`24a95312e24144058f50435a992208b84cb1d04163f3d196a51e52b30b401a2d`.
+O APK ARM64 público tem 58.336.319 bytes e SHA256
+`9c08f6074a4046f416fa204c2327c8785f8ef950aa01402b733b082692933375`.
+Ambos foram baixados e comparados com os artefatos locais. A navegação autenticada
+pública passou sem erros de página nem alterações de conteúdo. O upgrade Android
+x86 preservou pareamento, persona e rascunho; foi testado em emulador, não em
+aparelho físico. Evidências: `artifacts/product-correction/` e
+`artifacts/android/product-correction-release/`.
+
+Durante a publicação, a reconexão nativa exigiu reiniciar somente o supervisor.
+O computador voltou pronto no epoch 18, mantendo a sessão gráfica, os PIDs dos
+aplicativos, o controle humano na revisão 6 e os 233 recibos anteriores. A pausa
+permaneceu desativada na revisão 16 e o avatar selecionado foi preservado.
+A causa inicial da quarentena não pôde ser determinada pelos logs existentes;
+não foi apresentada como defeito de reconexão definitivamente corrigido.
+Recibo: `artifacts/product-correction/native-recovery.json`.
+
+
 O código dos doze marcos está implementado. A instalação técnica usa a VPS e a
 Lenovo existentes; o aceite de uso diário pela esposa ainda depende de
 conectores, push e ensaio no celular físico. ChatGPT e Grok estão conectados. Este documento registra

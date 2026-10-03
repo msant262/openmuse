@@ -71,3 +71,44 @@ O contador de operações na manutenção também foi corrigido: recibos nativos
 guardam `cleanupConfirmed` dentro de `data`. O reconhecimento exige envelope
 compatível com a operação; não altera o resultado histórico `outcome_unknown`
 nem dispensa recursos realmente mantidos pelo controle humano.
+
+## Resultado da revisão e publicação
+
+A fonte da interface foi congelada em `20c310d`; web e dois APKs foram
+reconstruídos em checkout isolado e limpo. A API final usa `8171783`, incluindo
+a data UTC do servidor no contexto do modelo e a orientação de excluir
+promoções vencidas. Os recibos de builds, hashes públicos, inspeção visual
+independente, teste Android e ensaios de pesquisa ficam em
+`artifacts/product-correction/` e `artifacts/android/product-correction-release/`.
+
+A suíte completa passou em 1.002 testes. O ajuste final da data passou em 15
+testes focados e build; TypeScript e lint também passaram, com os avisos
+registrados. A tarefa real isolada concluiu cinco ofertas a partir de Primor e
+OTTO, sem sessões de navegador e sem perguntas. Leituras independentes
+confirmaram três preços. No chat da imagem final, a consulta passou a usar
+outubro de 2026 e entregou fontes e limitações sem solicitar continuação.
+Esses ensaios não garantem que toda loja permitirá leitura ou que cada consulta
+retornará preços de produtos; bloqueios são relatados sem virar questionários.
+
+O upgrade no emulador preservou pareamento, avatar selecionado e rascunho. O
+rascunho original foi restaurado e o emulador próprio encerrado. A inspeção web
+pública abriu configurações, personalização, Feed, Ideias, Metas e Biblioteca em
+desktop/móvel sem erros de página; sua sessão temporária foi revogada. Não houve
+aceite em aparelho físico nem afirmação de identidade pixel a pixel com o Muse.
+
+## Reconexão do computador durante a publicação
+
+O reinício gracioso da API preservou a pausa desativada na revisão 16 e as duas
+reservas do controle humano. Não foi feito backup com escritores parados nessa
+janela. Após a desconexão, o supervisor nativo entrou em quarentena; os logs
+existentes não identificam qual etapa de contenção inicial falhou. Portanto, a
+causa desse problema de reconexão permanece indeterminada nesta revisão.
+
+A recuperação reiniciou somente `okami-executor@lenovo-okami`, pelo fluxo normal
+de reconciliação. O epoch avançou de 17 para 18; sessão gráfica, broker, Xvnc e
+Xfce conservaram seus PIDs, assim como o ID/geração da sessão e o controle humano
+na revisão 6. As 233 operações do journal conservaram status, sequência e hash
+dos recibos. Não houve reset, descongelamento manual, alteração de banco ou
+repetição de efeitos. A API voltou a informar computador pronto e conectado.
+Provas: `native-recovery.json` e `state-preservation.json` no diretório de
+artefatos desta revisão. O avatar escolhido permaneceu selecionado.
