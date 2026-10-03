@@ -7,7 +7,9 @@ import type {
   DesktopSession,
 } from "../../../packages/domain/src/desktop";
 import { desktopFrameSchema } from "../../../packages/domain/src/desktop";
+import { ApiError } from "./api-errors";
 import { browserAddress } from "./browser-address";
+import { readDesktop } from "./desktop-requests";
 import { desktopPoint, type RenderedDesktop, renderDesktopFrame } from "./desktop-state";
 import { desktopPollDelay } from "./preview-policy";
 import { Button, Card, ErrorNotice, Field, s } from "./ui";
@@ -23,8 +25,10 @@ export function DesktopViewer() {
   const { api, refresh } = useWorkspace();
   const [status, setStatus] = useState<Status>();
   const [rendered, setRendered] = useState<RenderedDesktop>();
+  const [imageLoaded, setImageLoaded] = useState(false);
   const [control, setControl] = useState<DesktopControl>();
   const [error, setError] = useState("");
+  const [connectionError, setConnectionError] = useState("");
   const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [text, setText] = useState("");
@@ -32,25 +36,35 @@ export function DesktopViewer() {
   const [drag, setDrag] = useState(false);
   const [width, setWidth] = useState(320);
   const latest = useRef<RenderedDesktop | undefined>(undefined);
+  const displayed = useRef<string | undefined>(undefined);
   const viewer = useRef<{ id: string; session: DesktopSession } | undefined>(undefined);
   const unchanged = useRef(0);
   const active = useRef(true),
     pending = useRef(false);
   const grant = useRef<DesktopControl | undefined>(undefined);
   const point = useRef<{ x: number; y: number } | undefined>(undefined);
+  const version = useRef(0);
+  const refreshFrame = useRef<() => void>(() => {});
   const human = control?.control === "human" && Boolean(control.grantId);
   useEffect(() => {
     active.current = true;
+    version.current++;
+    grant.current = undefined;
+    setControl(undefined);
     let running = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    function schedule() {
+    function schedule(immediate = false) {
       if (timer) clearTimeout(timer);
       const delay = desktopPollDelay(
         active.current && AppState.currentState === "active",
         unchanged.current,
       );
-      if (delay !== undefined) timer = setTimeout(() => void poll(), delay);
+      if (delay !== undefined) timer = setTimeout(() => void poll(), immediate ? 0 : delay);
     }
+    refreshFrame.current = () => {
+      unchanged.current = 0;
+      if (!running) schedule(true);
+    };
     async function poll() {
       if (running || !active.current || AppState.currentState !== "active") return;
       if (pending.current) {
@@ -58,11 +72,16 @@ export function DesktopViewer() {
         return;
       }
       running = true;
+      let request = version.current;
+      let stage: "status" | "open" | "heartbeat" | "observe" = "status";
+      const currentRequest = () => active.current && request === version.current;
       try {
-        const current = await api.request<Status | { enabled: false }>("/api/desktop");
-        if (!active.current) return;
+        const current = await readDesktop(() =>
+          api.request<Status | { enabled: false }>("/api/desktop"),
+        );
+        if (!currentRequest()) return;
         if (!current.enabled) {
-          setError("A registered desktop is not connected yet.");
+          setConnectionError("A registered desktop is not connected yet.");
           return;
         }
         if (
@@ -73,18 +92,34 @@ export function DesktopViewer() {
           const old = viewer.current;
           viewer.current = undefined;
           latest.current = undefined;
+          displayed.current = undefined;
+          setImageLoaded(false);
           grant.current = undefined;
           setRendered(undefined);
           setControl(undefined);
+          request = ++version.current;
           void api.request(`/api/desktop/viewers/${old.id}/close`, {}).catch(() => {});
+        }
+        if (
+          grant.current &&
+          (current.control !== "human" || current.revision !== grant.current.revision)
+        ) {
+          grant.current = undefined;
+          latest.current = undefined;
+          displayed.current = undefined;
+          setImageLoaded(false);
+          setRendered(undefined);
+          setControl(undefined);
         }
         setStatus(current);
         if (!viewer.current) {
-          const opened = await api.request<{ viewerId: string; session: DesktopSession }>(
-            "/api/desktop/viewers",
-            { sessionId: current.id },
+          stage = "open";
+          const opened = await readDesktop(() =>
+            api.request<{ viewerId: string; session: DesktopSession }>("/api/desktop/viewers", {
+              sessionId: current.id,
+            }),
           );
-          if (!active.current) {
+          if (!currentRequest()) {
             void api.request(`/api/desktop/viewers/${opened.viewerId}/close`, {}).catch(() => {});
             return;
           }
@@ -92,26 +127,31 @@ export function DesktopViewer() {
         }
         const connected = viewer.current;
         if (grant.current?.grantId) {
-          const renewed = await api.request<DesktopControl>(
-            `/api/desktop/viewers/${connected.id}/heartbeat`,
-            {
+          stage = "heartbeat";
+          const grantId = grant.current.grantId;
+          const renewed = await readDesktop(() =>
+            api.request<DesktopControl>(`/api/desktop/viewers/${connected.id}/heartbeat`, {
               sessionId: current.id,
-              grantId: grant.current.grantId,
+              grantId,
               operationId: Crypto.randomUUID(),
-            },
+            }),
           );
-          if (!active.current) return;
+          if (!currentRequest()) return;
           grant.current = renewed;
           setControl(renewed);
         } else setControl({ control: current.control, revision: current.revision });
+        stage = "observe";
+        const previous = latest.current;
         const frame = desktopFrameSchema.parse(
-          await api.request(`/api/desktop/viewers/${connected.id}/observe`, {
-            sessionId: current.id,
-            ...(latest.current ? { previousImage: latest.current.frame.imageHash } : {}),
-          }),
+          await readDesktop(() =>
+            api.request(`/api/desktop/viewers/${connected.id}/observe`, {
+              sessionId: current.id,
+              ...(previous ? { previousImage: previous.frame.imageHash } : {}),
+            }),
+          ),
         );
-        if (!active.current || viewer.current?.id !== connected.id) return;
-        const next = renderDesktopFrame(connected.session, latest.current, frame);
+        if (!currentRequest() || viewer.current?.id !== connected.id) return;
+        const next = renderDesktopFrame(connected.session, previous, frame);
         if (!next)
           throw new Error(
             "Desktop pixels no longer match this session. Reconnect before sending input.",
@@ -119,20 +159,44 @@ export function DesktopViewer() {
         unchanged.current =
           latest.current?.frame.imageHash === frame.imageHash ? unchanged.current + 1 : 0;
         latest.current = next;
+        if (next.uri !== displayed.current) setImageLoaded(false);
         setRendered(next);
-        setError("");
+        setConnectionError("");
       } catch (failure) {
-        if (active.current) {
-          setError(failure instanceof Error ? failure.message : String(failure));
+        if (currentRequest()) {
+          const message = failure instanceof Error ? failure.message : String(failure);
+          setConnectionError(message);
           latest.current = undefined;
+          displayed.current = undefined;
+          setImageLoaded(false);
           setRendered(undefined);
-          viewer.current = undefined;
-          grant.current = undefined;
-          setControl(undefined);
+          const denied = failure instanceof ApiError && [401, 403].includes(failure.status);
+          const expiredViewer =
+            failure instanceof ApiError &&
+            failure.status === 409 &&
+            message.startsWith("Desktop viewer");
+          // Capture/network failures do not revoke a device's acknowledged
+          // grant. Reconnect an expired viewer using that same device/grant.
+          if (denied || expiredViewer) {
+            const old = viewer.current;
+            viewer.current = undefined;
+            if (old) void api.request(`/api/desktop/viewers/${old.id}/close`, {}).catch(() => {});
+          }
+          if (
+            denied ||
+            (expiredViewer && message.includes("generation/epoch")) ||
+            (stage === "heartbeat" &&
+              failure instanceof ApiError &&
+              failure.status === 409 &&
+              !expiredViewer)
+          ) {
+            grant.current = undefined;
+            setControl(undefined);
+          }
         }
       } finally {
         running = false;
-        schedule();
+        schedule(request !== version.current);
       }
     }
     void poll();
@@ -142,19 +206,25 @@ export function DesktopViewer() {
         void poll();
       } else {
         if (timer) clearTimeout(timer);
+        version.current++;
         latest.current = undefined;
+        displayed.current = undefined;
+        setImageLoaded(false);
         setRendered(undefined);
         point.current = undefined;
       }
     });
     return () => {
       active.current = false;
+      version.current++;
       if (timer) clearTimeout(timer);
       subscription.remove();
       latest.current = undefined;
+      displayed.current = undefined;
       point.current = undefined;
       const current = viewer.current;
       viewer.current = undefined;
+      refreshFrame.current = () => {};
       if (current) void api.request(`/api/desktop/viewers/${current.id}/close`, {}).catch(() => {});
     };
   }, [api]);
@@ -162,15 +232,21 @@ export function DesktopViewer() {
     const current = viewer.current;
     if (!current || pending.current) return;
     unchanged.current = 0;
+    version.current++;
     pending.current = true;
     setBusy(true);
     setError("");
+    latest.current = undefined;
+    displayed.current = undefined;
+    setImageLoaded(false);
+    setRendered(undefined);
+    point.current = undefined;
     try {
       const result = await api.request<DesktopControl>(
         `/api/desktop/viewers/${current.id}/${name}`,
         { sessionId: current.session.id, operationId: Crypto.randomUUID(), ...body },
       );
-      if (!active.current) return;
+      if (!active.current || viewer.current?.id !== current.id) return;
       if (name === "import-downloads") {
         const transfer = result as unknown as { files: unknown[]; failures: { message: string }[] };
         if (transfer.failures.length)
@@ -188,12 +264,21 @@ export function DesktopViewer() {
     } finally {
       pending.current = false;
       if (active.current) setBusy(false);
+      refreshFrame.current();
     }
   }
   function input(action: DesktopInput["action"]) {
     const frame = latest.current?.frame,
       grantId = grant.current?.grantId;
-    if (!frame || frame.paused || status?.runtimePaused || !grantId || busy) return;
+    if (
+      !frame ||
+      latest.current?.uri !== displayed.current ||
+      frame.paused ||
+      status?.runtimePaused ||
+      !grantId ||
+      busy
+    )
+      return;
     const binding = {
       sessionGeneration: frame.sessionGeneration,
       frameId: frame.frameId,
@@ -222,7 +307,7 @@ export function DesktopViewer() {
       >
         Add browser downloads to Files
       </Button>
-      <ErrorNotice error={error} />
+      <ErrorNotice error={error || connectionError} />
       {rendered?.frame.paused ? (
         <Text style={s.small}>
           Paused · last masked frame from {rendered.frame.observedAt}. Resume to refresh or send
@@ -244,6 +329,7 @@ export function DesktopViewer() {
               !busy &&
               !status?.runtimePaused &&
               !latest.current?.frame.paused &&
+              latest.current?.uri === displayed.current &&
               Boolean(latest.current)
             }
             onResponderGrant={(event) => {
@@ -286,6 +372,21 @@ export function DesktopViewer() {
                 source={{ uri: rendered.uri }}
                 style={{ width: imageWidth, height: imageHeight }}
                 resizeMode="contain"
+                onLoad={() => {
+                  if (latest.current?.uri !== rendered.uri) return;
+                  displayed.current = rendered.uri;
+                  setImageLoaded(true);
+                }}
+                onError={() => {
+                  if (latest.current?.uri !== rendered.uri) return;
+                  latest.current = undefined;
+                  displayed.current = undefined;
+                  setImageLoaded(false);
+                  setRendered(undefined);
+                  setConnectionError(
+                    "Desktop image could not be displayed. Retrying a fresh frame…",
+                  );
+                }}
               />
             ) : (
               <Text style={{ color: "#FFF", padding: 24 }}>Waiting for a fresh desktop frame…</Text>
@@ -301,7 +402,7 @@ export function DesktopViewer() {
           onPress={() =>
             void operation(
               human ? "release-control" : "take-control",
-              human ? { grantId: control!.grantId } : {},
+              human ? { grantId: control?.grantId } : {},
             )
           }
         >
@@ -309,6 +410,21 @@ export function DesktopViewer() {
         </Button>
         <Button small onPress={() => setZoom(zoom === 1 ? 2 : 1)}>
           {zoom === 1 ? "Zoom in" : "Fit"}
+        </Button>
+        <Button
+          small
+          disabled={busy}
+          onPress={() => {
+            version.current++;
+            latest.current = undefined;
+            displayed.current = undefined;
+            setImageLoaded(false);
+            setRendered(undefined);
+            point.current = undefined;
+            refreshFrame.current();
+          }}
+        >
+          Refresh frame
         </Button>
         <Button small disabled={!human} primary={drag} onPress={() => setDrag(!drag)}>
           {drag ? "Drag mode" : "Click mode"}
@@ -325,7 +441,7 @@ export function DesktopViewer() {
             maxLength={2000}
           />
           <Button
-            disabled={!text || !rendered}
+            disabled={!text || !rendered || !imageLoaded}
             busy={busy}
             onPress={() => {
               const value = text;
@@ -340,7 +456,7 @@ export function DesktopViewer() {
               <Button
                 key={key}
                 small
-                disabled={!rendered || busy}
+                disabled={!rendered || !imageLoaded || busy}
                 onPress={() => input({ action: "press", key })}
               >
                 {key}
@@ -348,14 +464,14 @@ export function DesktopViewer() {
             ))}
             <Button
               small
-              disabled={!rendered || busy}
+              disabled={!rendered || !imageLoaded || busy}
               onPress={() => input({ action: "scroll", deltaY: -360 })}
             >
               Scroll up
             </Button>
             <Button
               small
-              disabled={!rendered || busy}
+              disabled={!rendered || !imageLoaded || busy}
               onPress={() => input({ action: "scroll", deltaY: 360 })}
             >
               Scroll down
