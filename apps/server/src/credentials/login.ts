@@ -319,6 +319,7 @@ export class CredentialLoginService {
           reasonCode: "SESSION_BINDING_UNAVAILABLE",
         });
       }
+      const challengeCreatedAt = this.now();
       const challengeRecord: CaptchaRecord = challenge ?? {
         id: result.challengeId ?? randomUUID(),
         taskId,
@@ -336,10 +337,11 @@ export class CredentialLoginService {
         submissions: 0,
         actionId: null,
         actionSequence: 0,
-        agentDeadline: this.now() + Math.min(60_000, this.options.captchaAttemptMs ?? 60_000),
-        createdAt: new Date(this.now()).toISOString(),
+        agentDeadline:
+          challengeCreatedAt + Math.min(60_000, this.options.captchaAttemptMs ?? 60_000),
+        createdAt: new Date(challengeCreatedAt).toISOString(),
         expiresAt: new Date(
-          this.now() +
+          challengeCreatedAt +
             (result.challengeKind === "captcha"
               ? 600_000
               : Math.min(60_000, this.options.challengeTtlMs ?? 60_000)),
