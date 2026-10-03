@@ -167,4 +167,115 @@ export const ptBR: Record<string, string> = {
   "Needs your input · {title}": "Precisa de você · {title}",
   "Picking up your next task…": "Começando sua próxima tarefa…",
   "Dismiss notification": "Dispensar notificação",
+  "Acceptance not yet confirmed: ": "Recebimento ainda não confirmado: ",
+  "Agent computer — take control": "Computador do agente — assumir controle",
+  "Agent is working": "O assistente está trabalhando",
+  "Attachments and voice": "Anexos e voz",
+  "Browser connected": "Navegador conectado",
+  "Browser offline": "Navegador desconectado",
+  "Browsing sessions keep their own logins and downloads. Open one to take over, then return to your conversation.":
+    "As sessões de navegação mantêm seus acessos e downloads. Abra uma para assumir o controle e depois volte à conversa.",
+  "Close files and sessions": "Fechar arquivos e sessões",
+  "Conversation unavailable": "Conversa indisponível",
+  Direction: "Orientação",
+  Documents: "Documentos",
+  "Files and sessions": "Arquivos e sessões",
+  "Files saved from your agent, mail and uploads.":
+    "Arquivos salvos pelo assistente, de e-mails e de envios.",
+  "Find cool things on Hacker News": "Encontrar novidades no Hacker News",
+  "Hide recent results": "Ocultar resultados recentes",
+  "Import a PDF in Files to use it in a conversation.":
+    "Importe um PDF em Arquivos para usá-lo em uma conversa.",
+  "Import a document": "Importar um documento",
+  "Keep an eye on a website": "Acompanhar um site",
+  "Keep the app open until sent": "Mantenha o aplicativo aberto até o envio",
+  "Latest messages": "Mensagens mais recentes",
+  "Loading conversation…": "Carregando conversa…",
+  "Messages waiting to retry": "Mensagens aguardando nova tentativa",
+  "Needs attention": "Precisa de atenção",
+  "Not accepted: ": "Não recebido: ",
+  "Open a browser session": "Abrir uma sessão de navegação",
+  "Open a page here or ask your agent to research something. Its browsing sessions will appear here.":
+    "Abra uma página aqui ou peça ao assistente para pesquisar algo. As sessões de navegação aparecerão aqui.",
+  "Open the workspace to see the saved result.": "Abra o espaço para ver o resultado salvo.",
+  "Preview unavailable. Open the browser to reconnect.":
+    "Prévia indisponível. Abra o navegador para reconectar.",
+  "Queued: ": "Na fila: ",
+  "Recent results": "Resultados recentes",
+  "Reconnect browser": "Reconectar navegador",
+  "Remove citation or marking": "Remover citação ou marcação",
+  "Reopen browser": "Reabrir navegador",
+  "Retry loading conversation": "Tentar carregar a conversa novamente",
+  "Retry saving conversation": "Tentar salvar a conversa novamente",
+  "Saved on this device": "Salvo neste dispositivo",
+  "Send queued messages": "Enviar mensagens da fila",
+  "Send the next message to": "Enviar a próxima mensagem para",
+  Sending: "Enviando",
+  "Session saved": "Sessão salva",
+  "Start the browser worker to connect this computer.":
+    "Inicie o serviço do navegador para conectar este computador.",
+  "Summarize copilotkit.ai": "Resumir copilotkit.ai",
+  "Tell me what’s on your mind. I can make a plan, work with your apps, and use my computer to help.":
+    "Conte o que você precisa. Posso criar um plano, trabalhar com seus aplicativos e usar meu computador para ajudar.",
+  "This direction applies to the selected task at its next safe point.":
+    "Esta orientação será aplicada à tarefa selecionada na próxima etapa segura.",
+  View: "Ver",
+  "Waiting for the server.": "Aguardando o servidor.",
+  "Website address": "Endereço do site",
+  "Your agent works here. Step in whenever you need.":
+    "Seu assistente trabalha aqui. Assuma o controle quando precisar.",
+  "Your agent’s browser and documents, in one place.":
+    "O navegador e os documentos do seu assistente em um só lugar.",
+  applied: "aplicada",
+  "arrived after the task completed": "chegou após a conclusão da tarefa",
+  "received; waiting to apply": "recebida; aguardando aplicação",
+  "Quote text": "Citar texto",
+  "View ChatGPT usage": "Ver uso do ChatGPT",
+  "Saving {name}…": "Salvando {name}…",
+  "{count} citations and annotations in this draft": "{count} citações e marcações neste rascunho",
+  "Text: {text}": "Texto: {text}",
+  "File: {name}": "Arquivo: {name}",
+  "Screen: {name}": "Tela: {name}",
+  message: "mensagem",
+  "Remove queued message: {message}": "Remover mensagem da fila: {message}",
+  "Remove attachment: {name}": "Remover anexo: {name}",
+  "Browser preview: {title}": "Prévia do navegador: {title}",
+  "Reopen this conversation to attach the saved file.":
+    "Reabra esta conversa para anexar o arquivo salvo.",
+  "Attachment saved in this conversation’s draft.": "Anexo salvo no rascunho desta conversa.",
+  "Reopen this conversation to use the saved transcript.":
+    "Reabra esta conversa para usar a transcrição salva.",
+  "Long transcript: open the result in Tasks or attach the audio to your request.":
+    "Transcrição longa: abra o resultado em Tarefas ou anexe o áudio ao seu pedido.",
+  "Transcript saved in this conversation’s draft.": "Transcrição salva no rascunho desta conversa.",
+  "Plan my day": "Planejar meu dia",
+  "Help me plan my day. Ask what you need to know.":
+    "Me ajude a planejar meu dia. Pergunte o que precisar saber.",
+  "Create a document": "Criar um documento",
+  "Help me create a document. Let's choose its topic and format.":
+    "Me ajude a criar um documento. Vamos escolher o assunto e o formato.",
+  "Open my computer": "Abrir meu computador",
+  "Message {name}": "Mensagem para {name}",
+  "Under human control": "Sob controle humano",
+  Observing: "Observando",
+  reconnecting: "reconectando",
+  "Observe your agent’s own computer. Take control to click, type or drag; hand it back to resume the same task.":
+    "Veja o computador do seu agente. Assuma o controle para clicar, digitar ou arrastar; devolva-o para retomar a mesma tarefa.",
+  "Paused · last masked frame from {observedAt}. Resume to refresh or send input.":
+    "Pausado · última imagem protegida de {observedAt}. Retome para atualizar ou enviar comandos.",
+  "Last masked agent desktop before pause":
+    "Última imagem protegida do computador do agente antes da pausa",
+  "Current masked agent desktop": "Imagem protegida atual do computador do agente",
+  Fit: "Ajustar",
+  "Refresh frame": "Atualizar imagem",
+  "Open in this desktop": "Abrir nesta área de trabalho",
+  "A registered desktop is not connected yet.": "O computador cadastrado ainda não está conectado.",
+  "Desktop pixels no longer match this session. Reconnect before sending input.":
+    "A imagem não corresponde mais a esta sessão. Reconecte antes de enviar comandos.",
+  "Desktop image could not be displayed. Retrying a fresh frame…":
+    "Não foi possível exibir a imagem. Tentando carregar uma nova…",
+  "Desktop preview timed out. Retrying the connection…":
+    "A prévia da área de trabalho demorou demais. Tentando reconectar…",
+  "Updating desktop image… Input is disabled until a fresh frame arrives.":
+    "Atualizando a imagem… Os comandos ficam bloqueados até chegar uma nova imagem.",
 };

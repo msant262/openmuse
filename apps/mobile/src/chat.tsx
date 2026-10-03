@@ -7,7 +7,7 @@ import {
   useRenderTool,
   useRenderToolCall,
 } from "@copilotkit/react-native/headless";
-import { ArrowDown, ArrowUp, FileText, RotateCcw, Square, X } from "lucide-react-native";
+import { ArrowDown, ArrowUp, FileText, Quote, RotateCcw, Square, X } from "lucide-react-native";
 import {
   type ReactNode,
   useCallback,
@@ -323,7 +323,7 @@ export function ChatScreen({
   wide?: boolean;
 }) {
   const { t } = useI18n();
-  const { api, workspace: w, refresh, navigate } = useWorkspace();
+  const { api, workspace: w, refresh, navigate, open } = useWorkspace();
   const { data: agentWorkspace, refresh: refreshAgent } = useAgentWorkspace();
   const { enabled: richThreads, mainId, claimPrompt, markAccepted } = useMuseThread();
   const selection = thread || { id: "local", existing: false };
@@ -991,14 +991,15 @@ export function ChatScreen({
             >
               {[
                 {
-                  text: t("Find cool things on Hacker News"),
-                  action: () => enqueue("Check out Hacker News for cool stuff"),
+                  text: t("Plan my day"),
+                  action: () => enqueue(t("Help me plan my day. Ask what you need to know.")),
                 },
                 {
-                  text: t("Summarize copilotkit.ai"),
-                  action: () => enqueue("Summarize copilotkit.ai"),
+                  text: t("Create a document"),
+                  action: () =>
+                    enqueue(t("Help me create a document. Let's choose its topic and format.")),
                 },
-                { text: t("Keep an eye on a website"), action: () => navigate("goals") },
+                { text: t("Open my computer"), action: () => open({ type: "computer" }) },
               ].map((item) => (
                 <Button
                   key={item.text}
@@ -1065,9 +1066,24 @@ export function ChatScreen({
                   </View>
                 )}
                 {durableChat && !!text && typeof message.content === "string" && (
-                  <Button small onPress={() => annotateMessage(message, message.content as string)}>
-                    {t("Quote text")}
-                  </Button>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={t("Quote text")}
+                    onPress={() => annotateMessage(message, message.content as string)}
+                    style={({ pressed }) => ({
+                      alignSelf: user ? "flex-end" : "flex-start",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 5,
+                      minHeight: wide ? 30 : 40,
+                      paddingHorizontal: 9,
+                      borderRadius: 8,
+                      opacity: pressed ? 0.55 : 1,
+                    })}
+                  >
+                    <Quote size={13} color={colors.muted} />
+                    <Text style={s.small}>{t("Quote text")}</Text>
+                  </Pressable>
                 )}
                 <JevInteractionContext.Provider
                   value={{
@@ -1553,7 +1569,9 @@ export function ChatScreen({
               </Text>
             </Pressable>
             <TextInput
-              accessibilityLabel={t("Message OkamiBot")}
+              accessibilityLabel={t("Message {name}", {
+                name: agentWorkspace?.identity.name || "OkamiBot",
+              })}
               value={draft}
               onChangeText={(value) => {
                 draftRevision.current++;

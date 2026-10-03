@@ -160,7 +160,12 @@ export function DesktopShell({
   return (
     <View style={desktop ? d.shell : { flex: 1, minHeight: 0 }}>
       {desktop && (
-        <View testID="desktop-sidebar" style={d.sidebar}>
+        <ScrollView
+          testID="desktop-sidebar"
+          style={{ width: 240, flexGrow: 0, flexShrink: 0, backgroundColor: "#F5F7FA" }}
+          contentContainerStyle={[d.sidebar, { flexGrow: 1, gap: 14 }]}
+          showsVerticalScrollIndicator={false}
+        >
           <View style={d.brand}>
             <Mascot size={56} variant={data?.identity.avatar} />
             <View style={{ flex: 1 }}>
@@ -207,7 +212,7 @@ export function DesktopShell({
             />
           </View>
           <View style={d.divider} />
-          <View style={d.conversations}>
+          <View style={[d.conversations, { minHeight: 126 }]}>
             <View style={d.conversationHeading}>
               <Text style={d.sectionLabel}>{t(desktopCopy.conversations)}</Text>
               <Pressable
@@ -219,7 +224,7 @@ export function DesktopShell({
                 <MoreHorizontal size={18} color="#78848F" />
               </Pressable>
             </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 280 }}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={t(desktopCopy.mainChat)}
@@ -285,7 +290,7 @@ export function DesktopShell({
           <Text numberOfLines={1} style={[s.small, { paddingHorizontal: 8 }]}>
             {workspace.mode === "sample" ? "OkamiBot" : workspace.profile.name}
           </Text>
-        </View>
+        </ScrollView>
       )}
       <View
         key="workspace-main"
