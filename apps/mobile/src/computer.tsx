@@ -15,11 +15,13 @@ import { browserAddress } from "./browser-address";
 import { useComputerDraft } from "./computer-drafts";
 import { LinuxWorkspace } from "./computer-workspace";
 import { DesktopViewer } from "./desktop";
+import { useI18n } from "./i18n";
 import { useInlinePreview } from "./preview";
 import { Button, Card, colors, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function ComputerEntry() {
+  const { t } = useI18n();
   const { workspace, open } = useWorkspace();
   const available = workspace.connections.some(
     (c) => c.id === "browser" && c.status === "connected",
@@ -28,7 +30,7 @@ export function ComputerEntry() {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Agent computer — take control"
+      accessibilityLabel={t("Agent computer — take control")}
       onPress={() => open({ type: "computer" })}
       style={[
         s.row,
@@ -44,8 +46,8 @@ export function ComputerEntry() {
     >
       <Monitor size={13} color={colors.muted} />
       <Text style={{ fontSize: 12, color: colors.muted }}>
-        Computer
-        {!available ? " · offline" : active ? " · take control" : " · ready"}
+        {t("Computer")}
+        {` · ${!available ? t("Offline") : active ? t("Take control") : t("Ready")}`}
       </Text>
       <View
         style={{
@@ -59,6 +61,7 @@ export function ComputerEntry() {
   );
 }
 export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
+  const { t } = useI18n();
   const previewVisible = useInlinePreview();
   const { open } = useWorkspace();
   const [, setTab] = useComputerDraft("tab");
@@ -75,19 +78,19 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
           <Globe2 size={21} color={colors.blueDark} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[s.text, { fontWeight: "600" }]}>Browser</Text>
+          <Text style={[s.text, { fontWeight: "600" }]}>{t("Browser")}</Text>
           <Text numberOfLines={1} style={s.small}>
             {browser.status === "closed"
-              ? "Session saved"
+              ? t("Session saved")
               : browser.status === "error"
-                ? "Needs attention"
+                ? t("Needs attention")
                 : browser.title}
           </Text>
         </View>
       </View>
       {previewVisible && browser.previewUrl && browser.status === "active" && !failed ? (
         <Image
-          accessibilityLabel={`Browser preview: ${browser.title}`}
+          accessibilityLabel={t("Browser preview: {title}", { title: browser.title })}
           source={{ uri: browser.previewUrl }}
           style={{ width: "100%", aspectRatio: 1.6, borderRadius: 11, backgroundColor: "#FFF" }}
           resizeMode="contain"
@@ -105,7 +108,7 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
         >
           <Globe2 size={30} color={colors.muted} />
           <Text numberOfLines={2} style={[s.muted, { textAlign: "center" }]}>
-            {failed ? "Preview unavailable. Open the browser to reconnect." : browser.url}
+            {failed ? t("Preview unavailable. Open the browser to reconnect.") : browser.url}
           </Text>
         </View>
       )}
@@ -118,15 +121,16 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
         }}
       >
         {browser.status === "closed"
-          ? "Reopen browser"
+          ? t("Reopen browser")
           : browser.status === "error"
-            ? "Reconnect browser"
-            : "Take control"}
+            ? t("Reconnect browser")
+            : t("Take control")}
       </Button>
     </Card>
   );
 }
 export function ComputerSheet() {
+  const { t } = useI18n();
   const { workspace, api, refresh, close, open, navigate } = useWorkspace();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -166,9 +170,10 @@ export function ComputerSheet() {
   }
   return (
     <Sheet
-      title="Agent computer"
-      subtitle="Your agent works here. Step in whenever you need."
+      title={t("Agent computer")}
+      subtitle={t("Your agent works here. Step in whenever you need.")}
       onClose={close}
+      wide
     >
       <View style={{ gap: 20 }}>
         {tab === "Browser" && (
@@ -177,11 +182,13 @@ export function ComputerSheet() {
           >
             <Monitor size={28} color={colors.blueDark} />
             <View style={{ flex: 1 }}>
-              <Text style={s.heading}>{available ? "Browser connected" : "Browser offline"}</Text>
+              <Text style={s.heading}>
+                {available ? t("Browser connected") : t("Browser offline")}
+              </Text>
               <Text style={s.muted}>
                 {available
-                  ? "Your agent’s browser and documents, in one place."
-                  : "Start the browser worker to connect this computer."}
+                  ? t("Your agent’s browser and documents, in one place.")
+                  : t("Start the browser worker to connect this computer.")}
               </Text>
             </View>
           </View>
@@ -202,20 +209,20 @@ export function ComputerSheet() {
               }
               onPress={() => setTab(item)}
             >
-              {item}
+              {t(item)}
             </Button>
           ))}
         </View>
         <View style={{ display: tab === "Browser" || tab === "Desktop" ? "none" : "flex" }}>
           <LinuxWorkspace tab={tab === "Files" ? "Files" : "Terminal"} />
         </View>
-        <ErrorNotice error={error} />
+        <ErrorNotice error={t(error)} />
         {tab === "Desktop" && <DesktopViewer />}
         {tab === "Browser" ? (
           <>
             <View>
               <Field
-                label="Website address"
+                label={t("Website address")}
                 value={url}
                 onChangeText={setUrl}
                 placeholder="https://example.com"
@@ -230,7 +237,7 @@ export function ComputerSheet() {
                 disabled={!available || !url.trim()}
                 onPress={() => void create()}
               >
-                Open a browser session
+                {t("Open a browser session")}
               </Button>
             </View>
             {[...workspace.browsers]
@@ -240,19 +247,21 @@ export function ComputerSheet() {
               ))}
             {!workspace.browsers.length && (
               <Text style={s.muted}>
-                Open a page here or ask your agent to research something. Its browsing sessions will
-                appear here.
+                {t(
+                  "Open a page here or ask your agent to research something. Its browsing sessions will appear here.",
+                )}
               </Text>
             )}
             <Text style={s.small}>
-              Browsing sessions keep their own logins and downloads. Open one to take over, then
-              return to your conversation.
+              {t(
+                "Browsing sessions keep their own logins and downloads. Open one to take over, then return to your conversation.",
+              )}
             </Text>
           </>
         ) : tab === "Files" ? (
           <>
-            <Text style={s.heading}>Documents</Text>
-            <Text style={s.small}>Files saved from your agent, mail and uploads.</Text>
+            <Text style={s.heading}>{t("Documents")}</Text>
+            <Text style={s.small}>{t("Files saved from your agent, mail and uploads.")}</Text>
             {workspace.files.map((file) => (
               <LinkRow
                 key={file.id}
@@ -269,7 +278,7 @@ export function ComputerSheet() {
                 navigate("files");
               }}
             >
-              Import a document
+              {t("Import a document")}
             </Button>
           </>
         ) : null}
@@ -282,7 +291,7 @@ export function ComputerSheet() {
               .catch((e) => setError(String(e)))
           }
         >
-          Refresh computer
+          {t("Refresh computer")}
         </Button>
       </View>
     </Sheet>

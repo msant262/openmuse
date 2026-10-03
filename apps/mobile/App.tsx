@@ -8,6 +8,7 @@ import {
   Menu,
   MessageCircle,
   PanelsTopLeft,
+  Settings2,
   Shapes,
   SquareCheck,
   X,
@@ -16,6 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -32,13 +34,16 @@ import {
   IdeasScreen,
 } from "./src/agent-ui";
 import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace";
-import { API_URL, authManager, MuseApi } from "./src/api";
+import { API_URL, ApiError, authManager, MuseApi } from "./src/api";
 import type { AuthManager } from "./src/auth-manager";
 import { installRuntimeAuthFetch } from "./src/auth-transport";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
+import { AppLanguagePicker, DesktopSettings, DesktopShell, desktopCopy } from "./src/desktop-shell";
+import { desktopStyles as d } from "./src/desktop-shell-styles";
 import { Details } from "./src/details";
+import { useI18n } from "./src/i18n";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ShareReceiver } from "./src/share-receiver";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
@@ -70,6 +75,7 @@ const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   files: { title: "Files", subtitle: "Documents, forms and filled copies." },
 };
 export default function App() {
+  const { t } = useI18n();
   const [session, setSession] = useState(authManager.snapshot);
   const [accessKey, setAccessKey] = useState("");
   const [busy, setBusy] = useState(true);
@@ -85,13 +91,21 @@ export default function App() {
       setBusy(false);
     }
   }, []);
-  const restore = useCallback(async () => {
+  const restore = useCallback(async (bootstrap = false) => {
     setBusy(true);
     setError("");
     try {
       await authManager.restoreOrPair();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (
+        !(
+          bootstrap &&
+          e instanceof ApiError &&
+          e.status === 401 &&
+          authManager.snapshot.status === "missing"
+        )
+      )
+        setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -99,13 +113,15 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = authManager.subscribe(setSession);
     const restoreFetch = installRuntimeAuthFetch(API_URL, authManager);
-    void restore();
+    void restore(true);
     const timer = setInterval(() => {
       if (authManager.snapshot.token) void authManager.authorization().catch(() => {});
     }, 30_000);
     const listener = AppState.addEventListener("change", (state) => {
       if (state === "active")
-        void (authManager.snapshot.token ? authManager.authorization() : restore()).catch(() => {});
+        void (authManager.snapshot.token ? authManager.authorization() : restore(true)).catch(
+          () => {},
+        );
     });
     return () => {
       unsubscribe();
@@ -136,40 +152,57 @@ export default function App() {
             padding: 24,
           }}
         >
+          <View
+            style={{ position: "absolute", top: 24, right: 24, left: 24, alignItems: "flex-end" }}
+          >
+            <AppLanguagePicker compact />
+          </View>
           <View style={{ width: "100%", maxWidth: 420, gap: 22, alignItems: "center" }}>
             <Mascot size={72} />
             <Text
-              style={{ fontSize: 32, color: colors.text, letterSpacing: -1, fontWeight: "500" }}
+              style={{
+                fontSize: 32,
+                color: colors.text,
+                letterSpacing: -1,
+                fontWeight: "500",
+                textAlign: "center",
+              }}
             >
-              Welcome to OkamiBot.
+              {t("Welcome to OkamiBot.")}
             </Text>
-            <Text style={[s.muted, { textAlign: "center" }]}>A little room for your day.</Text>
+            <Text style={[s.muted, { textAlign: "center" }]}>
+              {t("A little room for your day.")}
+            </Text>
+            {!busy && session.status === "missing" && !error && (
+              <Text style={[s.muted, { textAlign: "center" }]}>
+                {t("Enter your access key to continue.")}
+              </Text>
+            )}
             {busy ? (
               <ActivityIndicator color={colors.blueDark} />
             ) : (
               <Card style={{ width: "100%" }}>
-                <ErrorNotice error={error} />
+                <ErrorNotice error={t(error)} />
                 {session.status === "unavailable" ? (
                   <Button primary onPress={() => void restore()}>
-                    Retry saved pairing
+                    {t("Retry saved pairing")}
                   </Button>
                 ) : (
                   <>
                     <Field
-                      label="Workspace access key"
+                      label={t("Workspace access key")}
                       value={accessKey}
                       onChangeText={setAccessKey}
                       secureTextEntry
-                      placeholder="Required for a live workspace"
+                      placeholder={t("Required for a live workspace")}
                     />
                     <Button primary onPress={() => void connect(accessKey || undefined)}>
-                      Open workspace
+                      {t("Open workspace")}
                     </Button>
                   </>
                 )}
                 <Text style={[s.small, { marginTop: 15 }]}>
-                  Local workspaces open without a key. Make sure your OkamiBot server is running at{" "}
-                  {API_URL}.
+                  {t("Your language choice is saved on this device.")}
                 </Text>
               </Card>
             )}
@@ -180,6 +213,7 @@ export default function App() {
   );
 }
 function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError: string }) {
+  const { t } = useI18n();
   const api = useMemo(() => new MuseApi(auth), [auth]);
   const [workspace, setWorkspace] = useState<Workspace>();
   const [section, setSection] = useState<Section>("chat");
@@ -235,15 +269,15 @@ function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError:
         <Mascot size={56} />
         {error ? (
           <>
-            <ErrorNotice error={error} />
+            <ErrorNotice error={t(error)} />
             <Button onPress={() => void refresh().catch((e) => setError(String(e)))}>
-              Try again
+              {t("Try again")}
             </Button>
           </>
         ) : (
           <>
             <ActivityIndicator color={colors.blueDark} />
-            <Text style={s.muted}>Opening your workspace…</Text>
+            <Text style={s.muted}>{t("Opening your workspace…")}</Text>
           </>
         )}
       </SafeAreaView>
@@ -293,6 +327,7 @@ function WorkspaceShell({
   error: string;
   prompt?: { id: number; text: string };
 }) {
+  const { t } = useI18n();
   const { workspace, section, navigate, open } = useWorkspace();
   const { data } = useAgentWorkspace();
   const {
@@ -305,8 +340,21 @@ function WorkspaceShell({
     enabled: richThreads,
   } = useMuseThread();
   const [threadsOpen, setThreadsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => setSettingsOpen(false), [section, prompt?.id]);
+  const navigateSection = useCallback(
+    (next: Section) => {
+      setSettingsOpen(false);
+      navigate(next);
+    },
+    [navigate],
+  );
+  const openThreads = () => {
+    setSettingsOpen(false);
+    setThreadsOpen(true);
+  };
   const { width } = useWindowDimensions();
-  const desktop = width >= 900;
+  const desktop = Platform.OS === "web" && width >= 1024;
   const pending =
     (data?.notifications.filter((n) => !n.read).length || 0) +
     workspace.actions.filter((a) => a.status === "awaiting_review").length;
@@ -317,13 +365,13 @@ function WorkspaceShell({
   const agentName = data?.identity.name || "OkamiBot";
   const status = activeTask
     ? activeTask.status === "waiting_approval"
-      ? `Ready to review · ${activeTask.title}`
+      ? t("Ready to review · {title}", { title: activeTask.title })
       : activeTask.status === "waiting_input"
-        ? `Needs your input · ${activeTask.title}`
+        ? t("Needs your input · {title}", { title: activeTask.title })
         : activeTask.plan.find((step) => step.status === "running")?.title || activeTask.title
     : data?.tasks.some((task) => task.status === "queued")
-      ? "Picking up your next task…"
-      : "Here when you need me";
+      ? t("Picking up your next task…")
+      : t("Here when you need me");
   const title = titles[section] || titles.apps;
   const Screen =
     section === "mail"
@@ -342,193 +390,247 @@ function WorkspaceShell({
                   ? GoalsScreen
                   : AppsScreen;
   const utility = ["mail", "calendar", "browser", "files"].includes(section);
+  const content = (
+    <View style={{ flex: 1, minHeight: 0 }}>
+      {settingsOpen && (
+        <ScrollView
+          key="settings"
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={desktop ? d.page : { paddingHorizontal: 22, paddingBottom: 28 }}
+        >
+          <Text style={desktop ? d.pageTitle : [s.title, { marginBottom: 8 }]}>
+            {t(desktopCopy.settingsTitle)}
+          </Text>
+          <Text style={desktop ? d.pageSubtitle : [s.muted, { marginBottom: 22 }]}>
+            {t(desktopCopy.settingsSubtitle)}
+          </Text>
+          <ErrorNotice error={t(error)} />
+          <DesktopSettings />
+        </ScrollView>
+      )}
+      {!settingsOpen && section !== "chat" && (
+        <ScrollView
+          key={section}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={desktop ? d.page : { paddingHorizontal: 22, paddingBottom: 28 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {utility && (
+            <Button
+              small
+              style={{ alignSelf: "flex-start", marginBottom: 18 }}
+              onPress={() => navigateSection("apps")}
+            >
+              {t("Back to Apps")}
+            </Button>
+          )}
+          <Text style={desktop ? d.pageTitle : [s.title, { fontSize: 25, marginBottom: 22 }]}>
+            {t(title?.title || "")}
+          </Text>
+          {desktop && <Text style={d.pageSubtitle}>{t(title?.subtitle || "")}</Text>}
+          <ErrorNotice error={t(error)} />
+          <Screen />
+        </ScrollView>
+      )}
+      <View
+        style={[
+          desktop ? d.chat : { flex: 1, paddingHorizontal: 17 },
+          { display: !settingsOpen && section === "chat" ? "flex" : "none" },
+        ]}
+      >
+        <AgentStatus />
+        {richThreads ? (
+          <>
+            <ErrorNotice error={threadsError} />
+            {threadsError ? (
+              <Button onPress={retryThreads}>{t("Retry main chat")}</Button>
+            ) : threadsLoading ? (
+              <ActivityIndicator color={colors.blueDark} />
+            ) : null}
+            {!threadsLoading && selection.id !== mainId && (
+              <Text style={[s.small, { textAlign: "center", marginBottom: 8 }]}>
+                {t("Side chat")}
+              </Text>
+            )}
+            {visited.map((thread) => (
+              <View
+                key={thread.id}
+                style={{ display: selection.id === thread.id ? "flex" : "none", flex: 1 }}
+              >
+                <ChatScreen
+                  thread={thread}
+                  active={!settingsOpen && section === "chat" && selection.id === thread.id}
+                  wide={desktop}
+                  prompt={selection.id === thread.id ? prompt : undefined}
+                />
+              </View>
+            ))}
+          </>
+        ) : (
+          <ChatScreen prompt={prompt} active={!settingsOpen && section === "chat"} wide={desktop} />
+        )}
+      </View>
+    </View>
+  );
+  const mobileHeader = (
+    <View
+      style={{
+        height: 122,
+        paddingTop: 2,
+        marginHorizontal: 20,
+      }}
+    >
+      <View style={{ position: "absolute", left: 0, top: 16 }}>
+        <IconButton icon={Menu} label={t(desktopCopy.conversationMenu)} onPress={openThreads} />
+      </View>
+      <View pointerEvents="box-none" style={{ alignItems: "center", gap: 1 }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("Open {name} activity and approvals", { name: agentName })}
+          onPress={() => navigateSection("activity")}
+          style={({ pressed }) => ({
+            alignItems: "center",
+            maxWidth: "70%",
+            opacity: pressed ? 0.65 : 1,
+          })}
+        >
+          <Mascot size={49} variant={data?.identity.avatar} />
+          <Text
+            style={{
+              fontSize: 16,
+              fontWeight: "600",
+              color: colors.text,
+              letterSpacing: -0.4,
+            }}
+          >
+            {agentName}
+          </Text>
+          <Text numberOfLines={1} style={{ fontSize: 11, color: colors.muted, marginBottom: 6 }}>
+            {status}
+          </Text>
+        </Pressable>
+        {!settingsOpen && section === "chat" && <ComputerEntry />}
+      </View>
+      <View style={{ position: "absolute", right: 0, top: 16, flexDirection: "row", gap: 2 }}>
+        <IconButton
+          icon={Settings2}
+          label={t(desktopCopy.settings)}
+          onPress={() => setSettingsOpen(true)}
+        />
+        <IconButton
+          icon={Bell}
+          label={t(desktopCopy.notifications, { pending })}
+          onPress={() => open({ type: "notifications" })}
+        />
+        {pending > 0 && (
+          <View
+            pointerEvents="none"
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 4,
+              position: "absolute",
+              top: 7,
+              right: 9,
+              backgroundColor: colors.blueDark,
+            }}
+          />
+        )}
+      </View>
+    </View>
+  );
+  const mobileNavigation = (
+    <View
+      style={{
+        paddingHorizontal: 22,
+        paddingTop: 10,
+        paddingBottom: 7,
+        alignItems: "center",
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          width: "100%",
+          maxWidth: 370,
+          padding: 5,
+          backgroundColor: "#FFF",
+          borderRadius: 40,
+          shadowColor: "#132631",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.07,
+          shadowRadius: 18,
+          elevation: 3,
+          borderWidth: 1,
+          borderColor: "#F8F8F8",
+        }}
+      >
+        {nav.map((item) => {
+          const active = !settingsOpen && (section === item.id || (item.id === "apps" && utility));
+          return (
+            <Pressable
+              key={item.id}
+              accessibilityRole="tab"
+              accessibilityLabel={t(item.label)}
+              accessibilityState={{ selected: active }}
+              onPress={() => navigateSection(item.id)}
+              style={{
+                flex: 1,
+                height: 47,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: active ? "#F0F1F2" : "transparent",
+                borderRadius: 28,
+              }}
+            >
+              <item.icon size={23} strokeWidth={1.8} color={colors.text} />
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
   return (
     <>
       <WorkspaceTools />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>
-        <View style={{ flex: 1, width: "100%", maxWidth: 760, alignSelf: "center" }}>
-          <View
-            style={{
-              height: desktop ? 146 : 122,
-              paddingTop: desktop ? 14 : 2,
-              marginHorizontal: 20,
-            }}
-          >
-            <View style={{ position: "absolute", left: 0, top: 16 }}>
-              <IconButton
-                icon={Menu}
-                label="Open conversations and menu"
-                onPress={() => setThreadsOpen(true)}
-              />
-            </View>
-            <View pointerEvents="box-none" style={{ alignItems: "center", gap: 1 }}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Open ${agentName} activity and approvals`}
-                onPress={() => navigate("activity")}
-                style={({ pressed }) => ({
-                  alignItems: "center",
-                  maxWidth: "70%",
-                  opacity: pressed ? 0.65 : 1,
-                })}
-              >
-                <Mascot size={desktop ? 58 : 49} variant={data?.identity.avatar} />
-                <Text
-                  style={{
-                    fontSize: 16,
-                    fontWeight: "600",
-                    color: colors.text,
-                    letterSpacing: -0.4,
-                  }}
-                >
-                  {agentName}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  style={{ fontSize: 11, color: colors.muted, marginBottom: 6 }}
-                >
-                  {status}
-                </Text>
-              </Pressable>
-              {section === "chat" && <ComputerEntry />}
-            </View>
-            <View style={{ position: "absolute", right: 0, top: 16 }}>
-              <IconButton
-                icon={Bell}
-                label={`Notifications, ${pending} unread or pending`}
-                onPress={() => open({ type: "notifications" })}
-              />
-              {pending > 0 && (
-                <View
-                  pointerEvents="none"
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: 4,
-                    position: "absolute",
-                    top: 7,
-                    right: 9,
-                    backgroundColor: colors.blueDark,
-                  }}
-                />
-              )}
-            </View>
-          </View>
-          <View style={{ flex: 1, minHeight: 0 }}>
-            {section !== "chat" && (
-              <ScrollView
-                key={section}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: desktop ? 42 : 22, paddingBottom: 28 }}
-                keyboardShouldPersistTaps="handled"
-              >
-                {utility && (
-                  <Button
-                    small
-                    style={{ alignSelf: "flex-start", marginBottom: 18 }}
-                    onPress={() => navigate("apps")}
-                  >
-                    Back to Apps
-                  </Button>
-                )}
-                <Text style={[s.title, { fontSize: 25, marginBottom: 22 }]}>{title?.title}</Text>
-                <ErrorNotice error={error} />
-                <Screen />
-              </ScrollView>
-            )}
-            <View
-              style={{
-                display: section === "chat" ? "flex" : "none",
-                flex: 1,
-                paddingHorizontal: desktop ? 42 : 17,
-              }}
-            >
-              <AgentStatus />
-              {richThreads ? (
-                <>
-                  <ErrorNotice error={threadsError} />
-                  {threadsError ? (
-                    <Button onPress={retryThreads}>Retry main chat</Button>
-                  ) : threadsLoading ? (
-                    <ActivityIndicator color={colors.blueDark} />
-                  ) : null}
-                  {!threadsLoading && selection.id !== mainId && (
-                    <Text style={[s.small, { textAlign: "center", marginBottom: 8 }]}>
-                      Side chat
-                    </Text>
-                  )}
-                  {visited.map((thread) => (
-                    <View
-                      key={thread.id}
-                      style={{ display: selection.id === thread.id ? "flex" : "none", flex: 1 }}
-                    >
-                      <ChatScreen
-                        thread={thread}
-                        active={section === "chat" && selection.id === thread.id}
-                        prompt={selection.id === thread.id ? prompt : undefined}
-                      />
-                    </View>
-                  ))}
-                </>
-              ) : (
-                <ChatScreen prompt={prompt} active={section === "chat"} />
-              )}
-            </View>
-          </View>
-          <View
-            style={{
-              paddingHorizontal: 22,
-              paddingTop: 10,
-              paddingBottom: desktop ? 22 : 7,
-              alignItems: "center",
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                width: "100%",
-                maxWidth: 370,
-                padding: 5,
-                backgroundColor: "#FFF",
-                borderRadius: 40,
-                shadowColor: "#132631",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.07,
-                shadowRadius: 18,
-                elevation: 3,
-                borderWidth: 1,
-                borderColor: "#F8F8F8",
-              }}
-            >
-              {nav.map((item) => {
-                const active = section === item.id || (item.id === "apps" && utility);
-                return (
-                  <Pressable
-                    key={item.id}
-                    accessibilityRole="tab"
-                    accessibilityLabel={item.label}
-                    accessibilityState={{ selected: active }}
-                    onPress={() => navigate(item.id)}
-                    style={{
-                      flex: 1,
-                      height: 47,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      backgroundColor: active ? "#F0F1F2" : "transparent",
-                      borderRadius: 28,
-                    }}
-                  >
-                    <item.icon size={23} strokeWidth={1.8} color={colors.text} />
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        </View>
+        <DesktopShell
+          title={
+            settingsOpen
+              ? t(desktopCopy.settings)
+              : section === "chat"
+                ? agentName
+                : t(title?.title || desktopCopy.apps)
+          }
+          subtitle={
+            settingsOpen
+              ? t(desktopCopy.settingsSubtitle)
+              : section === "chat"
+                ? status
+                : t(title?.subtitle || "")
+          }
+          settingsOpen={settingsOpen}
+          onSettings={() => setSettingsOpen(true)}
+          onNavigate={navigateSection}
+          onThreads={openThreads}
+          pending={pending}
+          desktop={desktop}
+          mobileHeader={mobileHeader}
+          mobileNavigation={mobileNavigation}
+        >
+          {content}
+        </DesktopShell>
         {!!toast && (
           <View
             pointerEvents="box-none"
-            style={{ position: "absolute", bottom: 94, left: 20, right: 20, alignItems: "center" }}
+            style={{
+              position: "absolute",
+              bottom: desktop ? 28 : 94,
+              left: desktop ? 260 : 20,
+              right: 20,
+              alignItems: "center",
+            }}
           >
             <View
               style={[
@@ -546,7 +648,7 @@ function WorkspaceShell({
               <Text style={{ color: "#FFF", fontSize: 13, flexShrink: 1 }}>{toast}</Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Dismiss notification"
+                accessibilityLabel={t("Dismiss notification")}
                 onPress={clearToast}
               >
                 <X size={16} color="#FFF" />
