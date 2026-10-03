@@ -182,6 +182,20 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
         },
       ];
 }
+
+/** The requested text is the deliverable; a completion claim without steps is not. */
+export function textPlanDelivery(task: Pick<AgentTask, "kind" | "prompt">, text: string) {
+  if (
+    task.kind !== "plan" ||
+    !/\b(?:as\s+(?:plain\s+)?text|(?:como|em)\s+texto)\b/i.test(task.prompt)
+  )
+    return undefined;
+  const steps = [...text.matchAll(/^\s*\d+[.)]\s+([^\r\n]+)$/gm)]
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+  return steps.length ? { text, steps } : undefined;
+}
+
 function useful(value: unknown): boolean {
   if (typeof value === "string") return Boolean(value.trim());
   if (typeof value === "number" || typeof value === "boolean") return true;
@@ -490,7 +504,9 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(read_|browser_(navigate|snapshot|screenshot))/.test(op.toolName) ||
+                    !/^(read_|computer_status$|browser_(navigate|snapshot|screenshot))/.test(
+                      op.toolName,
+                    ) ||
                     !useful(op.receipt) ||
                     (op.receipt as { error?: unknown })?.error
                   )

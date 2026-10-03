@@ -546,13 +546,16 @@ export class TaskJournal {
               dispatched?: boolean;
             }
           | undefined;
+        // A read receipt describes its subject (for example a running computer),
+        // while an effect receipt can describe the dispatched operation itself.
+        const effectStatus = effect ? data?.status : undefined;
         const current =
           effect && data?.error
             ? await this.db.get<JournalOperation>(owner, "task-operations", op.id)
             : undefined;
         const unknownError = Boolean(
           data?.error &&
-            data.status !== "failed" &&
+            effectStatus !== "failed" &&
             !data.skipped &&
             !data.paused &&
             data.dispatched !== false &&
@@ -566,8 +569,8 @@ export class TaskJournal {
             ].includes(data.code ?? ""),
         );
         const status: OperationStatus =
-          data?.outcomeUnknown ||
-          data?.status === "outcome_unknown" ||
+          (effect && data?.outcomeUnknown) ||
+          effectStatus === "outcome_unknown" ||
           unknownError ||
           (call.name === "browser_act" &&
             data?.error &&
@@ -580,13 +583,13 @@ export class TaskJournal {
               "PAYMENT_APPROVAL_REQUIRED",
             ].includes(data.code ?? ""))
             ? "outcome_unknown"
-            : data?.status === "running"
+            : effectStatus === "running"
               ? "running"
-              : data?.skipped || data?.status === "rejected_not_dispatched"
+              : data?.skipped || effectStatus === "rejected_not_dispatched"
                 ? "rejected_not_dispatched"
-                : data?.status === "superseded"
+                : effectStatus === "superseded"
                   ? "superseded"
-                  : data?.error || data?.status === "failed"
+                  : data?.error || effectStatus === "failed"
                     ? "failed"
                     : "succeeded";
         await this.recordReceipt(owner, op.id, result, status);

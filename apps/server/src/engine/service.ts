@@ -71,7 +71,7 @@ import { TaskActor, TaskBudgetExhaustedError } from "./task-actor.ts";
 import { TaskJournal, validateTaskEffect } from "./task-journal.ts";
 import { TaskMailbox } from "./task-mailbox.ts";
 import { TaskTiming as TaskTimingService } from "./task-timing.ts";
-import { mandatoryTaskCriteria, TaskVerification } from "./task-verification.ts";
+import { mandatoryTaskCriteria, TaskVerification, textPlanDelivery } from "./task-verification.ts";
 import { WorkAdmission } from "./work-admission.ts";
 import { LostLeaseError, type TaskContext, TaskWorker } from "./worker.ts";
 
@@ -1576,6 +1576,21 @@ export class AgentService {
     // TaskContext executes under an owner; deterministic workflows pass it
     // explicitly, model calls do likewise. Do not infer owner from model data.
     if (!owner) throw new Error("Completion requires the authenticated task owner");
+    const textPlan = textPlanDelivery(task, result);
+    if (textPlan) {
+      const artifact = await this.artifact(
+        owner,
+        task,
+        "plan",
+        task.prompt.split(/[.!?\n]/)[0].slice(0, 160),
+        result.slice(0, 4000),
+        textPlan,
+        `text-plan:${Number(task.state.appliedRevision ?? 0)}`,
+      );
+      task = await context.checkpoint({
+        artifactIds: [...new Set([...task.artifactIds, artifact.id])],
+      });
+    }
     const completion = await this.verification.assess(
       owner,
       task.id,
