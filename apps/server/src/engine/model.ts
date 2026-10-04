@@ -1210,6 +1210,7 @@ export async function executeModelTask(
   tools.push(
     ...designReferenceTools(undefined, {
       queue: serial,
+      recent: () => service.media.recentDocumentDesigns(owner),
       before: async () => {
         if (outcome) throw new Error("Task is waiting or finished");
         await ctx.guard();

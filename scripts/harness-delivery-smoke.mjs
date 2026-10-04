@@ -118,7 +118,7 @@ export function smokeOperationEvidence(operation, scrub) {
     };
   }
   if (
-    !/^(?:primitive\.)?(?:create_document|inspect_document|confirm_document_review|view_file|finish_task)$/.test(
+    !/^(?:primitive\.)?(?:design_references|create_document|inspect_document|confirm_document_review|view_file|finish_task)$/.test(
       value.toolName,
     )
   )
@@ -276,7 +276,7 @@ async function runSmoke() {
     pptx: "uma apresentação PowerPoint PPTX profissional com aproximadamente 6 a 8 slides, usando textos, tabelas e formas nativos editáveis",
   };
   const prompt = designed
-    ? `Crie ${deliverable[mode]}, em português, explicando como você funciona neste aplicativo: harness, uso de ferramentas, skills instaladas, execução de tarefas e limites reais. Confira seus recursos e skills atuais; não invente capacidades, métricas ou integrações. Inclua uma comparação curta em tabela entre ferramenta, skill e tarefa e uma sequência visual que explique do pedido à entrega. Escolha um estilo coerente com o tema, com hierarquia tipográfica, espaçamento e boa legibilidade; revise visualmente todas as páginas ou slides antes de entregar. Não precisa pesquisar na web: use somente o ambiente atual e identifique o que não consegue verificar. Entregue o arquivo ${mode.toUpperCase()} pronto aqui, sem versões preliminares nem imagens internas da revisão.`
+    ? `Crie ${deliverable[mode]}, em português, explicando como você funciona neste aplicativo: harness, uso de ferramentas, skills instaladas, execução de tarefas e limites reais. Confira seus recursos e skills atuais; não invente capacidades, métricas ou integrações. Inclua uma comparação curta em tabela entre ferramenta, skill e tarefa e uma sequência visual que explique do pedido à entrega. Escolha um estilo coerente com o tema, com hierarquia tipográfica, espaçamento e boa legibilidade; revise visualmente todas as páginas ou slides antes de entregar. Não precisa pesquisar na web: use somente o ambiente atual e identifique o que não consegue verificar. Entregue o arquivo ${mode.toUpperCase()} pronto aqui, sem versões preliminares nem imagens internas da revisão. ${process.env.HARNESS_DOCUMENT_BRIEF ?? ""}`.trim()
     : "Crie um infográfico bonito em português com estes dados definidos: Rotina de estudos, total 60 minutos. Leitura: 20 minutos. Exercícios: 30 minutos. Revisão: 10 minutos. Use os valores exatamente como fornecidos, layout vertical com três blocos e gráfico de divisão do tempo. Me entregue a imagem pronta aqui.";
   let task, cancelChat, db, server, config, failure;
   const upstream = globalThis.fetch;

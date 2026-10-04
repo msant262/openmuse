@@ -798,6 +798,7 @@ export class ConversationAgent extends AbstractAgent {
     tools.push(
       ...designReferenceTools(undefined, {
         before: async () => browserAbort.signal.throwIfAborted(),
+        recent: () => this.service.media.recentDocumentDesigns(this.owner),
       }),
       ...skillTools(new SkillCatalog(this.service.config), this.owner, {
         tools: () => tools,

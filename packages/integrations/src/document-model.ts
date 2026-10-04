@@ -1,5 +1,6 @@
 import { Lexer, type Token, type Tokens } from "marked";
 import { z } from "zod";
+import { documentColorContrast } from "./document-colors.ts";
 import { PdfError } from "./pdf.ts";
 
 export type DocumentRun = {
@@ -44,16 +45,33 @@ export type DocumentTheme = {
   muted: string;
   accent: string;
   surface: string;
-  display: "serif" | "sans";
+  display: "serif" | "sans" | "mono";
 };
 
-export type DocumentDesign = {
-  reference?: string;
-  subtitle?: string;
-  eyebrow?: string;
-  footer?: string;
-  cover?: boolean;
-};
+const documentColor = z.string().regex(/^#[0-9a-f]{6}$/i);
+export const documentDesignSchema = z
+  .object({
+    reference: z.string().trim().min(1).max(80).optional(),
+    layout: z.enum(["editorial", "briefing", "signal"]).optional(),
+    display: z.enum(["serif", "sans", "mono"]).optional(),
+    palette: z
+      .object({
+        paper: documentColor,
+        ink: documentColor,
+        muted: documentColor,
+        accent: documentColor,
+        surface: documentColor,
+      })
+      .strict()
+      .optional(),
+    rationale: z.string().trim().min(1).max(600).optional(),
+    subtitle: z.string().trim().max(400).optional(),
+    eyebrow: z.string().trim().max(120).optional(),
+    footer: z.string().trim().max(200).optional(),
+    cover: z.boolean().optional(),
+  })
+  .strict();
+export type DocumentDesign = z.infer<typeof documentDesignSchema>;
 
 export type DocumentImage = {
   id: string;
@@ -254,6 +272,16 @@ export function composeDocument(
   theme: DocumentTheme = defaultDocumentTheme,
   images: ReadonlyMap<string, DocumentImage> = new Map(),
 ): DocumentModel {
+  design = documentDesignSchema.parse(design);
+  if (design.palette) {
+    for (const background of [design.palette.paper, design.palette.surface])
+      for (const foreground of [design.palette.ink, design.palette.muted])
+        if (documentColorContrast(background, foreground) < 4.5)
+          throw new PdfError(
+            "Document palette needs at least 4.5:1 contrast for ink and muted text on paper and surface; adjust those colors before rendering",
+          );
+  }
+  theme = { ...theme, ...design.palette, ...(design.display && { display: design.display }) };
   if (!content.trim() || content.length > 120000 || (title?.length ?? 0) > 200)
     throw new PdfError(
       "Document content must be nonempty and at most 120000 characters; title at most 200",

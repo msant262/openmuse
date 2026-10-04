@@ -11,6 +11,7 @@ import { PDFDocument } from "pdf-lib";
 import { getDesignProfile } from "../apps/server/src/design-catalog.ts";
 import {
   composeDocument,
+  type DocumentDesign,
   type DocumentTheme,
 } from "../packages/integrations/src/document-model.ts";
 import { createDesignedPdf } from "../packages/integrations/src/document-pdf.ts";
@@ -18,13 +19,18 @@ import { readPdfText } from "../packages/integrations/src/pdf-text.ts";
 
 // Deterministic renderer acceptance, separate from the later real-provider workflow.
 // Run: pnpm exec tsx scripts/document-design-smoke.ts [--formats=pdf,docx,pptx]
+// Compare composition with the same content/palette: --profiles=claude --layouts=editorial,briefing,signal
 // Every run gets a new directory; failures and earlier renders are preserved.
 const execute = promisify(executeFile);
 const argument = (key: string, fallback: string) =>
   process.argv.find((value) => value.startsWith(`--${key}=`))?.slice(key.length + 3) ?? fallback;
 const formats = argument("formats", "pdf,docx,pptx").split(",");
 const profiles = argument("profiles", "claude,ibm,spotify").split(",");
+const layouts = argument("layouts", "editorial").split(",") as NonNullable<
+  DocumentDesign["layout"]
+>[];
 assert.ok(formats.every((value) => ["pdf", "docx", "pptx"].includes(value)));
+assert.ok(layouts.every((value) => ["editorial", "briefing", "signal"].includes(value)));
 const root = resolve(argument("output-root", "artifacts/document-design/visual-smoke"));
 const output = join(root, new Date().toISOString().replace(/[:.]/g, "-"));
 await mkdir(output, { recursive: true });
@@ -227,125 +233,134 @@ try {
       display: profile.display,
       ...profile.tokens,
     };
-    const model = composeDocument(
-      content,
-      title,
-      {
-        cover: true,
-        subtitle: "Conversa, ferramentas, evidências e arquivos",
-        eyebrow: "Guia de uso · Português",
-        footer: "Amostra de verificação visual · OpenMuse",
-        reference: profile.id,
-      },
-      theme,
-    );
-    for (const format of formats) {
-      const result: Record<string, unknown> = {
-        profile: profile.id,
-        format,
-        passed: false,
-        profileSource: profile.source,
-      };
-      checks.results.push(result);
-      const directory = join(output, profile.id, format);
-      await mkdir(directory, { recursive: true });
-      const path = join(directory, `assistant-guide.${format}`);
-      const bytes =
-        format === "pdf"
-          ? await createDesignedPdf(model)
-          : format === "docx"
-            ? await (
-                await import("../packages/integrations/src/document-docx.ts")
-              ).createDocumentDocx(model)
-            : await (
-                await import("../packages/integrations/src/document-pptx.ts")
-              ).createDocumentPptx(model);
-      await writeFile(path, bytes);
-      result.file = path;
-      result.bytes = bytes.length;
-      result.sha256 = createHash("sha256").update(bytes).digest("hex");
-      const render = join(directory, "rendered");
-      await mkdir(render, { recursive: true });
-      const pdfPath = join(render, "assistant-guide.pdf");
-      if (format === "pdf") await copyFile(path, pdfPath);
-      else {
-        const office = JSON.parse(
-          (
-            await execute("python3", ["-c", officeInspect, path], {
-              timeout: 30000,
-              maxBuffer: 1024 * 1024,
-            })
-          ).stdout,
-        );
-        assert.ok(office.nativeTextRuns > 30, "Office text must be native editable content");
-        assert.equal(office.charts.length, 1);
-        const actual = Object.fromEntries(
-          office.charts[0].labels.map((label: string, index: number) => [
-            label,
-            office.charts[0].values[index],
-          ]),
-        );
-        assert.deepEqual(
-          actual,
-          Object.fromEntries(chart.labels.map((label, index) => [label, chart.values[index]])),
-          "Native chart must preserve exact category/value pairs",
-        );
-        result.nativeOffice = office;
-        const installation = await mkdtemp(join(tmpdir(), "openmuse-design-office-"));
-        try {
-          const conversion = await execute(
-            "soffice",
-            [
-              `-env:UserInstallation=${pathToFileURL(installation).href}`,
-              "--headless",
-              "--convert-to",
-              "pdf",
-              "--outdir",
-              render,
-              path,
-            ],
-            { timeout: 120000, maxBuffer: 1024 * 1024 },
+    for (const layout of layouts) {
+      const model = composeDocument(
+        content,
+        title,
+        {
+          cover: true,
+          subtitle: "Conversa, ferramentas, evidências e arquivos",
+          eyebrow: "Guia de uso · Português",
+          footer: "Amostra de verificação visual · OpenMuse",
+          reference: profile.id,
+          layout,
+        },
+        theme,
+      );
+      for (const format of formats) {
+        const result: Record<string, unknown> = {
+          profile: profile.id,
+          layout,
+          format,
+          passed: false,
+          profileSource: profile.source,
+        };
+        checks.results.push(result);
+        const directory = join(output, profile.id, layout, format);
+        await mkdir(directory, { recursive: true });
+        const path = join(directory, `assistant-guide.${format}`);
+        const bytes =
+          format === "pdf"
+            ? await createDesignedPdf(model)
+            : format === "docx"
+              ? await (
+                  await import("../packages/integrations/src/document-docx.ts")
+                ).createDocumentDocx(model)
+              : await (
+                  await import("../packages/integrations/src/document-pptx.ts")
+                ).createDocumentPptx(model);
+        await writeFile(path, bytes);
+        result.file = path;
+        result.bytes = bytes.length;
+        result.sha256 = createHash("sha256").update(bytes).digest("hex");
+        const render = join(directory, "rendered");
+        await mkdir(render, { recursive: true });
+        const pdfPath = join(render, "assistant-guide.pdf");
+        if (format === "pdf") await copyFile(path, pdfPath);
+        else {
+          const office = JSON.parse(
+            (
+              await execute("python3", ["-c", officeInspect, path], {
+                timeout: 30000,
+                maxBuffer: 1024 * 1024,
+              })
+            ).stdout,
           );
-          result.conversion = conversion.stdout.trim();
-        } finally {
-          await rm(installation, { recursive: true, force: true });
+          assert.ok(office.nativeTextRuns > 30, "Office text must be native editable content");
+          assert.equal(office.charts.length, 1);
+          const actual = Object.fromEntries(
+            office.charts[0].labels.map((label: string, index: number) => [
+              label,
+              office.charts[0].values[index],
+            ]),
+          );
+          assert.deepEqual(
+            actual,
+            Object.fromEntries(chart.labels.map((label, index) => [label, chart.values[index]])),
+            "Native chart must preserve exact category/value pairs",
+          );
+          result.nativeOffice = office;
+          const installation = await mkdtemp(join(tmpdir(), "openmuse-design-office-"));
+          try {
+            const conversion = await execute(
+              "soffice",
+              [
+                `-env:UserInstallation=${pathToFileURL(installation).href}`,
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                render,
+                path,
+              ],
+              { timeout: 120000, maxBuffer: 1024 * 1024 },
+            );
+            result.conversion = conversion.stdout.trim();
+          } finally {
+            await rm(installation, { recursive: true, force: true });
+          }
         }
+        const pdfBytes = await readFile(pdfPath);
+        const pdf = await PDFDocument.load(pdfBytes);
+        const pageCount = pdf.getPageCount();
+        assert.ok(pageCount > 1 && pageCount <= 40, "Fixture page count must remain bounded");
+        const text = (await readPdfText(pdfBytes)).normalize("NFC").replace(/\s+/gu, " ");
+        for (const expected of [
+          "Como o assistente trabalha",
+          "São Paulo",
+          "Conversa",
+          "Ferramentas",
+          "Arquivos",
+          "Exemplos explicados neste guia",
+        ])
+          assert.ok(text.includes(expected), `${format} rendered PDF missing ${expected}`);
+        await writeFile(join(render, "extracted-text.txt"), text);
+        await execute("pdftoppm", ["-png", "-scale-to", "1400", pdfPath, join(render, "page")], {
+          timeout: 120000,
+          maxBuffer: 1024 * 1024,
+        });
+        const pages = (await readdir(render))
+          .filter((name) => /^page-\d+\.png$/.test(name))
+          .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+          .map((name) => join(render, name));
+        assert.equal(pages.length, pageCount);
+        const contact = join(directory, "contact-sheet.png");
+        await contactSheet(
+          pages,
+          contact,
+          `${profile.label} · ${layout} · ${format.toUpperCase()} · ${pageCount} páginas`,
+        );
+        Object.assign(result, {
+          pageCount,
+          pageImages: pages,
+          contactSheet: contact,
+          passed: true,
+        });
+        await save();
+        console.log(
+          JSON.stringify({ profile: profile.id, layout, format, pageCount, contactSheet: contact }),
+        );
       }
-      const pdfBytes = await readFile(pdfPath);
-      const pdf = await PDFDocument.load(pdfBytes);
-      const pageCount = pdf.getPageCount();
-      assert.ok(pageCount > 1 && pageCount <= 40, "Fixture page count must remain bounded");
-      const text = (await readPdfText(pdfBytes)).normalize("NFC").replace(/\s+/gu, " ");
-      for (const expected of [
-        "Como o assistente trabalha",
-        "São Paulo",
-        "Conversa",
-        "Ferramentas",
-        "Arquivos",
-        "Exemplos explicados neste guia",
-      ])
-        assert.ok(text.includes(expected), `${format} rendered PDF missing ${expected}`);
-      await writeFile(join(render, "extracted-text.txt"), text);
-      await execute("pdftoppm", ["-png", "-scale-to", "1400", pdfPath, join(render, "page")], {
-        timeout: 120000,
-        maxBuffer: 1024 * 1024,
-      });
-      const pages = (await readdir(render))
-        .filter((name) => /^page-\d+\.png$/.test(name))
-        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-        .map((name) => join(render, name));
-      assert.equal(pages.length, pageCount);
-      const contact = join(directory, "contact-sheet.png");
-      await contactSheet(
-        pages,
-        contact,
-        `${profile.label} · ${format.toUpperCase()} · ${pageCount} páginas`,
-      );
-      Object.assign(result, { pageCount, pageImages: pages, contactSheet: contact, passed: true });
-      await save();
-      console.log(
-        JSON.stringify({ profile: profile.id, format, pageCount, contactSheet: contact }),
-      );
     }
   }
   checks.passed = true;

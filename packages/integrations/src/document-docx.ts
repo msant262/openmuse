@@ -44,11 +44,17 @@ const headingLevels = [
 /** Native paragraphs, cells, numbering and charts remain editable in Word. */
 export async function createDocumentDocx(model: DocumentModel): Promise<Uint8Array> {
   const { theme, design } = model;
+  const family = design.layout ?? "editorial";
   const ink = hex(theme.ink),
     accent = hex(theme.accent),
     muted = hex(theme.muted),
     surface = hex(theme.surface);
-  const displayFont = theme.display === "serif" ? "DejaVu Serif" : bodyFont;
+  const displayFont =
+    theme.display === "serif"
+      ? "DejaVu Serif"
+      : theme.display === "mono"
+        ? "DejaVu Sans Mono"
+        : bodyFont;
   const accentText = documentAccentText(accent, [hex(theme.paper), surface], ink);
   const accentLarge = documentAccentText(accent, [surface], ink, true);
   const children: (Paragraph | Table)[] = [];
@@ -83,45 +89,132 @@ export async function createDocumentDocx(model: DocumentModel): Promise<Uint8Arr
       spacing: { before: 90, after: 220 },
     });
 
-  if (design.eyebrow)
+  if (family !== "editorial" && model.title) {
+    const signal = family === "signal";
+    const titleColor = signal ? hex(theme.paper) : ink;
+    const titleParagraph = new Paragraph({
+      children: [
+        new TextRun({
+          text: model.title,
+          font: displayFont,
+          size: signal ? 76 : 56,
+          color: titleColor,
+        }),
+      ],
+      heading: HeadingLevel.TITLE,
+      spacing: {
+        before: design.cover ? 700 : 160,
+        after: 320,
+        line: 300,
+        lineRule: LineRuleType.AUTO,
+      },
+      keepNext: true,
+    });
+    const metadata = [
+      ...(design.eyebrow
+        ? [
+            new Paragraph({
+              children: [
+                new TextRun({ text: design.eyebrow, bold: true, size: 19, color: titleColor }),
+              ],
+              spacing: { after: 220 },
+              keepNext: true,
+            }),
+          ]
+        : []),
+      ...(design.subtitle
+        ? [
+            new Paragraph({
+              children: [new TextRun({ text: design.subtitle, size: 24, color: titleColor })],
+              spacing: { after: 240 },
+              keepNext: true,
+            }),
+          ]
+        : []),
+    ];
+    const widths = signal ? [textWidth] : [6500, textWidth - 6500];
     children.push(
-      new Paragraph({
-        children: [new TextRun({ text: design.eyebrow, size: 20, bold: true, color: accentText })],
-        spacing: { before: design.cover ? 1800 : 80, after: 260 },
-      }),
-    );
-  if (model.title)
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: model.title,
-            font: displayFont,
-            size: design.cover ? 72 : 52,
-            color: ink,
+      new Table({
+        width: { size: textWidth, type: WidthType.DXA },
+        columnWidths: widths,
+        layout: TableLayoutType.FIXED,
+        margins: { top: signal ? 420 : 200, bottom: signal ? 500 : 200, left: 350, right: 350 },
+        borders: {
+          top: { style: BorderStyle.SINGLE, size: signal ? 24 : 8, color: accent },
+          bottom: noBorder,
+          left: noBorder,
+          right: noBorder,
+          insideHorizontal: noBorder,
+          insideVertical: { style: BorderStyle.SINGLE, size: 6, color: hex(theme.paper) },
+        },
+        rows: [
+          new TableRow({
+            children: widths.map(
+              (width, index) =>
+                new TableCell({
+                  width: { size: width, type: WidthType.DXA },
+                  shading: { fill: signal ? ink : surface },
+                  children: signal
+                    ? [
+                        ...metadata.slice(0, design.eyebrow ? 1 : 0),
+                        titleParagraph,
+                        ...metadata.slice(design.eyebrow ? 1 : 0),
+                      ]
+                    : index === 0
+                      ? [titleParagraph]
+                      : metadata.length
+                        ? metadata
+                        : [plain("")],
+                }),
+            ),
           }),
         ],
-        heading: HeadingLevel.TITLE,
-        spacing: {
-          before: design.cover && !design.eyebrow ? 1800 : 0,
-          after: 300,
-          line: 300,
-          lineRule: LineRuleType.AUTO,
-        },
-        border: { bottom: { style: BorderStyle.SINGLE, size: 16, color: accent, space: 18 } },
-        keepNext: true,
       }),
+      spacer(),
     );
-  if (design.subtitle)
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({ text: design.subtitle, color: muted, size: design.cover ? 29 : 24 }),
-        ],
-        spacing: { before: 160, after: design.cover ? 700 : 360 },
-        keepNext: !design.cover,
-      }),
-    );
+  } else {
+    if (design.eyebrow)
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: design.eyebrow, size: 20, bold: true, color: accentText }),
+          ],
+          spacing: { before: design.cover ? 1800 : 80, after: 260 },
+        }),
+      );
+    if (model.title)
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: model.title,
+              font: displayFont,
+              size: design.cover ? 72 : 52,
+              color: ink,
+            }),
+          ],
+          heading: HeadingLevel.TITLE,
+          spacing: {
+            before: design.cover && !design.eyebrow ? 1800 : 0,
+            after: 300,
+            line: 300,
+            lineRule: LineRuleType.AUTO,
+          },
+          border: { bottom: { style: BorderStyle.SINGLE, size: 16, color: accent, space: 18 } },
+          keepNext: true,
+        }),
+      );
+    if (design.subtitle)
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: design.subtitle, color: muted, size: design.cover ? 29 : 24 }),
+          ],
+          spacing: { before: 160, after: design.cover ? 700 : 360 },
+          keepNext: !design.cover,
+        }),
+      );
+  }
   if (design.cover && model.title) children.push(new Paragraph({ children: [new PageBreak()] }));
 
   const table = (block: Extract<DocumentBlock, { type: "table" }>) => {
@@ -144,6 +237,7 @@ export async function createDocumentDocx(model: DocumentModel): Promise<Uint8Arr
         (row, index) =>
           new TableRow({
             tableHeader: index === 0,
+            cantSplit: true,
             children: row.map(
               (cell, column) =>
                 new TableCell({
@@ -152,7 +246,7 @@ export async function createDocumentDocx(model: DocumentModel): Promise<Uint8Arr
                   children: [
                     new Paragraph({
                       children: runs(cell, {
-                        color: index === 0 ? "FFFFFF" : ink,
+                        color: index === 0 ? hex(theme.paper) : ink,
                         bold: index === 0,
                         size: 20,
                       }),
@@ -175,11 +269,30 @@ export async function createDocumentDocx(model: DocumentModel): Promise<Uint8Arr
             text: block.text,
             heading: headingLevels[Math.min(5, Math.max(0, block.level - 1))],
             keepNext: true,
+            ...(block.level <= 2 && family === "briefing"
+              ? {
+                  shading: { fill: surface },
+                  border: {
+                    bottom: { style: BorderStyle.SINGLE, size: 6, color: accent, space: 6 },
+                  },
+                  indent: { left: 160, right: 160 },
+                }
+              : {}),
+            ...(block.level <= 2 && family === "signal"
+              ? {
+                  border: {
+                    left: { style: BorderStyle.SINGLE, size: 24, color: accent, space: 12 },
+                  },
+                  indent: { left: 400 },
+                }
+              : {}),
           }),
         );
         break;
       case "paragraph":
-        children.push(paragraph(block.runs));
+        children.push(
+          paragraph(block.runs, family === "signal" ? { indent: { left: 400, right: 200 } } : {}),
+        );
         break;
       case "list": {
         const configured = new Set<number>();
@@ -305,8 +418,9 @@ export async function createDocumentDocx(model: DocumentModel): Promise<Uint8Arr
         );
         break;
       case "metrics": {
-        for (let offset = 0; offset < block.items.length; offset += 3) {
-          const items = block.items.slice(offset, offset + 3);
+        const columns = family === "signal" ? 1 : family === "briefing" ? 2 : 3;
+        for (let offset = 0; offset < block.items.length; offset += columns) {
+          const items = block.items.slice(offset, offset + columns);
           children.push(
             new Table({
               width: { size: textWidth, type: WidthType.DXA },
@@ -333,7 +447,7 @@ export async function createDocumentDocx(model: DocumentModel): Promise<Uint8Arr
                               new TextRun({
                                 text: item.value,
                                 font: displayFont,
-                                size: 42,
+                                size: family === "signal" ? 64 : 42,
                                 color: accentLarge,
                               }),
                             ],
@@ -405,17 +519,31 @@ export async function createDocumentDocx(model: DocumentModel): Promise<Uint8Arr
           run: { font: bodyFont, size: 22, color: ink },
           // Older LibreOffice versions interpret an inherited w:line without
           // w:lineRule as a fixed body-sized height, overlapping large text.
-          paragraph: { spacing: { after: 180, line: 310, lineRule: LineRuleType.AUTO } },
+          paragraph: {
+            spacing: {
+              after: family === "briefing" ? 140 : 180,
+              line: family === "briefing" ? 290 : 310,
+              lineRule: LineRuleType.AUTO,
+            },
+          },
         },
         heading1: {
-          run: { font: displayFont, size: 36, color: ink },
+          run: {
+            font: displayFont,
+            size: family === "signal" ? 48 : family === "briefing" ? 32 : 36,
+            color: ink,
+          },
           paragraph: {
             spacing: { before: 420, after: 200, line: 300, lineRule: LineRuleType.AUTO },
             keepNext: true,
           },
         },
         heading2: {
-          run: { font: displayFont, size: 29, color: ink },
+          run: {
+            font: displayFont,
+            size: family === "signal" ? 40 : family === "briefing" ? 28 : 29,
+            color: ink,
+          },
           paragraph: {
             spacing: { before: 320, after: 150, line: 300, lineRule: LineRuleType.AUTO },
             keepNext: true,
