@@ -541,10 +541,7 @@ function WorkspaceShell({
       <View style={{ position: "absolute", left: 16, top: 17 }}>
         <IconButton icon={Menu} label={t(desktopCopy.conversationMenu)} onPress={openThreads} />
       </View>
-      <View
-        pointerEvents="box-none"
-        style={{ alignItems: "center", paddingTop: 1, paddingHorizontal: 92 }}
-      >
+      <View pointerEvents="box-none" style={{ alignItems: "center", paddingTop: 1 }}>
         <CompanionHeading
           name={agentName}
           status={status}
@@ -552,29 +549,6 @@ function WorkspaceShell({
           onPress={() => setAgentOpen(true)}
         />
       </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={t("Settings")}
-        onPress={() => setSettingsOpen(true)}
-        style={({ pressed }) => ({
-          position: "absolute",
-          right: 12,
-          top: 17,
-          width: 88,
-          minHeight: 48,
-          paddingVertical: 6,
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 4,
-          borderRadius: 16,
-          backgroundColor: pressed ? colors.subtle : colors.card,
-        })}
-      >
-        <Settings size={21} strokeWidth={1.8} color={colors.text} />
-        <Text style={{ color: colors.text, fontSize: 12, textAlign: "center" }}>
-          {t("Settings")}
-        </Text>
-      </Pressable>
     </View>
   );
   const mobileNavigation = (
@@ -630,6 +604,22 @@ function WorkspaceShell({
             </Pressable>
           );
         })}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("Settings")}
+          aria-expanded={settingsOpen}
+          onPress={() => setSettingsOpen(true)}
+          style={({ pressed }) => ({
+            flex: 1,
+            height: 48,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: settingsOpen || pressed ? colors.subtle : "transparent",
+            borderRadius: 28,
+          })}
+        >
+          <Settings size={23} strokeWidth={1.8} color={colors.text} />
+        </Pressable>
       </View>
     </View>
   );
