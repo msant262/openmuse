@@ -1,5 +1,8 @@
 # Public research recovery — 2026-10-04
 
+The rendering strategy and deadlines below were subsequently replaced by
+[structured research and explicit headless reading](2026-10-04-structured-research-strategy.md).
+
 The production election task `d8fd762c6f3e1445383f31b5a90e386b9891292118120e452aecc023b3a291cb`
 read a g1 results shell, never rendered the page, and reported verified completion
 despite explicitly stating that votes and percentages were unavailable. TSE and
