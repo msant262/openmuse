@@ -11,6 +11,8 @@ Structure the narrative with real Markdown headings and paragraphs. Keep section
 
 The supplied `title` and `design.subtitle` already appear in the opening layout. Start the body with the introduction or first meaningful section instead of repeating either as extra headings. Review page breaks for a lone trailing word or a nearly empty final page; shorten or rebalance the affected paragraph while preserving its meaning.
 
+Respect the requested page range while repairing. A final page with a substantial complete section may have more whitespace than earlier pages; this alone is not a failed review. A continued table is valid when complete rows remain readable and its column headers repeat. Repair an orphaned note, split row, lost context, collision or clipping, rather than repeatedly rewriting readable pages to equalize their density. Once the requested content, format and scope are met and every page is legible, preserve the working layout and finish the reviewed file.
+
 Use these supported visual blocks when the content calls for them:
 
 - An owned PNG/JPEG illustration on its own paragraph: `![Useful caption](file:FILE_ID)`. Source the file through current tools. Remote image URLs and raw HTML are not document input.
