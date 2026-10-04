@@ -22,6 +22,7 @@ import { useI18n } from "./i18n";
 import { MemorySettings } from "./memory-settings";
 import { ModelSettings } from "./model-settings";
 import { NativePushSettings } from "./native-push-settings";
+import { ProactivitySettings } from "./proactivity-settings";
 import { ProfileSettings } from "./profile-settings";
 import { ConnectionsScreen } from "./screens";
 import { ThemePicker } from "./theme-picker";
@@ -36,6 +37,7 @@ const sections: { id: string; title: string; icon: LucideIcon }[] = [
   { id: "personality", title: "Personalization", icon: Sparkles },
   { id: "permissions", title: "Permissions", icon: ShieldCheck },
   { id: "memory", title: "Memory", icon: Fingerprint },
+  { id: "proactivity", title: "Proactivity", icon: Bell },
   { id: "notifications", title: "Notifications", icon: Bell },
 ];
 
@@ -142,6 +144,7 @@ export function SettingsDialog({
                 gap: 24,
               }}
             >
+              {section === "proactivity" && <ProactivitySettings />}
               {section === "general" && (
                 <>
                   <Pressable

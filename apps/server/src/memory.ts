@@ -39,6 +39,29 @@ export const memoryInput = z
     source: z.string().trim().min(1).max(200).default("User confirmed"),
   })
   .extend(validity.shape);
+export const learnedMemoryFields = z.object({
+  category: z.enum(["fact", "preference", "habit", "plan"]),
+  evidence: z
+    .array(
+      z
+        .object({
+          messageId: z.string().min(1),
+          threadId: z.string().min(1),
+          quote: z.string().min(1).max(2000),
+          observedAt: z.iso.datetime({ offset: true }),
+        })
+        .strict(),
+    )
+    .min(1)
+    .max(8),
+  followUp: z
+    .object({
+      state: z.enum(["open", "resolved", "cancelled"]),
+      after: z.iso.datetime({ offset: true }),
+    })
+    .strict()
+    .optional(),
+});
 const editSchema = memoryInput
   .partial()
   .extend({
@@ -67,7 +90,8 @@ export class MemoryService {
     owner: string,
     text: string,
     source = "User confirmed",
-    options: z.infer<typeof validity> & { origin?: AgentMemory["origin"] } = {},
+    options: z.infer<typeof validity> &
+      Partial<z.infer<typeof learnedMemoryFields>> & { origin?: AgentMemory["origin"] } = {},
   ) {
     const input = memoryInput.parse({ text, source, ...options });
     assertPublicMemory(input.text);
@@ -80,6 +104,7 @@ export class MemoryService {
       status: "active",
       fingerprint: memoryFingerprint(input.text),
       origin: options.origin ?? { kind: "local" },
+      ...(options.category ? learnedMemoryFields.parse(options) : {}),
     };
     const saved = await this.db.saveMemory(owner, value);
     if (saved.status === "forgotten")
@@ -159,11 +184,16 @@ export class MemoryService {
     let size = 2;
     const facts: (AgentMemory & { truncated?: boolean })[] = [];
     const terms = [...new Set(query.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [])].slice(0, 8);
-    const candidates = terms.length
+    const relevant = terms.length
       ? (
           await Promise.all(terms.map((term) => this.page(owner, { query: term, limit: 8 })))
         ).flatMap((page) => page.entries)
       : await this.recall(owner);
+    // Hermes-style bounded baseline: personal facts must survive a different wording
+    // or language. Relevance supplements the baseline; it must not gate all memory.
+    const recent = await this.recall(owner);
+    const core = recent.filter((fact) => fact.category && fact.category !== "plan");
+    const candidates = [...core.slice(0, 12), ...relevant, ...(relevant.length ? [] : recent)];
     const seen = new Set<string>();
     for (const fact of candidates) {
       if (seen.has(fact.id)) continue;
@@ -190,11 +220,41 @@ export class MemoryService {
     await this.ensure(owner, id);
     return this.revisions.page(owner, id, options);
   }
+  /** Join a card resolution and its memory/history change in the same transaction. */
+  async resolvePlanMutations(owner: string, id: string, expectedRevision: number) {
+    const previous = await this.ensure(owner, id);
+    if (
+      previous.revision !== expectedRevision ||
+      previous.status !== "active" ||
+      previous.followUp?.state !== "open"
+    )
+      throw new AppError("The remembered plan changed while deciding", 409);
+    const changedAt = new Date(this.now()).toISOString();
+    const value = {
+      ...previous,
+      revision: expectedRevision + 1,
+      updatedAt: changedAt,
+      origin: { kind: "settings" as const },
+      followUp: { ...previous.followUp, state: "resolved" as const },
+    };
+    const entry = this.revisions.entry(id, value.revision, value, "edit", changedAt);
+    return [
+      {
+        kind: "memories",
+        id,
+        mode: "replace" as const,
+        expected: { revision: expectedRevision, status: "active" },
+        value,
+      },
+      { kind: "memory-history", id: entry.id, mode: "insert" as const, value: entry },
+    ];
+  }
   async update(
     owner: string,
     id: string,
     raw: z.infer<typeof editSchema>,
     origin?: AgentMemory["origin"],
+    learned?: z.infer<typeof learnedMemoryFields>,
   ) {
     const input = editSchema.parse(raw);
     assertPublicMemory(input.text);
@@ -210,11 +270,17 @@ export class MemoryService {
         ...previous,
         ...patch,
         ...(origin ? { origin } : {}),
+        ...(learned
+          ? {
+              ...learnedMemoryFields.parse(learned),
+              followUp: learned.category === "plan" ? learned.followUp : undefined,
+            }
+          : {}),
         fingerprint: memoryFingerprint(input.text),
       },
       expectedRevision,
       requestId,
-      { action: "edit", ...input, origin },
+      { action: "edit", ...input, origin, learned },
     );
   }
   async restore(

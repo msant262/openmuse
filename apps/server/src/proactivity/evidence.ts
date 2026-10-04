@@ -63,6 +63,17 @@ export function unansweredRequest(messages: Mail[], account: string): Mail | und
     return undefined;
   return request;
 }
+/** Notifications can deserve attention even when no reply was requested. */
+export function unattendedMail(messages: Mail[], account: string): Mail | undefined {
+  const incoming = [...messages]
+    .filter((m) => !draft(m) && !sent(m, account) && m.from.toLowerCase() !== account.toLowerCase())
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
+    .at(-1);
+  return incoming &&
+    !messages.some((m) => sent(m, account) && Date.parse(m.date) >= Date.parse(incoming.date))
+    ? incoming
+    : undefined;
+}
 export async function readMailEvidence(
   workspace: WorkspaceService,
   owner: string,
@@ -82,7 +93,10 @@ export async function readMailEvidence(
     throw new ProactivitySourceUnavailableError(
       "The current mail thread read is partial; no unanswered decision can be made",
     );
-  const request = unansweredRequest(read.messages, read.authority.account);
+  const request =
+    target.purpose === "attention"
+      ? unattendedMail(read.messages, read.authority.account)
+      : unansweredRequest(read.messages, read.authority.account);
   if (!request)
     throw new ProactivityEvidenceChangedError(
       "This thread has been answered or no longer has an unanswered request",

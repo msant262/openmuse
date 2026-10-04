@@ -50,6 +50,8 @@ export type ProcedureVersion = Omit<ProcedureInput, "expectedVersion"> & {
   version: number;
   savedAt: string;
   binding: string;
+  learned?: boolean;
+  sourceOperationIds?: string[];
 };
 export type Procedure = { id: string; version: number; versions: ProcedureVersion[] };
 export const procedureRunSchema = z

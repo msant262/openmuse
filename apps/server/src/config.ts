@@ -39,6 +39,8 @@ process.env.DO_NOT_TRACK = "1";
 process.env.COPILOTKIT_TELEMETRY_DISABLED = "true";
 
 export interface Config {
+  memoryLearningEnabled?: boolean;
+  semanticProactivityEnabled?: boolean;
   proactivityEnabled?: boolean;
   proactivityIntervalHours?: number;
   routineTimezone?: string;
@@ -194,6 +196,8 @@ export function readConfig(): Config {
     throw new Error("CREDENTIAL_ADAPTERS_JSON must be a valid array of trusted login adapters");
   }
   const config: Config = {
+    memoryLearningEnabled: process.env.MEMORY_LEARNING_ENABLED !== "false",
+    semanticProactivityEnabled: process.env.SEMANTIC_PROACTIVITY_ENABLED !== "false",
     proactivityEnabled: process.env.PROACTIVITY_ENABLED !== "false",
     proactivityIntervalHours: integer("PROACTIVITY_INTERVAL_HOURS", 4, 1, 168),
     approvalPolicy: policy,

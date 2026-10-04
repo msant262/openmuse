@@ -209,10 +209,13 @@ export class ConversationAgent extends AbstractAgent {
       let subscription: { unsubscribe(): void } | undefined;
       const latest = input.messages.filter((message) => message.role === "user").at(-1);
       void Promise.all([
-        this.service.memory.context(
-          this.owner,
-          typeof latest?.content === "string" ? latest.content : "",
-        ),
+        Promise.all([
+          this.service.memory.context(
+            this.owner,
+            typeof latest?.content === "string" ? latest.content : "",
+          ),
+          this.service.playbooks.context(this.owner),
+        ]).then((parts) => parts.join("\n")),
         this.service.mcp.tools(this.owner, `chat:${input.threadId}:${latest?.id ?? input.runId}`, {
           signal: abort.signal,
         }),

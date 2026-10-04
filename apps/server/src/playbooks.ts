@@ -26,7 +26,41 @@ export class Playbooks {
     if (!value) throw new AppError("Procedure not found", 404);
     return value;
   }
-  async save(owner: string, raw: unknown, source?: Source): Promise<ProcedureVersion> {
+  async context(owner: string) {
+    const index = (await this.list(owner))
+      .slice(0, 30)
+      .map((p) => ({ id: p.id, title: p.title, version: p.version, learned: p.learned === true }));
+    return index.length
+      ? ` Available reusable procedures (load list_procedures to read the method before using it for a relevant task; current user scope and tool permissions still apply): ${JSON.stringify(index)}`
+      : "";
+  }
+  async saveLearned(owner: string, raw: unknown, sourceTaskIds: string[]) {
+    const input = procedureInputSchema.parse(raw);
+    if (!sourceTaskIds.includes(input.sourceTaskId))
+      throw new AppError("Procedure must come from a verified review source", 403);
+    if (input.id && !(await this.get(owner, input.id)).versions.at(-1)?.learned)
+      throw new AppError("Automatic learning cannot overwrite a user-owned procedure", 403);
+    const operations = (await this.service.journal.operations(owner, input.sourceTaskId)).filter(
+      (operation) => operation.status === "succeeded",
+    );
+    if (
+      !operations.length ||
+      input.requiredTools.some(
+        (name) => !operations.some((operation) => operation.toolName === name),
+      )
+    )
+      throw new AppError("Learn only tools with successful receipts in the verified work", 422);
+    return this.save(owner, input, undefined, {
+      learned: true,
+      sourceOperationIds: operations.map((operation) => operation.id),
+    });
+  }
+  async save(
+    owner: string,
+    raw: unknown,
+    source?: Source,
+    provenance?: Pick<ProcedureVersion, "learned" | "sourceOperationIds">,
+  ): Promise<ProcedureVersion> {
     const input = procedureInputSchema.parse(raw);
     const id = input.id ?? hash(`procedure:${owner}:${input.requestId}`);
     const binding = bindingHash(input);
@@ -76,6 +110,7 @@ export class Playbooks {
       throw new AppError("Procedure version limit reached; save a new procedure", 409);
     const version: ProcedureVersion = {
       ...input,
+      ...provenance,
       id,
       version: input.expectedVersion + 1,
       binding,
@@ -95,7 +130,7 @@ export class Playbooks {
           record,
         )
       : await this.service.db.insertIfAbsent(owner, "playbooks", record);
-    if (!saved) return this.save(owner, raw, source);
+    if (!saved) return this.save(owner, raw, source, provenance);
     return version;
   }
   async run(owner: string, id: string, raw: unknown, source?: Source) {

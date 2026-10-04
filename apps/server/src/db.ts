@@ -977,6 +977,61 @@ export class Store {
       throw new AppError("Memory changed during migration. Retry the save", 409);
     return saved as unknown as AgentMemory;
   }
+  /** Durable sources survive model context trimming; reservations coalesce review jobs. */
+  async learningCandidates(owner: string, limit = 8) {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('kind',source.kind,'value',source.data) AS data FROM records source WHERE source.owner=$1
+       AND ((source.kind='conversation-inbox' AND source.data->>'status' IN ('finished','interrupted'))
+         OR (source.kind='tasks' AND source.data->>'status'='succeeded'
+           AND source.data->'completion'->>'status'='verified'
+           AND source.data->'input'->>'internalActivity' IS DISTINCT FROM 'true'
+           AND NOT (source.data->'input' ? 'proactivityCycleId')))
+       AND NOT EXISTS(SELECT 1 FROM records seen WHERE seen.owner=source.owner
+         AND seen.kind='learning-sources' AND seen.id=source.kind || ':' || source.id)
+       ORDER BY source.data->>'createdAt',source.id LIMIT $2`,
+      [owner, Math.min(20, limit)],
+    );
+    return result.rows.map(
+      (row) =>
+        row.data as unknown as { kind: string; value: Record<string, unknown> & { id: string } },
+    );
+  }
+  async memorySourceSuppressed(owner: string, messageIds: string[]) {
+    const result = await this.db.query(
+      `SELECT 1 FROM records fact WHERE owner=$1 AND kind='memories' AND data->>'status'='forgotten'
+       AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(data->'evidence','[]'::jsonb)) evidence
+         WHERE evidence->>'messageId'=ANY($2::text[])) LIMIT 1`,
+      [owner, messageIds],
+    );
+    return result.rows.length > 0;
+  }
+  async learningConversation(owner: string, threadIds: string[]) {
+    const result = await this.db.query(
+      `SELECT data FROM records WHERE owner=$1 AND kind='conversation-inbox'
+      AND data->>'threadId'=ANY($2::text[]) AND data->>'status' IN ('finished','interrupted')
+      ORDER BY data->>'createdAt' DESC,id DESC LIMIT 40`,
+      [owner, threadIds],
+    );
+    return result.rows
+      .map((row) => row.data as unknown as import("./conversation-inbox.ts").InboxMessage)
+      .reverse();
+  }
+  async learningWatermark(owner: string) {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('id',id,'createdAt',data->>'createdAt') AS data FROM records
+      WHERE owner=$1 AND kind='conversation-inbox' ORDER BY data->>'createdAt' DESC,id DESC LIMIT 1`,
+      [owner],
+    );
+    return JSON.stringify(result.rows[0]?.data ?? null);
+  }
+  async learningConversationActive(owner: string) {
+    const result = await this.db.query(
+      `SELECT 1 FROM records WHERE owner=$1 AND kind='conversation-inbox'
+      AND data->>'status' IN ('accepted','dispatching') LIMIT 1`,
+      [owner],
+    );
+    return result.rows.length > 0;
+  }
   /** Latest canonical transcript per thread, filtered in SQL; never load cumulative run copies. */
   async searchThreads(owner: string, query: string, limit: number, archived: boolean) {
     const result = await this.db.query(

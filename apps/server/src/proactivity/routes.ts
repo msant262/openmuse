@@ -4,6 +4,8 @@ import type { AgentService } from "../engine/service.ts";
 
 export function proactivityRoutes(service: AgentService) {
   const app = new Hono<{ Variables: { owner: string } }>();
+  app.get("/status", async (c) => c.json(await service.proactivity.status(c.get("owner"))));
+  app.post("/learning/retry", async (c) => c.json(await service.learning.retry(c.get("owner"))));
   app.get("/settings", async (c) => c.json(await service.proactivity.settings.get(c.get("owner"))));
   app.post("/settings", async (c) =>
     c.json(await service.proactivity.settings.update(c.get("owner"), await c.req.json())),
@@ -18,7 +20,7 @@ export function proactivityRoutes(service: AgentService) {
   );
   app.post("/review", async (c) => {
     const owner = c.get("owner"),
-      cycleId = await service.proactivity.scheduleDue(owner);
+      cycleId = await service.proactivity.scheduleDue(owner, Date.now(), true);
     const cycle = cycleId
       ? await service.db.get<{ taskId: string }>(owner, "proactivity-cycles", cycleId)
       : null;

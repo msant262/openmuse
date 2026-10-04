@@ -33,7 +33,7 @@ export function message(id: string, body: string, sent = false, draft = false) {
   };
 }
 
-export async function fixture(t: TestContext) {
+export async function fixture(t: TestContext, overrides: Partial<Config> = {}) {
   let now = Date.now();
   const directory = await mkdtemp(join(tmpdir(), "okami-proactivity-"));
   const config: Config = {
@@ -50,6 +50,7 @@ export async function fixture(t: TestContext) {
     googleClientId: "fixture",
     googleClientSecret: "fixture",
     routineTimezone: "Europe/Berlin",
+    ...overrides,
   };
   let db = await createStore({ dataDir: join(directory, "db") });
   await db.put("local-user", "credentials", {
@@ -78,9 +79,12 @@ export async function fixture(t: TestContext) {
     unavailable: false,
     truncated: false,
     writes: 0,
+    events: [] as Record<string, unknown>[],
   };
+  const realFetch = globalThis.fetch;
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input));
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.hostname === "127.0.0.1") return realFetch(input, init);
     assert.ok(url.hostname.endsWith("googleapis.com"), `Unexpected remote request ${url.hostname}`);
     if (init?.method && init.method !== "GET") {
       source.writes++;
@@ -97,7 +101,7 @@ export async function fixture(t: TestContext) {
     if (url.pathname.includes("/messages/")) return Response.json(source.messages[0]);
     if (url.pathname.endsWith("/profile")) return Response.json({ emailAddress: "me@example.com" });
     if (url.pathname.endsWith("/events"))
-      return Response.json({ items: [], timeZone: "Europe/Berlin" });
+      return Response.json({ items: source.events, timeZone: "Europe/Berlin" });
     throw new Error(`Unexpected fixture path ${url.pathname}`);
   });
   let server = await createApp(db, config);

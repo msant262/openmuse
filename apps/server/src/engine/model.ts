@@ -1235,7 +1235,12 @@ export async function executeModelTask(
       },
     }),
   );
-  const personalContext = await service.memory.context(owner, task.prompt);
+  const personalContext = (
+    await Promise.all([
+      service.memory.context(owner, task.prompt),
+      service.playbooks.context(owner),
+    ])
+  ).join("\n");
   const recordBlocked = async (error: unknown) => {
     if (error instanceof Error && "outcomeUnknown" in error && error.outcomeUnknown === true)
       error = new TaskOutcomeUnknownError(

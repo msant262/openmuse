@@ -47,6 +47,7 @@ import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { ConnectedSearchBackend, type IntegrationService } from "../integrations.ts";
 import { InteractionRequests } from "../interaction-requests.ts";
+import { PersonalLearning } from "../learning/service.ts";
 import { backgroundFailure } from "../log.ts";
 import { McpService } from "../mcp.ts";
 import { MediaService } from "../media-tools.ts";
@@ -148,6 +149,7 @@ export class AgentService {
   readonly routines: RoutinesService;
   readonly proactivity: ProactivityService;
   readonly memory: MemoryService;
+  readonly learning: PersonalLearning;
   readonly contextBudget: ContextBudget;
   contextModel?: ContextModelResolver;
   readonly mcp: McpService;
@@ -261,6 +263,7 @@ export class AgentService {
     this.mailbox = new TaskMailbox(db, this.inbox);
     this.actor = new TaskActor(db, this.mailbox, this.journal);
     this.inbox.subscribeAccepted((owner, message) => {
+      this.learning?.interrupt(owner);
       if (message.targetTaskId)
         void this.actor
           .wake(owner, message.targetTaskId, "directive")
@@ -290,6 +293,7 @@ export class AgentService {
       config.mode === "live",
     );
     this.memory = new MemoryService(db);
+    this.learning = new PersonalLearning(this);
     this.contextBudget = new ContextBudget(db);
     if (config.model) {
       const providers = config.modelProviders ?? modelProviderConfig(config.dataDir);
@@ -449,6 +453,7 @@ export class AgentService {
         )) {
           if (value.id !== "identity") continue;
           if (this.config.mode === "live") {
+            await this.learning.scheduleDue(owner);
             await this.proactivity.scheduleDue(owner);
             continue;
           }
@@ -1417,6 +1422,7 @@ export class AgentService {
     context: TaskContext,
   ): Promise<Partial<AgentTask>> {
     task = await this.actor.apply(owner, task, context);
+    if (task.input.memoryReview === true) return this.learning.review(owner, task, context);
     if (typeof task.input.proactivityCycleId === "string") {
       try {
         return await this.proactivity.review(owner, task.input.proactivityCycleId, task, context);

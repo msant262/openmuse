@@ -3,6 +3,7 @@ import { Text, View } from "react-native";
 import type { AgentMemory, RevisionEntry } from "../../../packages/domain/src/agent";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
+import { ProactivitySettings } from "./proactivity-settings";
 import { Button, Card, ErrorNotice, Field, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -51,6 +52,7 @@ export function MemorySettings({ document = false }: { document?: boolean } = {}
   return (
     <Card style={{ gap: 12 }}>
       <Text style={s.heading}>{t(document ? "Saved memories" : "Memory")}</Text>
+      <ProactivitySettings learningOnly />
       <Text style={s.muted}>
         {t("Inspect facts, corrections and forgotten entries. Restoring creates a new revision.")}
       </Text>
@@ -158,6 +160,17 @@ function MemoryRow({ memory, changed }: { memory: AgentMemory; changed: () => Pr
           origin: t(memory.origin?.kind ?? "legacy"),
         })}
       </Text>
+      {memory.category && (
+        <Text style={s.small}>
+          {t(memory.category)}
+          {memory.followUp ? ` · ${t(`Follow-up: ${memory.followUp.state}`)}` : ""}
+        </Text>
+      )}
+      {memory.evidence?.map((e) => (
+        <Text key={`${e.messageId}:${e.quote}`} style={s.small}>
+          {t("Source quote")}: “{e.quote}”
+        </Text>
+      ))}
       {!!memory.updatedAt && (
         <Text style={s.small}>
           {t("Changed {date}", {

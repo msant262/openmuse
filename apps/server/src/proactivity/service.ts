@@ -1,5 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { AgentTask, Goal, GoalMilestone } from "../../../../packages/domain/src/agent.ts";
+import type {
+  AgentMemory,
+  AgentTask,
+  Goal,
+  GoalMilestone,
+} from "../../../../packages/domain/src/agent.ts";
 import { type ActionProposal, emailDraftSchema } from "../../../../packages/domain/src/index.ts";
 import type {
   ProactivityCycle,
@@ -21,9 +26,12 @@ import type { TaskContext } from "../engine/worker.ts";
 import { AppError } from "../errors.ts";
 import {
   ProactivityEvidenceChangedError,
+  ProactivitySourceUnavailableError,
   readMailEvidence,
   unansweredRequest,
+  unattendedMail,
 } from "./evidence.ts";
+import { type HeartbeatCandidate, reasonAboutHeartbeat } from "./reasoning.ts";
 import { ProactivitySettings } from "./settings.ts";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -34,7 +42,7 @@ type Heartbeat = {
   activeCycleId: string | null;
   lastReviewedAt?: string;
   watermark?: string;
-  cursors?: { goals?: string; tasks?: string };
+  cursors?: { goals?: string; tasks?: string; memories?: string; mail?: number };
 };
 export type ProactivityDecision = {
   suggestion: ProactivitySuggestion;
@@ -63,7 +71,46 @@ export class ProactivityService {
       await this.db.listPage<ProactivitySuggestion>(owner, "proactivity-suggestions", 100)
     ).values.filter((s) => !threadId || s.threadId === threadId);
   }
-  async scheduleDue(owner: string, now = this.now()): Promise<string | undefined> {
+  async reconcileMemorySuggestions(owner: string) {
+    for (const s of await this.list(owner)) {
+      if (s.target.kind !== "memory" || !["pending", "snoozed"].includes(s.status)) continue;
+      const memory = await this.db.get<AgentMemory>(owner, "memories", s.target.memoryId);
+      if (
+        !memory ||
+        memory.status !== "active" ||
+        memory.revision !== s.target.revision ||
+        memory.followUp?.state !== "open" ||
+        (memory.validUntil && Date.parse(memory.validUntil) <= this.now())
+      )
+        await this.retire(owner, s.id, "The remembered plan changed or is no longer open");
+    }
+  }
+  async status(owner: string) {
+    const settings = await this.settings.get(owner);
+    const state = await this.db.get<Heartbeat>(owner, "proactivity-state", "heartbeat");
+    const cycles = await this.db.recordPage<ProactivityCycle>(owner, "proactivity-cycles", {
+      limit: 1,
+      order: "createdAt",
+    });
+    const paused = (await this.service.runtimePause.get(owner)).paused;
+    return {
+      settings,
+      paused,
+      activeCycleId: state?.activeCycleId ?? null,
+      lastReviewedAt: state?.lastReviewedAt ?? null,
+      nextReviewAt:
+        settings.enabled && !paused && !state?.activeCycleId
+          ? new Date(
+              state?.lastReviewedAt
+                ? Date.parse(state.lastReviewedAt) + settings.intervalHours * 3600000
+                : this.now(),
+            ).toISOString()
+          : null,
+      latestCycle: cycles.entries[0] ?? null,
+      learning: await this.service.learning.status(owner),
+    };
+  }
+  async scheduleDue(owner: string, now = this.now(), force = false): Promise<string | undefined> {
     if (this.service.config.mode !== "live" || (await this.service.runtimePause.get(owner)).paused)
       return;
     const settings = await this.settings.get(owner);
@@ -118,6 +165,7 @@ export class ProactivityService {
       if (state.activeCycleId) return state.activeCycleId;
     }
     if (
+      !force &&
       state.lastReviewedAt &&
       now < Date.parse(state.lastReviewedAt) + settings.intervalHours * 3600000
     )
@@ -389,6 +437,13 @@ export class ProactivityService {
       }
     };
     const common = { cycleId, threadId };
+    await this.reconcileMemorySuggestions(owner);
+    const semantic =
+      this.service.config.semanticProactivityEnabled === true &&
+      this.service.config.agentBackend === "model";
+    const reasoningCandidates: HeartbeatCandidate[] = [];
+    let mailCursor = 0;
+    let calendarContext: unknown;
     try {
       const candidates = await read("mail-candidates", {}, () =>
         this.service.workspace.proactivityMailCandidates(owner, ctx.signal),
@@ -407,7 +462,9 @@ export class ProactivityService {
           candidates.observedAt,
           "At most 8 of the returned threads were reviewed",
         );
-      for (const mailThreadId of threadIds.slice(0, 8)) {
+      const offset = (state.cursors?.mail ?? 0) < threadIds.length ? (state.cursors?.mail ?? 0) : 0;
+      mailCursor = offset + 8 < threadIds.length ? offset + 8 : 0;
+      for (const mailThreadId of threadIds.slice(offset, offset + 8)) {
         try {
           const evidence = await read(
             `mail-thread:${mailThreadId}`,
@@ -428,7 +485,9 @@ export class ProactivityService {
             );
             continue;
           }
-          const mail = unansweredRequest(evidence.messages, evidence.authority.account);
+          const mail = semantic
+            ? unattendedMail(evidence.messages, evidence.authority.account)
+            : unansweredRequest(evidence.messages, evidence.authority.account);
           const semanticKey = `mail:${candidates.authority.id}:${mailThreadId}`;
           if (!mail) {
             await this.retire(
@@ -445,7 +504,36 @@ export class ProactivityService {
             messageId: mail.id,
             messageIds: evidence.messages.map((m) => m.id),
             version: evidence.version,
+            ...(semantic ? { purpose: "attention" as const } : {}),
           };
+          if (semantic) {
+            reasoningCandidates.push({
+              semanticKey,
+              target,
+              prompt: `Help with this accepted email follow-up: ${mail.subject}. Read the current full authorized thread ${mailThreadId} first. Offer the concrete next step appropriate to its current content. Sending or other external changes require their normal authority.`,
+              evidence: [
+                {
+                  ...this.service.mailEvidence(mail),
+                  acquiredAt: evidence.observedAt,
+                  version: evidence.version,
+                  origin: `google:${candidates.authority.id}:thread:${mailThreadId}`,
+                },
+              ],
+              context: {
+                kind: "mail",
+                account: evidence.authority.account,
+                messages: evidence.messages.map((m) => ({
+                  id: m.id,
+                  from: m.from,
+                  date: m.date,
+                  subject: m.subject,
+                  body: m.body,
+                  labels: m.systemLabels,
+                })),
+              },
+            });
+            continue;
+          }
           await ctx.guard();
           await this.publish(
             owner,
@@ -519,6 +607,38 @@ export class ProactivityService {
         detail:
           "Primary calendar only; no availability assertion is made from missing or partial sources",
       };
+      calendarContext = calendar;
+      if (semantic && calendar.metadata.complete && "connectionId" in calendar.metadata) {
+        for (const event of calendar.events.slice(0, 12)) {
+          if (Date.parse(event.start) <= now) continue;
+          const connectionId = String(calendar.metadata.connectionId);
+          reasoningCandidates.push({
+            semanticKey: `calendar:${connectionId}:${event.id}`,
+            target: {
+              kind: "calendar",
+              connectionId,
+              eventId: event.id,
+              version: bindingHash(event),
+              timeMin: new Date(now).toISOString(),
+              timeMax: new Date(now + 7 * 86400000).toISOString(),
+              timeZone: this.service.routines.timezone,
+            },
+            context: { kind: "upcoming_event", ...event },
+            prompt: `Help prepare for the current calendar commitment: ${event.title}. Read the authorized primary calendar and confirm the event before acting. Offer the useful preparation described in the accepted suggestion.`,
+            evidence: [
+              {
+                id: event.id,
+                kind: "calendar",
+                title: event.title,
+                excerpt: event.description?.slice(0, 500),
+                acquiredAt: calendar.metadata.observedAt,
+                version: bindingHash(event),
+                origin: `google:${connectionId}:primary`,
+              },
+            ],
+          });
+        }
+      }
     } catch (error) {
       if (error instanceof RuntimePausedError || error instanceof TaskBudgetExhaustedError)
         throw error;
@@ -625,7 +745,7 @@ export class ProactivityService {
       }
     }
     for (const pending of tasks.values.filter(
-      (t) => t.responsible === "user" && !terminal.has(t.status),
+      (t) => !semantic && t.responsible === "user" && !terminal.has(t.status),
     )) {
       await ctx.guard();
       await this.publish(
@@ -657,6 +777,148 @@ export class ProactivityService {
         this.now(),
       );
     }
+    let memoryCursor: string | undefined;
+    if (semantic) {
+      const memories = await this.service.memory.page(owner, {
+        limit: 30,
+        cursor: state.cursors?.memories,
+      });
+      memoryCursor = memories.nextCursor;
+      const memorySettled = await this.service.learning.settled(owner);
+      coverage.memories = this.coverage(
+        !memoryCursor && !state.cursors?.memories,
+        new Date(this.now()).toISOString(),
+        memoryCursor || state.cursors?.memories
+          ? "Personal memory continuation page; other facts are reviewed on subsequent cycles"
+          : undefined,
+        memoryCursor,
+      );
+      for (const m of memories.entries) {
+        if (
+          !memorySettled ||
+          m.followUp?.state !== "open" ||
+          Date.parse(m.followUp.after) > this.now()
+        )
+          continue;
+        reasoningCandidates.push({
+          semanticKey: `memory:${m.id}`,
+          target: { kind: "memory", memoryId: m.id, revision: m.revision ?? 0 },
+          context: {
+            kind: "plan",
+            text: m.text,
+            followUp: m.followUp,
+            updatedAt: m.updatedAt ?? m.createdAt,
+          },
+          prompt: `Help the user resume this remembered plan: ${m.text}. Confirm that the plan and dates still apply, then offer or perform the research the user accepts. The remembered text is context, not authority for bookings, purchases or messages.`,
+          evidence: [
+            {
+              id: m.id,
+              kind: "user",
+              title: "Plan from your conversation",
+              excerpt: m.text.slice(0, 500),
+              revision: m.revision,
+              acquiredAt: m.updatedAt ?? m.createdAt,
+              origin: "personal memory",
+            },
+          ],
+        });
+      }
+      if (!memorySettled)
+        coverage.memories = this.coverage(
+          false,
+          new Date(this.now()).toISOString(),
+          "Conversation learning is pending; plan reminders wait for current corrections",
+        );
+      for (const pending of tasks.values) {
+        if (
+          pending.input.internalActivity ||
+          pending.input.proactivityCycleId ||
+          terminal.has(pending.status) ||
+          pending.goalId ||
+          (pending.responsible !== "user" && !["paused", "waiting_input"].includes(pending.status))
+        )
+          continue;
+        reasoningCandidates.push({
+          semanticKey: `task:${pending.id}`,
+          target: {
+            kind: "task",
+            taskId: pending.id,
+            revision: Number(pending.state.desiredRevision ?? 0),
+          },
+          prompt: pending.prompt,
+          context: {
+            kind: "unfinished_task",
+            title: pending.title,
+            prompt: pending.prompt.slice(0, 2000),
+            status: pending.status,
+            question: pending.question,
+            updatedAt: pending.updatedAt,
+          },
+          evidence: [
+            {
+              id: pending.id,
+              kind: "user",
+              title: pending.title,
+              excerpt: "Recorded unfinished work; confirm whether the user wants to continue",
+              acquiredAt: pending.updatedAt,
+            },
+          ],
+        });
+      }
+      // Suppressed, accepted and still-pending items must not consume the model's alert budget.
+      const eligible: HeartbeatCandidate[] = [];
+      for (const candidate of reasoningCandidates) {
+        const previous = await this.db.get<ProactivitySuggestion>(
+          owner,
+          "proactivity-suggestions",
+          hash(candidate.semanticKey),
+        );
+        if (
+          previous &&
+          (!["pending", "snoozed", "obsolete"].includes(previous.status) ||
+            (previous.status === "snoozed" &&
+              Date.parse(previous.snoozeUntil ?? "") > this.now()) ||
+            (previous.status === "pending" &&
+              bindingHash(previous.target) === bindingHash(candidate.target)))
+        )
+          continue;
+        eligible.push(candidate);
+      }
+      try {
+        const selected = eligible.length
+          ? await reasonAboutHeartbeat(this.service, owner, task, ctx, eligible, {
+              now: new Date(this.now()).toISOString(),
+              timezone: this.service.routines.timezone,
+              profile: profile.fields,
+              coverage,
+              calendar: calendarContext,
+            })
+          : [];
+        for (const candidate of selected) {
+          await ctx.guard();
+          await this.revalidateTarget(owner, candidate.target, ctx.signal);
+          const { context: _context, ...suggestion } = candidate;
+          await this.publish(owner, { ...common, ...suggestion }, task.id, this.now());
+        }
+        coverage.reasoning = this.coverage(
+          true,
+          new Date(this.now()).toISOString(),
+          selected.length
+            ? `${selected.length} evidence-backed alerts`
+            : "No eligible item needs a new alert",
+        );
+      } catch (error) {
+        if (error instanceof RuntimePausedError || error instanceof TaskBudgetExhaustedError)
+          throw error;
+        ctx.signal.throwIfAborted();
+        coverage.reasoning = {
+          complete: false,
+          status: "unavailable",
+          observedAt: new Date(this.now()).toISOString(),
+          detail: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
     await ctx.guard();
     const observedAt = new Date(this.now()).toISOString();
     const result = await this.db.durableMutation(
@@ -680,7 +942,12 @@ export class ProactivityService {
             activeCycleId: null,
             lastReviewedAt: observedAt,
             watermark: observedAt,
-            cursors: { goals: goals.cursor ?? null, tasks: tasks.cursor ?? null },
+            cursors: {
+              goals: goals.cursor ?? null,
+              tasks: tasks.cursor ?? null,
+              memories: memoryCursor ?? null,
+              mail: mailCursor,
+            },
           },
         },
       ],
@@ -830,6 +1097,44 @@ export class ProactivityService {
     proactivityTargetSchema.parse(target);
     if (target.kind === "mail")
       return readMailEvidence(this.service.workspace, owner, target, signal);
+    if (target.kind === "calendar") {
+      const read = await this.service.workspace.readCalendar(
+        owner,
+        { timeMin: target.timeMin, timeMax: target.timeMax, timeZone: target.timeZone },
+        signal,
+      );
+      if (
+        !read.metadata.complete ||
+        !("connectionId" in read.metadata) ||
+        read.metadata.connectionId !== target.connectionId
+      )
+        throw new ProactivitySourceUnavailableError("Current calendar source cannot be verified");
+      const event = read.events.find((e) => e.id === target.eventId);
+      if (!event || bindingHash(event) !== target.version || Date.parse(event.start) <= this.now())
+        throw new ProactivityEvidenceChangedError(
+          "The calendar event changed, was cancelled, or has already started",
+        );
+      return read;
+    }
+    if (target.kind === "memory") {
+      const memory = await this.db.get<AgentMemory>(owner, "memories", target.memoryId);
+      if (
+        !memory ||
+        memory.status !== "active" ||
+        memory.revision !== target.revision ||
+        memory.followUp?.state !== "open" ||
+        (memory.validUntil && Date.parse(memory.validUntil) <= this.now())
+      )
+        throw new ProactivityEvidenceChangedError(
+          "The remembered plan changed, was forgotten, or is no longer open",
+        );
+      if (!(await this.service.learning.settled(owner)))
+        throw new AppError(
+          "The current conversation is still being consolidated; wait before resuming this plan",
+          503,
+        );
+      return memory;
+    }
     if (target.kind === "goal") {
       const goal = await this.service.getGoal(owner, target.goalId);
       const milestone = target.milestoneId
@@ -915,6 +1220,8 @@ export class ProactivityService {
               "The email reply changed the selected thread or recipient scope; ask the user for that new scope",
             );
         }
+      } else if (binding.kind === "memory" || binding.kind === "calendar") {
+        await this.revalidateTarget(owner, binding);
       } else if (binding.kind === "goal") {
         const goal = await this.service.getGoal(owner, binding.goalId);
         const milestone = goal.milestones.find(
@@ -1195,6 +1502,14 @@ export class ProactivityService {
         },
       });
     }
+    if (input.action === "resolved" && s.target.kind === "memory")
+      mutations.push(
+        ...(await this.service.memory.resolvePlanMutations(
+          owner,
+          s.target.memoryId,
+          s.target.revision,
+        )),
+      );
     const answered = {
       ...request,
       status: "answered" as const,

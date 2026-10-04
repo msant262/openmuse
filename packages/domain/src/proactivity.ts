@@ -37,6 +37,21 @@ export const proactivityTargetSchema = z.discriminatedUnion("kind", [
       messageId: id,
       messageIds: z.array(id).min(1).max(100),
       version: z.string().min(1),
+      purpose: z.enum(["reply", "attention"]).optional(),
+    })
+    .strict(),
+  z
+    .object({ kind: z.literal("memory"), memoryId: id, revision: z.number().int().nonnegative() })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("calendar"),
+      connectionId: id,
+      eventId: id,
+      version: z.string().min(1),
+      timeMin: z.iso.datetime({ offset: true }),
+      timeMax: z.iso.datetime({ offset: true }),
+      timeZone: z.string().min(1).max(100),
     })
     .strict(),
   z
@@ -103,5 +118,7 @@ export type ProactivityCycle = {
   completedAt?: string;
   watermark?: string;
   cursor?: string;
-  coverage: Partial<Record<"mail" | "calendar" | "goals" | "tasks", SourceCoverage>>;
+  coverage: Partial<
+    Record<"mail" | "calendar" | "goals" | "tasks" | "memories" | "reasoning", SourceCoverage>
+  >;
 };

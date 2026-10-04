@@ -27,7 +27,7 @@ export type TaskStatus =
   | "cancelled";
 export interface Evidence {
   id: string;
-  kind: "mail" | "file" | "web" | "user";
+  kind: "mail" | "calendar" | "file" | "web" | "user";
   title: string;
   excerpt: string;
   url?: string;
@@ -150,7 +150,14 @@ export interface AgentMemory {
   createdAt: string;
   revision?: number;
   updatedAt?: string;
-  origin?: { kind: "settings" | "chat" | "local"; messageId?: string; taskId?: string };
+  origin?: {
+    kind: "settings" | "chat" | "local" | "learning";
+    messageId?: string;
+    taskId?: string;
+  };
+  category?: "fact" | "preference" | "habit" | "plan";
+  evidence?: { messageId: string; threadId: string; quote: string; observedAt: string }[];
+  followUp?: { state: "open" | "resolved" | "cancelled"; after: string };
   validUntil?: string;
   timezone?: string;
   status?: "active" | "forgotten";
