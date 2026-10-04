@@ -116,6 +116,58 @@ test("uploaded characters retain owned media and selection cannot use another ow
   }
 });
 
+test("renaming an owned companion persists, preserves selection and media, and binds retries", async () => {
+  const f = await fixture();
+  try {
+    const poster = await f.server.files.importAttachment("local-user", "fox.png", png, "test");
+    const imported = await f.request("/import", {
+      requestId: "rename-import",
+      label: "Meu personagem",
+      posterFileId: poster.id,
+    });
+    const asset = await imported.json();
+    await f.request("/default/select", { requestId: "rename-default", companion: "mini-muse" });
+    const identity = (await f.server.agent.snapshot("local-user")).identity;
+    const body = { requestId: "rename-first", label: "  Lua 🦊  " };
+    const response = await f.request(`/${asset.id}/rename`, body);
+    assert.equal(response.status, 200);
+    const renamed = await response.json();
+    assert.equal(renamed.label, "Lua 🦊");
+    assert.equal(renamed.poster.fileId, asset.poster.fileId);
+    assert.deepEqual(renamed.motions, asset.motions);
+    assert.equal(renamed.status, asset.status);
+    assert.deepEqual((await f.server.agent.snapshot("local-user")).identity, identity);
+    const reopened = new AvatarService(f.db, f.server.files, f.config);
+    assert.equal((await reopened.state("local-user")).assets[0].label, "Lua 🦊");
+    assert.equal((await f.request(`/${asset.id}/rename`, body)).status, 200);
+    assert.equal((await f.request(`/${asset.id}/rename`, { ...body, label: "Sol" })).status, 409);
+    for (const label of ["", "   ", "x".repeat(81)]) {
+      assert.equal(
+        (await f.request(`/${asset.id}/rename`, { requestId: "invalid", label })).status,
+        422,
+      );
+    }
+    assert.equal((await f.request("/missing/rename", body)).status, 404);
+    const other = await f.server.auth.devices.pair("someone-else", "test");
+    assert.equal(
+      (
+        await f.server.app.request(`/api/agent/avatars/${asset.id}/rename`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${other.token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        })
+      ).status,
+      404,
+    );
+    await f.request(`/${asset.id}/rename`, { requestId: "rename-second", label: "Sol" });
+    const replayed = await f.request(`/${asset.id}/rename`, body);
+    assert.equal((await replayed.json()).label, "Sol", "old retries cannot undo newer names");
+    assert.deepEqual(await f.db.list("local-user", "avatar-generations"), []);
+  } finally {
+    await f.close();
+  }
+});
+
 function providerFixture() {
   const calls = { images: 0, working: 0, submitted: [] as string[], polled: [] as string[] };
   const provider: AvatarMediaProvider = {
@@ -212,6 +264,10 @@ test("four real candidate receipts survive service restart and selected animatio
       assetId: job.candidates[2].id,
     });
     await service.tick(); // Submission receipt is durable before polling.
+    await service.rename("local-user", job.candidates[2].id, {
+      requestId: "rename-while-animating",
+      label: "Azul",
+    });
     service = new AvatarService(f.db, f.server.files, f.config, p.provider);
     for (let i = 0; i < 12; i++) {
       await f.db.compareAndSwap("local-user", "avatar-generations", job.id, {}, { pollAt: 0 });
@@ -227,6 +283,7 @@ test("four real candidate receipts survive service restart and selected animatio
     assert.deepEqual(p.calls.polled, ["receipt-idle", "receipt-working", "receipt-responding"]);
     const asset = job.candidates.find((candidate) => candidate.id === job.selectedAssetId);
     assert.ok(asset);
+    assert.equal(asset.label, "Azul", "animation completion preserves the edited name");
     assert.notEqual(asset.motions.working?.posterFileId, asset.poster.fileId);
     assert.match(asset.motions.working?.posterUrl ?? "", /signature=/);
     assert.equal(

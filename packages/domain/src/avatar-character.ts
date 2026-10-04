@@ -59,6 +59,12 @@ export interface AvatarStudioState {
   builtinCompanion?: BuiltinCompanion;
 }
 export const avatarRequestId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+export const avatarRenameInput = z
+  .object({
+    requestId: avatarRequestId,
+    label: z.string().trim().min(1).max(80),
+  })
+  .strict();
 export const avatarGenerationInput = z
   .object({
     requestId: avatarRequestId,
