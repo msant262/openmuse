@@ -9,6 +9,8 @@ Read `builtin:document-design`. Choose PDF for fixed pages or DOCX when the user
 
 Structure the narrative with real Markdown headings and paragraphs. Keep sections focused. Use lists for actual groups or sequences, blockquotes for a useful callout, Markdown tables for comparisons, and descriptive linked source labels. Avoid a long wall of equally styled paragraphs. Use a cover for a substantial report only when it helps orientation; a one-page brief should begin with its content.
 
+The supplied `title` and `design.subtitle` already appear in the opening layout. Start the body with the introduction or first meaningful section instead of repeating either as extra headings. Review page breaks for a lone trailing word or a nearly empty final page; shorten or rebalance the affected paragraph while preserving its meaning.
+
 Use these supported visual blocks when the content calls for them:
 
 - An owned PNG/JPEG illustration on its own paragraph: `![Useful caption](file:FILE_ID)`. Source the file through current tools. Remote image URLs and raw HTML are not document input.

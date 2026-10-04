@@ -133,7 +133,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
   const markerText =
     documentColorContrast(ink, accent) >= documentColorContrast("FFFFFF", accent) ? ink : "FFFFFF";
   let count = 0,
-    section = model.title ?? "",
+    section = [model.title ?? ""],
     continuation = false,
     pendingSection = false;
   let flow: { slide: PptxModule.default.Slide; y: number } | undefined;
@@ -199,7 +199,10 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
   ) => {
     const leading = (size * 1.29) / 72;
     for (const [index, line] of lines.entries())
-      text(slide, line, x, y + index * leading, w, leading + 0.035, size, options);
+      text(slide, line, x, y + index * leading, w, leading + 0.035, size, {
+        ...options,
+        wrap: false,
+      });
     return lines.length * leading;
   };
   const rect = (
@@ -240,6 +243,25 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     rect(slide, 0.72, 0.42, 0.62, 0.045, accent);
     return Math.max(1.6, 0.68 + h + 0.3);
   };
+  const sectionTitle = (slide: PptxModule.default.Slide) => {
+    if (section.length === 1) return title(slide, section[0]);
+    let y = 0.68;
+    for (const [index, heading] of section.entries()) {
+      const size = index === 0 ? 30 : 20;
+      const lines = wrapRuns([{ text: heading }], size, 11.89, fonts, index === 0);
+      if (y + (lines.length * size * 1.29) / 72 > 3.8)
+        throw new Error(
+          "Consecutive slide headings are too long; shorten them or separate sections with content or an explicit divider",
+        );
+      y +=
+        lineText(slide, lines, 0.72, y, 11.89, size, {
+          fontFace: index === 0 ? displayFont : bodyFont,
+          color: index === 0 ? ink : muted,
+        }) + 0.15;
+    }
+    rect(slide, 0.72, 0.42, 0.62, 0.045, accent);
+    return Math.max(1.6, y + 0.15);
+  };
   const flowSlide = () => {
     const slide = base("editorial-text");
     if (model.design.eyebrow)
@@ -247,11 +269,18 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
         bold: true,
         color: accentText,
       });
-    const label = section;
-    const lines = wrapRuns([{ text: label }], 29, 3, fonts, true);
-    if (lines.length > 10)
-      throw new Error("Slide section title is too long for the editorial layout");
-    lineText(slide, lines, 0.72, 1.3, 3, 29, { fontFace: displayFont });
+    let headingY = 1.3;
+    for (const [index, heading] of section.entries()) {
+      const size = index === 0 ? 29 : 20;
+      const lines = wrapRuns([{ text: heading }], size, 3, fonts, index === 0);
+      if (headingY + (lines.length * size * 1.29) / 72 + 0.035 > 6.55)
+        throw new Error("Slide section headings are too long for the editorial layout");
+      headingY +=
+        lineText(slide, lines, 0.72, headingY, 3, size, {
+          fontFace: index === 0 ? displayFont : bodyFont,
+          color: index === 0 ? ink : muted,
+        }) + 0.24;
+    }
     rect(slide, 0.72, 1.1, 0.6, 0.045, accent);
     if (continuation) text(slide, [{ text: "…" }], 0.72, 6.13, 0.6, 0.4, 26, { color: accent });
     continuation = true;
@@ -260,7 +289,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
   };
   const sectionSlide = () => {
     const slide = base("section-divider");
-    title(slide, section);
+    sectionTitle(slide);
     pendingSection = false;
   };
   const body = (
@@ -269,7 +298,12 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     bullet?: { ordered: boolean; value: number; level: number },
   ) => {
     const indent = bullet ? Math.min(4, bullet.level) * 0.25 + 0.3 : 0;
-    const lines = wrapRuns(runs, size, 8.15 - indent, fonts);
+    // Native numbering reserves 18pt inside the first text box. Measure its spacer
+    // too, and give continuation lines the same text origin. Otherwise LibreOffice
+    // wraps an already positioned line again and overlays the next line.
+    const markerInset = bullet ? (18 + fonts.regular.widthOfTextAtSize("\u00a0", size)) / 72 : 0;
+    const width = 8.15 - indent - markerInset;
+    const lines = wrapRuns(runs, size, width, fonts);
     const leading = (size * 1.29) / 72;
     for (const [index, line] of lines.entries()) {
       if (!flow || flow.y + leading > 6.55) flow = flowSlide();
@@ -280,18 +314,19 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
               runIndex === 0 ? { ...run, text: `\u00a0${run.text}` } : run,
             )
           : line,
-        4.12 + indent,
+        4.12 + indent + (index === 0 ? 0 : markerInset),
         flow.y,
-        8.15 - indent,
+        index === 0 ? 8.15 - indent : width,
         leading + 0.035,
         size,
         index === 0 && bullet
           ? {
+              wrap: false,
               bullet: bullet.ordered
                 ? { type: "number", numberType: "arabicPeriod", startAt: bullet.value, indent: 18 }
                 : { indent: 18 },
             }
-          : {},
+          : { wrap: false },
       );
       flow.y += leading;
     }
@@ -337,8 +372,9 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     captionArea = undefined;
     if (block.type === "heading") {
       if (block.level <= 2) {
-        if (pendingSection) sectionSlide();
-        section = block.text;
+        // Adjacent headings describe one hierarchy until content or an explicit
+        // divider is encountered; they are not requests for empty slides.
+        section = pendingSection ? [...section, block.text] : [block.text];
         continuation = false;
         flow = undefined;
         pendingSection = true;
@@ -359,6 +395,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
       continue;
     }
     if (block.type === "rule") {
+      if (pendingSection) sectionSlide();
       flow = undefined;
       continue;
     }
@@ -369,7 +406,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
       const lines = wrapRuns(block.runs, 27, 9.6, fonts);
       for (let offset = 0; offset < lines.length; ) {
         const slide = base("pull-quote");
-        const y = title(slide, section);
+        const y = sectionTitle(slide);
         const height = 6.5 - y,
           capacity = Math.floor((height - 0.85) / ((27 * 1.29) / 72));
         rect(slide, 0.72, y, 11.89, height, surface);
@@ -380,7 +417,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     } else if (block.type === "metrics") {
       for (let offset = 0; offset < block.items.length; ) {
         const slide = base("metric-cards");
-        const y = title(slide, section);
+        const y = sectionTitle(slide);
         const height = 6.45 - y - 0.2;
         let columns = Math.min(3, block.items.length - offset);
         const measured = (number: number) => {
@@ -423,7 +460,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     } else if (block.type === "steps") {
       for (let offset = 0; offset < block.items.length; ) {
         const slide = base("process");
-        const y = title(slide, section);
+        const y = sectionTitle(slide);
         const preferredHeight = Math.min(
           1.5,
           (6.45 - y) / Math.min(4, block.items.length - offset),
@@ -476,8 +513,13 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     } else if (block.type === "chart") {
       const slide = base("data-chart");
       let y = title(slide, block.title);
-      if (pendingSection && section !== block.title) {
-        const label = wrapRuns([{ text: section }], 12, 11.89, fonts);
+      if (pendingSection && (section.length > 1 || section[0] !== block.title)) {
+        const label = wrapRuns(
+          [{ text: section.filter((heading) => heading !== block.title).join("\n") }],
+          12,
+          11.89,
+          fonts,
+        );
         y += lineText(slide, label, 0.72, y, 11.89, 12, { color: muted }) + 0.18;
       }
       const labelLength = Math.max(...block.labels.map((label) => label.length));
@@ -547,7 +589,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
       const image = model.images.get(block.fileId);
       if (!image) throw new Error(`Document image is missing: ${block.fileId}`);
       const slide = base("image-caption");
-      const y = title(slide, section);
+      const y = sectionTitle(slide);
       const captionLines = block.caption
         ? wrapRuns([{ text: block.caption }], 16, 11.89, fonts)
         : [];
@@ -624,7 +666,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
       let offset = 0;
       do {
         const slide = base("comparison-table");
-        const y = title(slide, section);
+        const y = sectionTitle(slide);
         if (headerHeight > 2)
           throw new Error("Presentation table header is too dense; shorten its column headings");
         const cellRuns = (lines: Line[], color: string) =>
