@@ -18,6 +18,23 @@ after(async () => {
   await fixture?.close();
 });
 
+test("public read waits for delayed application data instead of reporting its loading shell", {
+  timeout: 20_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-delayed-results-"));
+  const browser = await createBrowserManager({ dataDir });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/delayed-results");
+    const page = await browser.read(id);
+    assert.match(page.text, /Candidate A: 52% of 12345 votes/);
+    assert.doesNotMatch(page.text, /Location 0/);
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("real HTTP and HTTPS CONNECT carry downloads that survive browser restart", {
   timeout: 30_000,
 }, async () => {

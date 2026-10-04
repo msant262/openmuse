@@ -23,6 +23,7 @@ import { type NativeBrowserConfig, nativeLaunchOptions } from "./native-config.t
 import { validatePublicUrl } from "./network.ts";
 import { observationContent } from "./observation-content.ts";
 import { startEgressProxy } from "./proxy.ts";
+import { readPublicContent } from "./public-read.ts";
 import { ReviewedActions } from "./reviewed-actions.ts";
 import { extractSearch } from "./search.ts";
 
@@ -702,19 +703,7 @@ export async function createBrowserManager(options: {
         await instance.agent.prepareObservation();
         const { page } = instance;
         await validatePublicUrl(page.url());
-        // Evaluation is fixed by the worker; callers cannot inject JavaScript.
-        const result = await page.evaluate(() => {
-          const text = document.body?.innerText ?? "";
-          return {
-            url: location.href,
-            title: document.title.slice(0, 300),
-            text: text.slice(0, 2_000_000),
-            sourceLength: text.length,
-            structured: Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
-              .slice(0, 20)
-              .map((node) => (node.textContent ?? "").slice(0, 100_000)),
-          };
-        });
+        const result = await readPublicContent(page);
         await validatePublicUrl(result.url);
         const session: Session = {
           id,
@@ -726,7 +715,13 @@ export async function createBrowserManager(options: {
         };
         sessions.set(id, session);
         await persist(session);
-        return { url: result.url, title: result.title, ...observationContent(result) };
+        return {
+          url: result.url,
+          title: result.title,
+          ...observationContent(result),
+          links: result.links,
+          extraction: result.extraction,
+        };
       }),
     refreshProtection: (id: string) =>
       serial(id, async () => {

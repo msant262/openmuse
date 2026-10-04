@@ -64,6 +64,13 @@ const readSchema = z.object({
   title: z.string().max(300),
   text: z.string().max(100_000),
   truncated: z.boolean(),
+  links: z
+    .array(z.object({ title: z.string().max(200), url: z.string().max(4096) }))
+    .max(80)
+    .optional(),
+  extraction: z
+    .object({ status: z.enum(["readable", "partial"]), reason: z.string().optional() })
+    .optional(),
   contentHash: z
     .string()
     .regex(/^[a-f0-9]{64}$/)
@@ -1347,22 +1354,29 @@ export class BrowserService {
     trackResources?: (
       leases: import("../../../packages/domain/src/runtime.ts").ResourceLease[],
     ) => void,
+    signal?: AbortSignal,
+    routingTaskId?: string,
   ) {
     return this.runAutomated(
       owner,
       taskId,
       existingId,
       url,
-      undefined,
+      signal,
       true,
       async (id) => {
         return this.serial(id, async () => ({
           sessionId: id,
-          ...(await this.readOwned(owner, id)),
+          ...(await this.readOwned(owner, id, signal)),
         }));
       },
       undefined,
       trackResources,
+      {
+        taskId: routingTaskId ?? (taskId ? `public:${taskId}` : undefined),
+        operationClass: "public_read",
+        artifactVersions: [],
+      },
     );
   }
   async observeForThread(owner: string, threadId: string, url: string, signal?: AbortSignal) {

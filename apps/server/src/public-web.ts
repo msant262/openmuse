@@ -16,6 +16,18 @@ export class WebReadError extends Error {
   }
 }
 
+export type RenderedPublicPage = {
+  url: string;
+  title: string;
+  text: string;
+  truncated: boolean;
+  sessionId?: string;
+  links?: { title: string; url: string }[];
+  extraction?: { status: "readable" | "partial"; reason?: string };
+};
+export const publicReadDescription =
+  "Read a public URL: HTTP first, automatically render JavaScript when the page is blocked or still loading. Returns observed text, links, extraction status and provenance. Use mode=browser if HTTP text lacks the requested data; mode=http skips rendering. Partial/loading pages are not verified results. No login or site actions.";
+
 /** Every request connects to the validated address, preserving Host/TLS hostname.
  * No cookies, ambient authentication, proxy credentials or browser session are used. */
 export function requestPublicPage(target: Target, signal: AbortSignal): Promise<Response> {
@@ -133,7 +145,8 @@ export function htmlText(node: Node): string {
       htmlAttribute(current, "aria-hidden") === "true"
     )
       continue;
-    if (current.nodeName === "#text" && "value" in current) text.push(current.value);
+    if (current.nodeName === "img") text.push(htmlAttribute(current, "alt") ?? "");
+    else if (current.nodeName === "#text" && "value" in current) text.push(current.value);
     else {
       const next = children(current);
       for (let i = next.length - 1; i >= 0; i--) pending.push(next[i]);
@@ -229,6 +242,7 @@ export function readablePage(
     typeof page.text === "string" &&
     Boolean(page.text.trim()) &&
     !page.error &&
+    (page.extraction as { status?: string } | undefined)?.status !== "partial" &&
     !/^a required part of this site couldn.t load/i.test(page.text.trim()) &&
     !/^(access denied|client challenge|just a moment|attention required|verify you are human|checking your browser|(?:403 )?forbidden|security check)(?:\b|[.!])/i.test(
       page.title.trim(),
@@ -307,7 +321,57 @@ export class PublicWeb {
     }
     throw new WebReadError("TOO_MANY_REDIRECTS", "The public page exceeded the redirect limit.");
   }
-  async read(url: string, signal?: AbortSignal) {
+  async read(
+    url: string,
+    signal?: AbortSignal,
+    options: {
+      mode?: "auto" | "http" | "browser";
+      render?: (url: string, signal?: AbortSignal) => Promise<RenderedPublicPage>;
+    } = {},
+  ) {
+    let page: Awaited<ReturnType<PublicWeb["readHttp"]>> | undefined;
+    let reason = "Requested rendered content";
+    if (options.mode !== "browser") {
+      try {
+        page = await this.readHttp(url, signal);
+        if (page.extraction.status === "readable" || options.mode === "http" || !options.render)
+          return page;
+        reason = page.extraction.reason ?? "Application content is still loading";
+      } catch (error) {
+        signal?.throwIfAborted();
+        // Never convert network/URL policy rejection or cancellation into browser dispatch.
+        if (
+          options.mode === "http" ||
+          !options.render ||
+          !(error instanceof WebReadError) ||
+          !["HTTP_403", "HTTP_429", "PAGE_BLOCKED"].includes(error.code)
+        )
+          throw error;
+        reason = error.code;
+      }
+    }
+    if (!options.render)
+      throw new WebReadError("RENDER_UNAVAILABLE", "Public rendering is unavailable.");
+    signal?.throwIfAborted();
+    await this.validate(url, signal);
+    const rendered = await options.render(url, signal);
+    signal?.throwIfAborted();
+    if (!readablePage({ ...rendered, extraction: undefined }))
+      throw new WebReadError(
+        "PAGE_BLOCKED",
+        "The rendered source is still blocked or empty. Read a different public source; no source data was verified.",
+      );
+    return {
+      ...rendered,
+      text: rendered.text.slice(0, maxText),
+      links: rendered.links ?? page?.links ?? [],
+      truncated: rendered.truncated || rendered.text.length > maxText,
+      extraction: rendered.extraction ?? { status: "readable" as const },
+      observedAt: new Date().toISOString(),
+      provenance: { backend: "browser" as const, fallbackReason: reason },
+    };
+  }
+  private async readHttp(url: string, signal?: AbortSignal) {
     const document = await this.document(url, signal);
     const root = parse(document.body);
     const html = /html/.test(document.contentType);
@@ -325,6 +389,34 @@ export class PublicWeb {
     const text = structured
       ? visibleText.slice(0, 19000) + structured.slice(0, 11000)
       : visibleText;
+    // A 200 response can be the application's loading shell. Ignore empty ad
+    // placeholders, but don't certify the surrounding boilerplate as its data.
+    const pending =
+      html &&
+      htmlNodes(main ?? root, (node) => {
+        if (["script", "style", "input", "textarea"].includes(node.nodeName)) return false;
+        const classes = `${htmlAttribute(node, "class") ?? ""} ${htmlAttribute(node, "id") ?? ""}`;
+        if (/(?:advert|publicidade|(?:^|[\s_-])ads?(?:[\s_-]|$))/i.test(classes)) return false;
+        return (
+          htmlAttribute(node, "aria-busy") === "true" ||
+          (/(?:^|[\s_-])(?:skeleton|placeholder|loading)(?:[\s_-]|$)/i.test(classes) &&
+            htmlText(node).length > 0)
+        );
+      }).length > 0;
+    const shell =
+      html &&
+      !products.length &&
+      visibleText.length < 100 &&
+      htmlNodes(root, (node) => node.nodeName === "script" && Boolean(htmlAttribute(node, "src")))
+        .length > 0;
+    const extraction =
+      pending || shell
+        ? {
+            status: "partial" as const,
+            reason:
+              "Application content is still loading; render this URL before claiming its data.",
+          }
+        : { status: "readable" as const };
     if (!readablePage({ url: document.url, title, text }))
       throw new WebReadError(
         "PAGE_BLOCKED",
@@ -353,6 +445,7 @@ export class PublicWeb {
       title,
       text: text.slice(0, maxText),
       links,
+      extraction,
       truncated:
         text.length > maxText ||
         (Boolean(structured) && (visibleText.length > 19000 || structured.length > 11000)),

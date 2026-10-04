@@ -6,6 +6,140 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const resolve = async () => [{ address: "93.184.216.34", family: 4 }];
 
+test("public reading identifies pending application content and renders it before returning evidence", async () => {
+  const { PublicWeb, readablePage } = await import("../apps/server/src/public-web.ts");
+  const web = new PublicWeb({
+    resolve,
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body:
+        '<title>Live results</title><main><h1>Results</h1><div class="results-placeholder">Location 0 '.repeat(
+          1,
+        ) +
+        'View results</div><p>Source and explanatory notes.</p><script src="/app.js"></script></main>',
+    }),
+  });
+  const raw = await web.read("https://news.example/live");
+  assert.equal(readablePage(raw), false, "a loading shell must not count as observed data");
+  const page = await web.read("https://news.example/live", undefined, {
+    render: async (url) => ({
+      url,
+      title: "Live results",
+      text: "Candidate A: 52% of 12345 votes.",
+      truncated: false,
+    }),
+  });
+  assert.match(page.text, /12345 votes/);
+  assert.equal(page.provenance.backend, "browser");
+  assert.equal(readablePage(page), true);
+});
+
+test("ordinary articles with advertising skeletons stay on HTTP", async () => {
+  const { PublicWeb } = await import("../apps/server/src/public-web.ts");
+  const web = new PublicWeb({
+    resolve,
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: '<title>Report</title><article><div class="advertisement skeleton"></div><h1>Report</h1><p>Complete article text.</p></article>',
+    }),
+  });
+  const page = await web.read("https://news.example/article", undefined, {
+    render: async () => {
+      throw new Error("Unnecessary browser dispatch");
+    },
+  });
+  assert.equal(page.provenance.backend, "http");
+});
+
+test("rendering that remains incomplete cannot become evidence and cancellation cannot trigger another read", async () => {
+  const { PublicWeb, readablePage } = await import("../apps/server/src/public-web.ts");
+  const web = new PublicWeb({
+    resolve,
+    request: async () => ({ status: 403, headers: {}, body: "Denied" }),
+  });
+  const partial = await web.read("https://news.example/live", undefined, {
+    render: async (url) => ({
+      url,
+      title: "Live results",
+      text: "Loading results",
+      truncated: false,
+      extraction: { status: "partial" },
+    }),
+  });
+  assert.equal(readablePage(partial), false);
+  const controller = new AbortController();
+  await assert.rejects(
+    web.read("https://news.example/live", controller.signal, {
+      render: async (url) => {
+        controller.abort(new Error("Read cancelled"));
+        return { url, title: "Live results", text: "Result", truncated: false };
+      },
+    }),
+    /Read cancelled/,
+  );
+});
+
+test("public reading recovers an HTTP rejection with one normal browser read but never retries unsafe URLs", async () => {
+  const { PublicWeb } = await import("../apps/server/src/public-web.ts");
+  const web = new PublicWeb({
+    resolve,
+    request: async () => ({ status: 403, headers: {}, body: "Denied" }),
+  });
+  let calls = 0;
+  const render = async (url: string) => {
+    calls++;
+    return { url, title: "Store", text: "Lipstick: €12, available.", truncated: false };
+  };
+  const page = await web.read("https://shop.example/", undefined, { render });
+  assert.match(page.text, /Lipstick: €12/);
+  await assert.rejects(web.read("http://127.0.0.1/", undefined, { render }), {
+    code: "BLOCKED_URL",
+  });
+  assert.equal(calls, 1);
+});
+
+test("image-only product links retain their accessible name beside the observed price", async () => {
+  const { PublicWeb } = await import("../apps/server/src/public-web.ts");
+  const web = new PublicWeb({
+    resolve,
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: '<title>Makeup</title><main><a href="/lipstick"><img alt="Velvet Lipstick" src="/p.jpg"></a><p>Current price: €12</p></main>',
+    }),
+  });
+  const page = await web.read("https://shop.example/sale");
+  assert.match(page.text, /Velvet Lipstick.*€12/);
+  assert.deepEqual(page.links, [
+    { title: "Velvet Lipstick", url: "https://shop.example/lipstick" },
+  ]);
+});
+
+test("RSS discovery rejects acronym-only matches on an unrelated topic", async () => {
+  const { PublicWeb } = await import("../apps/server/src/public-web.ts");
+  const { HttpSearchBackend } = await import("../apps/server/src/search.ts");
+  const web = new PublicWeb({
+    resolve,
+    request: async (target) => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: target.url.hostname.includes("bing")
+        ? "<rss><channel><item><title>TSE kassensysteme</title><link>https://cash.example/tse</link><description>TSE Sicherheitseinrichtung</description></item><item><title>Eleições: apuração de votos</title><link>https://news.example/results</link><description>Resultados do Brasil</description></item></channel></rss>"
+        : "<title>Challenge</title>",
+    }),
+  });
+  const result = await new HttpSearchBackend(web).search(
+    { query: "TSE eleições apuração resultados Brasil 2026", limit: 5 },
+    { owner: "owner" },
+  );
+  assert.deepEqual(
+    result.sources.map((source) => source.url),
+    ["https://news.example/results"],
+  );
+});
+
 test("public fetch reads useful HTML and links without opening a browser, with bounded text", async (t) => {
   const f = await taskRuntime(t);
   assert.ok(f.agent.web, "Public HTTP reading must be available without a browser");

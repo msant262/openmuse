@@ -277,6 +277,31 @@ test("production task starts public research on VPS when Lenovo is already offli
   );
 });
 
+test("HTTP rendering fallback uses a public VPS binding when the personal executor is offline", async (t) => {
+  const server = await browserFallbackFixture(t);
+  await server.offline();
+  const task = await server.runTask(async (_invoke, task, context) => {
+    const page = await server.agent.browser.observe(
+      "local-user",
+      "https://example.com/live",
+      undefined,
+      task.id,
+      context.trackResourceLeases,
+      context.signal,
+    );
+    assert.equal(page.text, "VPS evidence");
+    assert.notEqual(page.sessionId, server.session.browserSessionId);
+  });
+  const binding = await server.db.get<{ operationClass: string; executorId: string }>(
+    "local-user",
+    "browser-bindings",
+    `public:${task.id}`,
+  );
+  assert.equal(binding?.operationClass, "public_read");
+  assert.equal(binding?.executorId, "openmuse-server");
+  assert.equal(server.nativeCalls.length, 0);
+});
+
 test("production research continues on VPS after native read disconnect with fresh snapshot and old session rejection", async (t) => {
   const server = await browserFallbackFixture(t);
   let nativeSnapshot = "",
