@@ -13,6 +13,8 @@
 !apps/server/
 !apps/server/src/
 !apps/server/src/**
+!apps/server/skills/
+!apps/server/skills/**
 !apps/mobile/
 !apps/mobile/package.json
 !apps/worker/
@@ -26,6 +28,11 @@
 !docs/
 !docs/licenses/
 !docs/licenses/**
+!scripts/
+!scripts/copy-server-assets.mjs
+!third_party/
+!third_party/openclaw/
+!third_party/openclaw/**
 **/node_modules
 **/.env*
 **/.openmuse
