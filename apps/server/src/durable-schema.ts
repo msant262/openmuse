@@ -86,7 +86,7 @@ export async function initializeDurableConversations(query: (sql: string) => Pro
       count_events := jsonb_array_length(saved->'events');
       PERFORM openmuse_conversation_event(event_owner,saved->>'threadId',run_token || ':' || count_events::text,
         jsonb_build_object('runId',saved->>'runId','origin','live','kind','agui','payload',event_value - 'input'));
-      RETURN saved;
+      RETURN jsonb_build_object('id',run_token,'eventCount',count_events);
     END $$`);
   await query(`CREATE OR REPLACE FUNCTION openmuse_inbox_failure(event_owner text, message_id text, run_token text)
     RETURNS boolean LANGUAGE plpgsql AS $$

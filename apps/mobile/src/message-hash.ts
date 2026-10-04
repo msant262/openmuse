@@ -95,6 +95,8 @@ export function hashMessageContent(value: {
   attachmentIds?: string[];
   targetTaskId?: string;
   annotations?: unknown[];
+  replyToMessageId?: string;
+  stickerId?: string;
 }) {
   return sha256(
     stable({
@@ -102,6 +104,8 @@ export function hashMessageContent(value: {
       attachmentIds: value.attachmentIds ?? [],
       targetTaskId: value.targetTaskId ?? null,
       annotations: value.annotations ?? [],
+      ...(value.replyToMessageId && { replyToMessageId: value.replyToMessageId }),
+      ...(value.stickerId && { stickerId: value.stickerId }),
     }),
   );
 }

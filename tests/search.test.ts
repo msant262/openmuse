@@ -8,6 +8,7 @@ import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
 import { ResourceBusyError, ResourceLeases } from "../apps/server/src/engine/resource-leases.ts";
 import { BrowserSearchBackend } from "../apps/server/src/search.ts";
 import { searchTools } from "../apps/server/src/search-tools.ts";
+import { searchResultSchema } from "../packages/domain/src/search.ts";
 import { browserFixture } from "./helpers/browser.ts";
 import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
@@ -90,19 +91,18 @@ test("search backend and tool reuse profile authority, return typed failure and 
   assert.equal(paths.length, count);
   assert.equal((await fixture.db.list("owner", "browsers")).length, 1);
 });
-test("conversation search reads over HTTP immediately; delegated research journals reads without effects", async (t) => {
-  let phase: "chat" | "task" = "chat";
+test("chat delegates search promptly and the worker journals HTTP reads without treating an index as verified evidence", async (t) => {
   const { requests } = await modelFixture(t, (index) =>
-    phase === "chat"
-      ? index === 0
+    index === 0
+      ? { name: "delegate_task", arguments: { kind: "agent", prompt: "Find fixture sources" } }
+      : index === 2
         ? { name: "search_web", arguments: { query: "fixture sources", limit: 3 } }
-        : undefined
-      : index === 0
-        ? { name: "search_web", arguments: { query: "fixture sources", limit: 3 } }
-        : {
-            name: "finish_task",
-            arguments: { summary: "Discovered a source; its page has not been read." },
-          },
+        : index === 3
+          ? {
+              name: "finish_task",
+              arguments: { summary: "Discovered a source; its page has not been read." },
+            }
+          : undefined,
   );
   let id = "";
   const paths: string[] = [];
@@ -129,7 +129,8 @@ test("conversation search reads over HTTP immediately; delegated research journa
   } as const;
   const server = await createApp(fixture.db, config);
   t.after(() => server.agent.stop());
-  t.mock.method(server.agent.web, "document", async () => ({
+  await fixture.db.put("owner", "threads", { id: "search-chat" });
+  const document = t.mock.method(server.agent.web, "document", async () => ({
     url: "https://html.duckduckgo.com/html/?q=fixture",
     contentType: "text/html",
     body: '<div class="result"><a class="result__a" href="https://example.org/source">Primary fixture</a><div class="result__snippet">Index evidence</div></div>',
@@ -153,24 +154,28 @@ test("conversation search reads over HTTP immediately; delegated research journa
   const result = events.find((event) => event.type === EventType.TOOL_CALL_RESULT);
   assert.ok(result && result.type === EventType.TOOL_CALL_RESULT);
   const receipt = JSON.parse(String(result.content));
-  assert.equal(receipt.status, "ok");
-  assert.equal(receipt.provenance.backend, "http");
-  assert.equal((await fixture.db.list("owner", "tasks")).length, 0);
-  assert.equal(paths.length, 0, "public search does not dispatch browser work");
-  const delegated = await server.agent.createTask("owner", { prompt: "Find fixture sources" });
-  phase = "task";
-  requests.length = 0;
+  assert.equal(receipt.status, "queued");
+  assert.equal(receipt.delegated, true);
+  assert.equal(events.at(-1)?.type, EventType.RUN_FINISHED);
+  assert.equal(requests.length, 2, "chat completes after handing off the search");
+  assert.equal(document.mock.callCount(), 0);
+  assert.equal((await fixture.db.list("owner", "tasks")).length, 1);
+  await assert.rejects(server.agent.getTask("other-owner", receipt.taskId));
   await server.agent.worker.tick();
-  const task = await server.agent.getTask("owner", delegated.id);
+  const task = await server.agent.getTask("owner", receipt.taskId);
   assert.equal(task.status, "failed", "An index alone cannot verify a source claim");
+  assert.equal(task.originThreadId, "search-chat");
+  assert.equal(document.mock.callCount(), 1);
   const operations = await server.agent.journal.operations("owner", task.id);
   assert.equal(operations.filter((op) => op.toolName === "search_web").length, 1);
+  const search = operations.find((op) => op.toolName === "search_web");
+  assert.equal(searchResultSchema.parse(search?.receipt).provenance.backend, "http");
   assert.ok(
     requests.some(
       (request) =>
         request.body.includes("Index evidence") && request.body.includes("fullPagesRead"),
     ),
   );
-  assert.equal(operations.find((op) => op.toolName === "search_web")?.effect, false);
-  assert.equal(paths.length, 0);
+  assert.equal(search?.effect, false);
+  assert.equal(paths.length, 0, "public search does not dispatch browser work");
 });

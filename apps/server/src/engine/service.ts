@@ -87,6 +87,7 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const date = () => new Date().toISOString();
 const terminal = new Set(["succeeded", "failed", "cancelled"]);
 export class AgentService {
+  social?: import("../conversation-social.ts").ConversationSocial;
   private get monitorObservations() {
     return new MonitorObservations(this.db, (owner, title, body, taskId, key) =>
       this.notify(owner, title, body, taskId, key),

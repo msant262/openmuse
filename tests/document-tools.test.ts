@@ -270,7 +270,14 @@ test("chat document authoring delegates durably and publishes only after the wor
     const names = (JSON.parse(fixture.requests[index].body).tools ?? []).map(
       (tool: { name: string }) => tool.name,
     );
-    if (index === 0) return { name: "create_document", arguments: documentArgs };
+    if (index === 0)
+      return {
+        name: "delegate_task",
+        arguments: {
+          kind: "agent",
+          prompt: "Crie um PDF. Seções obrigatórias: Operação, Limitações.",
+        },
+      };
     if (!names.includes("finish_task")) return undefined;
     return documentWorkerCall(server, phase++, fixture.requests[index].body);
   });
@@ -307,10 +314,17 @@ test("chat document authoring delegates durably and publishes only after the wor
   const tasks = (await server.agent.snapshot("owner")).tasks;
   assert.equal(tasks.length, 1);
   assert.equal(tasks[0].originThreadId, "pdf-handoff");
+  assert.equal(tasks[0].status, "queued");
+  assert.equal(fixture.requests.length, 2, "chat completes without waiting for document authoring");
   await server.agent.worker.tick();
   const task = await server.agent.getTask("owner", tasks[0].id);
   assert.equal(task.status, "succeeded", task.error ?? task.question);
   assert.equal(task.artifactIds.length, 1);
+  assert.equal(task.completion?.status, "verified");
+  const bytes = await server.files.bytes("owner", task.artifactIds[0]);
+  assert.equal((await inspectPdf(bytes)).pageCount, 1);
+  assert.match(await readPdfText(bytes), /não invento conexões nem comprovantes/);
+  await assert.rejects(server.files.bytes("other-owner", task.artifactIds[0]));
   const previews = await server.db.list<{ id: string; previewFileId: string }>(
     "owner",
     "document-inspections",

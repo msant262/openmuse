@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { MessageQuote } from "../../../packages/domain/src/conversation-social.ts";
 import {
   type AcceptedMessageInput,
   acceptedMessageSchema,
@@ -30,15 +31,20 @@ export function messageContentHash(value: {
   attachmentIds?: string[];
   targetTaskId?: string;
   annotations?: AcceptedMessageInput["annotations"];
+  replyToMessageId?: string;
+  stickerId?: string;
 }) {
   return bindingHash({
     text: value.text.trim(),
     attachmentIds: value.attachmentIds ?? [],
     targetTaskId: value.targetTaskId ?? null,
     annotations: value.annotations ?? [],
+    ...(value.replyToMessageId && { replyToMessageId: value.replyToMessageId }),
+    ...(value.stickerId && { stickerId: value.stickerId }),
   });
 }
 export type InboxMessage = AcceptedMessageInput & {
+  replyTo?: MessageQuote;
   id: string;
   messageId: string;
   runId: string;
@@ -55,6 +61,7 @@ export type InboxMessage = AcceptedMessageInput & {
   };
 };
 export class ConversationInbox {
+  resolveQuote?: (owner: string, threadId: string, messageId: string) => Promise<MessageQuote>;
   /** Scheduler/mailbox adapter: acceptance stays durable if delivery is interrupted. */
   onAccepted?: (owner: string, message: InboxMessage) => void;
   private readonly acceptedListeners = new Set<(owner: string, message: InboxMessage) => void>();
@@ -123,8 +130,14 @@ export class ConversationInbox {
       input.annotations,
     );
     if (validatedAnnotations) input.annotations = validatedAnnotations;
+    const replyTo = input.replyToMessageId
+      ? await this.resolveQuote?.(owner, input.threadId, input.replyToMessageId)
+      : undefined;
+    if (input.replyToMessageId && !replyTo)
+      throw new AppError("Quoted replies are unavailable", 409);
     const message: InboxMessage = {
       ...input,
+      ...(replyTo && { replyTo }),
       id,
       messageId: input.clientMessageId,
       runId: randomUUID(),

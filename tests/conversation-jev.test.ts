@@ -5,6 +5,7 @@ import { EventType, type RunAgentInput } from "@ag-ui/core";
 import { lastValueFrom, toArray } from "rxjs";
 import { latestJevPanelId } from "../apps/mobile/src/jev-actions.ts";
 import { createApp } from "../apps/server/src/app.ts";
+import type { Store } from "../apps/server/src/db.ts";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
 import type { JevDecisionInput } from "../apps/server/src/jev/adapter.ts";
 import { JevService } from "../apps/server/src/jev/service.ts";
@@ -58,11 +59,29 @@ function input(content: string, threadId = "jev-thread"): RunAgentInput {
     state: {},
   };
 }
+async function recordSource(
+  db: Store,
+  request: RunAgentInput,
+  kind: "web" | "mail",
+  reference: string,
+  text?: string,
+) {
+  // Background research supplies verified receipts. Keep real evidence storage
+  // and its exact run binding; foreground chat no longer performs source reads.
+  const jev = new JevService({
+    store: db,
+    mode: "live",
+    adapter: { decide: async () => ({ control: "comparison", scores: { a: 1 } }) },
+  });
+  await jev.noteEvidence("local-user", request.threadId, request.runId, kind, reference, text);
+  return jev;
+}
 async function fixture(
   t: TestContext,
   calls: Array<{ name: string; arguments: object } | undefined>,
+  modelOptions: Parameters<typeof modelFixture>[2] = {},
 ) {
-  await modelFixture(t, (index) => calls[index]);
+  await modelFixture(t, (index) => calls[index], modelOptions);
   const browser = await browserFixture(t, () => ({
     data: { url: "https://example.org", title: "Example", text: "Observed", truncated: false },
   }));
@@ -84,8 +103,6 @@ async function fixture(
 
 test("present_choices emits a complete panel and selection uses trusted stored label", async (t) => {
   const f = await fixture(t, [
-    { name: "search_mail", arguments: { query: "aquarium" } },
-    { name: "read_mail_thread", arguments: { threadId: "trip-thread" } },
     {
       name: "present_choices",
       arguments: {
@@ -195,10 +212,10 @@ test("live choices reject unobserved source pages without creating a panel", asy
   assert.deepEqual(await browser.db.list("local-user", "jev_panels"), []);
 });
 
-test("a redirected browse does not prove the requested source URL", async (t) => {
+test("a redirected source receipt does not prove the requested URL", async (t) => {
   await modelFixture(t, (index) =>
     index === 0
-      ? { name: "browse_web", arguments: { url: "https://example.org/original" } }
+      ? { name: "agent_status", arguments: {} }
       : index === 1
         ? {
             name: "present_choices",
@@ -212,22 +229,7 @@ test("a redirected browse does not prove the requested source URL", async (t) =>
           }
         : undefined,
   );
-  const browser = await browserFixture(t, (path, body) => ({
-    data: path.endsWith("/read")
-      ? {
-          url: "https://example.org/redirected",
-          title: "Redirected",
-          text: "Other page",
-          truncated: false,
-        }
-      : {
-          id: body.id,
-          url: body.url,
-          title: "Opened",
-          status: "active",
-          updatedAt: new Date().toISOString(),
-        },
-  }));
+  const browser = await browserFixture(t, () => ({ data: {} }));
   const config = {
     ...browser.config,
     agentBackend: "model" as const,
@@ -239,19 +241,28 @@ test("a redirected browse does not prove the requested source URL", async (t) =>
   t.after(() => app.agent.stop());
   const adapter = { decide: async () => ({ control: "comparison" as const, scores: { a: 1 } }) };
   const agent = new ConversationAgent(config, app.agent, "local-user", adapter);
-  const events = await lastValueFrom(agent.run(input("Compare exhibits")).pipe(toArray()));
+  const request = input("Compare exhibits");
+  await recordSource(
+    browser.db,
+    request,
+    "web",
+    "https://example.org/redirected",
+    "Redirected\nOther page",
+  );
+  const events = await lastValueFrom(agent.run(request).pipe(toArray()));
   const result = events.find(
     (event) =>
       event.type === EventType.TOOL_CALL_RESULT && JSON.parse(String(event.content)).panel === null,
   );
   assert.ok(result && result.type === EventType.TOOL_CALL_RESULT);
   assert.match(JSON.parse(String(result.content)).error, /Read the source page/);
+  assert.deepEqual(await browser.db.list("local-user", "jev_panels"), []);
 });
 
 test("mail read in an earlier run does not authorize a new live clarification", async (t) => {
   await modelFixture(t, (index) =>
     index === 0
-      ? { name: "read_mail_thread", arguments: { threadId: "trip-thread" } }
+      ? { name: "agent_status", arguments: {} }
       : index === 2
         ? {
             name: "present_choices",
@@ -283,19 +294,30 @@ test("mail read in an earlier run does not authorize a new live clarification", 
     decide: async () => ({ control: "clarification" as const, scores: { explore: 1 } }),
   };
   const agent = new ConversationAgent(config, app.agent, "local-user", adapter);
-  await lastValueFrom(agent.run(input("Read trip mail")).pipe(toArray()));
-  const events = await lastValueFrom(agent.run(input("Now clarify")).pipe(toArray()));
+  const earlier = input("Read trip mail");
+  const jev = await recordSource(browser.db, earlier, "mail", "trip-thread");
+  await lastValueFrom(agent.run(earlier).pipe(toArray()));
+  const current = input("Now clarify");
+  assert.equal(
+    await jev.hasEvidence("local-user", earlier.threadId, earlier.runId, "mail", "trip-thread"),
+    true,
+  );
+  assert.equal(
+    await jev.hasEvidence("local-user", current.threadId, current.runId, "mail", "trip-thread"),
+    false,
+  );
+  const events = await lastValueFrom(agent.run(current).pipe(toArray()));
   const result = events.find((event) => event.type === EventType.TOOL_CALL_RESULT);
   assert.ok(result && result.type === EventType.TOOL_CALL_RESULT);
   assert.equal(JSON.parse(String(result.content)).panel, null);
   assert.match(JSON.parse(String(result.content)).error, /Read the referenced email/);
 });
 
-test("live refinement reuses the verified stored sources with no new browse or options", async (t) => {
+test("live refinement reuses verified stored sources with no new source receipt or options", async (t) => {
   let panelId = "";
   await modelFixture(t, (index) =>
     index === 0
-      ? { name: "browse_web", arguments: { url: "https://example.org/exhibit" } }
+      ? { name: "agent_status", arguments: {} }
       : index === 1
         ? {
             name: "present_choices",
@@ -328,22 +350,7 @@ test("live refinement reuses the verified stored sources with no new browse or o
             }
           : undefined,
   );
-  const browser = await browserFixture(t, (path, body) => ({
-    data: path.endsWith("/read")
-      ? {
-          url: "https://example.org/exhibit",
-          title: "Exhibit",
-          text: "Observed exhibit facts",
-          truncated: false,
-        }
-      : {
-          id: body.id,
-          url: body.url,
-          title: "Opened",
-          status: "active",
-          updatedAt: new Date().toISOString(),
-        },
-  }));
+  const browser = await browserFixture(t, () => ({ data: {} }));
   const config = {
     ...browser.config,
     agentBackend: "model" as const,
@@ -355,13 +362,32 @@ test("live refinement reuses the verified stored sources with no new browse or o
   t.after(() => app.agent.stop());
   const adapter = { decide: async () => ({ control: "comparison" as const, scores: { a: 1 } }) };
   const agent = new ConversationAgent(config, app.agent, "local-user", adapter);
-  const first = await lastValueFrom(agent.run(input("Compare exhibits")).pipe(toArray()));
+  const request = input("Compare exhibits");
+  const jev = await recordSource(
+    browser.db,
+    request,
+    "web",
+    "https://example.org/exhibit",
+    "Exhibit\nObserved exhibit facts",
+  );
+  const first = await lastValueFrom(agent.run(request).pipe(toArray()));
   const firstPanel = first.find(
     (event) => event.type === EventType.TOOL_CALL_RESULT && JSON.parse(String(event.content)).panel,
   );
   assert.ok(firstPanel && firstPanel.type === EventType.TOOL_CALL_RESULT);
   panelId = JSON.parse(String(firstPanel.content)).panel.id;
-  const second = await lastValueFrom(agent.run(input("Something hands-on")).pipe(toArray()));
+  const refinement = input("Something hands-on");
+  assert.equal(
+    await jev.evidenceText(
+      "local-user",
+      refinement.threadId,
+      refinement.runId,
+      "web",
+      "https://example.org/exhibit",
+    ),
+    null,
+  );
+  const second = await lastValueFrom(agent.run(refinement).pipe(toArray()));
   const refined = second.find(
     (event) => event.type === EventType.TOOL_CALL_RESULT && JSON.parse(String(event.content)).panel,
   );
@@ -469,7 +495,7 @@ test("Jev judges the person's own message, not the agent's summary of it", async
 test("live comparison rejects a factual detail absent from the read page", async (t) => {
   await modelFixture(t, (index) =>
     index === 0
-      ? { name: "browse_web", arguments: { url: "https://example.org/exhibit" } }
+      ? { name: "agent_status", arguments: {} }
       : index === 1
         ? {
             name: "present_choices",
@@ -481,6 +507,8 @@ test("live comparison rejects a factual detail absent from the read page", async
               options: [
                 {
                   ...comparisonOption("https://example.org/exhibit"),
+                  label: "Exhibit",
+                  sources: [{ title: "Exhibit", url: "https://example.org/exhibit" }],
                   details: ["A bat-ray touch pool"],
                 },
               ],
@@ -488,22 +516,7 @@ test("live comparison rejects a factual detail absent from the read page", async
           }
         : undefined,
   );
-  const browser = await browserFixture(t, (path, body) => ({
-    data: path.endsWith("/read")
-      ? {
-          url: "https://example.org/exhibit",
-          title: "Exhibit",
-          text: "A kelp forest with sardines.",
-          truncated: false,
-        }
-      : {
-          id: body.id,
-          url: body.url,
-          title: "Opened",
-          status: "active",
-          updatedAt: new Date().toISOString(),
-        },
-  }));
+  const browser = await browserFixture(t, () => ({ data: {} }));
   const config = {
     ...browser.config,
     agentBackend: "model" as const,
@@ -515,19 +528,28 @@ test("live comparison rejects a factual detail absent from the read page", async
   t.after(() => app.agent.stop());
   const adapter = { decide: async () => ({ control: "comparison" as const, scores: { a: 1 } }) };
   const agent = new ConversationAgent(config, app.agent, "local-user", adapter);
-  const events = await lastValueFrom(agent.run(input("Compare exhibits")).pipe(toArray()));
+  const request = input("Compare exhibits");
+  await recordSource(
+    browser.db,
+    request,
+    "web",
+    "https://example.org/exhibit",
+    "Exhibit\nA kelp forest with sardines.",
+  );
+  const events = await lastValueFrom(agent.run(request).pipe(toArray()));
   const rejected = events.find(
     (event) =>
       event.type === EventType.TOOL_CALL_RESULT && JSON.parse(String(event.content)).panel === null,
   );
   assert.ok(rejected && rejected.type === EventType.TOOL_CALL_RESULT);
-  assert.match(JSON.parse(String(rejected.content)).error, /source text/);
+  assert.match(JSON.parse(String(rejected.content)).error, /detail.*source text/);
+  assert.deepEqual(await browser.db.list("local-user", "jev_panels"), []);
 });
 
-test("an empty browser read does not authorize a live comparison", async (t) => {
+test("an empty source receipt does not authorize a live comparison", async (t) => {
   await modelFixture(t, (index) =>
     index === 0
-      ? { name: "browse_web", arguments: { url: "https://example.org/empty" } }
+      ? { name: "agent_status", arguments: {} }
       : index === 1
         ? {
             name: "present_choices",
@@ -541,17 +563,7 @@ test("an empty browser read does not authorize a live comparison", async (t) => 
           }
         : undefined,
   );
-  const browser = await browserFixture(t, (path, body) => ({
-    data: path.endsWith("/read")
-      ? { url: "https://example.org/empty", title: "Empty", text: "  ", truncated: false }
-      : {
-          id: body.id,
-          url: body.url,
-          title: "Opened",
-          status: "active",
-          updatedAt: new Date().toISOString(),
-        },
-  }));
+  const browser = await browserFixture(t, () => ({ data: {} }));
   const config = {
     ...browser.config,
     agentBackend: "model" as const,
@@ -563,13 +575,26 @@ test("an empty browser read does not authorize a live comparison", async (t) => 
   t.after(() => app.agent.stop());
   const adapter = { decide: async () => ({ control: "comparison" as const, scores: { a: 1 } }) };
   const agent = new ConversationAgent(config, app.agent, "local-user", adapter);
-  const events = await lastValueFrom(agent.run(input("Compare exhibits")).pipe(toArray()));
+  const request = input("Compare exhibits");
+  const jev = await recordSource(browser.db, request, "web", "https://example.org/empty", "  ");
+  assert.equal(
+    await jev.evidenceText(
+      "local-user",
+      request.threadId,
+      request.runId,
+      "web",
+      "https://example.org/empty",
+    ),
+    null,
+  );
+  const events = await lastValueFrom(agent.run(request).pipe(toArray()));
   const rejected = events.find(
     (event) =>
       event.type === EventType.TOOL_CALL_RESULT && JSON.parse(String(event.content)).panel === null,
   );
   assert.ok(rejected && rejected.type === EventType.TOOL_CALL_RESULT);
   assert.match(JSON.parse(String(rejected.content)).error, /Read the source page/);
+  assert.deepEqual(await browser.db.list("local-user", "jev_panels"), []);
 });
 
 for (const [name, candidate, error] of [
@@ -593,7 +618,7 @@ for (const [name, candidate, error] of [
     const url = "https://example.org/rocky-shore";
     await modelFixture(t, (index) =>
       index === 0
-        ? { name: "browse_web", arguments: { url } }
+        ? { name: "agent_status", arguments: {} }
         : index === 1
           ? {
               name: "present_choices",
@@ -614,22 +639,7 @@ for (const [name, candidate, error] of [
             }
           : undefined,
     );
-    const browser = await browserFixture(t, (path, body) => ({
-      data: path.endsWith("/read")
-        ? {
-            url,
-            title: "Rocky Shore",
-            text: "Rocky Shore lets visitors Touch sea stars.",
-            truncated: false,
-          }
-        : {
-            id: body.id,
-            url: body.url,
-            title: "Opened",
-            status: "active",
-            updatedAt: new Date().toISOString(),
-          },
-    }));
+    const browser = await browserFixture(t, () => ({ data: {} }));
     const config = {
       ...browser.config,
       agentBackend: "model" as const,
@@ -641,7 +651,15 @@ for (const [name, candidate, error] of [
     t.after(() => app.agent.stop());
     const adapter = { decide: async () => ({ control: "comparison" as const, scores: { a: 1 } }) };
     const agent = new ConversationAgent(config, app.agent, "local-user", adapter);
-    const events = await lastValueFrom(agent.run(input("Compare exhibits")).pipe(toArray()));
+    const request = input("Compare exhibits");
+    await recordSource(
+      browser.db,
+      request,
+      "web",
+      url,
+      "Rocky Shore\nRocky Shore lets visitors Touch sea stars.",
+    );
+    const events = await lastValueFrom(agent.run(request).pipe(toArray()));
     const rejected = events.find(
       (event) =>
         event.type === EventType.TOOL_CALL_RESULT &&
@@ -649,6 +667,7 @@ for (const [name, candidate, error] of [
     );
     assert.ok(rejected && rejected.type === EventType.TOOL_CALL_RESULT);
     assert.match(JSON.parse(String(rejected.content)).error, error);
+    assert.deepEqual(await browser.db.list("local-user", "jev_panels"), []);
   });
 }
 
@@ -735,7 +754,9 @@ async function assertRetired(
 }
 
 test("an ordinary turn that fails still retires the earlier choice, as the transcript does", async (t) => {
-  const f = await fixture(t, [clarify]);
+  const f = await fixture(t, [clarify], {
+    errorStatus: (index) => (index === 2 ? 400 : undefined),
+  });
   const panel = await presentPanel(f);
   // The mobile transcript treats any later user message as making the panel stale.
   const transcript = [
@@ -744,16 +765,9 @@ test("an ordinary turn that fails still retires the earlier choice, as the trans
     { role: "user", content: "Tell me about the weather" },
   ];
   assert.equal(latestJevPanelId(transcript, panel.threadId), null);
-  const base = process.env.OPENAI_BASE_URL;
-  process.env.OPENAI_BASE_URL = "http://127.0.0.1:1/v1";
-  let failed: Awaited<ReturnType<typeof lastValueFrom>> | undefined;
-  try {
-    failed = await lastValueFrom(
-      f.conversation.run(input("Tell me about the weather")).pipe(toArray()),
-    ).catch((error: unknown) => error);
-  } finally {
-    process.env.OPENAI_BASE_URL = base;
-  }
+  const failed = await lastValueFrom(
+    f.conversation.run(input("Tell me about the weather")).pipe(toArray()),
+  ).catch((error: unknown) => error);
   assert.ok(
     failed instanceof Error ||
       (Array.isArray(failed) && failed.at(-1)?.type === EventType.RUN_ERROR),

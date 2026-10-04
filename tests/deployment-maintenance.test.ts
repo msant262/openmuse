@@ -1,9 +1,58 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
+import { createStore } from "../apps/server/src/db.ts";
 import { DeploymentMaintenance } from "../apps/server/src/deployment-maintenance.ts";
+import { deploymentStatus } from "../apps/server/src/deployment-status.ts";
 import { WorkAdmission } from "../apps/server/src/engine/work-admission.ts";
 import { browserFallbackFixture } from "./helpers/browser-fallback.ts";
+
+test("backup preflight counts active conversation leases across owners and waits for their release", async () => {
+  const db = await createStore();
+  try {
+    await new DeploymentMaintenance(db).update("operator", randomUUID(), "begin");
+    const now = Date.now();
+    const future = new Date(now + 60_000).toISOString();
+    for (const [owner, id, runToken, leaseUntil] of [
+      ["operator", "local-chat", "local-run", future],
+      ["another-owner", "remote-chat", "remote-run", future],
+      ["another-owner", "expired-chat", "expired-run", new Date(now).toISOString()],
+      ["another-owner", "released-chat", null, future],
+      ["another-owner", "no-lease", "old-run", null],
+    ] as const)
+      await db.put(owner, "threads", { id, runToken, leaseUntil });
+
+    const busy = await deploymentStatus(db, now);
+    assert.equal(busy.activeConversations, 2);
+    assert.equal(busy.activeTasks, 0);
+    assert.equal(busy.activeHttpRequests, 0);
+    assert.equal(busy.readyForStoppedWriterBackup, false);
+
+    await db.compareAndSwap(
+      "operator",
+      "threads",
+      "local-chat",
+      { runToken: "local-run" },
+      { runToken: null, leaseUntil: null },
+    );
+    const otherOwnerStillRunning = await deploymentStatus(db, now);
+    assert.equal(otherOwnerStillRunning.activeConversations, 1);
+    assert.equal(otherOwnerStillRunning.readyForStoppedWriterBackup, false);
+
+    await db.compareAndSwap(
+      "another-owner",
+      "threads",
+      "remote-chat",
+      { runToken: "remote-run" },
+      { runToken: null, leaseUntil: null },
+    );
+    const drained = await deploymentStatus(db, now);
+    assert.equal(drained.activeConversations, 0);
+    assert.equal(drained.readyForStoppedWriterBackup, true);
+  } finally {
+    await db.close();
+  }
+});
 
 test("connected maintenance drains an actual task without abort, blocks new admissions and preserves user pause", async (t) => {
   const server = await browserFallbackFixture(t);

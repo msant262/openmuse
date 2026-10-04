@@ -106,6 +106,8 @@ export const providerContinuationCheckpointSchema = z
   .strict();
 export type ProviderContinuationCheckpoint = z.infer<typeof providerContinuationCheckpointSchema>;
 export interface ModelAdapterRuntime {
+  /** Model-visible schemas; the owner retains the complete authorized execution registry. */
+  projectTools?: (tools: NonNullable<TextOptions["tools"]>) => NonNullable<TextOptions["tools"]>;
   /** A successful model turn received these owner-verified image pixels. */
   onFileImageObserved?: (fileId: string) => Promise<void>;
   workClass?: WorkClass;
@@ -322,7 +324,13 @@ class OrderedModelAdapter implements AnyTextAdapter {
       this.loadBrowserImage,
       this.loadFileImage,
     );
-    const chatOptions = { ...options.chatOptions, messages, outputSchema: options.outputSchema };
+    const chatOptions = {
+      ...options.chatOptions,
+      messages,
+      outputSchema: options.outputSchema,
+      tools:
+        this.runtime.projectTools?.(options.chatOptions.tools ?? []) ?? options.chatOptions.tools,
+    };
     const requirements = this.requirements(chatOptions);
     let excluded: string[] = [];
     for (let count = 0; count < routing.maxAttempts; count++) {
@@ -524,6 +532,10 @@ class OrderedModelAdapter implements AnyTextAdapter {
     originalMessages: ModelMessage[],
     structured: boolean,
   ): AsyncIterable<AdapterYieldChunk> {
+    options = {
+      ...options,
+      tools: this.runtime.projectTools?.(options.tools ?? []) ?? options.tools,
+    };
     const routing = this.config.routing ?? defaultModelRouting;
     const requirements = this.requirements(options);
     const deadline = Date.now() + routing.deadlineMs,

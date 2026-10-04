@@ -24,6 +24,7 @@ import { RpcComputerService } from "./computer-rpc.ts";
 import type { Config } from "./config.ts";
 import { createConversationAnnotationValidator } from "./conversation-annotations.ts";
 import { conversationResources, currentConversationFrame } from "./conversation-resources.ts";
+import { ConversationSocial } from "./conversation-social.ts";
 import { CredentialBroker } from "./credentials/broker.ts";
 import type { CredentialAdapter, SecretStore } from "./credentials/contracts.ts";
 import { GenericCredentials, genericCredentialRoutes } from "./credentials/generic.ts";
@@ -409,6 +410,12 @@ export async function createApp(
   const threads = config.intelligenceApiKey?.trim()
     ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey.trim() })
     : new LocalThreads(db);
+  const social = new ConversationSocial(db, async (owner, threadId) => {
+    if (!(threads instanceof LocalThreads)) throw new AppError("Local conversations required", 409);
+    return (await threads.history(owner, threadId)).messages;
+  });
+  inbox.resolveQuote = (owner, threadId, messageId) => social.quote(owner, threadId, messageId);
+  agent.social = social;
   if (threads instanceof LocalThreads) {
     agent.configureThreads(threads);
     threads.configureInbox(inbox, conversationAgentFactory(config, agent));
@@ -765,6 +772,12 @@ export async function createApp(
       }),
     );
   });
+  app.get("/api/conversations/:threadId/social", async (c) =>
+    c.json(await social.state(c.get("owner"), c.req.param("threadId"))),
+  );
+  app.post("/api/conversations/:threadId/reactions", async (c) =>
+    c.json(await social.react(c.get("owner"), c.req.param("threadId"), "user", await c.req.json())),
+  );
   app.get("/api/conversations/:threadId/frame", async (c) => {
     if (!(threads instanceof LocalThreads))
       throw new AppError("Desktop annotations require local durable chat storage", 409);

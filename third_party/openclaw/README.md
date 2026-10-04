@@ -21,3 +21,14 @@ are not represented as implemented here.
 
 The original copyright and license apply to these reused portions. Other application
 components keep their existing license and provenance.
+
+## Additional reuse: 4 October harness implementation
+
+`apps/server/src/engine/openclaw/tool-search-ranking.ts` copies
+`src/agents/tool-search-ranking.ts` at `b56ae70a5e7e302dc2165c96b60214e84e19c7b1`.
+Only the normalization-core `isRecord` import is replaced with a local predicate;
+BM25, tokenization, query expansion and parameter text traversal are preserved.
+`engine/tool-discovery.ts` adapts the search/describe progressive disclosure
+contract of OpenClaw ToolSearchRuntime and Hermes `tools/tool_search.py` at
+`1298c8e74baa73e1a2b90124228d017261ac6bc4`. It keeps original native execution
+identities instead of adding an independent effect dispatcher.

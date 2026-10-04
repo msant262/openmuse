@@ -185,15 +185,18 @@ function hosted(db: Store, financial = false) {
 
 test("chat connects an unseen app in its native sheet, resumes the original request and reuses the account in a second task", async (t) => {
   let bindingId = "";
+  const original = "Leia a observação atual da minha conta Atlas";
   const { requests } = await modelFixture(t, async (index) => {
-    if (index === 0 || index === 4)
+    if (index === 0)
+      return { name: "delegate_task", arguments: { kind: "agent", prompt: original } };
+    if (index === 2 || index === 6)
       return {
         name: "connect_app",
         arguments: { toolkit: "atlas", purpose: "Read my current account observation" },
       };
-    if (index === 1 || index === 5)
+    if (index === 3 || index === 7)
       return { name: "search_app_tools", arguments: { query: "Read Atlas observation" } };
-    if (index === 2 || index === 6) {
+    if (index === 4 || index === 8) {
       const task = (await server.db.list<AgentTask>("owner", "tasks")).find(
         (candidate) => candidate.status === "running",
       )!;
@@ -205,7 +208,7 @@ test("chat connects an unseen app in its native sheet, resumes the original requ
         arguments: { bindingId, arguments: { target: "aurora" } },
       };
     }
-    if (index === 3 || index === 7)
+    if (index === 5 || index === 9)
       return {
         name: "finish_task",
         arguments: { summary: "A observação da conta é Aurora boreal às 22h." },
@@ -217,7 +220,6 @@ test("chat connects an unseen app in its native sheet, resumes the original requ
   server.agent.configureComposio(fixture.service);
   const threadId = randomUUID();
   await server.db.put("owner", "threads", { id: threadId });
-  const original = "Leia a observação atual da minha conta Atlas";
   const input: RunAgentInput = {
     threadId,
     runId: randomUUID(),
@@ -229,10 +231,16 @@ test("chat connects an unseen app in its native sheet, resumes the original requ
   const conversation = new ConversationAgent(server.agent.config, server.agent, "owner");
   const events = await lastValueFrom(conversation.run(input).pipe(toArray()));
   assert.equal(events.at(-1)?.type, EventType.RUN_FINISHED);
-  assert.equal(requests.length, 1);
+  assert.equal(requests.length, 2, "chat finishes after the durable handoff");
   const first = (await server.db.list<AgentTask>("owner", "tasks"))[0];
   assert.equal(first.prompt, original);
-  assert.equal(first.status, "waiting_input");
+  assert.equal(first.originThreadId, threadId);
+  assert.equal(first.status, "queued");
+  assert.equal(fixture.links, 0, "chat does not start remote account setup");
+  assert.equal((await server.db.list("owner", "interaction-requests")).length, 0);
+  await server.agent.worker.tick();
+  assert.equal((await server.agent.getTask("owner", first.id)).status, "waiting_input");
+  assert.equal(requests.length, 3);
   const interaction = (
     await server.db.list<CredentialInteractionRequest>("owner", "interaction-requests")
   )[0];
@@ -246,7 +254,7 @@ test("chat connects an unseen app in its native sheet, resumes the original requ
   assert.equal((await server.agent.getTask("owner", second.id)).status, "succeeded");
   assert.equal(fixture.links, 1, "the second task uses the saved account without another modal");
   assert.equal(fixture.dispatches, 2);
-  assert.equal(requests.length, 8);
+  assert.equal(requests.length, 10);
   const recorded = await Promise.all(
     [
       "tasks",
