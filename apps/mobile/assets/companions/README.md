@@ -43,6 +43,28 @@ These bundled stills and videos remain available as Mini Muse. They do not const
 
 ## Okami wolf
 
-`okami-wolf.png` is the default companion added October 4, 2026: an original transparent plush wolf generated with the OpenAI image-generation tool. It is currently a still image. Mini Muse retains all three existing animations, and selecting either built-in companion preserves the user's saved gallery.
+`okami-wolf.png` is the original transparent plush wolf added October 4, 2026 with the OpenAI image-generation tool. The default wolf now has its own bundled animations. Mini Muse retains all three existing animations, and selecting either built-in companion preserves the user's saved gallery.
 
 Generation direction: a calm, friendly silver-gray wolf cub with ivory muzzle and chest, charcoal facial mask, pointed ears, small paws, curled fluffy tail, and restrained cyan/magenta ear accents. Full body, almost front-facing, neutral studio light, transparent background, no props, text, floor or shadow. Designed to remain recognizable at header size.
+
+### Wolf motion assets
+
+- `okami-wolf-idle-poster.png`: white-background animation reference, created from the transparent wolf using built-in `image_gen`. Identity, seated pose, fur, face, ears, paws and tail preserved; no new props, text or scenery.
+- `okami-wolf-working-poster.png`: the same wolf wearing black headphones, with its front paws on a small dark-gray laptop on a light wood tabletop. Created with built-in `image_gen`, using the original wolf as the identity reference and a fixed white background.
+- `okami-wolf-{idle,working,responding}.mp4`: three independent Grok Imagine Video 1.5 generations, using the matching still as both first and last frame. H.264, 720 × 720, 24 fps, 145 frames (approximately six seconds). Total video payload: 3,926,052 bytes. Bundled exports keep the original video stream, remove attached covers/audio and move MP4 metadata before the video data. No soundtrack.
+
+Video prompt prefix:
+
+> Animate the exact miniature plush wolf cub in this reference. Keep its identity, silver-gray and ivory fur, charcoal facial mask, glossy black eyes with tiny cyan highlights, cyan and magenta inner-ear accents, rounded short muzzle, pointed ears, paws and fluffy tail unchanged.
+
+Motion instructions:
+
+- Idle: “Paws rest in the exact seated pose. Gentle natural breathing, one soft blink and a tiny content head settle. Calm attention. Tail stays resting.”
+- Working: “Headphones, laptop and tabletop remain unchanged. Two existing soft front paws make small alternating typing movements on the keyboard. Occasional blink and a slight attentive nod toward the laptop. Head stays above the laptop; body and tail stay anchored.”
+- Responding: “One small, clearly visible friendly acknowledging nod and a gentle blink, then return to the exact resting seated pose. Paws stay down and mouth stays a gentle closed smile. No speech, lip sync, waving or celebration.”
+
+Video prompt suffix:
+
+> A seamless six-second loop, beginning and ending in precisely the same pose. Camera completely locked; no zoom, pan, crop changes, swaying, bouncing, new body parts, new props or texture shimmer. Pure white background stays fixed. Preserve all framing, proportions, materials, lighting and props in the reference. No words, logos, music, sound effects or audio.
+
+Source videos, generation receipts, full prompts and frame sequences are in local `artifacts/okami-wolf-motion/generated/`. Playback uses the existing shared player: muted loops, paused when hidden/backgrounded, with the matching still for reduced motion or unavailable video. The existing circular and rounded framing applies on both themes and platforms.

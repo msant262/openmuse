@@ -8,7 +8,22 @@ import type {
 
 export const companionPoster = require("../assets/companions/okami-wolf.png");
 
-const defaultScenes = {
+const wolfScenes = {
+  idle: {
+    poster: require("../assets/companions/okami-wolf-idle-poster.png"),
+    video: require("../assets/companions/okami-wolf-idle.mp4"),
+  },
+  working: {
+    poster: require("../assets/companions/okami-wolf-working-poster.png"),
+    video: require("../assets/companions/okami-wolf-working.mp4"),
+  },
+  responding: {
+    poster: require("../assets/companions/okami-wolf-idle-poster.png"),
+    video: require("../assets/companions/okami-wolf-responding.mp4"),
+  },
+} satisfies Record<AvatarMotion, { poster: ImageSourcePropType; video: number }>;
+
+const miniMuseScenes = {
   idle: {
     poster: require("../assets/companions/okami-idle-poster.png"),
     video: require("../assets/companions/okami-idle.mp4"),
@@ -55,9 +70,11 @@ export function avatarVisual(
 ): AvatarVisual {
   const motion = avatarMotion(state);
   if (!asset)
-    return companion === "mini-muse"
-      ? { key: `mini-muse:${motion}`, ...defaultScenes[motion], pending: false }
-      : { key: `okami:${motion}`, poster: companionPoster, pending: false };
+    return {
+      key: `${companion}:${motion}`,
+      ...(companion === "mini-muse" ? miniMuseScenes : wolfScenes)[motion],
+      pending: false,
+    };
   const media = asset.motions[motion];
   const posterUrl = avatarMediaUrl(media?.posterUrl ?? asset.poster.url, origin);
   const videoUrl = avatarMediaUrl(media?.url, origin);
