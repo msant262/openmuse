@@ -83,11 +83,21 @@ test("post-conversation review saves a sourced preference without a remember com
 
 test("a quiet learning review retains its reason without creating memory", async (t) => {
   const summary = "Only an acknowledgement; no durable fact or reusable method.";
-  await modelFixture(t, () => ({ name: "finish_learning", arguments: { summary } }));
+  const fixture = await modelFixture(t, () => ({
+    name: "finish_learning",
+    arguments: { summary },
+  }));
   const server = await taskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
     memoryLearningEnabled: true,
+  });
+  await server.agent.profiles.update("owner", {
+    scope: { kind: "global" },
+    expectedRevision: 0,
+    requestId: "unrelated-persona",
+    origin: { kind: "settings" },
+    patch: { personality: "PERSONA_ONLY_NOT_A_USER_FACT: use affectionate diva energy." },
   });
   await source(server, "thanks", "Obrigado, está tudo certo.");
   const id = await server.agent.learning.scheduleDue("owner");
@@ -97,6 +107,10 @@ test("a quiet learning review retains its reason without creating memory", async
   assert.equal(task.status, "succeeded");
   assert.equal(task.state.learningSummary, summary);
   assert.equal((await server.agent.memory.recall("owner")).length, 0);
+  assert.ok(
+    fixture.requests.every((request) => !request.body.includes("PERSONA_ONLY_NOT_A_USER_FACT")),
+    "agent personality must not be presented as evidence about the user",
+  );
 });
 
 test("learning refuses unsupported quotes, credentials, wrong owners and forgotten provenance", async (t) => {

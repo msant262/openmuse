@@ -296,7 +296,6 @@ export class PersonalLearning {
     const memories = (await this.service.memory.page(owner, { limit: 40, includeInactive: true }))
       .entries;
     const viewedProcedures = new Set<string>();
-    const profile = await this.service.profiles.get(owner);
     const pendingWrites = new Map<string, string>(
       Array.isArray(task.state.learningWriteErrors)
         ? (task.state.learningWriteErrors as [string, string][])
@@ -470,7 +469,6 @@ export class PersonalLearning {
         content: JSON.stringify({
           now: new Date(this.now()).toISOString(),
           timezone: this.service.routines.timezone,
-          profile: profile.fields,
           unresolvedWrites: [...pendingWrites],
           userMessages: visibleMessages.map((m) => ({
             messageId: m.messageId,

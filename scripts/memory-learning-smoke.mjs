@@ -356,11 +356,21 @@ try {
   // A new owner has only low-value conversation, so the connected reviewer must stay empty.
   const quietOwner = "isolated-noise-acceptance";
   await server.agent.ensure(quietOwner);
+  await server.agent.profiles.update(quietOwner, {
+    scope: { kind: "global" },
+    expectedRevision: 0,
+    requestId: "persona-is-not-evidence",
+    origin: { kind: "settings" },
+    patch: {
+      personality:
+        "Use a warm, affectionate, elegant, humorous diva/drag voice. Call the user Diva. Give clear, structured Brazilian Portuguese answers and be honest about uncertainty.",
+    },
+  });
   await db.put(quietOwner, "conversation-inbox", {
     id: "quiet:thanks",
     messageId: "thanks",
     threadId: "quiet",
-    text: "Ok, obrigado. Até logo!",
+    text: "Obrigado gata, agora preciso que você gere um PDF sobre como você funciona.",
     status: "finished",
     createdAt: new Date().toISOString(),
   });
@@ -368,7 +378,7 @@ try {
   await server.agent.worker.tick();
   assert.equal((await server.agent.getTask(quietOwner, quietId)).status, "succeeded");
   assert.equal((await server.agent.memory.recall(quietOwner)).length, 0);
-  report.checks.push("quiet review saves nothing");
+  report.checks.push("quiet review saves nothing and never turns agent persona into user facts");
   report.passed = true;
 } catch (error) {
   report.passed = false;
