@@ -11,9 +11,7 @@ import { PdfError } from "./pdf.ts";
 
 const W = 595.28,
   H = 841.89,
-  M = 52,
-  BOTTOM = 62,
-  AREA = W - 2 * M;
+  BOTTOM = 62;
 const fontCache = new Map<string, Promise<Buffer>>();
 const fontData = (name: string) => {
   let data = fontCache.get(name);
@@ -41,6 +39,10 @@ export async function createDesignedPdf(
   title?: string,
 ): Promise<Uint8Array> {
   const model = typeof content === "string" ? composeDocument(content, title) : content;
+  const family = model.design.layout ?? "editorial";
+  const M = family === "briefing" ? 40 : family === "signal" ? 68 : 52,
+    AREA = W - 2 * M,
+    metricColumns = family === "signal" ? 1 : family === "briefing" ? 2 : 3;
   const doc = await PDFDocument.create();
   doc.setCreationDate(new Date(0));
   doc.setModificationDate(new Date(0));
@@ -63,8 +65,10 @@ export async function createDesignedPdf(
   ])
     fonts.push(await load(name));
   const [regular, bold, italic, boldItalic, serif, serifBold, mono] = fonts;
-  const display = model.theme.display === "serif" ? serif : bold;
-  const heading = model.theme.display === "serif" ? serifBold : bold;
+  const display =
+    model.theme.display === "serif" ? serif : model.theme.display === "mono" ? mono : bold;
+  const heading =
+    model.theme.display === "serif" ? serifBold : model.theme.display === "mono" ? mono : bold;
   const ink = color(model.theme.ink),
     paper = color(model.theme.paper),
     accent = color(model.theme.accent),
@@ -155,8 +159,9 @@ export async function createDesignedPdf(
   };
   const plain = (text: string, size: number, width = AREA, font = regular) =>
     lines([{ text }], size, width, font);
-  let page: PDFPage,
-    y = H - 72;
+  let page!: PDFPage;
+  let y = H - 72;
+  const contrastPages = new Set<PDFPage>();
   const draw = (line: Line, x: number, top: number, size: number, tint = ink) => {
     for (const part of line) {
       if (part.text.trim())
@@ -180,7 +185,13 @@ export async function createDesignedPdf(
     page = doc.addPage([W, H]);
     y = H - 72;
     page.drawRectangle({ x: 0, y: 0, width: W, height: H, color: paper });
-    page.drawRectangle({ x: M, y: H - 35, width: 24, height: 3, color: accent });
+    page.drawRectangle({
+      x: M,
+      y: H - 35,
+      width: family === "briefing" ? AREA : 24,
+      height: family === "briefing" ? 1 : 3,
+      color: accent,
+    });
     if (doc.getPageCount() > 1 && model.title)
       draw(plain(model.title, 7.5, AREA - 42, bold)[0], M + 34, H - 26, 7.5, muted);
   };
@@ -206,22 +217,73 @@ export async function createDesignedPdf(
   };
   newPage();
   if (model.design.cover && model.title) y = H - 152;
-  if (model.design.eyebrow)
-    paragraph([{ text: model.design.eyebrow.toLocaleUpperCase() }], 8, 12, bold, muted, 18);
-  if (model.title) {
-    const size = model.design.cover ? 42 : 32;
-    paragraph([{ text: model.title }], size, size * 1.18, display, ink, 18);
+  const contrastCover = family === "signal" && model.design.cover && model.title;
+  if (contrastCover) {
+    const height =
+      plain(model.title ?? "", 46, AREA, display).length * 46 * 1.18 +
+      18 +
+      (model.design.eyebrow
+        ? plain(model.design.eyebrow.toLocaleUpperCase(), 8, AREA, bold).length * 12 + 18
+        : 0) +
+      (model.design.subtitle ? plain(model.design.subtitle, 15).length * 22 + 20 : 0) +
+      24;
+    if (height > H - 190 - BOTTOM)
+      throw new PdfError("Signal cover text is too long to fit; shorten the title or subtitle");
+    page.drawRectangle({ x: 0, y: 0, width: W, height: H, color: ink });
+    page.drawRectangle({ x: M, y: H - 78, width: AREA, height: 4, color: accent });
+    contrastPages.add(page);
+    y = H - 190;
   }
-  if (model.design.subtitle)
-    paragraph(
-      [{ text: model.design.subtitle }],
-      model.design.cover ? 15 : 12,
-      model.design.cover ? 22 : 18,
-      regular,
-      muted,
-      20,
-    );
-  page!.drawRectangle({ x: M, y: y + 1, width: 56, height: 3, color: accent });
+  const coverInk = contrastCover ? paper : ink,
+    coverMuted = contrastCover ? paper : muted;
+  if (family === "briefing" && model.title) {
+    const titleSize = model.design.cover ? 34 : 27;
+    const titleWidth = AREA * 0.6 - 28,
+      metadataWidth = AREA * 0.4 - 28;
+    const titles = plain(model.title, titleSize, titleWidth, display);
+    const eyebrow = model.design.eyebrow
+      ? plain(model.design.eyebrow.toLocaleUpperCase(), 8, metadataWidth, bold)
+      : [];
+    const subtitles = model.design.subtitle ? plain(model.design.subtitle, 11, metadataWidth) : [];
+    const height =
+      Math.max(titles.length * titleSize * 1.18, eyebrow.length * 12 + subtitles.length * 16 + 12) +
+      32;
+    ensure(height);
+    page.drawRectangle({ x: M, y: y - height, width: AREA, height, color: surface });
+    page.drawRectangle({ x: M + AREA * 0.6, y: y - height, width: 1, height, color: paper });
+    const top = y - 16;
+    titles.forEach((line, index) => {
+      draw(line, M + 14, top - index * titleSize * 1.18, titleSize);
+    });
+    let metadataY = top;
+    for (const line of eyebrow) {
+      draw(line, M + AREA * 0.6 + 14, metadataY, 8);
+      metadataY -= 12;
+    }
+    metadataY -= 12;
+    for (const line of subtitles) {
+      draw(line, M + AREA * 0.6 + 14, metadataY, 11, muted);
+      metadataY -= 16;
+    }
+    y -= height + 24;
+  } else {
+    if (model.design.eyebrow)
+      paragraph([{ text: model.design.eyebrow.toLocaleUpperCase() }], 8, 12, bold, coverMuted, 18);
+    if (model.title) {
+      const size = family === "signal" ? 46 : model.design.cover ? 42 : 32;
+      paragraph([{ text: model.title }], size, size * 1.18, display, coverInk, 18);
+    }
+    if (model.design.subtitle)
+      paragraph(
+        [{ text: model.design.subtitle }],
+        model.design.cover ? 15 : 12,
+        model.design.cover ? 22 : 18,
+        regular,
+        coverMuted,
+        20,
+      );
+  }
+  page.drawRectangle({ x: M, y: y + 1, width: 56, height: 3, color: accent });
   y -= 24;
   if (model.design.cover && model.title) {
     const chapters = model.blocks
@@ -235,9 +297,15 @@ export async function createDesignedPdf(
       for (const [index, chapter] of chapters.entries()) {
         const wrapped = plain(chapter.text, 10, AREA - 38);
         ensure(wrapped.length * 15 + 12);
-        draw(plain(String(index + 1).padStart(2, "0"), 9, 30, bold)[0], M, y, 9, muted);
+        draw(
+          plain(String(index + 1).padStart(2, "0"), 9, 30, bold)[0],
+          M,
+          y,
+          9,
+          contrastPages.has(page) ? paper : muted,
+        );
         for (const line of wrapped) {
-          draw(line, M + 38, y, 10);
+          draw(line, M + 38, y, 10, contrastPages.has(page) ? paper : ink);
           y -= 15;
         }
         y -= 12;
@@ -259,7 +327,7 @@ export async function createDesignedPdf(
       return rowHeight(next.headers, true) + (next.rows[0] ? rowHeight(next.rows[0]) : 0);
     }
     if (next.type === "metrics") {
-      const cols = Math.min(3, next.items.length),
+      const cols = Math.min(metricColumns, next.items.length),
         cw = (AREA - 12 * (cols - 1)) / cols;
       return (
         Math.max(
@@ -312,8 +380,18 @@ export async function createDesignedPdf(
   };
   for (const [blockIndex, block] of model.blocks.entries()) {
     if (block.type === "heading") {
-      const size = block.level <= 2 ? 21 : block.level === 3 ? 14 : 11,
-        wrapped = plain(block.text, size, AREA, heading);
+      const major = block.level <= 2;
+      const size = major
+          ? family === "signal"
+            ? 29
+            : family === "briefing"
+              ? 17
+              : 21
+          : block.level === 3
+            ? 14
+            : 11,
+        inset = major && family === "briefing" ? 10 : 0,
+        wrapped = plain(block.text, size, AREA - 2 * inset, heading);
       ensure(
         Math.min(
           H - 72 - BOTTOM,
@@ -321,9 +399,27 @@ export async function createDesignedPdf(
         ),
       );
       y -= 12;
+      const bandHeight = Math.min(wrapped.length * size * 1.28, y - BOTTOM);
+      if (major && family === "briefing") {
+        page.drawRectangle({
+          x: M,
+          y: y - bandHeight - 5,
+          width: AREA,
+          height: bandHeight + 10,
+          color: surface,
+        });
+      } else if (major && family === "signal") {
+        page.drawRectangle({
+          x: M - 16,
+          y: y - bandHeight,
+          width: 4,
+          height: bandHeight,
+          color: accent,
+        });
+      }
       for (const line of wrapped) {
         ensure(size * 1.28);
-        draw(line, M, y, size);
+        draw(line, M + inset, y, size);
         y -= size * 1.28;
       }
       y -= 12;
@@ -368,8 +464,8 @@ export async function createDesignedPdf(
             Math.min(wrapped.length - offset, Math.floor((y - BOTTOM - 28) / leading)),
           ),
           h = take * leading + 28;
-        page!.drawRectangle({ x: M, y: y - h, width: AREA, height: h, color: surface });
-        page!.drawRectangle({ x: M, y: y - h, width: 3, height: h, color: accent });
+        page.drawRectangle({ x: M, y: y - h, width: AREA, height: h, color: surface });
+        page.drawRectangle({ x: M, y: y - h, width: 3, height: h, color: accent });
         y -= 14;
         for (const line of wrapped.slice(offset, offset + take)) {
           draw(line, M + 17, y, size);
@@ -380,7 +476,7 @@ export async function createDesignedPdf(
       }
     } else if (block.type === "rule") {
       ensure(20);
-      page!.drawLine({
+      page.drawLine({
         start: { x: M, y: y - 3 },
         end: { x: W - M, y: y - 3 },
         color: surface,
@@ -397,7 +493,7 @@ export async function createDesignedPdf(
         headHeight = rowHeight(head);
       const row = (cells: Line[][], header: boolean, alternate = false) => {
         const h = rowHeight(cells);
-        page!.drawRectangle({
+        page.drawRectangle({
           x: M,
           y: y - h,
           width: AREA,
@@ -411,7 +507,7 @@ export async function createDesignedPdf(
           });
         });
         y -= h;
-        page!.drawLine({
+        page.drawLine({
           start: { x: M, y },
           end: { x: W - M, y },
           color: surface,
@@ -433,7 +529,7 @@ export async function createDesignedPdf(
       }
       y -= 20;
     } else if (block.type === "metrics") {
-      const cols = Math.min(3, block.items.length),
+      const cols = Math.min(metricColumns, block.items.length),
         gap = 12,
         cw = (AREA - gap * (cols - 1)) / cols;
       for (let start = 0; start < block.items.length; start += cols) {
@@ -456,8 +552,8 @@ export async function createDesignedPdf(
         cards.forEach((card, i) => {
           const x = M + i * (cw + gap);
           let top = y - 16;
-          page!.drawRectangle({ x, y: y - h, width: cw, height: h, color: surface });
-          page!.drawRectangle({ x, y: y - 3, width: 24, height: 3, color: accent });
+          page.drawRectangle({ x, y: y - h, width: cw, height: h, color: surface });
+          page.drawRectangle({ x, y: y - 3, width: 24, height: 3, color: accent });
           for (const line of card.value) {
             draw(line, x + 14, top, 27);
             top -= 33;
@@ -482,9 +578,9 @@ export async function createDesignedPdf(
           details = item.detail ? plain(item.detail, 10, AREA - 44) : [];
         const h = Math.max(34, titles.length * 16 + details.length * 15 + 18);
         ensure(h);
-        page!.drawCircle({ x: M + 12, y: y - 12, size: 12, color: surface });
+        page.drawCircle({ x: M + 12, y: y - 12, size: 12, color: surface });
         const label = String(index + 1);
-        page!.drawText(label, {
+        page.drawText(label, {
           x: M + 12 - bold.widthOfTextAtSize(label, 9) / 2,
           y: y - 15,
           font: bold,
@@ -533,7 +629,7 @@ export async function createDesignedPdf(
           draw(line, M, y - j * 13, 9);
         });
         const endpoint = plotX + ((value - low) / range) * plotWidth;
-        page!.drawRectangle({
+        page.drawRectangle({
           x: Math.min(zero, endpoint),
           y: y - 16,
           width: Math.abs(endpoint - zero),
@@ -561,7 +657,7 @@ export async function createDesignedPdf(
         w = embedded.width * scale,
         h = embedded.height * scale;
       ensure(h + captions.length * 13 + 28);
-      page!.drawImage(embedded, { x: M + (AREA - w) / 2, y: y - h, width: w, height: h });
+      page.drawImage(embedded, { x: M + (AREA - w) / 2, y: y - h, width: w, height: h });
       y -= h + 9;
       for (const line of captions) {
         draw(line, M, y, 8.5, muted);
@@ -584,13 +680,13 @@ export async function createDesignedPdf(
       y: 25,
       size: 8,
       font: regular,
-      color: muted,
+      color: contrastPages.has(sheet) ? paper : muted,
     });
     if (model.design.footer) {
       const footer = plain(model.design.footer, 7.5, AREA - 62);
       if (footer.length > 3) throw new PdfError("Document footer exceeds three lines; shorten it");
       footer.forEach((line, index) => {
-        draw(line, M, 39 - index * 9, 7.5, muted);
+        draw(line, M, 39 - index * 9, 7.5, contrastPages.has(sheet) ? paper : muted);
       });
     }
   }

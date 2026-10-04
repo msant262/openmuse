@@ -4,6 +4,7 @@ import { cp, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import * as catalogModule from "../apps/server/src/design-catalog.ts";
 import {
   DesignCatalog,
   designReferenceTools,
@@ -89,6 +90,135 @@ test("curated document profiles trace every palette and use paper-readable body 
     assert.ok(["serif", "sans"].includes(profile.display));
   }
   assert.equal(await getDesignProfile("unknown"), undefined);
+});
+
+test("natural Portuguese briefs retrieve matching composition and typography instead of requiring every literal word", async () => {
+  const catalog = new DesignCatalog();
+  const warm = await catalog.list({
+    query: "Quero um relatório editorial acolhedor com tipografia serifada",
+    limit: 5,
+  });
+  assert.ok(warm.references.some(({ id }) => id === "claude"));
+  assert.equal(
+    warm.references[0]?.id,
+    "claude",
+    "a warm serif editorial brief should favor its defining traits over incidental body mentions",
+  );
+  const cinema = await catalog.list({
+    query: "Uma apresentação cinematográfica com fotografia e luxo",
+    limit: 5,
+  });
+  assert.ok(cinema.references.some(({ id }) => ["ferrari", "bugatti", "runwayml"].includes(id)));
+  assert.notEqual(warm.references[0]?.id, cinema.references[0]?.id);
+  const exact = await catalog.list({ query: "Quero o estilo Linear.app com fotografia", limit: 5 });
+  assert.equal(exact.references[0]?.id, "linear.app");
+  assert.equal((await catalog.list({ query: "Cal" })).references[0]?.id, "cal");
+  assert.equal((await catalog.list({ query: "plasmaquantumxyz" })).total, 0);
+  const sans = await catalog.recommend({ query: "tipografia sem serifa" });
+  const englishSans = await catalog.recommend({ query: "sans-serif typography" });
+  assert.equal(sans.total, englishSans.total);
+  assert.ok(sans.references.length);
+  for (const { matchedTerms } of sans.references)
+    assert.deepEqual(matchedTerms, ["sans"], "sem serifa means sans-serif, not serif");
+});
+
+test("recommendations expose bounded source excerpts for contrasting composition, with full catalog access", async () => {
+  const [tool] = designReferenceTools(new DesignCatalog());
+  assert.ok(tool.execute);
+  const result = JSON.parse(
+    JSON.stringify(
+      await tool.execute({
+        action: "recommend",
+        query: "revista editorial com fotografia e tipografia expressiva",
+        limit: 3,
+      } as never),
+    ),
+  );
+  assert.equal(result.error, undefined);
+  assert.equal(result.authority, "reference_data");
+  assert.equal(result.references.length, 3);
+  assert.ok(JSON.stringify(result).length < 12000);
+  assert.equal(new Set(result.references.map((entry: { id: string }) => entry.id)).size, 3);
+  assert.ok(result.references.some((entry: { profileIds: string[] }) => !entry.profileIds.length));
+  const catalog = new DesignCatalog();
+  for (const reference of result.references) {
+    assert.ok(reference.matchedTerms.length);
+    assert.ok(reference.cues.some((cue: { aspect: string }) => cue.aspect === "layout"));
+    assert.ok(reference.cues.some((cue: { aspect: string }) => cue.aspect === "typography"));
+    const fullSource = await readFile(join(directory, reference.path), "utf8");
+    assert.equal(sha256(fullSource), reference.sha256);
+    for (const cue of reference.cues) {
+      assert.ok(
+        cue.excerpt.length > 30,
+        `${reference.id}: cue must contain design content, not just a heading`,
+      );
+      assert.ok(cue.excerpt.length <= 420);
+      const page = await catalog.read(reference.id, cue.page);
+      assert.ok(
+        page.content.includes(cue.excerpt),
+        `${reference.id}: excerpt must match source page`,
+      );
+    }
+  }
+  const unknown = JSON.parse(
+    JSON.stringify(
+      await tool.execute({
+        action: "recommend",
+        query: "plasmaquantumxyz",
+      } as never),
+    ),
+  );
+  assert.deepEqual(unknown.references, []);
+  const tooMany = await tool.execute({
+    action: "recommend",
+    query: "editorial",
+    limit: 20,
+  } as never);
+  assert.ok((tooMany as { error?: string }).error);
+});
+
+test("renderer source lookup resolves any exact catalog ID without hiding inventory failures", async () => {
+  assert.equal("getDesignReference" in catalogModule, true);
+  const lookup = catalogModule.getDesignReference as (
+    id: string,
+  ) => Promise<{ id: string; sha256: string } | undefined>;
+  const reference = await lookup("wired");
+  assert.equal(reference?.id, "wired");
+  assert.equal(
+    reference?.sha256,
+    sha256(await readFile(join(directory, "design-md/wired/DESIGN.md"), "utf8")),
+  );
+  assert.equal(await lookup("not-a-reference"), undefined);
+  await assert.rejects(lookup("../wired"));
+});
+
+test("recent preset aliases annotate canonical references while explicit names keep priority", async () => {
+  const [tool] = designReferenceTools(new DesignCatalog(), {
+    recent: async () => [{ reference: "linear", layout: "briefing", title: "Previous report" }],
+  });
+  assert.ok(tool.execute);
+  const result = JSON.parse(
+    JSON.stringify(
+      await tool.execute({
+        action: "recommend",
+        query: "Quero Linear com fotografia editorial",
+        limit: 3,
+      } as never),
+    ),
+  );
+  assert.equal(result.references[0].id, "linear.app");
+  assert.equal(result.references[0].usedRecently, true);
+  const catalog = new DesignCatalog();
+  const first = await catalog.recommend({ query: "editorial" });
+  const repeated = await catalog.recommend({
+    query: "editorial",
+    avoidIds: first.references.map(({ id }) => id),
+  });
+  assert.notEqual(first.references[0].id, repeated.references[0].id);
+  assert.equal(
+    (await catalog.recommend({ query: "Claude", avoidIds: ["claude"] })).references[0]?.id,
+    "claude",
+  );
 });
 
 test("design tool is bounded read-only data with exact IDs, no traversal and lifecycle hooks", async () => {

@@ -15,7 +15,7 @@ const hex = (color: string) => color.replace(/^#/, "");
 type Fonts = { regular: PDFFont; bold: PDFFont; italic: PDFFont; mono: PDFFont; display: PDFFont };
 type Line = DocumentRun[];
 
-async function loadFonts(serif: boolean): Promise<Fonts> {
+async function loadFonts(displayStyle: DocumentModel["theme"]["display"]): Promise<Fonts> {
   const document = await PDFDocument.create();
   document.registerFontkit(fontkit);
   const font = async (name: string) =>
@@ -25,7 +25,13 @@ async function loadFonts(serif: boolean): Promise<Fonts> {
     font("DejaVuSans-Bold"),
     font("DejaVuSans-Oblique"),
     font("DejaVuSansMono"),
-    font(serif ? "DejaVuSerif" : "DejaVuSans"),
+    font(
+      displayStyle === "serif"
+        ? "DejaVuSerif"
+        : displayStyle === "mono"
+          ? "DejaVuSansMono"
+          : "DejaVuSans",
+    ),
   ]);
   return { regular, bold, italic, mono, display };
 }
@@ -114,14 +120,20 @@ function wrapRuns(
 
 /** Every visible heading, table, chart and diagram is an editable Office object. */
 export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Array> {
-  const fonts = await loadFonts(model.theme.display === "serif");
+  const fonts = await loadFonts(model.theme.display);
+  const family = model.design.layout ?? "editorial";
   const presentation = new PptxGenJS();
   presentation.layout = "LAYOUT_WIDE";
   presentation.author = "";
   presentation.company = "";
   presentation.title = model.title ?? "";
   presentation.subject = model.design.subtitle ?? "";
-  const displayFont = model.theme.display === "serif" ? "DejaVu Serif" : bodyFont;
+  const displayFont =
+    model.theme.display === "serif"
+      ? "DejaVu Serif"
+      : model.theme.display === "mono"
+        ? "DejaVu Sans Mono"
+        : bodyFont;
   presentation.theme = { headFontFace: displayFont, bodyFontFace: bodyFont };
   const ink = hex(model.theme.ink),
     muted = hex(model.theme.muted),
@@ -229,9 +241,10 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     slide.background = { color: background };
     slide.addNotes(`Layout: ${layout}`);
     const folio = model.design.footer ?? model.title ?? "";
-    text(slide, [{ text: folio.slice(0, 95) }], 0.72, 7.01, 10.8, 0.23, 9, { color: muted });
+    const footerColor = background === ink ? paper : muted;
+    text(slide, [{ text: folio.slice(0, 95) }], 0.72, 7.01, 10.8, 0.23, 9, { color: footerColor });
     text(slide, [{ text: String(count).padStart(2, "0") }], 11.9, 6.98, 0.7, 0.25, 10, {
-      color: muted,
+      color: footerColor,
       align: "right",
     });
     rect(slide, 0.72, 6.82, 11.89, 0.014, surface);
@@ -246,6 +259,32 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     return Math.max(1.6, 0.68 + h + 0.3);
   };
   const sectionTitle = (slide?: PptxModule.default.Slide, compact = false) => {
+    if (family !== "editorial") {
+      const signal = family === "signal";
+      const x = signal ? 1.16 : 0.72,
+        width = signal ? 10.73 : 11.89;
+      let y = signal ? 0.75 : 0.63;
+      for (const [index, heading] of section.entries()) {
+        const size = index === 0 ? (signal ? 40 : 29) : 20;
+        const lines = wrapRuns([{ text: heading }], size, width, fonts, index === 0);
+        const height = (lines.length * size * 1.29) / 72;
+        if (y + height > 3.8)
+          throw new Error(
+            "Slide section headings are too long; shorten them or separate sections with content",
+          );
+        if (slide)
+          lineText(slide, lines, x, y, width, size, {
+            fontFace: index === 0 ? displayFont : bodyFont,
+            color: index === 0 ? ink : muted,
+          });
+        y += height + 0.15;
+      }
+      if (slide) {
+        if (signal) rect(slide, 0.72, 0.75, 0.08, y - 0.9, accent);
+        else rect(slide, 0.72, y, 11.89, 0.018, accent);
+      }
+      return Math.max(signal ? 2.2 : 1.6, y + (signal ? 0.4 : 0.25));
+    }
     if (section.length === 1) {
       if (slide) title(slide, section[0]);
       return Math.max(
@@ -274,22 +313,24 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     return Math.max(compact ? 1.4 : 1.6, y + (compact ? 0 : 0.15));
   };
   const flowSlide = () => {
-    const slide = base(wideFlow ? "wide-text" : "editorial-text");
+    const slide = base(
+      family !== "editorial" ? `${family}-text` : wideFlow ? "wide-text" : "editorial-text",
+    );
     if (model.design.eyebrow)
       text(
         slide,
         [{ text: model.design.eyebrow }],
         0.72,
-        wideFlow ? 0.13 : 0.5,
+        wideFlow || family !== "editorial" ? 0.13 : 0.5,
         11.8,
-        wideFlow ? 0.22 : 0.3,
+        wideFlow || family !== "editorial" ? 0.22 : 0.3,
         11,
         {
           bold: true,
           color: accentText,
         },
       );
-    if (wideFlow) {
+    if (wideFlow || family !== "editorial") {
       const y = sectionTitle(slide, true);
       continuation = true;
       pendingSection = false;
@@ -350,6 +391,10 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
   // complete section fits a full-width layout at the same font sizes and spacing.
   const prepareFlow = (index: number) => {
     if (flow) return;
+    if (family !== "editorial") {
+      wideFlow = true;
+      return;
+    }
     wideFlow = false;
     const items: Prose[] = [];
     for (let offset = index; offset < model.blocks.length; offset++) {
@@ -388,9 +433,10 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     // too, and give continuation lines the same text origin. Otherwise LibreOffice
     // wraps an already positioned line again and overlays the next line.
     const markerInset = bullet ? (18 + fonts.regular.widthOfTextAtSize("\u00a0", size)) / 72 : 0;
-    const columnWidth = wideFlow ? 11.89 : 8.15,
-      columnX = wideFlow ? 0.72 : 4.12,
-      top = wideFlow ? sectionTitle(undefined, true) : 1.23,
+    const columnWidth =
+        family === "signal" ? 10.73 : wideFlow || family === "briefing" ? 11.89 : 8.15,
+      columnX = family === "signal" ? 1.16 : wideFlow || family === "briefing" ? 0.72 : 4.12,
+      top = wideFlow || family !== "editorial" ? sectionTitle(undefined, true) : 1.23,
       width = columnWidth - indent - markerInset;
     const lines = wrapRuns(runs, size, width, fonts);
     const leading = (size * 1.29) / 72;
@@ -451,27 +497,66 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
   };
 
   if (model.title && model.design.cover !== false) {
-    const slide = base("cover");
-    rect(slide, 9.75, 0, 3.58, 6.82, surface);
-    rect(slide, 9.75, 0, 0.1, 6.82, accent);
-    if (model.design.eyebrow)
-      text(slide, [{ text: model.design.eyebrow }], 0.82, 1.02, 8.2, 0.4, 13, {
-        color: accentText,
-        bold: true,
+    if (family !== "editorial") {
+      const signal = family === "signal";
+      const slide = base(`${family}-cover`, signal ? ink : paper);
+      const titleWidth = signal ? 11.25 : 7.2,
+        titleSize = signal ? 48 : 38;
+      const titleY = signal ? 2 : 1.6;
+      const titleLines = wrapRuns([{ text: model.title }], titleSize, titleWidth, fonts, true);
+      const titleHeight = (titleLines.length * titleSize * 1.29) / 72;
+      if (titleY + titleHeight > 5.55)
+        throw new Error("Presentation title is too long for its cover");
+      rect(slide, 0.82, signal ? 0.65 : 1.25, signal ? 11.69 : 7.2, signal ? 0.08 : 0.025, accent);
+      if (!signal) rect(slide, 8.55, 1.25, 0.018, 4.8, surface);
+      if (model.design.eyebrow)
+        text(
+          slide,
+          [{ text: model.design.eyebrow }],
+          signal ? 0.82 : 9.02,
+          signal ? 1 : 1.6,
+          signal ? 11.25 : 3.2,
+          0.4,
+          12,
+          { bold: true, color: signal ? paper : accentText },
+        );
+      lineText(slide, titleLines, 0.82, titleY, titleWidth, titleSize, {
+        fontFace: displayFont,
+        color: signal ? paper : ink,
       });
-    const titleLines = wrapRuns([{ text: model.title }], 40, 8.1, fonts, true);
-    if (titleLines.length > 5) throw new Error("Presentation title is too long for its cover");
-    const height = lineText(slide, titleLines, 0.82, 1.95, 8.1, 40, { fontFace: displayFont });
-    if (model.design.subtitle) {
-      const subtitle = wrapRuns([{ text: model.design.subtitle }], 20, 8, fonts);
-      if (subtitle.length * 0.36 + 2.25 + height > 6.4)
-        throw new Error("Presentation subtitle overflows the cover; shorten it");
-      lineText(slide, subtitle, 0.85, 2.25 + height, 8, 20, { color: muted });
+      if (model.design.subtitle) {
+        const width = signal ? 10.7 : 3.1;
+        const subtitle = wrapRuns([{ text: model.design.subtitle }], 20, width, fonts);
+        const y = signal ? titleY + titleHeight + 0.35 : 2.4;
+        if (y + (subtitle.length * 20 * 1.29) / 72 > 6.35)
+          throw new Error("Presentation subtitle overflows the cover; shorten it");
+        lineText(slide, subtitle, signal ? 0.85 : 9.02, y, width, 20, {
+          color: signal ? paper : muted,
+        });
+      }
+    } else {
+      const slide = base("cover");
+      rect(slide, 9.75, 0, 3.58, 6.82, surface);
+      rect(slide, 9.75, 0, 0.1, 6.82, accent);
+      if (model.design.eyebrow)
+        text(slide, [{ text: model.design.eyebrow }], 0.82, 1.02, 8.2, 0.4, 13, {
+          color: accentText,
+          bold: true,
+        });
+      const titleLines = wrapRuns([{ text: model.title }], 40, 8.1, fonts, true);
+      if (titleLines.length > 5) throw new Error("Presentation title is too long for its cover");
+      const height = lineText(slide, titleLines, 0.82, 1.95, 8.1, 40, { fontFace: displayFont });
+      if (model.design.subtitle) {
+        const subtitle = wrapRuns([{ text: model.design.subtitle }], 20, 8, fonts);
+        if (subtitle.length * 0.36 + 2.25 + height > 6.4)
+          throw new Error("Presentation subtitle overflows the cover; shorten it");
+        lineText(slide, subtitle, 0.85, 2.25 + height, 8, 20, { color: muted });
+      }
+      text(slide, [{ text: "01" }], 10.25, 4.88, 2.2, 1, 64, {
+        color: accentLarge,
+        fontFace: displayFont,
+      });
     }
-    text(slide, [{ text: "01" }], 10.25, 4.88, 2.2, 1, 64, {
-      color: accentLarge,
-      fontFace: displayFont,
-    });
   }
 
   for (const [blockIndex, block] of model.blocks.entries()) {
@@ -489,7 +574,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     captionArea = undefined;
     if (prose(block)) prepareFlow(blockIndex);
     if (block.type === "heading") {
-      if (block.level <= 2) {
+      if (block.level <= 2 || pendingSection) {
         // Adjacent headings describe one hierarchy until content or an explicit
         // divider is encountered; they are not requests for empty slides.
         section = pendingSection ? [...section, block.text] : [block.text];
@@ -544,7 +629,10 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
         const slide = base("metric-cards");
         const y = sectionTitle(slide);
         const height = 6.45 - y - 0.2;
-        let columns = Math.min(3, block.items.length - offset);
+        let columns = Math.min(
+          family === "signal" ? 1 : family === "briefing" ? 2 : 3,
+          block.items.length - offset,
+        );
         const measured = (number: number) => {
           const width = (11.89 - (number - 1) * 0.25) / number;
           return block.items.slice(offset, offset + number).map((item) => {
@@ -855,8 +943,8 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
           );
         const rows: PptxModule.default.TableRow[] = [
           headerLines.map((lines) => ({
-            text: cellRuns(lines, "FFFFFF"),
-            options: { bold: true, fill: { color: ink }, color: "FFFFFF" },
+            text: cellRuns(lines, paper),
+            options: { bold: true, fill: { color: ink }, color: paper },
           })),
         ];
         const heights = [headerHeight];
