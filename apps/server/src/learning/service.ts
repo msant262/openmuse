@@ -1,14 +1,14 @@
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
-import type { AgentMemory, AgentTask } from "../../../../packages/domain/src/agent.ts";
+import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
 import { procedureInputSchema } from "../../../../packages/domain/src/playbooks.ts";
 import { bindingHash, type InboxMessage } from "../conversation-inbox.ts";
 import type { AgentService } from "../engine/service.ts";
 import { tanstackAgent } from "../engine/tanstack-agent.ts";
 import type { TaskContext } from "../engine/worker.ts";
 import { AppError } from "../errors.ts";
-import { assertPublicMemory } from "../memory.ts";
 import { modelSelection, selectionContextModel } from "../providers/preferences.ts";
+import { sourcedMemoryInput as learningMemoryInput, writeSourcedMemory } from "./memory-writer.ts";
 import { learningReviewPrompt } from "./prompts.ts";
 
 type Source = { kind: string; id: string };
@@ -20,34 +20,8 @@ type State = {
   lastError?: string | null;
   changes?: number;
 };
-export const learningMemoryInput = z
-  .object({
-    text: z.string().trim().min(1).max(1800),
-    category: z.enum(["fact", "preference", "habit", "plan"]),
-    evidence: z
-      .array(
-        z
-          .object({ messageId: z.string().min(1), quote: z.string().trim().min(3).max(2000) })
-          .strict(),
-      )
-      .min(1)
-      .max(8),
-    memoryId: z.string().optional(),
-    expectedRevision: z.number().int().nonnegative().optional(),
-    followUpAfter: z.iso.datetime({ offset: true }).optional(),
-    validUntil: z.iso.datetime({ offset: true }).optional(),
-    planState: z.enum(["open", "resolved", "cancelled"]).optional(),
-  })
-  .strict()
-  .superRefine((v, c) => {
-    if (Boolean(v.memoryId) !== (v.expectedRevision !== undefined))
-      c.addIssue({
-        code: "custom",
-        message: "Corrections require both memoryId and expectedRevision",
-      });
-    if (v.category !== "plan" && (v.followUpAfter || v.planState))
-      c.addIssue({ code: "custom", message: "Only a plan has follow-up state" });
-  });
+
+export { sourcedMemoryInput as learningMemoryInput } from "./memory-writer.ts";
 
 /** Hermes post-turn review pattern on the existing durable worker, never a second runner. */
 export class PersonalLearning {
@@ -179,82 +153,15 @@ export class PersonalLearning {
     return id;
   }
   async learn(owner: string, raw: unknown, messages: InboxMessage[], reviewTaskId: string) {
-    const input = learningMemoryInput.parse(raw);
-    assertPublicMemory(input.text);
-    const evidence = input.evidence.map((e) => {
-      const source = messages.find((m) => m.messageId === e.messageId);
-      if (!source || !source.text.includes(e.quote))
-        throw new AppError(
-          "Learning requires an exact quote from the supplied authenticated user message",
-          422,
-        );
-      assertPublicMemory(e.quote);
-      return { ...e, threadId: source.threadId, observedAt: source.createdAt };
-    });
-    if (
-      await this.db.memorySourceSuppressed(
-        owner,
-        evidence.map((e) => e.messageId),
-      )
-    )
-      throw new AppError("Forgotten source evidence cannot be learned again automatically", 409);
-    const previous = input.memoryId
-      ? await this.db.get<AgentMemory>(owner, "memories", input.memoryId)
-      : null;
-    if (input.memoryId && !previous) throw new AppError("Memory not found", 404);
-    const previousEvidenceAt =
-      previous?.origin?.kind === "learning" && previous.evidence?.length
-        ? Math.max(...previous.evidence.map((e) => Date.parse(e.observedAt)))
-        : Date.parse(previous?.updatedAt ?? previous?.createdAt ?? "");
-    const sameMessage =
-      previous?.origin?.messageId &&
-      evidence.some((e) => e.messageId === previous.origin?.messageId);
-    if (
-      previous &&
-      !sameMessage &&
-      evidence.every((e) => Date.parse(e.observedAt) < previousEvidenceAt)
-    )
-      throw new AppError("Older evidence cannot overwrite a newer correction", 409);
-    const fields = {
-      category: input.category,
-      evidence,
-      ...(input.category === "plan"
-        ? {
-            followUp: {
-              state: input.planState ?? ("open" as const),
-              after:
-                input.followUpAfter ??
-                previous?.followUp?.after ??
-                new Date(this.now() + 86400000).toISOString(),
-            },
-          }
-        : {}),
-    };
-    const origin = {
-      kind: "learning" as const,
-      messageId: evidence.at(-1)!.messageId,
-      taskId: reviewTaskId,
-    };
-    const saved = await (previous
-      ? this.service.memory.update(
-          owner,
-          previous.id,
-          {
-            text: input.text,
-            expectedRevision: input.expectedRevision!,
-            requestId: `learn:${reviewTaskId}:${bindingHash(input)}`,
-            ...(input.validUntil ? { validUntil: input.validUntil } : {}),
-          },
-          origin,
-          fields,
-        )
-      : this.service.memory.save(owner, input.text, "Learned from your conversation", {
-          ...fields,
-          origin,
-          validUntil: input.validUntil,
-        }));
-    await this.service.proactivity.reconcileMemorySuggestions(owner);
-    return saved;
+    return writeSourcedMemory(
+      this.service,
+      owner,
+      raw,
+      messages,
+      { kind: "learning", taskId: reviewTaskId, messageId: messages.at(-1)?.messageId },
+      `learn:${reviewTaskId}`,
+      this.now,
+    );
   }
   async review(owner: string, task: AgentTask, ctx: TaskContext): Promise<Partial<AgentTask>> {
     await ctx.guard();

@@ -16,7 +16,14 @@ test("natural-language tools save memory and a routine; real worker posts once a
   const directory = await mkdtemp(join(tmpdir(), "openmuse-routine-integration-"));
   let db = await createStore({ dataDir: join(directory, "db") });
   const calls: { name: string; arguments: object }[] = [
-    { name: "remember_fact", arguments: { text: "I prefer my agenda in Portuguese" } },
+    {
+      name: "remember_fact",
+      arguments: {
+        text: "I prefer my agenda in Portuguese",
+        category: "preference",
+        evidence: [{ quote: "I prefer my agenda in Portuguese" }],
+      },
+    },
     {
       name: "manage_routine",
       arguments: {
@@ -72,7 +79,7 @@ test("natural-language tools save memory and a routine; real worker posts once a
                   id: "user-setup",
                   role: "user",
                   content:
-                    "Remember that I prefer Portuguese. Every weekday at 8 in Berlin send me today's agenda.",
+                    "Remember that I prefer my agenda in Portuguese. Every weekday at 8 in Berlin send me today's agenda.",
                 },
               ],
               state: {},

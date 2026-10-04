@@ -1,0 +1,83 @@
+{
+  "source": "13f363e",
+  "mode": "isolated synthetic provider; no production reads or writes",
+  "chat": {
+    "registeredTools": 78,
+    "toolSchemaBytes": 60304,
+    "requestBytes": 78198
+  },
+  "worker": {
+    "registeredTools": 85,
+    "toolSchemaBytes": 55684,
+    "requestBytes": 74528
+  },
+  "memoryWrite": {
+    "profileUnchanged": true,
+    "category": null,
+    "evidence": null,
+    "origin": {
+      "kind": "local"
+    }
+  },
+  "profileCommands": [
+    {
+      "text": "Responda formal",
+      "intent": {
+        "patch": {
+          "formality": "formal"
+        },
+        "conversation": false,
+        "hasWork": false
+      }
+    },
+    {
+      "text": "Fala comigo de um jeito mais carinhoso e menos formal",
+      "intent": null
+    },
+    {
+      "text": "Quero que você pare de usar emojis nas suas respostas",
+      "intent": null
+    },
+    {
+      "text": "Sua personalidade: gentil e objetiva.",
+      "intent": {
+        "patch": {
+          "personality": "gentil e objetiva."
+        },
+        "conversation": false,
+        "hasWork": false
+      }
+    }
+  ],
+  "contextProjection": {
+    "originalMessages": 14,
+    "kept": [
+      "intermediate-10",
+      "intermediate-11",
+      "continue"
+    ],
+    "originalConstraintRetained": false,
+    "hasSummary": false
+  },
+  "upstreamReferences": {
+    "hermes": "1298c8e74baa73e1a2b90124228d017261ac6bc4",
+    "openclaw": "b56ae70a5e7e302dc2165c96b60214e84e19c7b1"
+  },
+  "diagnosticTests": {
+    "passed": 1,
+    "failed": 0,
+    "purpose": "Reproduce current behavior, not assert that the identified gaps are fixed."
+  },
+  "regressionTests": {
+    "passed": 37,
+    "failed": 0,
+    "files": [
+      "agent-profile",
+      "profile-personality",
+      "personal-learning",
+      "memory-context",
+      "proactivity-learning",
+      "playbooks"
+    ]
+  }
+}

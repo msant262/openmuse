@@ -483,6 +483,7 @@ export async function executeModelTask(
       },
     }),
     ...personalTools(service, owner, `task:${task.id}`, {
+      memoryTaskId: task.id,
       queue: serial,
       before: async () => {
         if (outcome) throw new Error("Task is waiting or finished");

@@ -87,10 +87,19 @@ test("correct_memory cannot recover a forgotten fingerprint; authenticated setti
     const forgotten = await memory.save("owner", "My address is Rua Um", "User");
     await memory.forget("owner", forgotten.id, { expectedRevision: 1, requestId: "forget" });
     const other = await memory.save("owner", "My unrelated preference is morning", "User");
+    const source = { messageId: "address", threadId: "chat", runId: "run-address" };
+    await db.put("owner", "conversation-inbox", {
+      id: "chat:address",
+      ...source,
+      text: forgotten.text,
+      createdAt: new Date().toISOString(),
+      status: "dispatching",
+    });
     const tool = personalTools(
-      { memory, routines: { timezone: "Europe/Berlin" } } as AgentService,
+      { db, memory, routines: { timezone: "Europe/Berlin" } } as AgentService,
       "owner",
       "chat",
+      { profileSource: source },
     ).find((item) => item.name === "correct_memory") as {
       execute: (input: unknown) => Promise<unknown>;
     };
@@ -100,6 +109,8 @@ test("correct_memory cannot recover a forgotten fingerprint; authenticated setti
         text: forgotten.text,
         expectedRevision: 1,
         requestId: "recover",
+        category: "fact",
+        evidence: [{ quote: "My address is Rua Um" }],
       }),
       /forgotten|suppressed/i,
     );
