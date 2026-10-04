@@ -13,6 +13,47 @@ const documentMimes = {
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+/** Keep exact diagnostic identifiers; redact before bounding any document prose. */
+export function smokeOperationEvidence(operation, scrub) {
+  const value = scrub(operation);
+  const summary = { tool: value.toolName, status: value.status };
+  if (
+    !/^(?:primitive\.)?(?:create_document|inspect_document|confirm_document_review|view_file|finish_task)$/.test(
+      value.toolName,
+    )
+  )
+    return summary;
+  const bounded = (input, key = "") => {
+    if (typeof input === "string" && input.length > (key === "content" ? 4000 : 16000))
+      return {
+        omitted: true,
+        journalCharacters: input.length,
+        journalSha256: sha256(input),
+        excerpt: input.slice(0, 500),
+      };
+    if (Array.isArray(input)) return input.map((entry) => bounded(entry));
+    if (input && typeof input === "object")
+      return Object.fromEntries(
+        Object.entries(input).map(([name, entry]) => [name, bounded(entry, name)]),
+      );
+    return input;
+  };
+  return {
+    ...summary,
+    id: value.id,
+    toolCallId: value.toolCallId,
+    taskId: value.taskId,
+    revision: value.revision,
+    parentOperationId: value.parentOperationId,
+    createdAt: value.createdAt,
+    dispatchedAt: value.dispatchedAt,
+    args: bounded(value.args),
+    output: bounded(value.receipt),
+    error: bounded(value.receipt?.error ?? value.rejection),
+  };
+}
+
 const xmlText = (xml) =>
   [...xml.matchAll(/<(?:w|a):t(?:\s[^>]*)?>([\s\S]*?)<\/(?:w|a):t>/g)]
     .map((match) =>
@@ -462,6 +503,13 @@ async function runSmoke() {
     const receipt = safe({
       mode,
       prompt,
+      task: task
+        ? {
+            id: task.id,
+            appliedRevision: Number(task.state.appliedRevision ?? 0),
+            attempts: task.attempts,
+          }
+        : undefined,
       status: task?.status ?? "smoke_failed",
       failure,
       blockedCredentialRefresh: [...blockedRefresh],
@@ -487,10 +535,7 @@ async function runSmoke() {
       chatErrors: events
         .filter((event) => event.type === "RUN_ERROR")
         .map((event) => event.message),
-      operations: operations.map((operation) => ({
-        tool: operation.toolName,
-        status: operation.status,
-      })),
+      operations: operations.map((operation) => smokeOperationEvidence(operation, safe)),
       publication: {
         status: publication?.status,
         correctThread: publication?.threadId === threadId,

@@ -43,6 +43,16 @@ test("document review needs image dispatch, exact scope/revision, full page cove
     });
   const first = await record([1, 2]);
   await assert.rejects(
+    review.confirm("owner", scope, { receiptId: "a".repeat(64), passed: true, issues: [] }),
+    (error: Error) =>
+      error.message.includes(first.receiptId) && error.message.includes("not a file ID"),
+  );
+  await assert.rejects(
+    review.confirm("other-owner", scope, { receiptId: first.receiptId, passed: true, issues: [] }),
+    (error: Error) =>
+      error.message.includes("Current inspections: []") && !error.message.includes(first.receiptId),
+  );
+  await assert.rejects(
     review.confirm("owner", scope, { receiptId: first.receiptId, passed: true, issues: [] }),
     /image|observ/i,
   );

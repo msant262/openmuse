@@ -13,6 +13,14 @@ Make intentional choices about heading hierarchy, spacing, figure placement, col
 
 Compose complete content through the actual `create_document` schema. The document renderer supports Markdown headings, emphasis, links, lists, quotes, tables and code, plus supported figure blocks; follow the format workflow. Select a descriptive filename and title. Use subtitle, footer and cover only when useful to this document. Keep short documents compact; a cover is not mandatory. Use the supplied profile and fonts rather than naming unavailable proprietary fonts.
 
+Figure blocks use fenced JSON in every format. For example, a process uses:
+
+```steps
+{"items":[{"title":"Prepare","detail":"Gather the required information."},{"title":"Verify","detail":"Check the resulting document."}]}
+```
+
+Replace these example steps with the document's actual process. A `chart` fence contains `title`, `labels`, numeric `values` and optional `unit`; a `metrics` fence contains `items` with `label`, `value` and optional `detail`. Do not use `:::steps`, other colon directives, Mermaid or pseudo-HTML as figure syntax. Check that no construction markup appears in rendered output.
+
 Chat creation tools queue a durable worker task. In the worker, creation is followed by visual review:
 
 1. `inspect_document` renders the owned file in bounded batches. Request one inspection batch per model turn: the current image transport supplies the latest image. Read the receipt's actual page count and inspected page numbers.

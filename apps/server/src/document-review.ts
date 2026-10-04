@@ -24,7 +24,12 @@ const inspectionSchema = z
   );
 export const documentReviewArgs = z
   .object({
-    receiptId: z.string().regex(/^[a-f0-9]{64}$/),
+    receiptId: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .describe(
+        "Copy the exact receiptId returned by inspect_document; fileId, previewFileId and SHA-256 values are different identifiers.",
+      ),
     passed: z.boolean(),
     issues: z.array(z.string().trim().min(1).max(500)).max(20),
   })
@@ -90,8 +95,21 @@ export class DocumentReview {
   async confirm(owner: string, scope: DocumentReviewScope, raw: unknown) {
     const args = documentReviewArgs.parse(raw);
     const receipt = await this.db.get<Inspection>(owner, "document-inspections", args.receiptId);
-    if (!receipt || receipt.scope !== scope.scope || receipt.revision !== scope.revision)
-      throw new AppError("Inspection does not belong to this task revision", 409);
+    if (!receipt || receipt.scope !== scope.scope || receipt.revision !== scope.revision) {
+      const available = (await this.db.list<Inspection>(owner, "document-inspections"))
+        .filter((entry) => entry.scope === scope.scope && entry.revision === scope.revision)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 8)
+        .map((entry) => ({
+          receiptId: entry.id,
+          documentFileId: entry.fileId,
+          pages: entry.pages,
+        }));
+      throw new AppError(
+        `Inspection does not belong to this task revision. Copy an exact receiptId from inspect_document, not a file ID or content hash. Current inspections: ${JSON.stringify(available)}. If none match the pages you reviewed, call inspect_document again.`,
+        409,
+      );
+    }
     const seen = await this.db.get<{
       id: string;
       scope: string;

@@ -429,6 +429,109 @@ test("owned image assets survive deterministic package normalization alongside m
   }
 });
 
+test("wrapped DOCX titles and headings retain separate lines with and without a cover", {
+  timeout: 120000,
+}, async (t) => {
+  const run = promisify(execFile);
+  const directory = await mkdtemp(join(tmpdir(), "document-title-leading-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const paths: string[] = [];
+  const title = "Como funciona o OkamiBot neste aplicativo";
+  const heading =
+    "Uma seção com título extenso que permanece legível quando é distribuído em várias linhas consecutivas";
+  for (const cover of [false, true]) {
+    const bytes = await createDocumentDocx(
+      composeDocument(
+        `# ${heading}\n\nTexto de conferência.`,
+        title,
+        {
+          cover,
+          eyebrow: "GUIA DE OPERAÇÃO",
+          subtitle: "Ferramentas, skills e limites observáveis",
+        },
+        { ...defaultDocumentTheme, display: "sans" },
+      ),
+    );
+    const zip = await JSZip.loadAsync(bytes);
+    const xml = await zip.file("word/document.xml")?.async("string");
+    const styles = await zip.file("word/styles.xml")?.async("string");
+    assert.ok(xml && styles);
+    // LibreOffice 7.4 interprets an omitted lineRule as fixed body-sized leading,
+    // although newer versions render it as automatic. Preserve compatibility.
+    assert.match(styles, /<w:pPrDefault>.*?<w:spacing[^>]*w:lineRule="auto"/);
+    const titleParagraph = xml.match(/<w:p>\s*<w:pPr><w:pStyle w:val="Title".*?<\/w:p>/)?.[0];
+    assert.ok(titleParagraph);
+    assert.match(titleParagraph, /<w:spacing[^>]*w:lineRule="auto"/);
+    const path = join(directory, `cover-${cover}.docx`);
+    await writeFile(path, bytes);
+    paths.push(path);
+  }
+  try {
+    await run("libreoffice", ["--version"], { timeout: 10000 });
+  } catch {
+    t.diagnostic("LibreOffice is unavailable; rendered line separation requires it");
+    return;
+  }
+  await run(
+    "libreoffice",
+    [
+      `-env:UserInstallation=${pathToFileURL(join(directory, "profile")).href}`,
+      "--headless",
+      "--nologo",
+      "--nodefault",
+      "--norestore",
+      "--convert-to",
+      "pdf",
+      "--outdir",
+      directory,
+      ...paths,
+    ],
+    { timeout: 60000 },
+  );
+  const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  for (const cover of [false, true]) {
+    const loading = getDocument({
+      data: new Uint8Array(await readFile(join(directory, `cover-${cover}.pdf`))),
+      useWorkerFetch: false,
+      verbosity: 0,
+    });
+    try {
+      const pdf = await loading.promise;
+      for (const [pageNumber, fontSize, expected] of [
+        [1, cover ? 36 : 26, title],
+        [cover ? 2 : 1, 18, heading],
+      ] as const) {
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1 });
+        const text = await page.getTextContent();
+        const lines = text.items.flatMap((item) => {
+          if (!("str" in item) || !item.str.trim() || Math.abs(item.height - fontSize) > 0.1)
+            return [];
+          const font = text.styles[item.fontName];
+          return [
+            {
+              text: item.str,
+              top: viewport.height - item.transform[5] - (font.ascent ?? 1) * item.height,
+              bottom: viewport.height - item.transform[5] - (font.descent ?? -0.25) * item.height,
+            },
+          ];
+        });
+        assert.equal(lines.map((line) => line.text).join(" "), expected);
+        assert.ok(lines.length >= 2, "the regression fixture must actually wrap");
+        for (let index = 1; index < lines.length; index++) {
+          const gap = lines[index].top - lines[index - 1].bottom;
+          assert.ok(
+            gap >= 2,
+            `cover=${cover}, ${fontSize}pt lines need clear separation; got ${gap}pt`,
+          );
+        }
+      }
+    } finally {
+      await loading.destroy();
+    }
+  }
+});
+
 test("native Office documents open in LibreOffice and retain their final text in actual rendered PDFs", {
   timeout: 120000,
 }, async (t) => {

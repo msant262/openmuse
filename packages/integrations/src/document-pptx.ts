@@ -137,6 +137,14 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     continuation = false,
     pendingSection = false;
   let flow: { slide: PptxModule.default.Slide; y: number } | undefined;
+  let captionArea: { slide: PptxModule.default.Slide; y: number } | undefined;
+  const captionSize = 18,
+    captionLeading = (captionSize * 1.29) / 72,
+    captionGap = 0.23;
+  const shortCaption = (runs: readonly DocumentRun[]) => {
+    const lines = wrapRuns(runs, captionSize, 11.89, fonts);
+    return lines.length <= 3 ? lines : undefined;
+  };
 
   const styled = (
     runs: readonly DocumentRun[],
@@ -314,7 +322,19 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     });
   }
 
-  for (const block of model.blocks) {
+  for (const [blockIndex, block] of model.blocks.entries()) {
+    // Only an immediately adjacent, short paragraph can occupy a figure's remaining space.
+    // Headings, lists, explicit breaks and longer prose keep their existing slide flow.
+    if (block.type === "paragraph" && captionArea) {
+      const lines = shortCaption(block.runs);
+      const area = captionArea;
+      captionArea = undefined;
+      if (lines && area.y + lines.length * captionLeading + 0.035 <= 6.55) {
+        lineText(area.slide, lines, 0.72, area.y, 11.89, captionSize, { color: muted });
+        continue;
+      }
+    }
+    captionArea = undefined;
     if (block.type === "heading") {
       if (block.level <= 2) {
         if (pendingSection) sectionSlide();
@@ -408,7 +428,8 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
           1.5,
           (6.45 - y) / Math.min(4, block.items.length - offset),
         );
-        let top = y;
+        let top = y,
+          visibleBottom = y;
         while (offset < block.items.length) {
           const item = block.items[offset];
           const itemTitle = wrapRuns([{ text: item.title, bold: true }], 23, 10.4, fonts);
@@ -439,11 +460,18 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
             { bold: true, color: markerText, align: "center" },
           );
           const height = lineText(slide, itemTitle, 1.65, top + 0.03, 10.4, 23);
-          if (detail.length)
-            lineText(slide, detail, 1.65, top + 0.1 + height, 10.4, 18, { color: muted });
+          const detailHeight = detail.length
+            ? lineText(slide, detail, 1.65, top + 0.1 + height, 10.4, 18, { color: muted })
+            : 0;
+          visibleBottom = Math.max(
+            top + 0.66,
+            top + 0.03 + height + 0.035,
+            detail.length ? top + 0.1 + height + detailHeight + 0.035 : 0,
+          );
           top += stepHeight;
           offset++;
         }
+        captionArea = { slide, y: visibleBottom + captionGap };
       }
     } else if (block.type === "chart") {
       const slide = base("data-chart");
@@ -457,6 +485,19 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
         throw new Error(
           "Chart labels are too long for presentation axes; shorten labels and explain them in prose",
         );
+      const next = model.blocks[blockIndex + 1];
+      const caption = next?.type === "paragraph" ? shortCaption(next.runs) : undefined;
+      const captionHeight = caption ? caption.length * captionLeading + 0.035 + captionGap : 0;
+      const labelSize = block.labels.length > 8 ? 15 : 18;
+      const minimumChartHeight = Math.max(
+        2.4,
+        (block.labels.length * labelSize * 1.29 * 1.2) / 72 + 0.75,
+      );
+      const fullHeight = 6.45 - y;
+      const height =
+        caption && fullHeight - captionHeight >= minimumChartHeight
+          ? fullHeight - captionHeight
+          : fullHeight;
       slide.addChart(
         presentation.ChartType.bar,
         [
@@ -470,9 +511,9 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
           x: 0.72,
           y,
           w: 11.85,
-          h: 6.45 - y,
+          h: height,
           catAxisLabelFontFace: bodyFont,
-          catAxisLabelFontSize: block.labels.length > 8 ? 15 : 18,
+          catAxisLabelFontSize: labelSize,
           catAxisLabelColor: ink,
           catAxisLineShow: false,
           valAxisLabelFontFace: bodyFont,
@@ -501,6 +542,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
             : {}),
         },
       );
+      captionArea = { slide, y: y + height + captionGap };
     } else if (block.type === "image") {
       const image = model.images.get(block.fileId);
       if (!image) throw new Error(`Document image is missing: ${block.fileId}`);
@@ -629,6 +671,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
           autoPage: false,
           valign: "top",
         });
+        captionArea = { slide, y: y + used + captionGap };
       } while (offset < data.length);
     }
     pendingSection = false;

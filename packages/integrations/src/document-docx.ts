@@ -10,6 +10,7 @@ import {
   type INumberingOptions,
   type IParagraphOptions,
   LevelFormat,
+  LineRuleType,
   Packer,
   PageBreak,
   PageNumber,
@@ -101,7 +102,12 @@ export async function createDocumentDocx(model: DocumentModel): Promise<Uint8Arr
           }),
         ],
         heading: HeadingLevel.TITLE,
-        spacing: { before: design.cover && !design.eyebrow ? 1800 : 0, after: 300 },
+        spacing: {
+          before: design.cover && !design.eyebrow ? 1800 : 0,
+          after: 300,
+          line: 300,
+          lineRule: LineRuleType.AUTO,
+        },
         border: { bottom: { style: BorderStyle.SINGLE, size: 16, color: accent, space: 18 } },
         keepNext: true,
       }),
@@ -397,19 +403,30 @@ export async function createDocumentDocx(model: DocumentModel): Promise<Uint8Arr
       default: {
         document: {
           run: { font: bodyFont, size: 22, color: ink },
-          paragraph: { spacing: { after: 180, line: 310 } },
+          // Older LibreOffice versions interpret an inherited w:line without
+          // w:lineRule as a fixed body-sized height, overlapping large text.
+          paragraph: { spacing: { after: 180, line: 310, lineRule: LineRuleType.AUTO } },
         },
         heading1: {
           run: { font: displayFont, size: 36, color: ink },
-          paragraph: { spacing: { before: 420, after: 200 }, keepNext: true },
+          paragraph: {
+            spacing: { before: 420, after: 200, line: 300, lineRule: LineRuleType.AUTO },
+            keepNext: true,
+          },
         },
         heading2: {
           run: { font: displayFont, size: 29, color: ink },
-          paragraph: { spacing: { before: 320, after: 150 }, keepNext: true },
+          paragraph: {
+            spacing: { before: 320, after: 150, line: 300, lineRule: LineRuleType.AUTO },
+            keepNext: true,
+          },
         },
         heading3: {
           run: { font: bodyFont, size: 24, bold: true, color: accentText },
-          paragraph: { spacing: { before: 240, after: 130 }, keepNext: true },
+          paragraph: {
+            spacing: { before: 240, after: 130, line: 300, lineRule: LineRuleType.AUTO },
+            keepNext: true,
+          },
         },
         heading4: {
           run: { font: bodyFont, size: 22, bold: true, color: ink },

@@ -71,6 +71,13 @@ test("document composition preserves semantic content and editable data", () => 
 });
 
 test("authoring rejects unresolvable images and malformed numerical graphics", () => {
+  assert.throws(
+    () => composeDocument(":::steps\n1. Entender\n2. Entregar\n:::"),
+    /Unsupported :::.*fenced steps/,
+  );
+  assert.doesNotThrow(() =>
+    composeDocument('```steps\n{"items":[{"title":"Entender"},{"title":"Entregar"}]}\n```'),
+  );
   assert.throws(() => composeDocument("![Photo](https://example.org/image.png)"), /owned|file:/i);
   assert.throws(
     () => composeDocument('```chart\n{"title":"X","labels":["A"],"values":[1,2]}\n```'),

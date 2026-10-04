@@ -1,10 +1,69 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import JSZip from "jszip";
+import {
+  configuredSecretScrubber,
+  scrubConfiguredValue,
+} from "../apps/server/src/configured-secrets.ts";
 import { createDocumentDocx } from "../packages/integrations/src/document-docx.ts";
 import { composeDocument } from "../packages/integrations/src/document-model.ts";
 import { createDocumentPptx } from "../packages/integrations/src/document-pptx.ts";
-import { inspectOfficeExport } from "../scripts/harness-delivery-smoke.mjs";
+import { inspectOfficeExport, smokeOperationEvidence } from "../scripts/harness-delivery-smoke.mjs";
+
+test("smoke preserves exact document call IDs, revisions and errors while bounding scrubbed prose", () => {
+  const secret = "do-not-export-this-credential";
+  const scrub = (value) => scrubConfiguredValue(value, configuredSecretScrubber([secret]));
+  const receiptId = "a".repeat(64),
+    fileId = "b".repeat(64);
+  const failed = smokeOperationEvidence(
+    {
+      id: "operation",
+      taskId: "task-one",
+      revision: 3,
+      toolName: "confirm_document_review",
+      toolCallId: "call-one",
+      status: "failed",
+      args: { receiptId, passed: true, issues: [] },
+      receipt: { error: `Inspection does not belong to this task revision ${secret}` },
+    },
+    scrub,
+  );
+  assert.equal(failed.args.receiptId, receiptId);
+  assert.equal(failed.revision, 3);
+  assert.equal(failed.toolCallId, "call-one");
+  assert.equal(failed.taskId, "task-one");
+  assert.equal(failed.output.error, failed.error);
+  assert.match(failed.error, /\[redacted\]/);
+  assert.ok(!JSON.stringify(failed).includes(secret));
+
+  const created = smokeOperationEvidence(
+    {
+      toolName: "create_document",
+      status: "succeeded",
+      args: { content: `${secret} ${"conteúdo ".repeat(2000)}`, operationId: "authored" },
+      receipt: { fileId },
+    },
+    scrub,
+  );
+  assert.equal(created.args.content.omitted, true);
+  assert.ok(created.args.content.journalCharacters > 4000);
+  assert.equal(created.args.content.journalSha256.length, 64);
+  assert.equal(created.output.fileId, fileId);
+  assert.ok(!JSON.stringify(created).includes(secret));
+  assert.ok(JSON.stringify(created).length < 1500);
+  assert.deepEqual(
+    smokeOperationEvidence(
+      {
+        toolName: "search_web",
+        status: "succeeded",
+        args: { query: secret },
+        receipt: { content: "large unrelated result" },
+      },
+      scrub,
+    ),
+    { tool: "search_web", status: "succeeded" },
+  );
+});
 
 const content = `## Como o assistente trabalha
 

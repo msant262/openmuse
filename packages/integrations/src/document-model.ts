@@ -173,6 +173,10 @@ function blocksFrom(tokens: Token[], depth = 0): DocumentBlock[] {
     if (token.type === "hr") return [{ type: "rule" }];
     if (token.type === "paragraph" || token.type === "text") {
       const paragraph = token as Tokens.Paragraph;
+      if (/^\s*:::(?:[a-z][\w-]*)?\s*$/im.test(paragraph.text))
+        throw new PdfError(
+          'Unsupported ::: document figure syntax. Use fenced steps, metrics or chart blocks containing JSON; for steps use {"items":[{"title":"Step title","detail":"Optional explanation"}]}.',
+        );
       const items = paragraph.tokens ?? Lexer.lexInline(paragraph.text);
       if (items.length === 1 && items[0].type === "image")
         return [imageBlock(items[0] as Tokens.Image)];
