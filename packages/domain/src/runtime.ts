@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stickerIdSchema } from "./conversation-social.ts";
 import type { ProactivitySuggestion } from "./proactivity.ts";
 
 export const normalizedRegionSchema = z
@@ -62,6 +63,8 @@ export const acceptedMessageSchema = z
     text: z.string().trim().min(1).max(24000),
     attachmentIds: z.array(runtimeId).max(30).default([]),
     targetTaskId: runtimeId.optional(),
+    replyToMessageId: runtimeId.optional(),
+    stickerId: stickerIdSchema.optional(),
     annotations: z
       .array(
         z

@@ -324,3 +324,172 @@ test("a first definitive rejection can be removed without erasing another uncert
   await outbox.remove("never-accepted");
   assert.equal(outbox.getSnapshot().pending.length, 0);
 });
+
+test("quotes and stickers remain renderable after ACK, a stale stream snapshot, and reopen", async () => {
+  const disk = storage();
+  const outbox = new MessageOutbox(disk, "social-cache", "chat");
+  const replyTo = { messageId: "source", role: "assistant" as const, text: "Want to celebrate?" };
+  await outbox.saveDraft("Keep typing", [], [], replyTo);
+  await outbox.enqueue({
+    id: "sticker-reply",
+    text: "Nice!",
+    stickerId: "celebrate",
+    replyToMessageId: "source",
+    displayReplyTo: replyTo,
+  });
+  assert.deepEqual(outbox.getSnapshot().messageDetails, [
+    {
+      messageId: "sticker-reply",
+      text: "Nice!",
+      stickerId: "celebrate",
+      replyTo,
+    },
+  ]);
+  await outbox.flush(async (message) => {
+    assert.equal("displayReplyTo" in message, false);
+    assert.equal(message.replyToMessageId, "source");
+  });
+  await outbox.saveMessages([{ id: "source", role: "assistant", content: "Want to celebrate?" }]);
+  const restored = new MessageOutbox(disk, "social-cache", "chat");
+  await restored.open();
+  assert.equal(restored.getSnapshot().pending.length, 0);
+  assert.equal(restored.getSnapshot().messageDetails[0].stickerId, "celebrate");
+  assert.deepEqual(restored.getSnapshot().messageDetails[0].replyTo, replyTo);
+  assert.equal(
+    restored
+      .getSnapshot()
+      .messages.filter((value) => (value as { id: string }).id === "sticker-reply").length,
+    1,
+  );
+  await restored.saveMessages([
+    { id: "source", role: "assistant", content: "Want to celebrate?" },
+    { id: "sticker-reply", role: "user", content: "Nice!\n[Companion sticker: celebrate]" },
+  ]);
+  assert.equal(
+    restored
+      .getSnapshot()
+      .messages.filter((value) => (value as { id: string }).id === "sticker-reply").length,
+    1,
+  );
+});
+
+test("canonical quote metadata replaces the preview without dropping unsent local stickers", async () => {
+  const outbox = new MessageOutbox(storage(), "canonical-social", "chat");
+  await outbox.enqueue({ id: "local", text: "Thanks", stickerId: "thanks" });
+  await outbox.saveMessageDetails([
+    {
+      messageId: "remote",
+      text: "Reply",
+      replyTo: {
+        messageId: "source",
+        role: "assistant",
+        text: "The canonical quote",
+      },
+    },
+  ]);
+  await outbox.saveMessageDetails([
+    { messageId: "local", text: "Thank you!", stickerId: "thanks" },
+  ]);
+  assert.equal(outbox.getSnapshot().messageDetails.length, 2);
+  assert.equal(
+    outbox.getSnapshot().messageDetails.find((item) => item.messageId === "local")?.text,
+    "Thank you!",
+  );
+  assert.equal(
+    outbox.getSnapshot().messageDetails.find((item) => item.messageId === "remote")?.replyTo?.text,
+    "The canonical quote",
+  );
+  await outbox.remove("local");
+  assert.equal(
+    outbox.getSnapshot().messageDetails.some((item) => item.messageId === "local"),
+    false,
+  );
+  assert.equal(
+    outbox.getSnapshot().messages.some((item) => (item as { id: string }).id === "local"),
+    false,
+  );
+});
+
+test("old outbox records load with an empty display metadata cache", async () => {
+  const disk = storage();
+  await disk.write(
+    "legacy",
+    JSON.stringify({
+      version: 1,
+      pending: [],
+      cursor: 0,
+      events: [],
+      messages: [],
+      draft: { text: "Older draft", attachmentIds: [], annotations: [], revision: 1 },
+    }),
+  );
+  const outbox = new MessageOutbox(disk, "legacy", "chat");
+  await outbox.open();
+  assert.deepEqual(outbox.getSnapshot().messageDetails, []);
+  assert.equal(outbox.getSnapshot().draft.text, "Older draft");
+});
+
+test("removing a queued message while flush starts never sends the removed message", async () => {
+  const outbox = new MessageOutbox(storage(), "remove-race", "chat");
+  await outbox.enqueue({ id: "removed", text: "Do not send" });
+  const sent: string[] = [];
+  await Promise.all([
+    outbox.remove("removed"),
+    outbox.flush(async (message) => {
+      sent.push(message.id);
+    }),
+  ]);
+  assert.deepEqual(sent, []);
+});
+
+test("a stale remove after acceptance keeps the accepted message visible", async () => {
+  const outbox = new MessageOutbox(storage(), "remove-after-ack", "chat");
+  await outbox.enqueue({ id: "accepted", text: "Keep this" });
+  await outbox.flush(async () => {});
+  assert.equal(await outbox.remove("accepted"), false);
+  assert.equal(outbox.getSnapshot().messages.length, 1);
+});
+
+test("sending a quoted sticker clears only its quote and preserves the unfinished text and files", async () => {
+  const outbox = new MessageOutbox(storage(), "sticker-draft", "chat");
+  const quote = { messageId: "source", role: "assistant" as const, text: "Hello" };
+  await outbox.saveDraft("Unfinished text", ["file"], [], quote);
+  await outbox.enqueue({
+    id: "sticker",
+    text: "Hello!",
+    stickerId: "hello",
+    replyToMessageId: "source",
+    displayReplyTo: quote,
+    clearReply: true,
+  });
+  assert.equal(outbox.getSnapshot().draft.replyTo, undefined);
+  assert.equal(outbox.getSnapshot().draft.text, "Unfinished text");
+  assert.deepEqual(outbox.getSnapshot().draft.attachmentIds, ["file"]);
+});
+
+test("accepted replay hydrates clean text and canonical quotes before transcript reconnect", async () => {
+  const outbox = new MessageOutbox(storage(), "replay-details", "chat");
+  const replyTo = { messageId: "source", role: "assistant" as const, text: "Canonical text" };
+  await outbox.applyReplay({
+    events: [
+      {
+        id: "accepted:remote",
+        threadId: "chat",
+        seq: 1,
+        kind: "accepted",
+        origin: "user",
+        payload: { messageId: "remote", text: "Thanks!", stickerId: "thanks", replyTo },
+      },
+    ],
+    nextCursor: 1,
+    snapshotRequired: false,
+  });
+  assert.deepEqual(outbox.getSnapshot().messageDetails, [
+    {
+      messageId: "remote",
+      text: "Thanks!",
+      stickerId: "thanks",
+      replyTo,
+    },
+  ]);
+});

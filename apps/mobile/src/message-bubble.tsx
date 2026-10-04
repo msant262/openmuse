@@ -12,6 +12,10 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  type MessageReaction,
+  reactionEmojis,
+} from "../../../packages/domain/src/conversation-social";
 import { useI18n } from "./i18n";
 import { useUI } from "./ui";
 
@@ -42,12 +46,16 @@ export function MessageBubble({
   user,
   contextual,
   onQuote,
+  reactions = [],
+  onReact,
 }: {
   children: ReactNode;
   text: string;
   user: boolean;
   contextual: boolean;
   onQuote?: () => void;
+  reactions?: MessageReaction[];
+  onReact?: (emoji: MessageReaction["emoji"]) => void;
 }) {
   const { colors, s } = useUI();
 
@@ -98,7 +106,7 @@ export function MessageBubble({
     }
   }
   const menuWidth = Math.min(244, width - 32);
-  const menuHeight = (onQuote ? 3 : 2) * 48 + 16 + (error ? 66 : 0);
+  const menuHeight = (onQuote ? 3 : 2) * 48 + 16 + (onReact ? 52 : 0) + (error ? 66 : 0);
   return (
     <View
       ref={anchor}
@@ -129,6 +137,41 @@ export function MessageBubble({
       >
         {children}
       </Pressable>
+      {!!reactions.length && (
+        <View
+          style={{
+            flexDirection: "row",
+            gap: 5,
+            marginTop: 5,
+            alignSelf: user ? "flex-end" : "flex-start",
+          }}
+        >
+          {reactions.map((reaction) => (
+            <Pressable
+              key={reaction.id}
+              accessibilityRole={reaction.actor === "user" ? "button" : undefined}
+              accessibilityLabel={t(
+                reaction.actor === "user"
+                  ? "Your reaction: {emoji}"
+                  : "Companion reaction: {emoji}",
+                { emoji: reaction.emoji ?? "" },
+              )}
+              disabled={reaction.actor !== "user" || !onReact}
+              onPress={() => onReact?.(reaction.emoji)}
+              style={{
+                backgroundColor: colors.raised,
+                borderRadius: 14,
+                paddingHorizontal: 9,
+                paddingVertical: 5,
+                borderWidth: 1,
+                borderColor: reaction.actor === "user" ? colors.selectedBorder : colors.line,
+              }}
+            >
+              <Text style={{ fontSize: 17, color: colors.text }}>{reaction.emoji}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={t("Message actions")}
@@ -217,6 +260,30 @@ export function MessageBubble({
                     onQuote();
                   }}
                 />
+              )}
+              {onReact && (
+                <View style={{ flexDirection: "row", paddingHorizontal: 8, paddingVertical: 4 }}>
+                  {reactionEmojis.map((emoji) => (
+                    <Pressable
+                      key={emoji}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("React with {emoji}", { emoji })}
+                      aria-selected={reactions.some((r) => r.actor === "user" && r.emoji === emoji)}
+                      onPress={() => {
+                        setMenu(undefined);
+                        onReact(emoji);
+                      }}
+                      style={{
+                        flex: 1,
+                        minHeight: 44,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Text style={{ fontSize: 24, color: colors.text }}>{emoji}</Text>
+                    </Pressable>
+                  ))}
+                </View>
               )}
               <MessageAction
                 icon={copied ? Check : Copy}

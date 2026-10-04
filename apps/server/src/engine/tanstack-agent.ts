@@ -75,6 +75,8 @@ export function tanstackAgent(options: {
   maxSteps: number;
   /** Reserve the last allowed model turn for a chat answer without any tools. */
   finalResponseOnStepLimit?: boolean;
+  /** A successful handoff finishes the foreground turn without polling its worker. */
+  finalResponseWhen?: () => boolean;
   /** Reserve the preceding turn for handing unfinished work to a durable worker. */
   handoffBeforeFinalResponse?: {
     tools: () => readonly string[];
@@ -240,7 +242,8 @@ export function tanstackAgent(options: {
                 progressWarnings.clear();
               }
               const finalResponse =
-                options.finalResponseOnStepLimit && ctx.iteration >= options.maxSteps - 1;
+                Boolean(options.finalResponseWhen?.()) ||
+                (options.finalResponseOnStepLimit && ctx.iteration >= options.maxSteps - 1);
               const handoff =
                 options.finalResponseOnStepLimit &&
                 !finalResponse &&

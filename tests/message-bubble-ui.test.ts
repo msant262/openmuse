@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { reactionEmojis } from "../packages/domain/src/conversation-social.ts";
 import { componentHarness } from "./helpers/component.ts";
 
 function fixture(
@@ -11,6 +12,7 @@ function fixture(
     new URL("../apps/mobile/src/message-bubble.tsx", import.meta.url),
     "MessageBubble",
     {
+      "../../../packages/domain/src/conversation-social": { reactionEmojis },
       "react-native": {
         View: "View",
         Pressable: "Pressable",
@@ -147,5 +149,50 @@ test("Copy and unsupported web sharing copy the actual message, while clipboard 
   } finally {
     view.close();
     failed.close();
+  }
+});
+
+test("reaction menu selects an emoji and only the user's reaction chip can toggle it", () => {
+  const selected: unknown[] = [];
+  const view = fixture(true);
+  try {
+    const props = {
+      contextual: true,
+      user: false,
+      text: "A message",
+      children: "A message",
+      onReact: (emoji: unknown) => selected.push(emoji),
+      reactions: [
+        { id: "user", messageId: "m", threadId: "chat", actor: "user", emoji: "❤️" },
+        { id: "companion", messageId: "m", threadId: "chat", actor: "assistant", emoji: "👍" },
+      ],
+    };
+    view.render(props);
+    attachAnchor(view);
+    const mine = view
+      .nodes()
+      .find((node) => node.props.accessibilityLabel === "Your reaction: {emoji}");
+    const companion = view
+      .nodes()
+      .find((node) => node.props.accessibilityLabel === "Companion reaction: {emoji}");
+    assert.ok(mine);
+    assert.ok(companion);
+    assert.equal(mine.props.disabled, false);
+    assert.equal(companion.props.disabled, true);
+    (mine.props.onPress as () => void)();
+    assert.deepEqual(selected, ["❤️"]);
+    overflow(view).onPress();
+    view.render();
+    const emoji = view.nodes().find((node) => node.props["aria-selected"] === true);
+    assert.ok(emoji);
+    (emoji.props.onPress as () => void)();
+    view.render();
+    assert.deepEqual(selected, ["❤️", "❤️"]);
+    assert.equal(
+      view.nodes().some((node) => node.type === "Modal"),
+      false,
+    );
+  } finally {
+    view.close();
   }
 });

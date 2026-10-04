@@ -1,5 +1,6 @@
 import { avatarCharacterPtBR } from "./avatar-character-copy";
 import { avatarPTBR } from "./avatar-copy";
+import { companionChatPtBR } from "./companion-chat-copy";
 import { connectionsPtBR } from "./connections-copy";
 import { interfaceRefreshPtBR } from "./interface-refresh-copy";
 import { learningPtBR } from "./learning-copy";
@@ -7,6 +8,7 @@ import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  ...companionChatPtBR,
   "Your AI companion": "Seu companheiro de IA",
   "A brighter tomorrow, together.": "Um amanhã melhor, juntos.",
   "Connecting to your workspace…": "Conectando ao seu workspace…",

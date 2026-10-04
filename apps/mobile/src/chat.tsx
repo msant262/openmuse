@@ -18,6 +18,7 @@ import {
   Mic,
   Monitor,
   RotateCcw,
+  Smile,
   Square,
   X,
 } from "lucide-react-native";
@@ -39,9 +40,16 @@ import {
   Text,
   TextInput,
   type TextStyle,
+  useWindowDimensions,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { z } from "zod";
+import {
+  companionStickers,
+  type MessageQuote,
+  type StickerId,
+} from "../../../packages/domain/src/conversation-social";
 import type { ProactivitySuggestion } from "../../../packages/domain/src/proactivity";
 import type {
   AcceptedMessageInput,
@@ -57,6 +65,7 @@ import { useAvatarPresentation } from "./avatar-presentation";
 import { BackgroundUpdates } from "./background-updates";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
 import { ChatAttachments } from "./chat-attachments";
+import { CompanionSticker, MessageQuoteView, useConversationSocial } from "./companion-chat";
 import { BrowserThreadCard } from "./computer";
 import {
   type AnnotationSource,
@@ -69,7 +78,7 @@ import {
   ConversationResourceLibrary,
 } from "./conversation-resources";
 import { runConversationTurn } from "./conversation-run";
-import { FileToolCard } from "./file-tool-card";
+import { FileToolCard, mediaResult } from "./file-tool-card";
 import { useI18n } from "./i18n";
 import { InteractionList } from "./interaction-list";
 import { confirmedJevSelection, displayJevUserMessage, latestJevPanelId } from "./jev-actions";
@@ -81,6 +90,7 @@ import {
   composerKeyIsSubmit,
   conversationDeliveryError,
   MessageOutbox,
+  mergeOutboxMessages,
   type OutboxMessage,
 } from "./message-outbox";
 import { messageStorage } from "./message-storage";
@@ -112,6 +122,38 @@ function useComputerToolCard(name: string) {
   });
 }
 export function WorkspaceTools() {
+  useRenderTool({
+    name: "send_sticker",
+    description: "Companion sticker",
+    parameters: displayParameters,
+    render: ({ result, status }) =>
+      status === "complete" ? (
+        <CompanionSticker
+          id={mediaResult(result)?.stickerId as StickerId}
+          caption={mediaResult(result)?.caption as string | undefined}
+        />
+      ) : null,
+  });
+  useRenderTool({
+    name: "react_to_message",
+    description: "Message reaction",
+    parameters: displayParameters,
+    render: () => null,
+  });
+  useRenderTool({
+    name: "reply_to_message",
+    description: "Quoted reply",
+    parameters: displayParameters,
+    render: ({ result, status }) => {
+      const reply = mediaResult(result) as { replyTo?: MessageQuote; text?: string } | undefined;
+      return status === "complete" && reply?.replyTo ? (
+        <View>
+          <MessageQuoteView quote={reply.replyTo} />
+          <AssistantResponse content={reply.text ?? ""} />
+        </View>
+      ) : null;
+    },
+  });
   useComputerToolCard("export_computer_file");
   useComputerToolCard("export_computer_pdf");
   useComputerToolCard("transcribe");
@@ -341,6 +383,8 @@ export function ChatScreen({
   const { colors, s } = useUI();
 
   const { t } = useI18n();
+  const { height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { api, workspace: w, refresh, open } = useWorkspace();
   const { reportActivity } = useAvatarPresentation();
   const { data: agentWorkspace, refresh: refreshAgent } = useAgentWorkspace();
@@ -353,6 +397,11 @@ export function ChatScreen({
   const { copilotkit } = useCopilotKit();
   const renderToolCall = useRenderToolCall();
   const [draft, setDraft] = useState("");
+  const [replyTo, setReplyTo] = useState<MessageQuote>();
+  const [showExpressions, setShowExpressions] = useState(false);
+  const [receivedMessage, setReceivedMessage] = useState<string>();
+  const composerInput = useRef<TextInput>(null);
+  const messagePositions = useRef(new Map<string, number>());
   const [annotations, setAnnotations] = useState<AcceptedMessageInput["annotations"]>([]);
   const [annotationSource, setAnnotationSource] = useState<AnnotationSource>();
   const [showResourceLibrary, setShowResourceLibrary] = useState(false);
@@ -381,8 +430,8 @@ export function ChatScreen({
   const [picking, setPicking] = useState(false);
   const [voiceRequest, setVoiceRequest] = useState(0);
   const [attachments, setAttachments] = useState<string[]>([]);
-  const composerValues = useRef({ draft, attachments, annotations });
-  composerValues.current = { draft, attachments, annotations };
+  const composerValues = useRef({ draft, attachments, annotations, replyTo });
+  composerValues.current = { draft, attachments, annotations, replyTo };
   const composerMounted = useRef(true);
   useEffect(() => {
     composerMounted.current = true;
@@ -395,6 +444,12 @@ export function ChatScreen({
     durableChat
       ? new MessageOutbox(messageStorage, `${api.identityKey}\n${threadId}`, threadId)
       : new ConversationQueue(),
+  );
+  const social = useConversationSocial(
+    threadId,
+    durableChat && active && (selection.existing || agent.messages.length > 0),
+    queue instanceof MessageOutbox ? queue : undefined,
+    agent.messages,
   );
   const [questions, setQuestions] = useState<InteractionRequest[]>([]);
   const [suggestions, setSuggestions] = useState<ProactivitySuggestion[]>([]);
@@ -426,6 +481,7 @@ export function ChatScreen({
           setDraft(saved.draft.text);
           setAttachments(saved.draft.attachmentIds);
           setAnnotations(saved.draft.annotations);
+          setReplyTo(saved.draft.replyTo);
         }
         if (!agent.messages.length && saved.messages.length)
           agent.setMessages(saved.messages as Message[]);
@@ -476,6 +532,7 @@ export function ChatScreen({
             setDraft(saved.draft.text);
             setAttachments(saved.draft.attachmentIds);
             setAnnotations(saved.draft.annotations);
+            setReplyTo(saved.draft.replyTo);
           }
           if (active && !agent.messages.length && saved.messages.length)
             agent.setMessages(saved.messages as Message[]);
@@ -532,9 +589,9 @@ export function ChatScreen({
   useEffect(() => {
     if (!(queue instanceof MessageOutbox) || !queue.getSnapshot().loaded) return;
     void queue
-      .saveDraft(draft, attachments, annotations)
+      .saveDraft(draft, attachments, annotations, replyTo)
       .catch((cause) => setSaveError(String(cause)));
-  }, [draft, attachments, annotations, queue, loaded]);
+  }, [draft, attachments, annotations, replyTo, queue, loaded]);
   useEffect(() => {
     if (!(queue instanceof MessageOutbox)) return;
     const subscription = agent.subscribe({
@@ -702,6 +759,7 @@ export function ChatScreen({
             ...envelope,
             clientMessageId: id,
           });
+          setReceivedMessage(id);
           markAccepted(threadId);
           void syncReplay().catch((cause) => setError(String(cause)));
         } else await run(message);
@@ -730,23 +788,32 @@ export function ChatScreen({
       attachmentIds: string[] = [],
       clearDraft = false,
       messageAnnotations: AcceptedMessageInput["annotations"] = [],
+      expression?: {
+        replyToMessageId?: string;
+        stickerId?: StickerId;
+        displayReplyTo?: MessageQuote;
+        clearReply?: boolean;
+      },
     ) => {
       const message = {
         id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         text,
         attachmentIds,
         clearDraft,
+        ...(queue instanceof MessageOutbox ? expression : {}),
         ...(queue instanceof MessageOutbox ? { annotations: messageAnnotations } : {}),
         ...(queue instanceof MessageOutbox && directionTarget
           ? { targetTaskId: directionTarget }
           : {}),
       };
       await queue.enqueue(message);
+      if (queue instanceof MessageOutbox && !agent.messages.some((item) => item.id === message.id))
+        agent.addMessage({ id: message.id, role: "user", content: text });
       followLatest.current = true;
       setAwayFromLatest(false);
       flush();
     },
-    [queue, flush, directionTarget],
+    [queue, flush, directionTarget, agent],
   );
   const sendChoice = useCallback(
     (text: string, retry = false): Promise<void> => {
@@ -829,6 +896,7 @@ export function ChatScreen({
         queue instanceof MessageOutbox ? attachments : [],
         true,
         queue instanceof MessageOutbox ? annotations : [],
+        replyTo ? { replyToMessageId: replyTo.messageId, displayReplyTo: replyTo } : undefined,
       );
     } catch (cause) {
       setSaveError(String(cause));
@@ -836,6 +904,7 @@ export function ChatScreen({
     }
     if (draftRevision.current === submittedRevision) {
       setDraft("");
+      setReplyTo(undefined);
       setInputHeight(44);
       setAttachments([]);
       setAnnotations([]);
@@ -845,14 +914,35 @@ export function ChatScreen({
     }
     setSaveError("");
   }
+  async function sendSticker(sticker: (typeof companionStickers)[number]) {
+    if (!(queue instanceof MessageOutbox) || !queue.getSnapshot().loaded) return;
+    const quoted = composerValues.current.replyTo;
+    queue.resume();
+    try {
+      await enqueue(t(sticker.label), [], false, [], {
+        stickerId: sticker.id,
+        clearReply: true,
+        ...(quoted && { replyToMessageId: quoted.messageId, displayReplyTo: quoted }),
+      });
+      if (composerValues.current.replyTo === quoted) {
+        draftRevision.current++;
+        setReplyTo(undefined);
+      }
+      setShowExpressions(false);
+      setSaveError("");
+    } catch (cause) {
+      setSaveError(String(cause));
+    }
+  }
   function annotateMessage(message: Message, content: string) {
     if (!(queue instanceof MessageOutbox)) return;
     draftRevision.current++;
-    setAnnotationSource({
-      kind: "message",
+    setReplyTo({
       messageId: String(message.id),
-      quote: content.slice(0, 8000),
+      text: content.slice(0, 1000),
+      role: message.role === "user" ? "user" : "assistant",
     });
+    composerInput.current?.focus();
   }
   function annotateFile(resource: ConversationFileResource) {
     draftRevision.current++;
@@ -882,7 +972,7 @@ export function ChatScreen({
         ? Array.from(new Set([...current.attachments, annotation.reference.attachmentId]))
         : current.attachments;
     try {
-      await queue.saveDraft(current.draft, nextAttachments, nextAnnotations);
+      await queue.saveDraft(current.draft, nextAttachments, nextAnnotations, current.replyTo);
       if (!composerMounted.current) return;
       draftRevision.current++;
       setAttachments(nextAttachments);
@@ -911,7 +1001,15 @@ export function ChatScreen({
     )
       setAnnotationSource(undefined);
   }
-  const messages = agent.messages || [];
+  const messages =
+    queue instanceof MessageOutbox
+      ? mergeOutboxMessages(
+          agent.messages || [],
+          (queue.getSnapshot().messages as Message[]).filter((message) =>
+            queue.getSnapshot().messageDetails.some((details) => details.messageId === message.id),
+          ),
+        )
+      : agent.messages || [];
   const latestPanelId = latestJevPanelId(messages, threadId);
   const latestUserIndex = messages.reduce(
     (last, message, index) => (message.role === "user" ? index : last),
@@ -922,6 +1020,29 @@ export function ChatScreen({
       ? messages[latestUserIndex].content
       : null;
   const visible = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  const currentTask = agentWorkspace?.tasks.find(
+    (task) =>
+      task.originThreadId === threadId &&
+      task.originMessageId === messages[latestUserIndex]?.id &&
+      !["succeeded", "failed", "cancelled"].includes(task.status),
+  );
+  const interrupted = /Server restarted or lost its run lease|Conversation lease expired/.test(
+    error,
+  );
+  const displayedError = interrupted
+    ? t(
+        currentTask
+          ? "The chat reply was interrupted. Your task is still running in the background."
+          : "The chat reply was interrupted. Your messages are saved; you can continue the conversation.",
+      )
+    : t(error);
+  function jumpToMessage(id: string) {
+    const y = messagePositions.current.get(id);
+    if (y !== undefined) {
+      followLatest.current = false;
+      list.current?.scrollTo({ y: Math.max(0, y - 100), animated: true });
+    }
+  }
   const replying = busy || agent.isRunning;
   const conversationKey = `${api.identityKey}\n${threadId}`;
   const motion = replying ? (streamingText ? "talking" : "thinking") : "idle";
@@ -1099,19 +1220,29 @@ export function ChatScreen({
         ) : (
           visible.map((message) => {
             const user = message.role === "user";
-            const text =
-              typeof message.content === "string"
-                ? user
-                  ? displayJevUserMessage(
-                      message.content,
-                      messages.slice(0, messages.indexOf(message)),
-                    )
-                  : message.content
-                : "";
+            const details = social.state.messages.find((item) => item.messageId === message.id);
+            const awaitingDetails = durableChat && user && !details;
+            const text = details
+              ? user
+                ? displayJevUserMessage(details.text, messages.slice(0, messages.indexOf(message)))
+                : details.text
+              : awaitingDetails
+                ? ""
+                : typeof message.content === "string"
+                  ? user
+                    ? displayJevUserMessage(
+                        message.content,
+                        messages.slice(0, messages.indexOf(message)),
+                      )
+                    : message.content
+                  : "";
             const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];
             return (
               <View
                 key={message.id}
+                onLayout={(event) =>
+                  messagePositions.current.set(String(message.id), event.nativeEvent.layout.y)
+                }
                 style={{
                   alignSelf: user ? "flex-end" : "flex-start",
                   maxWidth: user ? "85%" : "90%",
@@ -1119,18 +1250,40 @@ export function ChatScreen({
                   gap: 8,
                 }}
               >
+                {awaitingDetails && (
+                  <Text accessibilityLiveRegion="polite" style={s.small}>
+                    {t("Loading message…")}
+                  </Text>
+                )}
                 {!!text && (
                   <MessageBubble
                     text={text}
                     user={user}
                     contextual={wide}
+                    reactions={social.state.reactions.filter(
+                      (item) => item.messageId === message.id,
+                    )}
+                    onReact={
+                      durableChat
+                        ? (emoji) => void social.react(String(message.id), emoji)
+                        : undefined
+                    }
                     onQuote={
                       durableChat && typeof message.content === "string"
-                        ? () => annotateMessage(message, message.content as string)
+                        ? () => annotateMessage(message, text)
                         : undefined
                     }
                   >
-                    {user ? (
+                    {details?.replyTo && (
+                      <MessageQuoteView
+                        quote={details.replyTo}
+                        name={agentWorkspace?.identity.name}
+                        onPress={() => details.replyTo && jumpToMessage(details.replyTo.messageId)}
+                      />
+                    )}
+                    {details?.stickerId ? (
+                      <CompanionSticker id={details.stickerId} />
+                    ) : user ? (
                       <Text selectable style={[s.text, { fontSize: 16, lineHeight: 24 }]}>
                         {text}
                       </Text>
@@ -1138,6 +1291,14 @@ export function ChatScreen({
                       <AssistantResponse content={text} />
                     )}
                   </MessageBubble>
+                )}
+                {user && message.id === receivedMessage && (
+                  <Text
+                    accessibilityLiveRegion="polite"
+                    style={[s.small, { fontSize: 10, alignSelf: "flex-end" }]}
+                  >
+                    {t("Message received")}
+                  </Text>
                 )}
                 <JevInteractionContext.Provider
                   value={{
@@ -1279,7 +1440,10 @@ export function ChatScreen({
           </View>
         )}
         {!!modelNotice && <Text style={s.small}>{modelNotice}</Text>}
-        <ErrorNotice error={t(error)} />
+        <ErrorNotice error={displayedError} />
+        {currentTask && (
+          <Text style={s.small}>{t("Working in the background · you can keep chatting")}</Text>
+        )}
         {modelUsageUrl(error) && (
           <Button
             onPress={() => {
@@ -1300,9 +1464,11 @@ export function ChatScreen({
             disabled={busy || agent.isRunning || !loaded || !isReady}
             onPress={() => {
               void (
-                queue instanceof MessageOutbox
-                  ? enqueue("Continue the previous reply using its saved task receipts.")
-                  : run()
+                interrupted
+                  ? copilotkit.connectAgent({ agent }).then(() => setError(""))
+                  : queue instanceof MessageOutbox
+                    ? enqueue("Continue the previous reply using its saved task receipts.")
+                    : run()
               )
                 .then(() => {
                   if (!queue.getSnapshot().paused) flush();
@@ -1310,7 +1476,7 @@ export function ChatScreen({
                 .catch((e) => setError(e instanceof Error ? e.message : String(e)));
             }}
           >
-            {t("Retry response")}
+            {t(interrupted ? "Reconnect to chat" : "Retry response")}
           </Button>
         )}
       </ScrollView>
@@ -1337,8 +1503,12 @@ export function ChatScreen({
           {t("Latest messages")}
         </Button>
       )}
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "web" ? undefined : "padding"}
+        keyboardVerticalOffset={Platform.OS === "android" ? insets.top : 0}
+      >
         <ErrorNotice error={saveError} />
+        <ErrorNotice error={t(social.error)} />
         {!!saveError && (
           <Button
             small
@@ -1375,13 +1545,19 @@ export function ChatScreen({
                   })}
                   hitSlop={10}
                   onPress={() => {
-                    void Promise.resolve(queue.remove(message.id)).catch((cause) =>
-                      setSaveError(String(cause)),
-                    );
-                    choiceCompletions.current
-                      .get(message.id)
-                      ?.reject(new Error("Choice removed from queue."));
-                    choiceCompletions.current.delete(message.id);
+                    void Promise.resolve(queue.remove(message.id))
+                      .then((removed) => {
+                        if (removed === false) return;
+                        if (queue instanceof MessageOutbox)
+                          agent.setMessages(
+                            agent.messages.filter((item) => item.id !== message.id),
+                          );
+                        choiceCompletions.current
+                          .get(message.id)
+                          ?.reject(new Error("Choice removed from queue."));
+                        choiceCompletions.current.delete(message.id);
+                      })
+                      .catch((cause) => setSaveError(String(cause)));
                   }}
                   style={{ padding: 8 }}
                 >
@@ -1548,7 +1724,7 @@ export function ChatScreen({
                     throw new Error("Reopen this conversation to attach the saved file.");
                   const current = composerValues.current;
                   const next = Array.from(new Set([...current.attachments, id]));
-                  await queue.saveDraft(current.draft, next);
+                  await queue.saveDraft(current.draft, next, current.annotations, current.replyTo);
                   if (!composerMounted.current)
                     throw new Error("Attachment saved in this conversation’s draft.");
                   draftRevision.current++;
@@ -1564,7 +1740,12 @@ export function ChatScreen({
                     throw new Error(
                       "Long transcript: open the result in Tasks or attach the audio to your request.",
                     );
-                  await queue.saveDraft(next, current.attachments);
+                  await queue.saveDraft(
+                    next,
+                    current.attachments,
+                    current.annotations,
+                    current.replyTo,
+                  );
                   if (!composerMounted.current)
                     throw new Error("Transcript saved in this conversation’s draft.");
                   draftRevision.current++;
@@ -1710,6 +1891,78 @@ export function ChatScreen({
               ))}
             </View>
           )}
+          {replyTo && (
+            <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+              <View style={[s.row, { gap: 8 }]}>
+                <View style={{ flex: 1 }}>
+                  <MessageQuoteView quote={replyTo} name={agentWorkspace?.identity.name} />
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("Cancel reply")}
+                  onPress={() => {
+                    draftRevision.current++;
+                    setReplyTo(undefined);
+                  }}
+                  style={{ padding: 10 }}
+                >
+                  <X size={18} color={colors.muted} />
+                </Pressable>
+              </View>
+            </View>
+          )}
+          {showExpressions && (
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              style={{ maxHeight: Math.min(280, windowHeight * 0.35) }}
+              contentContainerStyle={{ gap: 12, padding: 12 }}
+            >
+              <Text style={s.small}>{t("Emojis")}</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+                {["😊", "❤️", "👍", "😂", "🎉", "👋", "🤔", "😢", "💪", "✨"].map((emoji) => (
+                  <Pressable
+                    key={emoji}
+                    accessibilityRole="button"
+                    accessibilityLabel={t("Insert emoji {emoji}", { emoji })}
+                    onPress={() => {
+                      draftRevision.current++;
+                      setDraft((value) => value + emoji);
+                      composerInput.current?.focus();
+                    }}
+                    style={{
+                      minWidth: 40,
+                      minHeight: 44,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Text style={{ fontSize: 25, color: colors.text }}>{emoji}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              {durableChat && (
+                <>
+                  <Text style={s.small}>{t("Stickers")}</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    {companionStickers.map((sticker) => (
+                      <Pressable
+                        key={sticker.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={t("Send sticker: {name}", { name: t(sticker.label) })}
+                        disabled={!loaded}
+                        onPress={() => {
+                          void composerSubmission.submit(() => sendSticker(sticker));
+                        }}
+                      >
+                        <CompanionSticker id={sticker.id} small />
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              )}
+            </ScrollView>
+          )}
           <View style={[s.row, { gap: 7, alignItems: "flex-end" }]}>
             <Pressable
               accessibilityRole="button"
@@ -1729,7 +1982,17 @@ export function ChatScreen({
                 +
               </Text>
             </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("Emoji and stickers")}
+              aria-expanded={showExpressions}
+              onPress={() => setShowExpressions((value) => !value)}
+              style={{ width: 36, height: 44, alignItems: "center", justifyContent: "center" }}
+            >
+              <Smile size={21} color={colors.muted} />
+            </Pressable>
             <TextInput
+              ref={composerInput}
               accessibilityLabel={t("Message {name}", {
                 name: agentWorkspace?.identity.name || "OkamiBot",
               })}

@@ -10,14 +10,23 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 const html =
   '<html><title>Promoções de maquiagem</title><main><h1>Batom</h1><p>Preço atual €12, em estoque na Alemanha.</p><a href="/batom">Ver produto</a></main></html>';
 
-test("chat web_fetch answers from public HTTP text without a task, browser or question", async (t) => {
+test("chat delegates public-page research before the worker reads HTTP text without a browser or question", async (t) => {
+  const prompt = "Veja as promoções em https://shop.example/sale";
   const { requests } = await modelFixture(t, (index) =>
     index === 0
-      ? { name: "web_fetch", arguments: { url: "https://shop.example/sale" } }
-      : undefined,
+      ? { name: "delegate_task", arguments: { kind: "agent", prompt } }
+      : index === 2
+        ? { name: "web_fetch", arguments: { url: "https://shop.example/sale" } }
+        : index === 3
+          ? {
+              name: "finish_task",
+              arguments: { summary: "Batom por €12 na Alemanha: https://shop.example/sale" },
+            }
+          : undefined,
   );
   const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
-  t.mock.method(f.agent.web, "document", async (url: string) => ({
+  await f.db.put("owner", "threads", { id: "makeup" });
+  const document = t.mock.method(f.agent.web, "document", async (url: string) => ({
     url,
     contentType: "text/html",
     body: html,
@@ -31,7 +40,7 @@ test("chat web_fetch answers from public HTTP text without a task, browser or qu
           {
             id: randomUUID(),
             role: "user",
-            content: "Veja as promoções em https://shop.example/sale",
+            content: prompt,
           },
         ],
         tools: [],
@@ -42,9 +51,31 @@ test("chat web_fetch answers from public HTTP text without a task, browser or qu
   );
   const result = events.find((event) => event.type === EventType.TOOL_CALL_RESULT);
   assert.ok(result && result.type === EventType.TOOL_CALL_RESULT);
-  assert.match(JSON.parse(String(result.content)).text, /€12/);
-  assert.ok(requests[1].body.includes("€12"));
-  assert.equal((await f.db.list("owner", "tasks")).length, 0);
+  const receipt = JSON.parse(String(result.content));
+  assert.equal(receipt.delegated, true);
+  assert.equal(receipt.status, "queued");
+  assert.equal(events.at(-1)?.type, EventType.RUN_FINISHED);
+  assert.equal(requests.length, 2, "chat completes before the research worker runs");
+  assert.equal(document.mock.callCount(), 0);
+  assert.equal((await f.db.list("owner", "tasks")).length, 1);
+  const accepted = await f.agent.getTask("owner", receipt.taskId);
+  assert.equal(accepted.prompt, prompt);
+  assert.equal(accepted.originThreadId, "makeup");
+  await assert.rejects(f.agent.getTask("other-owner", receipt.taskId));
+  await f.agent.worker.tick();
+  const task = await f.agent.getTask("owner", receipt.taskId);
+  assert.equal(task.status, "succeeded", task.error ?? task.question);
+  assert.equal(task.completion?.status, "verified");
+  assert.equal(document.mock.callCount(), 1);
+  assert.match(task.evidence[0].excerpt, /€12/);
+  assert.equal(task.evidence[0].url, "https://shop.example/sale");
+  assert.ok(requests[3].body.includes("€12"));
+  const operations = await f.agent.journal.operations("owner", task.id);
+  assert.equal(operations.find((op) => op.toolName === "web_fetch")?.effect, false);
+  assert.equal(
+    (await f.db.get("owner", "thread-publications", `task:${task.id}`))?.status,
+    "posted",
+  );
   assert.equal((await f.db.list("owner", "browsers")).length, 0);
   assert.equal((await f.db.list("owner", "interaction-requests")).length, 0);
 });

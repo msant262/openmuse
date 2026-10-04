@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { AbstractAgent, type BaseEvent, EventType, type RunAgentInput } from "@ag-ui/client";
 import { CopilotKitCore } from "@copilotkit/core";
-import { lastValueFrom, Observable, of, toArray } from "rxjs";
+import { lastValueFrom, Observable, of, type Subscriber, toArray } from "rxjs";
 import { createApp } from "../apps/server/src/app.ts";
 import { BrowserAssets } from "../apps/server/src/browser-assets.ts";
 import type { Config } from "../apps/server/src/config.ts";
@@ -374,6 +374,63 @@ test("server startup drains accepted messages without a phone and historical err
   }
 });
 
+test("legacy run retries preserve the accepted quote and sticker binding without duplicate dispatch", async () => {
+  const db = await createStore();
+  const inbox = new ConversationInbox(db);
+  const threads = new LocalThreads(db);
+  try {
+    await threads.ensure("owner", "chat");
+    inbox.resolveQuote = async () => ({
+      messageId: "source",
+      role: "assistant",
+      text: "Original message",
+    });
+    const body = {
+      threadId: "chat",
+      clientMessageId: "quoted-retry",
+      text: "Agreed",
+      attachmentIds: [],
+      replyToMessageId: "source",
+      stickerId: "agreed",
+    };
+    const accepted = await inbox.acceptMessage("owner", {
+      ...body,
+      contentHash: messageContentHash(body),
+    });
+    let dispatches = 0;
+    threads.configureInbox(inbox, () => {
+      dispatches++;
+      return new RichAgent();
+    });
+    const request = {
+      ...input("chat", accepted.runId),
+      messages: [{ id: body.clientMessageId, role: "user" as const, content: body.text }],
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const events = await collect(
+        threads.withOwner("owner", () =>
+          threads.run({ threadId: "chat", input: request, agent: new RichAgent() }),
+        ),
+      );
+      assert.equal(
+        events.some((event) => event.type === EventType.RUN_ERROR),
+        false,
+      );
+      assert.ok(events.some((event) => event.type === EventType.RUN_FINISHED));
+    }
+    assert.equal(dispatches, 1);
+    const saved = await inbox.get("owner", "chat", body.clientMessageId);
+    assert.equal(saved?.contentHash, messageContentHash(body));
+    assert.equal(saved?.runId, accepted.runId);
+    const history = await threads.history("owner", "chat");
+    assert.match(String(history.messages[0]?.content), /Companion sticker: agreed/);
+    assert.match(String(history.messages[0]?.content), /Original message/);
+  } finally {
+    await threads.close();
+    await db.close();
+  }
+});
+
 test("private reasoning is excluded from durable events and transcript checkpoints", async () => {
   const db = await createStore();
   const threads = new LocalThreads(db);
@@ -461,6 +518,161 @@ class RichAgent extends AbstractAgent {
     );
   }
 }
+
+test("long streaming histories persist events without repeated snapshots and renew their lease through replay", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "openmuse-streaming-history-"));
+  let db = await createStore({ dataDir: join(dir, "postgres") });
+  const leaseMs = 3000;
+  let threads = new LocalThreads(db, leaseMs);
+  const oldMessages: RunAgentInput["messages"] = Array.from({ length: 96 }, (_, i) => ({
+    id: `history-${i}`,
+    role: i % 2 ? "assistant" : "user",
+    content: `Earlier message ${i}: ${"history ".repeat(512)}`,
+  }));
+  let emit!: Subscriber<BaseEvent>;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  class StreamingAgent extends AbstractAgent {
+    run(request: RunAgentInput) {
+      return new Observable<BaseEvent>((subscriber) => {
+        emit = subscriber;
+        subscriber.next({
+          type: EventType.RUN_STARTED,
+          threadId: request.threadId,
+          runId: request.runId,
+        });
+        entered();
+      });
+    }
+  }
+  try {
+    await threads.ensure("owner", "long-chat");
+    await db.put("owner", "thread-runs", {
+      id: "history",
+      threadId: "long-chat",
+      runId: "history",
+      createdAt: "2020-01-01T00:00:00.000Z",
+      status: "finished",
+      events: [],
+      messages: oldMessages,
+      state: { earlier: true },
+    });
+    const compareAndSwap = db.compareAndSwap.bind(db);
+    let snapshots = 0;
+    db.compareAndSwap = (async (owner, kind, id, expected, patch) => {
+      if (kind === "thread-runs" && ("messages" in patch || "state" in patch)) snapshots++;
+      return compareAndSwap(owner, kind, id, expected, patch);
+    }) as Store["compareAndSwap"];
+    const renew = db.renewThread.bind(db);
+    const renewals: boolean[] = [];
+    db.renewThread = async (...args) => {
+      const renewed = await renew(...args);
+      renewals.push(renewed);
+      return renewed;
+    };
+    let committed = 0;
+    const append = db.appendRecordEvent.bind(db);
+    db.appendRecordEvent = async (...args) => {
+      await append(...args);
+      committed++;
+    };
+    const agent = new StreamingAgent();
+    const finished = collect(
+      threads.withOwner("owner", () =>
+        threads.run({ threadId: "long-chat", input: input("long-chat"), agent }),
+      ),
+    );
+    await started;
+    const lease = await db.get<{ leaseUntil: string }>("owner", "threads", "long-chat");
+    assert.ok(lease);
+    assert.deepEqual(agent.messages.slice(0, oldMessages.length), oldMessages);
+    const deltas = Array.from({ length: 128 }, (_, i) => `chunk-${i} `);
+    const args = `{"prompt":"${deltas.join("")}"}`;
+    const events: BaseEvent[] = [
+      { type: EventType.TEXT_MESSAGE_START, messageId: "streamed", role: "assistant" },
+      ...deltas.map((delta) => ({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "streamed",
+        delta,
+      })),
+      { type: EventType.TEXT_MESSAGE_END, messageId: "streamed" },
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "streamed-tool",
+        toolCallName: "delegate_task",
+        parentMessageId: "streamed",
+      },
+      ...['{"prompt":"', ...deltas, '"}'].map((delta) => ({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "streamed-tool",
+        delta,
+      })),
+      { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/streamed", value: true }] },
+    ];
+    for (const event of events) emit.next(event);
+    await eventually(async () => committed === events.length + 1);
+    assert.equal(snapshots, 0, "token and state events must not rewrite the full transcript");
+    const live = await new LocalThreads(db).history("owner", "long-chat");
+    assert.deepEqual(live.messages.slice(0, oldMessages.length), oldMessages);
+    const streamed = live.messages.find((message) => message.id === "streamed");
+    assert.ok(streamed?.role === "assistant");
+    assert.equal(streamed.content, deltas.join(""));
+    assert.equal(streamed.toolCalls?.[0]?.function.arguments, args);
+    assert.deepEqual(live.state, { earlier: true, streamed: true });
+
+    // Cross the original SQL expiry while the tool call is still open. The tail
+    // below can only commit if the real database lease heartbeat kept renewing.
+    await eventually(async () => Date.now() > Date.parse(lease.leaseUntil) && renewals.length >= 2);
+    assert.ok(renewals.every(Boolean), "every heartbeat must retain the lease");
+    emit.next({ type: EventType.TOOL_CALL_END, toolCallId: "streamed-tool" });
+    emit.next({
+      type: EventType.TOOL_CALL_RESULT,
+      toolCallId: "streamed-tool",
+      messageId: "streamed-result",
+      role: "tool",
+      content: '{"taskId":"independent-task"}',
+    });
+    emit.next({ type: EventType.RUN_FINISHED, threadId: "long-chat", runId: "run-1" });
+    emit.complete();
+    const delivered = await finished;
+    assert.equal(delivered.at(-1)?.type, EventType.RUN_FINISHED);
+    assert.equal(
+      delivered.some((event) => event.type === EventType.RUN_ERROR),
+      false,
+    );
+    assert.equal(snapshots, 1, "only the completed run stores a full transcript snapshot");
+    const saved = await threads.history("owner", "long-chat");
+    assert.equal(saved.messages.at(-1)?.content, '{"taskId":"independent-task"}');
+    assert.equal(await db.threadLeaseActive("owner", "long-chat"), false);
+    const journal = await new ConversationInbox(db).eventsAfter("owner", "long-chat", 0);
+    assert.equal(journal.events.length, delivered.length);
+    await threads.close();
+    await db.close();
+    db = await createStore({ dataDir: join(dir, "postgres") });
+    threads = new LocalThreads(db);
+    assert.deepEqual(await threads.history("owner", "long-chat"), saved);
+    const replay = await collect(
+      threads.withOwner("owner", () => threads.connect({ threadId: "long-chat" })),
+    );
+    const reader = new (class extends AbstractAgent {
+      run() {
+        return of(...replay);
+      }
+    })();
+    await reader.runAgent(input("long-chat", "replay"));
+    assert.deepEqual(reader.messages, saved.messages);
+    assert.deepEqual(reader.state, saved.state);
+    t.diagnostic(
+      `${Buffer.byteLength(JSON.stringify(oldMessages))} history bytes; ${committed} durable events; ${snapshots} final snapshot; ${renewals.length} successful renewals`,
+    );
+  } finally {
+    await threads.close().catch(() => {});
+    await db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("Store runner durably replays rich messages, state and custom events after a database restart", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openmuse-local-replay-"));

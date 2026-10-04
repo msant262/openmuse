@@ -13,7 +13,7 @@ test("chat can inspect its actual runtime and owned procedures without external 
     index === 0
       ? { name: "read_runtime", arguments: {} }
       : index === 1
-        ? { name: "describe_tools", arguments: { names: ["generate_image"] } }
+        ? { name: "describe_tools", arguments: { names: ["delegate_task"] } }
         : undefined,
   );
   const server = await taskRuntime(t, {
@@ -96,10 +96,10 @@ test("chat can inspect its actual runtime and owned procedures without external 
   assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR));
   assert.match(fixture.requests[0].body, /read_runtime/);
   const imageTool = JSON.parse(fixture.requests[2].body).tools.find(
-    (tool: { name: string }) => tool.name === "generate_image",
+    (tool: { name: string }) => tool.name === "delegate_task",
   );
-  assert.match(imageTool.description, /returns only a task card/);
-  assert.match(imageTool.description, /Worker operation contract/);
+  assert.match(imageTool.description, /durable server worker/);
+  assert.match(imageTool.description, /worker researches/);
   assert.ok(
     fixture.requests[0].body.includes(
       "Promising future, background, delegated, or continued work creates follow-through ownership.",

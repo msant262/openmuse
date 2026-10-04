@@ -1,5 +1,12 @@
 import { z } from "zod";
 import {
+  type ConversationSocialState,
+  type MessageQuote,
+  messageQuoteSchema,
+  type StickerId,
+  stickerIdSchema,
+} from "../../../packages/domain/src/conversation-social";
+import {
   type AcceptedMessageInput,
   acceptedMessageSchema,
   type ConversationAcceptance,
@@ -26,8 +33,10 @@ type Persisted = {
     attachmentIds: string[];
     annotations: AcceptedMessageInput["annotations"];
     revision: number;
+    replyTo?: MessageQuote;
   };
   messages: unknown[];
+  messageDetails: ConversationSocialState["messages"];
 };
 type Snapshot = Persisted & { loaded: boolean; running: boolean; paused: boolean; error: string };
 /** Durable dispositions remain visible after the accepted entry leaves the local outbox. */
@@ -64,10 +73,17 @@ const empty = (): Snapshot => ({
   events: [],
   draft: { text: "", attachmentIds: [], annotations: [], revision: 0 },
   messages: [],
+  messageDetails: [],
   loaded: false,
   running: false,
   paused: false,
   error: "",
+});
+const messageDetailsSchema = z.object({
+  messageId: z.string(),
+  text: z.string(),
+  replyTo: messageQuoteSchema.optional(),
+  stickerId: stickerIdSchema.optional(),
 });
 const savedOutboxSchema = z
   .object({
@@ -86,8 +102,10 @@ const savedOutboxSchema = z
       attachmentIds: z.array(acceptedMessageSchema.shape.clientMessageId),
       annotations: acceptedMessageSchema.shape.annotations,
       revision: z.number().int().min(0),
+      replyTo: messageQuoteSchema.optional(),
     }),
     messages: z.array(z.unknown()),
+    messageDetails: z.array(messageDetailsSchema.strict()).default([]),
   })
   .strict();
 export class MessageOutbox {
@@ -117,7 +135,7 @@ export class MessageOutbox {
       throw new Error(
         "Saved messages belong to a different conversation; preserve the data and retry",
       );
-    const { version, pending, cursor, events, draft, messages } = parsed;
+    const { version, pending, cursor, events, draft, messages, messageDetails } = parsed;
     return {
       version,
       pending,
@@ -125,6 +143,7 @@ export class MessageOutbox {
       events,
       draft: { ...draft, annotations: draft.annotations ?? [] },
       messages,
+      messageDetails,
     };
   }
   open() {
@@ -172,8 +191,13 @@ export class MessageOutbox {
     targetTaskId?: string;
     annotations?: AcceptedMessageInput["annotations"];
     clearDraft?: boolean;
+    clearReply?: boolean;
+    replyToMessageId?: string;
+    stickerId?: StickerId;
+    /** Local preview only. The server resolves the quote from replyToMessageId. */
+    displayReplyTo?: MessageQuote;
   }) {
-    const { clearDraft, ...input } = message;
+    const { clearDraft, clearReply, displayReplyTo, ...input } = message;
     const value: OutboxMessage = {
       ...input,
       threadId: this.threadId,
@@ -191,6 +215,18 @@ export class MessageOutbox {
       }
       return {
         pending: [...previous.pending, value],
+        messages: mergeOutboxMessages(previous.messages, [
+          { id: value.id, role: "user", content: value.text },
+        ]),
+        messageDetails: [
+          ...previous.messageDetails.filter((item) => item.messageId !== value.id),
+          {
+            messageId: value.id,
+            text: value.text,
+            ...(displayReplyTo && { replyTo: displayReplyTo }),
+            ...(value.stickerId && { stickerId: value.stickerId }),
+          },
+        ],
         ...(clearDraft
           ? {
               draft: {
@@ -200,34 +236,68 @@ export class MessageOutbox {
                 revision: previous.draft.revision + 1,
               },
             }
-          : {}),
+          : clearReply && previous.draft.replyTo?.messageId === value.replyToMessageId
+            ? {
+                draft: {
+                  ...previous.draft,
+                  replyTo: undefined,
+                  revision: previous.draft.revision + 1,
+                },
+              }
+            : {}),
       };
     });
   }
   async remove(id: string) {
+    let removed = false;
     await this.commit((previous) => {
       const message = previous.pending.find((message) => message.id === id);
+      if (!message) return {};
       if (message?.attempts && message.delivery !== "rejected")
         throw new Error("Delivery may already be accepted. Retry to confirm it before removing.");
-      return { pending: previous.pending.filter((message) => message.id !== id) };
+      removed = true;
+      return {
+        pending: previous.pending.filter((message) => message.id !== id),
+        messages: previous.messages.filter((message) => messageId(message) !== id),
+        messageDetails: previous.messageDetails.filter((message) => message.messageId !== id),
+      };
     });
+    return removed;
   }
   async saveDraft(
     text: string,
     attachmentIds: string[],
     annotations?: AcceptedMessageInput["annotations"],
+    replyTo?: MessageQuote,
   ) {
     await this.commit((previous) => ({
       draft: {
         text,
         attachmentIds,
         annotations: annotations ?? previous.draft.annotations,
+        replyTo,
         revision: previous.draft.revision + 1,
       },
     }));
   }
   async saveMessages(messages: readonly unknown[]) {
-    await this.commit(() => ({ messages: [...messages] }));
+    await this.commit((previous) => ({
+      // A stream snapshot can precede admission of an optimistic message. Keep
+      // locally saved messages until a snapshot includes the same stable ID.
+      messages: mergeOutboxMessages(
+        messages,
+        previous.messages.filter((message) =>
+          previous.messageDetails.some((details) => details.messageId === messageId(message)),
+        ),
+      ),
+    }));
+  }
+  async saveMessageDetails(messages: ConversationSocialState["messages"]) {
+    await this.commit((previous) => {
+      const details = new Map(previous.messageDetails.map((item) => [item.messageId, item]));
+      for (const message of messages) details.set(message.messageId, message);
+      return { messageDetails: [...details.values()] };
+    });
   }
   async applyReplay(replay: ConversationReplay) {
     await this.commit((previous) => {
@@ -241,7 +311,13 @@ export class MessageOutbox {
         if (event.seq > cursor + 1) break;
         if (event.seq === cursor + 1) cursor = event.seq;
       }
-      return { events, cursor };
+      const details = new Map(previous.messageDetails.map((item) => [item.messageId, item]));
+      for (const event of replay.events) {
+        if (event.kind !== "accepted") continue;
+        const parsed = messageDetailsSchema.safeParse(event.payload);
+        if (parsed.success) details.set(parsed.data.messageId, parsed.data);
+      }
+      return { events, cursor, messageDetails: [...details.values()] };
     });
   }
   pause() {
@@ -260,15 +336,18 @@ export class MessageOutbox {
       while (this.state.pending.length && !this.state.paused) {
         const message = this.state.pending[0];
         pendingId = message.id;
+        let exists = false;
         await this.commit((previous) => ({
           pending: previous.pending.map((item) => {
             if (item.id !== message.id) return item;
+            exists = true;
             // Read the persisted disposition: a retry rejection cannot resolve
             // an earlier request whose acknowledgement was lost.
             priorUncertain = item.attempts > 0 && item.delivery !== "rejected";
             return { ...item, attempts: item.attempts + 1, delivery: "uncertain" as const };
           }),
         }));
+        if (!exists) continue;
         await send(message);
         // A lost ACK leaves this entry plus all later entries available after restart.
         await this.commit((previous) => ({
@@ -291,6 +370,26 @@ export class MessageOutbox {
       this.update({ running: false });
     }
   }
+}
+
+function messageId(message: unknown): string | undefined {
+  return message && typeof message === "object" && "id" in message && typeof message.id === "string"
+    ? message.id
+    : undefined;
+}
+
+/** Prefer stream messages and append local messages missing from a stale snapshot. */
+export function mergeOutboxMessages<T>(messages: readonly T[], local: readonly T[]): T[] {
+  const ids = new Set(messages.map(messageId));
+  const merged = [...messages];
+  for (const message of local) {
+    const id = messageId(message);
+    if (id && !ids.has(id)) {
+      ids.add(id);
+      merged.push(message);
+    }
+  }
+  return merged;
 }
 
 /** Set the in-flight guard synchronously, before asynchronous disk persistence starts. */

@@ -36,13 +36,13 @@ const capabilityAvailable = (body: string, name: string) => {
   );
 };
 
-test("research retains a bounded handoff before the final answer and delivers the requested image", async (t) => {
+test("research is handed off immediately and the worker delivers the requested image", async (t) => {
   const fixture = await modelFixture(
     t,
     (index) => {
       const tools = offeredTools(fixture.requests[index].body);
-      if (index >= 10)
-        return index === 10
+      if (index >= 2)
+        return index === 2
           ? { name: "generate_image", arguments: imageArgs }
           : { name: "finish_task", arguments: { summary: "Infográfico pronto e anexado." } };
       if (capabilityAvailable(fixture.requests[index].body, "web_fetch"))
@@ -101,13 +101,13 @@ test("research retains a bounded handoff before the final answer and delivers th
     1,
     "research must leave a durable job for the requested artifact",
   );
-  assert.equal(reads, 8, "reserve handoff and final response inside the existing ten-step budget");
-  assert.equal(fixture.requests.length, 10);
-  assert.deepEqual(offeredTools(fixture.requests[8].body), ["delegate_task"]);
-  assert.deepEqual(offeredTools(fixture.requests[9].body), []);
-  assert.match(fixture.requests[8].body, /do not.*claim.*unavailable/i);
-  assert.ok(fixture.requests[8].body.includes(fact));
-  assert.ok(fixture.requests[8].body.includes(source));
+  assert.equal(reads, 0, "foreground must not research before starting the worker");
+  assert.equal(fixture.requests.length, 2);
+  assert.ok(offeredTools(fixture.requests[0].body).includes("delegate_task"));
+  assert.deepEqual(offeredTools(fixture.requests[1].body), []);
+  assert.match(fixture.requests[0].body, /SOUL/);
+  assert.ok(fixture.requests[1].body.includes(fact));
+  assert.ok(fixture.requests[1].body.includes(source));
   const task = await server.agent.getTask("owner", tasks.tasks[0].id);
   assert.equal(task.kind, "agent");
   assert.equal(task.originThreadId, "research-image-chat");
@@ -138,7 +138,8 @@ test("research retains a bounded handoff before the final answer and delivers th
 test("the handoff slot does not queue a second job after image generation was already delegated", async (t) => {
   const fixture = await modelFixture(t, (index) => {
     const tools = offeredTools(fixture.requests[index].body);
-    if (index === 0) return { name: "generate_image", arguments: imageArgs };
+    if (index === 0)
+      return { name: "delegate_task", arguments: { kind: "agent", prompt: imageArgs.prompt } };
     if (capabilityAvailable(fixture.requests[index].body, "agent_status"))
       return { name: "agent_status", arguments: {} };
     if (tools.includes("delegate_task"))
@@ -152,8 +153,8 @@ test("the handoff slot does not queue a second job after image generation was al
       .pipe(toArray()),
   );
   assert.equal((await server.db.list("owner", "tasks")).length, 1);
-  assert.deepEqual(offeredTools(fixture.requests[8].body), []);
-  assert.equal(fixture.requests.length, 9);
+  assert.deepEqual(offeredTools(fixture.requests[1].body), []);
+  assert.equal(fixture.requests.length, 2);
 });
 
 test("research that only needs a written answer ends without a background job", async (t) => {
@@ -204,47 +205,29 @@ test("a failed delegation does not suppress the reserved handoff", async (t) => 
   );
   assert.equal(attempts, 2);
   assert.equal((await server.db.list("owner", "tasks")).length, 1);
-  assert.deepEqual(offeredTools(fixture.requests[8].body), ["delegate_task"]);
-  assert.ok(fixture.requests[8].body.includes("Temporary queue admission unavailable"));
-  assert.deepEqual(offeredTools(fixture.requests[9].body), []);
-  assert.equal(fixture.requests.length, 10);
+  assert.ok(offeredTools(fixture.requests[1].body).includes("delegate_task"));
+  assert.ok(fixture.requests[1].body.includes("Temporary queue admission unavailable"));
+  assert.deepEqual(offeredTools(fixture.requests[2].body), []);
+  assert.equal(fixture.requests.length, 3);
 });
 
-test("cancelling the last research call does not start the reserved handoff", {
+test("cancelling a pending chat inference does not create a late background job", {
   timeout: 10000,
 }, async (t) => {
-  const fixture = await modelFixture(t, (index) => {
-    const tools = offeredTools(fixture.requests[index].body);
-    if (capabilityAvailable(fixture.requests[index].body, "web_fetch"))
-      return { name: "web_fetch", arguments: { url: source } };
-    if (tools.includes("delegate_task"))
-      return { name: "delegate_task", arguments: { prompt: "Create an infographic" } };
-    return undefined;
-  });
-  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
   let entered!: () => void;
   let release!: () => void;
-  let returned!: () => void;
   const started = new Promise<void>((resolve) => {
     entered = resolve;
   });
-  const receipt = new Promise<void>((resolve) => {
+  const pending = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const finishedRead = new Promise<void>((resolve) => {
-    returned = resolve;
+  const fixture = await modelFixture(t, async () => {
+    entered();
+    await pending;
+    return { name: "delegate_task", arguments: { kind: "agent", prompt: "Create an infographic" } };
   });
-  let reads = 0;
-  let lastSignal: AbortSignal | undefined;
-  t.mock.method(server.agent.web, "read", async (_url: string, signal: AbortSignal) => {
-    if (++reads === 8) {
-      lastSignal = signal;
-      entered();
-      await receipt;
-      returned();
-    }
-    return { url: source, title: "Cuidados do jardim", text: fact, links: [], truncated: false };
-  });
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
   const subscription = new ConversationAgent(server.agent.config, server.agent, "owner")
     .run(input("Pesquise os cuidados e crie um infográfico sobre o jardim."))
     .subscribe();
@@ -254,11 +237,77 @@ test("cancelling the last research call does not start the reserved handoff", {
   });
   await started;
   subscription.unsubscribe();
-  assert.equal(lastSignal?.aborted, true);
   release();
-  await finishedRead;
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(reads, 8);
-  assert.equal(fixture.requests.length, 8);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(fixture.requests.length, 1);
   assert.equal((await server.db.list("owner", "tasks")).length, 0);
+});
+
+test("each foreground reply follows its owner's SOUL and conversation override without leaking reactions", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, { text: () => "Fixture reply" });
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  for (const [owner, patch] of [
+    [
+      "ana",
+      {
+        personality: "Paciente, afetuosa, explica com exemplos",
+        responseLength: "detailed",
+        tone: "warm",
+        emojis: true,
+      },
+    ],
+    [
+      "bia",
+      {
+        personality: "Formal, direta, sem brincadeiras",
+        responseLength: "concise",
+        tone: "concise",
+        emojis: false,
+      },
+    ],
+  ] as const)
+    await server.agent.profiles.update(owner, {
+      scope: { kind: "global" },
+      requestId: "profile",
+      expectedRevision: 0,
+      origin: { kind: "settings" },
+      patch,
+    });
+  assert.ok(server.threads instanceof LocalThreads);
+  await server.threads.ensure("ana", "research-image-chat");
+  await server.agent.profiles.update("ana", {
+    scope: { kind: "conversation", threadId: "research-image-chat" },
+    requestId: "override",
+    expectedRevision: 0,
+    origin: { kind: "settings" },
+    patch: { responseLength: "concise" },
+  });
+  await server.db.put("ana", "message-reactions", {
+    id: "reaction",
+    threadId: "research-image-chat",
+    messageId: "request-image",
+    actor: "user",
+    emoji: "❤️",
+  });
+  for (const owner of ["ana", "bia"])
+    await lastValueFrom(
+      new ConversationAgent(server.agent.config, server.agent, owner)
+        .run(input("Como vai?"))
+        .pipe(toArray()),
+    );
+  assert.match(fixture.requests[0].body, /Paciente, afetuosa/);
+  assert.match(fixture.requests[0].body, /❤️/);
+  assert.ok(fixture.requests[0].body.includes('\\"responseLength\\":\\"concise\\"'));
+  assert.match(fixture.requests[1].body, /Formal, direta/);
+  assert.doesNotMatch(fixture.requests[1].body, /Paciente, afetuosa/);
+  assert.ok(fixture.requests[1].body.includes('\\"emojis\\":false'));
+  assert.ok(fixture.requests[1].body.includes('\\"reactions\\":[]'));
+  for (const request of fixture.requests) {
+    assert.match(request.body, /SOUL/);
+    assert.match(request.body, /react_to_message/);
+    assert.match(request.body, /reply_to_message/);
+    assert.match(request.body, /send_sticker/);
+  }
+  assert.equal((await server.agent.profiles.get("ana")).fields.responseLength, "detailed");
+  assert.equal((await server.db.list("bia", "tasks")).length, 0);
 });

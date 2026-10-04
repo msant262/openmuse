@@ -8,7 +8,7 @@ import type { ExecutorDelivery } from "./executors/registry.ts";
  * cannot be omitted from a stopped-writer consistency decision. No payloads,
  * tokens, source contents or account information are returned. */
 export async function deploymentStatus(db: Store, now = Date.now(), activeRequests = () => 0) {
-  const [pause, maintenance, tasks, admissions, leases, deliveries, operations, avatars] =
+  const [pause, maintenance, tasks, admissions, leases, deliveries, operations, avatars, threads] =
     await Promise.all([
       new RuntimePause(db).get(""),
       new DeploymentMaintenance(db).current(now),
@@ -40,6 +40,7 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
         dispatching?: boolean;
         providerRequestId?: string | null;
       }>("avatar-generations"),
+      db.scan<{ runToken?: string | null; leaseUntil?: string | null }>("threads"),
     ]);
   const occupied = (row: { hold?: boolean; expiresAt: string }) =>
     row.hold === true || Date.parse(row.expiresAt) > now;
@@ -48,6 +49,9 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
   ).length;
   const heldResources = leases.filter(({ value }) => occupied(value)).length;
   const workAdmissions = admissions.filter(({ value }) => occupied(value)).length;
+  const activeConversations = threads.filter(
+    ({ value }) => Boolean(value.runToken) && Date.parse(value.leaseUntil ?? "") > now,
+  ).length;
   const activeAvatarOperations = avatars.filter(
     ({ value }) =>
       value.status === "running" &&
@@ -100,6 +104,7 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
     pause,
     maintenance: maintenance ? { id: maintenance.id, expiresAt: maintenance.expiresAt } : null,
     activeTasks,
+    activeConversations,
     workAdmissions,
     heldResources,
     activeOperations,
@@ -108,6 +113,7 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
     readyForStoppedWriterBackup:
       (pause.paused || Boolean(maintenance)) &&
       !activeTasks &&
+      !activeConversations &&
       !workAdmissions &&
       !heldResources &&
       !activeOperations &&

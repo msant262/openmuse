@@ -612,7 +612,15 @@ test("mutable chat tools create a durable task receipt with thread provenance in
   });
   await modelFixture(t, (index) =>
     index % 2 === 0
-      ? { name: "browser_navigate", arguments: { url: "https://example.org/account" } }
+      ? {
+          name: "delegate_task",
+          arguments: {
+            kind: "agent",
+            title: "Open my connected account and update the document",
+            prompt:
+              "Use browser_navigate to open https://example.org/account and update the document",
+          },
+        }
       : undefined,
   );
   const config = {
