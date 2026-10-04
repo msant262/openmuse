@@ -458,26 +458,86 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
         offset += columns;
       }
     } else if (block.type === "steps") {
-      for (let offset = 0; offset < block.items.length; ) {
-        const slide = base("process");
-        const y = sectionTitle(slide);
-        const preferredHeight = Math.min(
-          1.5,
-          (6.45 - y) / Math.min(4, block.items.length - offset),
+      const measured = block.items.map((item) => {
+        const title = wrapRuns([{ text: item.title, bold: true }], 23, 10.4, fonts);
+        const detail = item.detail ? wrapRuns([{ text: item.detail }], 18, 10.4, fonts) : [];
+        const titleHeight = (title.length * 23 * 1.29) / 72,
+          detailHeight = (detail.length * 18 * 1.29) / 72;
+        return {
+          title,
+          detail,
+          height: Math.max(
+            0.66,
+            0.03 + titleHeight + 0.035,
+            detail.length ? 0.1 + titleHeight + detailHeight + 0.035 : 0,
+          ),
+        };
+      });
+      const firstSlide = base("process"),
+        y = sectionTitle(firstSlide),
+        availableHeight = 6.45 - y;
+      const next = model.blocks[blockIndex + 1];
+      const caption = next?.type === "paragraph" ? shortCaption(next.runs) : undefined;
+      const captionHeight = caption ? caption.length * captionLeading + 0.035 + captionGap : 0;
+      // Keep a short takeaway with the last group, even if balancing must split
+      // five steps as 3+2. A single oversized step may still need its own page.
+      const reservedCaptionHeight =
+        measured[measured.length - 1].height + captionHeight <= availableHeight ? captionHeight : 0;
+      type StepPlan = {
+        pages: { start: number; end: number; height: number }[];
+        singletons: number;
+        imbalance: number;
+      };
+      // The schema permits at most 12 steps. Choose contiguous measured groups:
+      // fewest pages first, then avoid orphan steps, then balance occupied height.
+      const plans: (StepPlan | undefined)[] = new Array(measured.length + 1);
+      plans[measured.length] = { pages: [], singletons: 0, imbalance: 0 };
+      for (let start = measured.length - 1; start >= 0; start--) {
+        let height = 0;
+        for (let end = start + 1; end <= measured.length; end++) {
+          height += measured[end - 1].height + (end - start > 1 ? 0.1 : 0);
+          if (height > availableHeight - (end === measured.length ? reservedCaptionHeight : 0))
+            break;
+          const rest = plans[end];
+          if (!rest) continue;
+          const candidate: StepPlan = {
+            pages: [{ start, end, height }, ...rest.pages],
+            singletons: rest.singletons + (end - start === 1 ? 1 : 0),
+            imbalance: rest.imbalance + height ** 2,
+          };
+          const best = plans[start];
+          if (
+            !best ||
+            candidate.pages.length < best.pages.length ||
+            (candidate.pages.length === best.pages.length &&
+              (candidate.singletons < best.singletons ||
+                (candidate.singletons === best.singletons &&
+                  (candidate.imbalance < best.imbalance - 1e-8 ||
+                    (Math.abs(candidate.imbalance - best.imbalance) < 1e-8 &&
+                      end > best.pages[0].end)))))
+          )
+            plans[start] = candidate;
+        }
+      }
+      const plan = plans[0];
+      if (!plan) throw new Error("Process step is too dense; use a separate prose section");
+      for (const [pageIndex, page] of plan.pages.entries()) {
+        const slide = pageIndex === 0 ? firstSlide : base("process");
+        if (pageIndex > 0) sectionTitle(slide);
+        const contentHeight = measured
+          .slice(page.start, page.end)
+          .reduce((sum, item) => sum + item.height, 0);
+        const gap = Math.min(
+          0.6,
+          (availableHeight -
+            (page.end === measured.length ? reservedCaptionHeight : 0) -
+            contentHeight) /
+            Math.max(1, page.end - page.start - 1),
         );
         let top = y,
           visibleBottom = y;
-        while (offset < block.items.length) {
-          const item = block.items[offset];
-          const itemTitle = wrapRuns([{ text: item.title, bold: true }], 23, 10.4, fonts);
-          const detail = item.detail ? wrapRuns([{ text: item.detail }], 18, 10.4, fonts) : [];
-          const stepHeight = Math.max(
-            preferredHeight,
-            ((itemTitle.length * 23 + detail.length * 18) * 1.29) / 72 + 0.15,
-          );
-          if (stepHeight > 6.5 - y)
-            throw new Error("Process step is too dense; use a separate prose section");
-          if (top + stepHeight > 6.5) break;
+        for (let offset = page.start; offset < page.end; offset++) {
+          const item = measured[offset];
           slide.addShape(presentation.ShapeType.ellipse, {
             x: 0.78,
             y: top + 0.08,
@@ -496,17 +556,11 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
             14,
             { bold: true, color: markerText, align: "center" },
           );
-          const height = lineText(slide, itemTitle, 1.65, top + 0.03, 10.4, 23);
-          const detailHeight = detail.length
-            ? lineText(slide, detail, 1.65, top + 0.1 + height, 10.4, 18, { color: muted })
-            : 0;
-          visibleBottom = Math.max(
-            top + 0.66,
-            top + 0.03 + height + 0.035,
-            detail.length ? top + 0.1 + height + detailHeight + 0.035 : 0,
-          );
-          top += stepHeight;
-          offset++;
+          const height = lineText(slide, item.title, 1.65, top + 0.03, 10.4, 23);
+          if (item.detail.length)
+            lineText(slide, item.detail, 1.65, top + 0.1 + height, 10.4, 18, { color: muted });
+          visibleBottom = top + item.height;
+          top += item.height + gap;
         }
         captionArea = { slide, y: visibleBottom + captionGap };
       }

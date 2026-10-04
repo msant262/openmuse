@@ -108,6 +108,101 @@ test("process caption uses space after the last visible step and preserves nativ
   for (const number of ["01", "02", "03"]) assert.ok(text.includes(number));
 });
 
+test("five short process steps stay together at their readable native font sizes", async () => {
+  const items = [
+    { title: "Entender", detail: "Objetivo, formato e contexto." },
+    { title: "Escolher", detail: "Ferramentas e workflows; checar conexão quando necessário." },
+    { title: "Executar", detail: "Operações com argumentos validados." },
+    { title: "Verificar", detail: "Observações, recibos e requisitos." },
+    { title: "Entregar", detail: "Resultado confirmado e limites remanescentes." },
+  ];
+  const result = await slides(`## Do pedido à entrega\n\n${fence("steps", { items })}`);
+  assert.equal(result.length, 1, "five measured short steps must not become a 4+1 split");
+  let previousBottom = 0;
+  for (const item of items) {
+    const title = textBox(result[0], item.title),
+      detail = textBox(result[0], item.detail);
+    assert.ok(title.y >= previousBottom + 0.06, "steps have visible separation");
+    assert.ok(detail.bottom <= 6.5, "the final step remains above the footer");
+    previousBottom = detail.bottom;
+    for (const [content, fontSize] of [
+      [item.title, "2300"],
+      [item.detail, "1800"],
+    ]) {
+      const run = Array.from(result[0].getElementsByTagName("a:r")).find(
+        (run) => run.textContent === content,
+      );
+      assert.equal(run?.getElementsByTagName("a:rPr")[0]?.getAttribute("sz"), fontSize);
+    }
+  }
+  assert.equal(result[0].getElementsByTagName("a:prstGeom").length > 5, true);
+});
+
+test("process pagination reserves its short takeaway instead of creating a caption-only slide", async () => {
+  for (const [count, expectedCounts] of [
+    [4, [4]],
+    [5, [3, 2]],
+  ] as const) {
+    const items = Array.from({ length: count }, (_, index) => ({
+      title: `Etapa ${index + 1}`,
+      detail: `Descrição curta ${index + 1}.`,
+    }));
+    const result = await slides(
+      `## Processo completo\n\n${fence("steps", { items })}\n\nCada etapa deixa evidências verificáveis.`,
+    );
+    assert.deepEqual(
+      result.map(
+        (slide) =>
+          Array.from(slide.getElementsByTagName("a:t")).filter((text) =>
+            /^Etapa \d+$/.test(text.textContent ?? ""),
+          ).length,
+      ),
+      expectedCounts,
+    );
+    const last = result.at(-1);
+    assert.ok(last);
+    const caption = textBox(last, "Cada etapa deixa evidências verificáveis.");
+    assert.ok(caption.y >= textBox(last, `Descrição curta ${count}.`).bottom + 0.18);
+    assert.ok(caption.bottom <= 6.55);
+  }
+});
+
+test("longer process sequences balance measured pages instead of leaving a lone final step", async () => {
+  for (const [count, expected] of [
+    [6, [3, 3]],
+    [7, [4, 3]],
+    [9, [5, 4]],
+    [11, [4, 4, 3]],
+    [12, [4, 4, 4]],
+  ] as const) {
+    const items = Array.from({ length: count }, (_, index) => ({
+      title: `Etapa ${index + 1}`,
+      detail: `Descrição curta ${index + 1}.`,
+    }));
+    const result = await slides(`## Processo completo\n\n${fence("steps", { items })}`);
+    const counts = result.map(
+      (slide) =>
+        Array.from(slide.getElementsByTagName("a:t")).filter((text) =>
+          /^Etapa \d+$/.test(text.textContent ?? ""),
+        ).length,
+    );
+    assert.deepEqual(counts, expected, `${count} steps should remain balanced and ordered`);
+    let offset = 0;
+    for (const [pageIndex, page] of result.entries()) {
+      for (const item of items.slice(offset, offset + counts[pageIndex])) {
+        assert.ok(textBox(page, item.detail).bottom <= 6.5);
+        assert.ok(
+          Array.from(page.getElementsByTagName("a:t")).some(
+            (text) => text.textContent === String(offset + 1).padStart(2, "0"),
+          ),
+        );
+        offset++;
+      }
+    }
+    assert.equal(offset, count, "pagination never drops or duplicates a step");
+  }
+});
+
 test("large prose and explicit slide breaks keep their own slides after a figure", async () => {
   const prose = `Explicação detalhada: ${"Há informações que precisam de contexto suficiente e espaço próprio. ".repeat(35)} FINAL PRESERVADO.`;
   const result = await slides(`## Comparação\n\n${table}\n\n${prose}`);
@@ -276,8 +371,11 @@ test("rendered list lines stay inside the column with separated text bounds", {
       }> = [];
       for (const item of content.items) {
         if (!("str" in item) || !item.str.trim() || Math.abs(item.height - 21) > 0.1) continue;
-        if (/^(?:[•·]|\d+\.)$/.test(item.str.trim())) markers.push(item.str.trim());
-        if (!/^(?:[•·]|\d+\.)$/.test(item.str.trim())) observedText += item.str;
+        // LibreOffice 7.4 may combine the marker and first text run; 26.x
+        // commonly exports them as separate PDF text items.
+        const marker = item.str.trim().match(/^(?:[•·]|\d+\.)(?=\s|$)/)?.[0];
+        if (marker) markers.push(marker);
+        observedText += item.str.replace(/^\s*(?:[•·]|\d+\.)(?=\s|$)/, "");
         const style = content.styles[item.fontName];
         const top = page.view[3] - item.transform[5] - (style.ascent ?? 1) * item.height;
         const bottom = page.view[3] - item.transform[5] - (style.descent ?? -0.25) * item.height;
