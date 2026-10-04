@@ -32,3 +32,12 @@ BM25, tokenization, query expansion and parameter text traversal are preserved.
 contract of OpenClaw ToolSearchRuntime and Hermes `tools/tool_search.py` at
 `1298c8e74baa73e1a2b90124228d017261ac6bc4`. It keeps original native execution
 identities instead of adding an independent effect dispatcher.
+
+Semantic compaction ports the summary structure, exact-identifier extraction and
+quality audit from `src/agents/agent-hooks/compaction-safeguard-quality.ts` at
+`b56ae70a5e7e302dc2165c96b60214e84e19c7b1`, including the query-expansion,
+UTF-16 and prompt-data sanitization helpers it uses. Imports and portable string
+helpers are adapted to this repository. The existing configured streaming
+provider generates summaries; bounded source windows are validated before an
+owner-scoped, source-fingerprinted checkpoint is committed. Complete required
+operation receipts remain outside the summary in the model context.

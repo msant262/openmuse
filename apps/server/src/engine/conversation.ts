@@ -791,6 +791,7 @@ export class ConversationAgent extends AbstractAgent {
       }),
     );
     const agent = tanstackAgent({
+      compaction: { db: this.service.db, owner: this.owner, scope: `chat:${input.threadId}` },
       contextModel: selection
         ? (selectionContextModel(this.config, selection) ?? this.service.contextModel)
         : this.service.contextModel,

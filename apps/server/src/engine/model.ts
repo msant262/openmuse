@@ -1310,6 +1310,7 @@ export async function executeModelTask(
   // can be pruned. Duplicating them in the system prompt makes them mandatory.
   const promptState = { ...task.state, providerCheckpoint: undefined };
   const agent = tanstackAgent({
+    compaction: { db: service.db, owner, scope: `task:${task.id}` },
     contextModel: selectionContextModel(config, selection) ?? service.contextModel,
     requiredOperationIds: () => service.journal.requiredHistoryIds(owner, task.id),
     workClass: "background",

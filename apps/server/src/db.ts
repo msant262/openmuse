@@ -470,6 +470,18 @@ export class Store {
   async remove(owner: string, kind: string, id: string): Promise<void> {
     await this.write("DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3", [owner, kind, id]);
   }
+  async removeIf(
+    owner: string,
+    kind: string,
+    id: string,
+    expected: Record<string, unknown>,
+  ): Promise<boolean> {
+    const result = await this.write(
+      "DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3 AND data @> $4::jsonb RETURNING data",
+      [owner, kind, id, JSON.stringify(expected)],
+    );
+    return result.rows.length === 1;
+  }
   async compareAndSwap<T>(
     owner: string,
     kind: string,
@@ -1043,7 +1055,7 @@ export class Store {
     limit: number,
     archived: boolean,
     time: { before?: string; after?: string } = {},
-  ) {
+  ): Promise<Record<string, unknown>[]> {
     const result = await this.db.query(
       `WITH latest AS (
         SELECT DISTINCT ON (data->>'threadId') data FROM records WHERE owner=$1 AND kind='thread-runs' AND data->>'status'<>'running'

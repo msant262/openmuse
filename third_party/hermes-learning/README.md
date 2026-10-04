@@ -36,3 +36,8 @@ owner-scoped stores, lexical relevance and per-thread diversity; it adds later
 user updates so an old plan can be checked against subsequent cancellation.
 Search supports accent normalization and English/Portuguese stemming, not
 cross-language embedding similarity.
+
+Semantic compaction also adapts generation ownership/cancellation rollback from
+`agent/context_compressor_summary.py` at `1298c8e74baa73e1a2b90124228d017261ac6bc4`.
+A superseded writer cannot commit, and cancellation preserves the preceding
+checkpoint. Summary failure is explicit and does not erase canonical history.
