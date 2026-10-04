@@ -161,16 +161,17 @@ export async function browserFallbackFixture(
       }
       const url = profiles.get(id) ?? "https://example.com/";
       return {
-        data: path.endsWith("/snapshot") || path.endsWith("/read")
-          ? snapshot(id, url, "VPS evidence")
-          : {
-              id,
-              url,
-              title: "Fixture page",
-              status: "active",
-              control: "agent",
-              updatedAt: new Date().toISOString(),
-            },
+        data:
+          path.endsWith("/snapshot") || path.endsWith("/read")
+            ? snapshot(id, url, "VPS evidence")
+            : {
+                id,
+                url,
+                title: "Fixture page",
+                status: "active",
+                control: "agent",
+                updatedAt: new Date().toISOString(),
+              },
       };
     },
   );
