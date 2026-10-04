@@ -10,6 +10,76 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 const html =
   '<html><title>Promoções de maquiagem</title><main><h1>Batom</h1><p>Preço atual €12, em estoque na Alemanha.</p><a href="/batom">Ver produto</a></main></html>';
 
+test("worker web_fetch renders pending data automatically and records the rendered source", async (t) => {
+  await modelFixture(t, (index) =>
+    index === 0
+      ? { name: "web_fetch", arguments: { url: "https://news.example/live" } }
+      : {
+          name: "finish_task",
+          arguments: { summary: "Candidate A has 52% of 12345 votes: https://news.example/live" },
+        },
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: '<title>Live results</title><main><div class="results-placeholder">Location 0</div></main>',
+  }));
+  // External rendering is the test boundary; the real reader, journal and verifier run.
+  t.mock.method(f.agent.web, "validate", async (url: string) => ({
+    url: new URL(url),
+    address: "93.184.216.34",
+    family: 4,
+  }));
+  t.mock.method(f.agent.browser, "observe", async (_owner: string, url: string) => ({
+    sessionId: randomUUID(),
+    url,
+    title: "Live results",
+    text: "Candidate A has 52% of 12345 votes.",
+    truncated: false,
+  }));
+  const task = await f.agent.createTask("owner", {
+    prompt: "Read the current count",
+    criteria: [
+      { id: "votes", kind: "observation", description: "Observed votes", requiredItems: ["12345"] },
+    ],
+  });
+  await f.agent.worker.tick();
+  const result = await f.agent.getTask("owner", task.id);
+  assert.equal(result.status, "succeeded", result.error ?? result.result);
+  assert.match(result.evidence[0].excerpt, /12345/);
+  const op = (await f.agent.journal.operations("owner", task.id)).find(
+    (op) => op.toolName === "web_fetch",
+  );
+  assert.ok(op);
+  assert.equal((op.receipt as { provenance: { backend: string } }).provenance.backend, "browser");
+});
+
+test("a declared partial research report cannot pass as a completed task merely because an article was read", async (t) => {
+  await modelFixture(t, (index) =>
+    index === 0
+      ? { name: "web_fetch", arguments: { url: "https://news.example/about-results" } }
+      : {
+          name: "finish_task",
+          arguments: {
+            summary: "Li as instruções, mas não consegui confirmar os resultados atuais.",
+            outcome: "partial",
+          },
+        },
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "<title>About the count</title><article>Results update after polls close. Read the live data on the results page.</article>",
+  }));
+  const task = await f.agent.createTask("owner", { prompt: "como está a apuração agora?" });
+  await f.agent.worker.tick();
+  const result = await f.agent.getTask("owner", task.id);
+  assert.equal(result.status, "failed");
+  assert.equal(result.completion?.status, "partial");
+});
+
 test("chat delegates public-page research before the worker reads HTTP text without a browser or question", async (t) => {
   const prompt = "Veja as promoções em https://shop.example/sale";
   const { requests } = await modelFixture(t, (index) =>

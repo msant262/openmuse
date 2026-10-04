@@ -31,6 +31,7 @@ import { buildProfileContext } from "../profile-context.ts";
 import { modelProviderConfig } from "../providers/config.ts";
 import { routingCapabilities } from "../providers/model-capabilities.ts";
 import { modelSelection, selectionContextModel } from "../providers/preferences.ts";
+import { publicReadDescription, readablePage } from "../public-web.ts";
 import { runtimeTool } from "../runtime-tools.ts";
 import { SkillCatalog, skillTools } from "../skill-catalog.ts";
 import {
@@ -582,14 +583,28 @@ export class ConversationAgent extends AbstractAgent {
       ...searchTools(this.service.search, this.owner, { signal: browserAbort.signal }),
       defineTool({
         name: "web_fetch",
-        description:
-          "Read a public URL over HTTP without opening a browser. Preferred for offers, prices, articles and public-page questions. Returns actual text and links, without scripts, login or cookies.",
-        parameters: z.object({ url: z.url().max(4096) }),
-        execute: async ({ url }) => {
+        description: publicReadDescription,
+        parameters: z.object({
+          url: z.url().max(4096),
+          mode: z.enum(["auto", "http", "browser"]).default("auto"),
+        }),
+        execute: async ({ url, mode }) => {
           browserAbort.signal.throwIfAborted();
           try {
-            const page = await this.service.web.read(url, browserAbort.signal);
-            if (jev)
+            const page = await this.service.web.read(url, browserAbort.signal, {
+              mode,
+              render: (target, signal) =>
+                this.service.browser.observe(
+                  this.owner,
+                  target,
+                  undefined,
+                  undefined,
+                  undefined,
+                  signal,
+                  `public:chat:${input.threadId}`,
+                ),
+            });
+            if (jev && readablePage(page))
               await jev.noteEvidence(
                 this.owner,
                 input.threadId,

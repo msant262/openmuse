@@ -161,7 +161,7 @@ export async function browserFallbackFixture(
       }
       const url = profiles.get(id) ?? "https://example.com/";
       return {
-        data: path.endsWith("/snapshot")
+        data: path.endsWith("/snapshot") || path.endsWith("/read")
           ? snapshot(id, url, "VPS evidence")
           : {
               id,

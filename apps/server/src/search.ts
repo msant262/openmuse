@@ -199,7 +199,11 @@ export class HttpSearchBackend implements SearchBackend {
         }
         if (endpoint.provider === "bing-rss") {
           const normalize = (value: string) =>
-            value.toLowerCase().replace(/make[ -]+up/g, "makeup");
+            value
+              .normalize("NFD")
+              .replace(/\p{M}/gu, "")
+              .toLowerCase()
+              .replace(/make[ -]+up/g, "makeup");
           const stop = new Set([
             "make",
             "up",
@@ -230,19 +234,25 @@ export class HttpSearchBackend implements SearchBackend {
             "deutschland",
             "germany",
             "alemanha",
-            "promoções",
+            "promocoes",
             "ofertas",
-            "2026",
           ]);
-          const terms = (normalize(input.query).match(/[\p{L}\p{N}]+/gu) ?? []).filter(
-            (term) => term.length > 2 && !stop.has(term),
-          );
-          if (terms.length)
-            entries = entries.filter((entry) =>
-              terms.some((term) =>
-                normalize(`${entry.title} ${entry.snippet} ${entry.url}`).includes(term),
+          const terms = [
+            ...new Set(
+              (normalize(input.query).match(/[\p{L}]+/gu) ?? []).filter(
+                (term) => term.length > 2 && !stop.has(term),
               ),
-            );
+            ),
+          ];
+          if (terms.length)
+            entries = entries.filter((entry) => {
+              const words = new Set(
+                normalize(`${entry.title} ${entry.snippet} ${entry.url}`).match(/\p{L}+/gu) ?? [],
+              );
+              // One ambiguous acronym must not drown a multi-topic query in
+              // unrelated results. Short/single-topic queries still need one match.
+              return terms.filter((term) => words.has(term)).length >= (terms.length >= 3 ? 2 : 1);
+            });
           if (!entries.length) {
             code = "SEARCH_NO_RELEVANT_SOURCES";
             continue;

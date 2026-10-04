@@ -1747,7 +1747,13 @@ export class AgentService {
     }
     return executeModelTask(this, owner, task, context);
   }
-  async finish(task: AgentTask, context: TaskContext, result: string, owner?: string) {
+  async finish(
+    task: AgentTask,
+    context: TaskContext,
+    result: string,
+    owner?: string,
+    deliveryOutcome: "completed" | "partial" = "completed",
+  ) {
     await context.guard();
     // TaskContext executes under an owner; deterministic workflows pass it
     // explicitly, model calls do likewise. Do not infer owner from model data.
@@ -1773,6 +1779,11 @@ export class AgentService {
       Number(task.state.appliedRevision ?? 0),
       result,
     );
+    if (deliveryOutcome === "partial") {
+      completion.status = completion.status === "unverified" ? "unverified" : "partial";
+      completion.checks.push({ criterionId: "requested-outcome", passed: false, evidenceIds: [] });
+      completion.remaining.push("The delivered report still lacks part of the requested outcome.");
+    }
     const failedChecks = completion.checks.filter((check) => !check.passed);
     if (
       failedChecks.length &&

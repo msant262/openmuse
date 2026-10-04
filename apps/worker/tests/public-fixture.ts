@@ -111,6 +111,11 @@ export async function publicFixture() {
     if (path.startsWith("/redirect-private")) {
       response.writeHead(302, { location: "http://127.0.0.1:8790/health" });
       response.end();
+    } else if (path === "/delayed-results") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<!doctype html><title>Live results</title><main><h1>Live results</h1><div id="results" class="results-placeholder">Location 0</div></main><script>
+        setTimeout(() => { const results = document.getElementById('results'); results.className = ''; results.textContent = 'Candidate A: 52% of 12345 votes'; }, 900);
+      </script>`);
     } else if (path.startsWith("/upload")) {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(`<!doctype html><title>File fixture</title><label>Upload data<input type="file" id="file"></label><p id="received"></p>
