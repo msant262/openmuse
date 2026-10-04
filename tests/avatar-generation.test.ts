@@ -531,3 +531,43 @@ test("avatar image requests do not seed unrelated anatomy and preserve requested
     await f.close();
   }
 });
+
+test("built-in companions persist independently of the saved gallery and bind retries to the choice", async () => {
+  const f = await fixture();
+  try {
+    assert.equal((await (await f.request("")).json()).builtinCompanion, "okami");
+    const mini = await f.request("/default/select", {
+      requestId: "choose-mini",
+      companion: "mini-muse",
+    });
+    assert.equal(mini.status, 200);
+    assert.equal(
+      (await f.server.agent.snapshot("local-user")).identity.builtinCompanion,
+      "mini-muse",
+    );
+    const restarted = new AvatarService(f.db, f.server.files, f.config);
+    assert.equal((await restarted.state("local-user")).builtinCompanion, "mini-muse");
+    assert.equal((await restarted.state("another-owner")).builtinCompanion, "okami");
+    assert.equal(
+      (await f.request("/default/select", { requestId: "choose-mini", companion: "mini-muse" }))
+        .status,
+      200,
+    );
+    assert.equal(
+      (await f.request("/default/select", { requestId: "choose-mini", companion: "okami" })).status,
+      409,
+    );
+    assert.equal(
+      (await f.request("/default/select", { requestId: "invalid-choice", companion: "invalid" }))
+        .status,
+      422,
+    );
+    assert.equal(
+      (await f.request("/default/select", { requestId: "choose-wolf", companion: "okami" })).status,
+      200,
+    );
+    assert.equal((await restarted.state("local-user")).builtinCompanion, "okami");
+  } finally {
+    await f.close();
+  }
+});

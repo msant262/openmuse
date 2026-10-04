@@ -14,6 +14,8 @@ import {
   avatarRequestId,
   avatarRetryInput,
   avatarSelectionInput,
+  type BuiltinCompanion,
+  builtinCompanionSchema,
 } from "../../../packages/domain/src/avatar-character.ts";
 import { ActionLog } from "./action-log.ts";
 import type { Config } from "./config.ts";
@@ -131,15 +133,15 @@ export class AvatarService {
     };
   }
   async state(owner: string): Promise<AvatarStudioState> {
-    const identity = await this.db.get<{ avatarAssetId?: string }>(
-      owner,
-      "agent-settings",
-      "identity",
-    );
+    const identity = await this.db.get<{
+      avatarAssetId?: string;
+      builtinCompanion?: BuiltinCompanion;
+    }>(owner, "agent-settings", "identity");
     const assets = await this.db.list<AvatarAsset>(owner, "avatar-assets");
     const jobs = await this.db.list<GenerationRecord>(owner, "avatar-generations");
     return {
       capabilities: await this.provider.capabilities(),
+      builtinCompanion: identity?.builtinCompanion ?? "okami",
       assets: await Promise.all(assets.map((asset) => this.decorate(owner, asset))),
       generations: await Promise.all(
         jobs.slice(0, 30).map((job) => this.generation(owner, job.id)),
@@ -216,16 +218,27 @@ export class AvatarService {
     ]);
     return this.decorate(owner, asset);
   }
-  async selectDefault(owner: string, requestId: string) {
+  async selectDefault(owner: string, requestId: string, companion: BuiltinCompanion = "okami") {
+    builtinCompanionSchema.parse(companion);
     avatarRequestId.parse(requestId);
     await this.db.insertIfAbsent(owner, "agent-settings", {
       id: "identity",
       name: "Okami",
       tone: "warm",
     });
-    await this.mutation(owner, requestId, { kind: "default" }, [
-      { kind: "agent-settings", id: "identity", mode: "merge", value: { avatarAssetId: null } },
-    ]);
+    await this.mutation(
+      owner,
+      requestId,
+      companion === "okami" ? { kind: "default" } : { kind: "default", companion },
+      [
+        {
+          kind: "agent-settings",
+          id: "identity",
+          mode: "merge",
+          value: { avatarAssetId: null, builtinCompanion: companion },
+        },
+      ],
+    );
     return { selected: true };
   }
   async select(owner: string, id: string, raw: unknown) {
@@ -656,10 +669,10 @@ export function avatarRoutes(service: AvatarService) {
   const app = new Hono<{ Variables: { owner: string } }>();
   app.post("/default/select", async (c) => {
     const input = z
-      .object({ requestId: avatarRequestId })
+      .object({ requestId: avatarRequestId, companion: builtinCompanionSchema.optional() })
       .strict()
       .parse(await c.req.json());
-    return c.json(await service.selectDefault(c.get("owner"), input.requestId));
+    return c.json(await service.selectDefault(c.get("owner"), input.requestId, input.companion));
   });
   app.get("/", async (c) => c.json(await service.state(c.get("owner"))));
   app.post("/generations", async (c) =>

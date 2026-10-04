@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+export const builtinCompanions = ["okami", "mini-muse"] as const;
+export type BuiltinCompanion = (typeof builtinCompanions)[number];
+export const builtinCompanionSchema = z.enum(builtinCompanions);
+
 export const avatarMotions = ["idle", "working", "responding"] as const;
 export type AvatarMotion = (typeof avatarMotions)[number];
 export interface AvatarMedia {
@@ -52,6 +56,7 @@ export interface AvatarStudioState {
   assets: AvatarAsset[];
   generations: AvatarGeneration[];
   activeAssetId?: string;
+  builtinCompanion?: BuiltinCompanion;
 }
 export const avatarRequestId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
 export const avatarGenerationInput = z
