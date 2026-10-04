@@ -454,6 +454,7 @@ export class AgentService {
           if (value.id !== "identity") continue;
           if (this.config.mode === "live") {
             await this.learning.scheduleDue(owner);
+            await this.proactivity.pollSources(owner);
             await this.proactivity.scheduleDue(owner);
             continue;
           }
@@ -959,6 +960,12 @@ export class AgentService {
       },
     );
     if (!saved) throw new AppError("Goal changed; refresh its revision before updating", 409);
+    await this.proactivity.events.enqueue(owner, {
+      source: "goal",
+      key: id,
+      revision: String(saved.revision ?? 0),
+      observedAt: saved.updatedAt,
+    });
     if (patch.status === "paused")
       for (const task of await this.db.list<AgentTask>(owner, "tasks"))
         if (task.goalId === id && !terminal.has(task.status) && task.status !== "paused")
@@ -1839,6 +1846,7 @@ export class AgentService {
     const task = await this.getTask(owner, saved.id);
     if (typeof task.input.proactivityCycleId === "string" || task.input.internalActivity === true)
       return;
+    await this.proactivity.events.task(owner, task);
     if (terminal.has(task.status) && typeof task.state.parentTaskId === "string") {
       const parent = await this.db.get<AgentTask>(owner, "tasks", task.state.parentTaskId);
       const children = (await this.db.list<AgentTask>(owner, "tasks")).filter(

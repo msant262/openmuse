@@ -41,3 +41,16 @@ helpers are adapted to this repository. The existing configured streaming
 provider generates summaries; bounded source windows are validated before an
 owner-scoped, source-fingerprinted checkpoint is committed. Complete required
 operation receipts remain outside the summary in the model context.
+
+Event heartbeat adapts `src/infra/session-event-wake.ts` (wake priority,
+250 ms coalescing, retaining deferred work) and ports
+`src/infra/heartbeat-active-hours.ts` at the same pinned revision. Events use
+owner-scoped durable rows, atomic claims with review tasks, retry backoff and
+reconciliation on the existing one-minute maintenance tick. There is no second
+scheduler. Plan deadlines, goal changes and task outcomes are actual producers.
+Native Gmail and the primary calendar are polled every five minutes; changed
+source versions enqueue a review, whose existing evidence checks run again
+before publication. This adapter does not install Google Pub/Sub, `gog`, or
+assume background support from an arbitrary MCP connector. Gmail change polling
+uses [`users.getProfile.historyId`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users/getProfile)
+without downloading message bodies. Disconnected and partial coverage is explicit.

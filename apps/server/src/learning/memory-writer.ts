@@ -158,6 +158,7 @@ export async function writeSourcedMemory(
         origin,
         validUntil: input.validUntil,
       }));
+  await service.proactivity.events.plan(owner, saved as AgentMemory);
   await service.proactivity.reconcileMemorySuggestions(owner);
   return saved;
 }

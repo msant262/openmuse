@@ -99,7 +99,11 @@ export async function fixture(t: TestContext, overrides: Partial<Config> = {}) {
         ...(source.truncated ? { nextPageToken: "more" } : {}),
       });
     if (url.pathname.includes("/messages/")) return Response.json(source.messages[0]);
-    if (url.pathname.endsWith("/profile")) return Response.json({ emailAddress: "me@example.com" });
+    if (url.pathname.endsWith("/profile"))
+      return Response.json({
+        emailAddress: "me@example.com",
+        historyId: JSON.stringify(source.messages.map((m) => [m.id, m.labelIds])),
+      });
     if (url.pathname.endsWith("/events"))
       return Response.json({ items: source.events, timeZone: "Europe/Berlin" });
     throw new Error(`Unexpected fixture path ${url.pathname}`);

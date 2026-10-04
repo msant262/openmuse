@@ -120,6 +120,18 @@ export class WorkspaceService {
       throw new AppError(`The connected account has no authorized ${source} read scope`, 403);
     return { id: tokens.connectionId, account: tokens.account };
   }
+  async proactivityMailVersion(owner: string, signal?: AbortSignal) {
+    const authority = await this.sourceAuthority(owner, "mail");
+    if (!authority)
+      return { status: "disconnected" as const, observedAt: new Date().toISOString() };
+    const version =
+      this.config.mode === "live"
+        ? await this.google(owner, authority.id, signal).mailHistoryId()
+        : mailVersion((await this.db.listPage<Mail>(owner, "mail", 30)).values);
+    if ((await this.sourceAuthority(owner, "mail"))?.id !== authority.id)
+      throw new AppError("Mail account changed during the change-token read", 409);
+    return { status: "fresh" as const, version, authority, observedAt: new Date().toISOString() };
+  }
   async proactivityMailCandidates(owner: string, signal?: AbortSignal) {
     const authority = await this.sourceAuthority(owner, "mail");
     if (!authority) throw new AppError("Mail source is disconnected", 409);

@@ -10,10 +10,26 @@ export const proactivitySettingsPatch = z
     enabled: z.boolean().optional(),
     intervalHours: z.number().min(0.25).max(168).optional(),
     requestId: z.string().min(1).max(256).optional(),
+    activeHours: z
+      .object({
+        start: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+        end: z.string().regex(/^(?:(?:[01]\d|2[0-3]):[0-5]\d|24:00)$/),
+        timezone: z.string().refine((value) => {
+          try {
+            new Intl.DateTimeFormat("en", { timeZone: value });
+            return true;
+          } catch {
+            return false;
+          }
+        }, "Use an IANA timezone"),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict()
   .refine(
-    (v) => v.enabled !== undefined || v.intervalHours !== undefined,
+    (v) => v.enabled !== undefined || v.intervalHours !== undefined || v.activeHours !== undefined,
     "Choose a setting to change",
   );
 export type ChatSource = { messageId: string; threadId: string; runId: string };
@@ -79,6 +95,7 @@ export class ProactivitySettings {
       const intent = message ? proactivityIntent(message.text) : null;
       if (
         !intent ||
+        input.activeHours !== undefined ||
         Object.entries(input).some(
           ([key, value]) => (key === "enabled" || key === "intervalHours") && intent[key] !== value,
         )

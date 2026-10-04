@@ -107,6 +107,7 @@ export type ProactivitySettingsRecord = {
   revision: number;
   enabled: boolean;
   intervalHours: number;
+  activeHours?: { start: string; end: string; timezone: string } | null;
   updatedAt: string;
   origin?: { kind: "chat" | "settings"; messageId?: string };
 };
@@ -118,6 +119,8 @@ export type ProactivityCycle = {
   completedAt?: string;
   watermark?: string;
   cursor?: string;
+  wakeEvents?: string[];
+  reviewedWakeEvents?: string[];
   coverage: Partial<
     Record<"mail" | "calendar" | "goals" | "tasks" | "memories" | "reasoning", SourceCoverage>
   >;
