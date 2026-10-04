@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 import { type Message, MessageSchema } from "@ag-ui/core";
 import type { ModelMessage } from "@tanstack/ai";
 import { z } from "zod";
+import { modelAdmissionSchema } from "../providers/admission-diagnostics.ts";
 
 /** Public tool history only: credentials, model thinking, media bytes and metadata
  * are deliberately absent. Images are reacquired by owned reference when needed. */
-export function publicJournalValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.slice(0, 1000).map(publicJournalValue);
+export function publicJournalValue(value: unknown, maxStringCharacters = 32000): unknown {
+  if (Array.isArray(value))
+    return value.slice(0, 1000).map((item) => publicJournalValue(item, maxStringCharacters));
   if (value && typeof value === "object")
     return Object.fromEntries(
       Object.entries(value)
@@ -16,10 +18,10 @@ export function publicJournalValue(value: unknown): unknown {
               key,
             ),
         )
-        .map(([key, item]) => [key, publicJournalValue(item)]),
+        .map(([key, item]) => [key, publicJournalValue(item, maxStringCharacters)]),
     );
   if (typeof value !== "string") return value;
-  let text = value.slice(0, 32000);
+  let text = value.slice(0, maxStringCharacters);
   for (const [key, secret] of Object.entries(process.env)) {
     if (
       secret &&
@@ -29,6 +31,22 @@ export function publicJournalValue(value: unknown): unknown {
       text = text.replaceAll(secret, "[redacted]");
   }
   return text.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, "Bearer [redacted]");
+}
+/** Only local document authoring accepts a 120k source. Other argument strings
+ * retain their existing bound; source text still receives normal secret scrubbing. */
+export function publicToolArguments(name: string, args: unknown): unknown {
+  const value = publicJournalValue(args);
+  if (
+    name === "create_document" &&
+    args &&
+    typeof args === "object" &&
+    "content" in args &&
+    typeof args.content === "string" &&
+    value &&
+    typeof value === "object"
+  )
+    return { ...value, content: publicJournalValue(args.content, 120000) };
+  return value;
 }
 export function completedMessages(raw: unknown): Message[] {
   const input = z.array(z.unknown()).parse(raw);
@@ -69,7 +87,7 @@ export function completedMessages(raw: unknown): Message[] {
                 type: "function",
                 function: {
                   name: call.function.name,
-                  arguments: JSON.stringify(publicJournalValue(args)),
+                  arguments: JSON.stringify(publicToolArguments(call.function.name, args)),
                 },
               };
             }),
@@ -129,6 +147,7 @@ export const providerContinuationCheckpointSchema = z
     accepted: z.boolean(),
     code: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
     retryAt: z.iso.datetime().optional(),
+    admission: modelAdmissionSchema.optional(),
   })
   .strict();
 export type ProviderContinuationCheckpoint = z.infer<typeof providerContinuationCheckpointSchema>;

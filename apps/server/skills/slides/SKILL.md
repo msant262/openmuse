@@ -13,6 +13,8 @@ Plan the actual slide count from these layout rules. A figure gets its own slide
 
 Adjacent section headings share a hierarchy on the next content slide. Use an explicit `---` after a heading only when an intentional divider slide serves the narrative. A short warning alone on a continuation slide usually belongs with a more concise version of the preceding content.
 
+Balanced continuations are valid: a longer process may span two slides with the same section title and different numbered steps. Check the actual step numbers and content before calling this duplication. Repair concrete defects such as clipped text, overlaps, unreadable labels, missing content or isolated trailing fragments. Once the deck meets the requested scope and is readable, preserve working layouts instead of recreating the file for successive stylistic variations. Review comments must describe pages visible in that receipt; do not reconfirm a superseded draft as a way to review the current file.
+
 Use visual variation where it serves content: quantitative comparison, key finding, process, image-led explanation or compact table. Keep type, colors and spacing consistent across these layouts. Prefer native editable text, shapes, tables and charts where the renderer supports them. Do not flatten the entire deck into screenshots or claim an image is an editable chart.
 
 Keep speaker detail out of crowded slide bodies. If a slide becomes dense, shorten wording, split the topic or choose a clearer visual structure before reducing type. Figures must carry correct units, captions and sources. Never invent values, brand assets or testimonial content to fill space.

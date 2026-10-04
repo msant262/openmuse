@@ -8,6 +8,7 @@ import { type OpenAIChatModel, openaiText } from "@tanstack/ai-openai";
 import { openaiCompatibleText } from "@tanstack/ai-openai/compatible";
 import { z } from "zod";
 import type { ModelRequirements, WorkClass } from "../../../../packages/domain/src/runtime.ts";
+import { modelAdmission, modelAdmissionSchema } from "./admission-diagnostics.ts";
 import {
   type BrowserImageLoader,
   browserImageMessages,
@@ -100,6 +101,7 @@ export const providerContinuationCheckpointSchema = z
     accepted: z.boolean(),
     code: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
     retryAt: z.iso.datetime().optional(),
+    admission: modelAdmissionSchema.optional(),
   })
   .strict();
 export type ProviderContinuationCheckpoint = z.infer<typeof providerContinuationCheckpointSchema>;
@@ -413,6 +415,13 @@ class OrderedModelAdapter implements AnyTextAdapter {
       this.config.routing?.imageContextTokens,
     );
   }
+  private candidates(requirements: ModelRequirements) {
+    // Keep an accepted fallback sticky while it still fits the next request.
+    // Images, schemas or growing context can require an earlier configured model.
+    return this.router.eligibleModels(requirements, [this.models[this.selected]]).length
+      ? this.models.slice(this.selected)
+      : this.models;
+  }
   private acquire(
     requirements: ModelRequirements,
     signal: AbortSignal,
@@ -420,7 +429,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
     excluded: string[],
   ) {
     return this.router.select({
-      models: this.models.slice(this.selected),
+      models: this.candidates(requirements),
       workClass: this.runtime.workClass ?? "interactive",
       requirements,
       excludedModels: excluded,
@@ -473,7 +482,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
   ) {
     const routing = this.config.routing ?? defaultModelRouting;
     const next = [...excluded, ...(model ? [model] : [])];
-    const candidates = this.router.eligibleModels(requirements, this.models.slice(this.selected));
+    const candidates = this.router.eligibleModels(requirements, this.candidates(requirements));
     if (!candidates.length) throw new ModelUnavailableError("capability");
     if (count + 1 >= routing.maxAttempts)
       throw new ModelUnavailableError(
@@ -642,6 +651,13 @@ class OrderedModelAdapter implements AnyTextAdapter {
           rejectedModel: lease?.model ?? this.models[this.selected],
           accepted,
           code,
+          admission: modelAdmission(
+            "provider_dispatch",
+            requirements,
+            this.models,
+            this.router,
+            this.candidates(requirements),
+          ),
           ...(failure instanceof ModelUnavailableError && failure.retryAt
             ? { retryAt: new Date(failure.retryAt).toISOString() }
             : {}),

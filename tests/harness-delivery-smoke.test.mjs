@@ -8,7 +8,71 @@ import {
 import { createDocumentDocx } from "../packages/integrations/src/document-docx.ts";
 import { composeDocument } from "../packages/integrations/src/document-model.ts";
 import { createDocumentPptx } from "../packages/integrations/src/document-pptx.ts";
-import { inspectOfficeExport, smokeOperationEvidence } from "../scripts/harness-delivery-smoke.mjs";
+import {
+  inspectOfficeExport,
+  smokeOperationEvidence,
+  smokeProviderDiagnostics,
+} from "../scripts/harness-delivery-smoke.mjs";
+
+test("provider diagnostics retain exact admission numbers without checkpoint content or credentials", () => {
+  const secret = "diagnostic-secret-do-not-export";
+  const requirements = {
+    tools: true,
+    vision: true,
+    structuredOutput: false,
+    contextTokens: 141200,
+  };
+  const value = smokeProviderDiagnostics(
+    {
+      state: {
+        providerCheckpoint: {
+          code: "MODEL_CAPABILITY_UNAVAILABLE",
+          rejectedModel: "openai/fixture",
+          accepted: false,
+          partialText: secret,
+          messages: [
+            {
+              role: "assistant",
+              content: secret,
+              toolCalls: [{ function: { arguments: secret } }],
+            },
+            { role: "tool", content: "document private body", toolCallId: "doc" },
+          ],
+          admission: {
+            stage: "context_projection",
+            requirements: { ...requirements, credential: secret },
+            prompt: secret,
+            candidates: [
+              {
+                model: "openai/fixture",
+                capabilities: { ...requirements, contextTokens: 131072 },
+                eligible: false,
+                considered: true,
+                cooldownUntil: 0,
+                capabilitySource: "declared",
+                accessToken: secret,
+              },
+            ],
+          },
+        },
+      },
+    },
+    (input) => scrubConfiguredValue(input, configuredSecretScrubber([secret])),
+  );
+  assert.deepEqual(value.admission.requirements, requirements);
+  assert.equal(value.admission.candidates[0].capabilities.contextTokens, 131072);
+  assert.equal(value.history.messages, 2);
+  assert.equal(value.history.toolCalls, 1);
+  assert.equal(value.history.toolReceipts, 1);
+  assert.doesNotMatch(
+    JSON.stringify(value),
+    /credential|accessToken|partialText|private body|arguments|diagnostic-secret/,
+  );
+  assert.equal(
+    smokeProviderDiagnostics({ state: {} }, (value) => value),
+    undefined,
+  );
+});
 
 test("smoke preserves exact document call IDs, revisions and errors while bounding scrubbed prose", () => {
   const secret = "do-not-export-this-credential";

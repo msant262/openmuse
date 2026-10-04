@@ -15,7 +15,7 @@ import { AppError, NativePreflightRejection } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { ResourceBusyError } from "./resource-leases.ts";
 import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
-import { completedMessages, publicJournalValue } from "./task-history.ts";
+import { completedMessages, publicJournalValue, publicToolArguments } from "./task-history.ts";
 import { TaskValidityExpiredError } from "./task-timing.ts";
 import { LostLeaseError } from "./worker.ts";
 
@@ -276,7 +276,7 @@ export class TaskJournal {
   async prepare(owner: string, intent: JournalOperation): Promise<JournalOperation> {
     const value = journalOperationSchema.parse({
       ...intent,
-      args: publicJournalValue(intent.args),
+      args: publicToolArguments(intent.toolName, intent.args),
     });
     const existing =
       (await this.db.insertIfAbsent(owner, "task-operations", value)) ??

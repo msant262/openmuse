@@ -14,6 +14,63 @@ const documentMimes = {
 };
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
+/** Explicit allowlist: never export checkpoint history, tool arguments or image bytes. */
+export function smokeProviderDiagnostics(task, scrub) {
+  const checkpoint = task?.state?.providerCheckpoint;
+  if (!checkpoint || typeof checkpoint !== "object") return undefined;
+  const number = (value) =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+  const string = (value) => (typeof value === "string" ? value.slice(0, 240) : undefined);
+  const requirements = (value) =>
+    value && typeof value === "object"
+      ? {
+          tools: typeof value.tools === "boolean" ? value.tools : undefined,
+          vision: typeof value.vision === "boolean" ? value.vision : undefined,
+          structuredOutput:
+            typeof value.structuredOutput === "boolean" ? value.structuredOutput : undefined,
+          contextTokens: number(value.contextTokens),
+        }
+      : undefined;
+  const admission = checkpoint.admission;
+  const messages = Array.isArray(checkpoint.messages) ? checkpoint.messages : [];
+  return scrub({
+    code: string(checkpoint.code),
+    rejectedModel: string(checkpoint.rejectedModel),
+    accepted: typeof checkpoint.accepted === "boolean" ? checkpoint.accepted : undefined,
+    retryAt: string(checkpoint.retryAt),
+    history: {
+      messages: messages.length,
+      bytes: Buffer.byteLength(JSON.stringify(messages)),
+      toolCalls: messages.reduce(
+        (count, message) =>
+          count + (Array.isArray(message.toolCalls) ? message.toolCalls.length : 0),
+        0,
+      ),
+      toolReceipts: messages.filter((message) => message.role === "tool").length,
+    },
+    admission:
+      admission && typeof admission === "object"
+        ? {
+            stage: ["context_projection", "provider_dispatch"].includes(admission.stage)
+              ? admission.stage
+              : undefined,
+            requirements: requirements(admission.requirements),
+            candidates: (Array.isArray(admission.candidates) ? admission.candidates : [])
+              .slice(0, 64)
+              .map((candidate) => ({
+                model: string(candidate.model),
+                capabilities: requirements(candidate.capabilities),
+                capabilitySource: string(candidate.capabilitySource),
+                eligible: typeof candidate.eligible === "boolean" ? candidate.eligible : undefined,
+                considered:
+                  typeof candidate.considered === "boolean" ? candidate.considered : undefined,
+                cooldownUntil: number(candidate.cooldownUntil),
+              })),
+          }
+        : undefined,
+  });
+}
+
 /** Keep exact diagnostic identifiers; redact before bounding any document prose. */
 export function smokeOperationEvidence(operation, scrub) {
   const value = scrub(operation);
@@ -523,6 +580,7 @@ async function runSmoke() {
       fallbacks: config?.modelFallbacks,
       error: task?.error,
       question: task?.question,
+      providerDiagnostics: smokeProviderDiagnostics(task, safe),
       result: task?.result,
       completion: task?.completion,
       files,

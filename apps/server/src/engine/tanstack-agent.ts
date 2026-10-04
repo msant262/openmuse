@@ -19,10 +19,11 @@ import {
 import { finalize, map, mergeMap, type Observable } from "rxjs";
 import { z } from "zod";
 import type { ModelRequirements, WorkClass } from "../../../../packages/domain/src/runtime.ts";
+import { modelAdmission } from "../providers/admission-diagnostics.ts";
 import type { BrowserImageLoader } from "../providers/browser-images.ts";
 import type { ModelProviderConfig } from "../providers/config.ts";
 import { ModelUnavailableError } from "../providers/errors.ts";
-import type { ModelRouter } from "../providers/model-router.ts";
+import { type ModelRouter, sharedModelRouter } from "../providers/model-router.ts";
 import type { ModelSelection, ProviderContinuationCheckpoint } from "../providers/models.ts";
 import { continuationMessages, modelAdapter } from "../providers/models.ts";
 import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
@@ -108,6 +109,7 @@ export function tanstackAgent(options: {
     type: "tanstack",
     factory: ({ input, abortController }) => {
       const converted = convertInputToTanStackAI(input);
+      let canonicalMessages = converted.messages;
       const outputStore = new ToolOutputStore();
       const progress = new ToolProgress();
       const progressWarnings = new Set<string>();
@@ -115,6 +117,7 @@ export function tanstackAgent(options: {
         ...harnessToolCatalog[0],
         parameters: z.object({
           toolCallId: z.string().min(1).max(500),
+          part: z.enum(["result", "arguments"]).default("result"),
           offset: z.number().int().nonnegative().default(0),
           limit: z.number().int().min(2).max(8000).default(4000),
         }),
@@ -157,7 +160,13 @@ export function tanstackAgent(options: {
             workClass: options.workClass,
             requirements: options.requirements,
             router: options.modelRouter,
-            onInterrupted: options.onProviderInterrupted,
+            // The adapter sees a bounded provider view. Persist canonical tool
+            // arguments so a new process can page superseded document sources.
+            onInterrupted: (checkpoint) =>
+              options.onProviderInterrupted?.({
+                ...checkpoint,
+                messages: continuationMessages(canonicalMessages),
+              }),
             onFileImageObserved: options.onFileImageObserved,
           },
         ),
@@ -167,6 +176,7 @@ export function tanstackAgent(options: {
           {
             name: "openmuse-context",
             onConfig: async (ctx: ChatMiddlewareContext, config: ChatMiddlewareConfig) => {
+              canonicalMessages = config.messages;
               await options.onMessages?.(config.messages, ctx.phase);
               outputStore.observe(config.messages);
               progress.observe(config.messages);
@@ -198,20 +208,23 @@ export function tanstackAgent(options: {
               const projected = outputStore.project(config.messages, requiredOperationIds);
               const observations = ContextBudget.observations(projected);
               const imageContextTokens = options.providers?.routing?.imageContextTokens ?? 8192;
+              const requirements = options.contextModel
+                ? {
+                    tools: Boolean(tools.length),
+                    vision: ContextBudget.currentVision(projected, observations),
+                    structuredOutput: false,
+                    contextTokens: ContextBudget.minimumTokens(projected, {
+                      systemPrompts,
+                      tools,
+                      requiredOperationIds,
+                      observations,
+                      imageContextTokens,
+                    }),
+                  }
+                : undefined;
               let model: ReturnType<ContextModelResolver>;
               try {
-                model = options.contextModel?.({
-                  tools: Boolean(tools.length),
-                  vision: ContextBudget.currentVision(projected, observations),
-                  structuredOutput: false,
-                  contextTokens: ContextBudget.minimumTokens(projected, {
-                    systemPrompts,
-                    tools,
-                    requiredOperationIds,
-                    observations,
-                    imageContextTokens,
-                  }),
-                });
+                model = requirements ? options.contextModel?.(requirements) : undefined;
               } catch (error) {
                 if (error instanceof ModelUnavailableError)
                   await options.onProviderInterrupted?.({
@@ -221,6 +234,15 @@ export function tanstackAgent(options: {
                     rejectedModel: options.model,
                     accepted: false,
                     code: error.code,
+                    admission:
+                      requirements &&
+                      modelAdmission(
+                        "context_projection",
+                        requirements,
+                        [options.model, ...(options.fallbacks ?? [])],
+                        options.modelRouter ??
+                          (options.providers && sharedModelRouter(options.providers)),
+                      ),
                   });
                 throw error;
               }
