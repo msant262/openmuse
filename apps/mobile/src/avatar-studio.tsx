@@ -13,6 +13,7 @@ import type {
   AvatarAsset,
   AvatarGeneration,
   AvatarStudioState,
+  BuiltinCompanion,
 } from "../../../packages/domain/src/avatar-character";
 import { useAgentWorkspace } from "./agent-workspace";
 import { AvatarRenderer } from "./avatar-renderer";
@@ -234,7 +235,15 @@ export function AvatarStudio({
         if (!current(expected)) return;
         setStudio((before) =>
           before?.target === expected
-            ? { target: expected, value: { ...before.value, activeAssetId: undefined } }
+            ? {
+                target: expected,
+                value: {
+                  ...before.value,
+                  activeAssetId: undefined,
+                  builtinCompanion:
+                    (action.body.companion as BuiltinCompanion | undefined) ?? "okami",
+                },
+              }
             : before,
         );
         setFocused(undefined);
@@ -349,6 +358,7 @@ export function AvatarStudio({
             <AvatarRenderer
               key={`${owner.identityKey}:${preview?.id ?? "default"}`}
               asset={preview}
+              companion={data?.builtinCompanion}
               state={motion}
               framing="full"
               size={Math.min(242, width - 100)}
@@ -603,9 +613,9 @@ export function AvatarStudio({
       <View style={styles.gallerySection}>
         <Button
           small
-          disabled={busy || !data || !data.activeAssetId}
+          disabled={busy || !data || (!data.activeAssetId && data.builtinCompanion !== "mini-muse")}
           onPress={() => {
-            if (!current(owner) || !data?.activeAssetId) return;
+            if (!current(owner) || !data) return;
             void run({
               target: owner,
               path: "/api/agent/avatars/default/select",
@@ -616,6 +626,50 @@ export function AvatarStudio({
         >
           {t("Use default companion")}
         </Button>
+        <Text style={styles.sectionTitle}>{t("Included companions")}</Text>
+        <View style={styles.gallery}>
+          {(["okami", "mini-muse"] as const).map((companion) => {
+            const label = companion === "okami" ? t("Okami wolf") : "Mini Muse";
+            const isActive =
+              !data?.activeAssetId && (data?.builtinCompanion ?? "okami") === companion;
+            return (
+              <Pressable
+                key={companion}
+                accessibilityRole="button"
+                accessibilityLabel={t("Use {name}", { name: label })}
+                aria-selected={isActive}
+                aria-disabled={busy || !data}
+                disabled={busy || !data}
+                onPress={() => {
+                  if (!current(owner) || !data || isActive) return;
+                  void run({
+                    target: owner,
+                    path: "/api/agent/avatars/default/select",
+                    body: { requestId: Crypto.randomUUID(), companion },
+                    kind: "default",
+                  });
+                }}
+                style={[styles.savedCard, isActive && styles.candidateSelected]}
+              >
+                <AvatarRenderer
+                  companion={companion}
+                  active={false}
+                  reducedMotion
+                  size={88}
+                  accessibilityLabel={label}
+                />
+                <Text style={styles.savedName}>{label}</Text>
+                <Text style={styles.activeLabel}>
+                  {isActive
+                    ? t("Selected")
+                    : companion === "okami"
+                      ? t("Default")
+                      : t("Original companion")}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
         <View style={styles.galleryHeader}>
           <Text style={styles.sectionTitle}>{t("Your companions")}</Text>
           <Button

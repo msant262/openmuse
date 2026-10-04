@@ -7,6 +7,9 @@ import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  "Your AI companion": "Seu companheiro de IA",
+  "A brighter tomorrow, together.": "Um amanhã melhor, juntos.",
+  "Connecting to your workspace…": "Conectando ao seu workspace…",
   ...learningPtBR,
   ...connectionsPtBR,
   "Secure connection": "Conexão segura",

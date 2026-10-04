@@ -4,7 +4,7 @@
 
 Generation prompt: “An original friendly capybara assistant mascot, with a broad boxy rounded snout, small round ears, tiny relaxed eyes, a squat body and short legs. Sitting in a gentle three-quarter view, with warm caramel and oat tan coloring, a calm expression, a soft clay/plush finish and restrained detail readable at 48–96 pixels. Entire character centered on a transparent background. One character, no clothing, props, text, logos or watermark.”
 
-The original artwork and this attribution remain intact. The current launcher, adaptive icon and web favicon use the newly authored plush companion under `companions/`.
+The original artwork and this attribution remain intact. The launcher, adaptive icon and web favicon use the OkamiBot mark under `branding/`; startup uses `../public/okami-mark.png`. These exports were created on October 4, 2026 from the owner's supplied logo with the image-generation tool. The app icon includes a dark background and padding for system icon masks.
 
 
 ## Previous procedural companions
@@ -17,7 +17,6 @@ character assets are included. See `src/avatar/README.md` for legacy reproductio
 
 ## Current plush companions
 
-`companions/` contains the original generated stills and three locally bundled state videos used
-by the default companion. Its [asset record](companions/README.md) preserves generation prompts
+`companions/` contains the new default Okami wolf and the original generated stills and three locally bundled state videos available as Mini Muse. Its [asset record](companions/README.md) preserves generation prompts
 and production details. New user-described characters are created through the dedicated media
 generation service, then stored with the owner's files; the player uses their stills and videos.

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AvatarDesign } from "./avatar.ts";
-import type { AvatarAsset } from "./avatar-character.ts";
+import type { AvatarAsset, BuiltinCompanion } from "./avatar-character.ts";
 import {
   type CompletionAssessment,
   type CompletionCriterion,
@@ -196,6 +196,7 @@ export interface AgentIdentity {
   avatar?: "sky" | "sand" | "lilac";
   avatarDesign?: AvatarDesign;
   avatarAssetId?: string;
+  builtinCompanion?: BuiltinCompanion;
   avatarAsset?: AvatarAsset;
   showChatUpdates?: boolean;
   profile?: EffectiveAgentProfile;

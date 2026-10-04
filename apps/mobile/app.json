@@ -14,14 +14,14 @@
     "android": {
       "package": "app.openmuse.mobile",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/companions/okami-poster.png",
-        "backgroundColor": "#FFFFFF"
+        "foregroundImage": "./assets/branding/okami-icon.png",
+        "backgroundColor": "#0B1018"
       }
     },
     "web": {
       "bundler": "metro",
-      "name": "OkamiBot — a little room for everything",
-      "favicon": "./assets/companions/okami-idle-poster.png"
+      "name": "OkamiBot — Your AI companion",
+      "favicon": "./assets/branding/okami-icon.png"
     },
     "plugins": [
       "expo-document-picker",
@@ -58,8 +58,21 @@
           ],
           "androidMultiIntentFilters": ["image/*", "application/pdf"]
         }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./public/okami-mark.png",
+          "imageWidth": 172,
+          "resizeMode": "contain",
+          "backgroundColor": "#F8FAFF",
+          "dark": {
+            "image": "./public/okami-mark.png",
+            "backgroundColor": "#0B1018"
+          }
+        }
       ]
     ],
-    "icon": "./assets/companions/okami-idle-poster.png"
+    "icon": "./assets/branding/okami-icon.png"
   }
 }

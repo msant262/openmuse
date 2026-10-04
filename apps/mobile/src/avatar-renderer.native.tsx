@@ -10,6 +10,7 @@ export type { AvatarRendererProps } from "./avatar-renderer.types";
 
 export function AvatarRenderer({
   asset,
+  companion,
   state = "idle",
   active = true,
   reducedMotion,
@@ -71,7 +72,7 @@ export function AvatarRenderer({
     };
   }, [active, foreground]);
   const reduce = reducedMotion ?? systemReducedMotion ?? true;
-  const visual = avatarVisual(asset, state, API_URL);
+  const visual = avatarVisual(asset, state, API_URL, companion);
   return (
     <View ref={bounds} collapsable={false} style={[{ width: size, height: size }, style]}>
       <AvatarMediaStage

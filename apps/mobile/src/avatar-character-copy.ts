@@ -1,4 +1,7 @@
 export const avatarCharacterPtBR: Record<string, string> = {
+  "Included companions": "Mascotes incluídos",
+  "Okami wolf": "Lobinho Okami",
+  "Original companion": "Companheiro original",
   "Previous generations": "Gerações anteriores",
   "Resume generation: {prompt}": "Retomar geração: {prompt}",
   "View saved generation": "Ver geração salva",

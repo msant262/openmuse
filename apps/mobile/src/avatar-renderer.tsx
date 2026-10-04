@@ -10,6 +10,7 @@ export type { AvatarRendererProps } from "./avatar-renderer.types";
 
 export function AvatarRenderer({
   asset,
+  companion,
   state = "idle",
   active = true,
   reducedMotion,
@@ -56,7 +57,7 @@ export function AvatarRenderer({
     };
   }, []);
   const reduce = reducedMotion ?? systemReducedMotion;
-  const visual = avatarVisual(asset, state, API_URL);
+  const visual = avatarVisual(asset, state, API_URL, companion);
   return (
     <View style={[{ width: size, height: size }, style]}>
       <div ref={bounds} style={{ position: "absolute", inset: 0 }}>

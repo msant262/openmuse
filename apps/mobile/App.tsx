@@ -1,4 +1,6 @@
 import { CopilotKitProvider } from "@copilotkit/react-native/headless";
+import { Asset } from "expo-asset";
+import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import * as SystemUI from "expo-system-ui";
 import {
@@ -33,6 +35,7 @@ import { API_URL, ApiError, authManager, MuseApi } from "./src/api";
 import type { AuthManager } from "./src/auth-manager";
 import { installRuntimeAuthFetch } from "./src/auth-transport";
 import { AvatarPresentationProvider } from "./src/avatar-presentation";
+import { BrandBackdrop, BrandLoading, BrandLockup, brandMark } from "./src/brand-screen";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { CompanionHeading } from "./src/companion-heading";
 import { ComputerDraftProvider } from "./src/computer-drafts";
@@ -48,8 +51,10 @@ import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/sc
 import { ShareReceiver } from "./src/share-receiver";
 import { useTheme, useThemedStyles } from "./src/theme";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
-import { Button, Card, ErrorNotice, Field, HeaderFade, IconButton, Mascot, useUI } from "./src/ui";
+import { Button, Card, ErrorNotice, Field, HeaderFade, IconButton, useUI } from "./src/ui";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
+
+if (Platform.OS !== "web") void SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "chat", label: "Chat", icon: MessageCircle },
@@ -76,6 +81,16 @@ const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   files: { title: "Library", subtitle: "Documents, forms and filled copies." },
 };
 export default function App() {
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    void Asset.loadAsync(brandMark)
+      .catch(() => {})
+      .finally(() => {
+        requestAnimationFrame(() => {
+          void SplashScreen.hideAsync().catch(() => {});
+        });
+      });
+  }, []);
   const { scheme, colors: themeColors } = useTheme();
   useEffect(() => {
     if (Platform.OS !== "web") {
@@ -156,53 +171,36 @@ export default function App() {
         >
           <WorkspaceApp auth={authManager} sessionError={error} />
         </CopilotKitProvider>
+      ) : busy ? (
+        <BrandLoading label={t("Connecting to your workspace…")} />
       ) : (
-        <SafeAreaView
-          style={{
-            flex: 1,
-            backgroundColor: colors.canvas,
-            justifyContent: "center",
-            alignItems: "center",
-            padding: 24,
-          }}
-        >
-          <SafeAreaView
-            edges={["top", "left", "right"]}
-            style={{
-              position: "absolute",
-              top: 0,
-              right: 0,
-              left: 0,
+        <BrandBackdrop>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{
+              flexGrow: 1,
+              alignItems: "center",
+              justifyContent: "center",
               padding: 24,
-              alignItems: "flex-end",
+              paddingTop: 64,
+              gap: 22,
             }}
           >
-            <AppLanguagePicker compact />
-          </SafeAreaView>
-          <View style={{ width: "100%", maxWidth: 420, gap: 22, alignItems: "center" }}>
-            <Mascot size={72} />
-            <Text
-              style={{
-                fontSize: 32,
-                color: colors.text,
-                letterSpacing: -1,
-                fontWeight: "500",
-                textAlign: "center",
-              }}
-            >
-              {t("Welcome to OkamiBot.")}
-            </Text>
-            <Text style={[s.muted, { textAlign: "center" }]}>
-              {t("A little room for your day.")}
-            </Text>
-            {!busy && session.status === "missing" && !error && (
-              <Text style={[s.muted, { textAlign: "center" }]}>
-                {t("Enter your access key to continue.")}
+            <View style={{ position: "absolute", top: 12, right: 20 }}>
+              <AppLanguagePicker compact />
+            </View>
+            <View style={{ width: "100%", maxWidth: 420, alignItems: "center", gap: 22 }}>
+              <BrandLockup compact />
+              <Text
+                style={{ fontSize: 22, fontWeight: "600", color: colors.text, textAlign: "center" }}
+              >
+                {t("Welcome to OkamiBot.")}
               </Text>
-            )}
-            {busy ? (
-              <ActivityIndicator color={colors.blueDark} />
-            ) : (
+              {session.status === "missing" && !error && (
+                <Text style={[s.muted, { textAlign: "center" }]}>
+                  {t("Enter your access key to continue.")}
+                </Text>
+              )}
               <Card style={{ width: "100%" }}>
                 <ErrorNotice error={t(error)} />
                 {session.status === "unavailable" ? (
@@ -227,16 +225,17 @@ export default function App() {
                   {t("Your language choice is saved on this device.")}
                 </Text>
               </Card>
-            )}
-          </View>
-        </SafeAreaView>
+              <Text style={[s.small, { textAlign: "center", letterSpacing: 1 }]}>
+                {t("A brighter tomorrow, together.")}
+              </Text>
+            </View>
+          </ScrollView>
+        </BrandBackdrop>
       )}
     </SafeAreaProvider>
   );
 }
 function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError: string }) {
-  const { colors, s } = useUI();
-
   const { t } = useI18n();
   const api = useMemo(() => new MuseApi(auth), [auth]);
   const [workspace, setWorkspace] = useState<Workspace>();
@@ -280,31 +279,16 @@ function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError:
   }, []);
   if (!workspace)
     return (
-      <SafeAreaView
-        style={{
-          flex: 1,
-          backgroundColor: colors.canvas,
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 24,
-          gap: 18,
-        }}
-      >
-        <Mascot size={56} />
+      <BrandLoading label={t("Opening your workspace…")}>
         {error ? (
-          <>
+          <View style={{ gap: 18, width: "100%", maxWidth: 420 }}>
             <ErrorNotice error={t(error)} />
             <Button onPress={() => void refresh().catch((e) => setError(String(e)))}>
               {t("Try again")}
             </Button>
-          </>
-        ) : (
-          <>
-            <ActivityIndicator color={colors.blueDark} />
-            <Text style={s.muted}>{t("Opening your workspace…")}</Text>
-          </>
-        )}
-      </SafeAreaView>
+          </View>
+        ) : undefined}
+      </BrandLoading>
     );
   return (
     <WorkspaceContext.Provider
@@ -627,6 +611,7 @@ function WorkspaceShell({
     <AvatarPresentationProvider
       design={data?.identity.avatarDesign}
       asset={data?.identity.avatarAsset}
+      companion={data?.identity.builtinCompanion}
       state={activeTask?.status === "running" ? "thinking" : "idle"}
       active={!settingsOpen && !customizeOpen && !detail}
       conversationKey={

@@ -552,6 +552,7 @@ export function Mascot({
       size={size}
       design={presentation.design}
       asset={presentation.asset}
+      companion={presentation.companion}
       state={presentation.state}
       active={presentation.active}
       framing={framing}

@@ -1,8 +1,12 @@
 import type { ImageSourcePropType } from "react-native";
 import type { AvatarMotionState } from "../../../packages/domain/src/avatar";
-import type { AvatarAsset, AvatarMotion } from "../../../packages/domain/src/avatar-character";
+import type {
+  AvatarAsset,
+  AvatarMotion,
+  BuiltinCompanion,
+} from "../../../packages/domain/src/avatar-character";
 
-export const companionPoster = require("../assets/companions/okami-poster.png");
+export const companionPoster = require("../assets/companions/okami-wolf.png");
 
 const defaultScenes = {
   idle: {
@@ -47,9 +51,13 @@ export function avatarVisual(
   asset: AvatarAsset | undefined,
   state: AvatarMotionState,
   origin: string,
+  companion: BuiltinCompanion = "okami",
 ): AvatarVisual {
   const motion = avatarMotion(state);
-  if (!asset) return { key: `default:${motion}`, ...defaultScenes[motion], pending: false };
+  if (!asset)
+    return companion === "mini-muse"
+      ? { key: `mini-muse:${motion}`, ...defaultScenes[motion], pending: false }
+      : { key: `okami:${motion}`, poster: companionPoster, pending: false };
   const media = asset.motions[motion];
   const posterUrl = avatarMediaUrl(media?.posterUrl ?? asset.poster.url, origin);
   const videoUrl = avatarMediaUrl(media?.url, origin);

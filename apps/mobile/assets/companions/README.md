@@ -39,4 +39,10 @@ All three use this prefix and suffix, with the motion-specific text inserted bet
 
 ## Free character creation
 
-These bundled files are the default companion. They do not constrain the creation system. The server's shared `avatarVisualBrief` in `apps/server/src/providers/avatar-media.ts` applies the same tactile plush direction to the user's chosen creature and generates four actual distinct candidates. The selected still becomes the identity reference for all three animations, including a separately generated working pose. Visual quality is evaluated from real outputs, not inferred from passing unit tests.
+These bundled stills and videos remain available as Mini Muse. They do not constrain the creation system. The server's shared `avatarVisualBrief` in `apps/server/src/providers/avatar-media.ts` applies the same tactile plush direction to the user's chosen creature and generates four actual distinct candidates. The selected still becomes the identity reference for all three animations, including a separately generated working pose. Visual quality is evaluated from real outputs, not inferred from passing unit tests.
+
+## Okami wolf
+
+`okami-wolf.png` is the default companion added October 4, 2026: an original transparent plush wolf generated with the OpenAI image-generation tool. It is currently a still image. Mini Muse retains all three existing animations, and selecting either built-in companion preserves the user's saved gallery.
+
+Generation direction: a calm, friendly silver-gray wolf cub with ivory muzzle and chest, charcoal facial mask, pointed ears, small paws, curled fluffy tail, and restrained cyan/magenta ear accents. Full body, almost front-facing, neutral studio light, transparent background, no props, text, floor or shadow. Designed to remain recognizable at header size.

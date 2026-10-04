@@ -10,9 +10,18 @@ test("OkamiBot display branding preserves installed app and paired storage ident
   assert.equal(expo.scheme, "openmuse");
   assert.equal(expo.android.package, "app.openmuse.mobile");
   assert.equal(expo.ios.bundleIdentifier, "app.openmuse.mobile");
-  assert.equal(expo.icon, "./assets/companions/okami-idle-poster.png");
+  assert.equal(expo.icon, "./assets/branding/okami-icon.png");
   assert.equal(expo.web.favicon, expo.icon);
-  assert.equal(expo.android.adaptiveIcon.foregroundImage, "./assets/companions/okami-poster.png");
+  assert.equal(expo.android.adaptiveIcon.foregroundImage, "./assets/branding/okami-icon.png");
+  const splash = expo.plugins.find(
+    (plugin: unknown) => Array.isArray(plugin) && plugin[0] === "expo-splash-screen",
+  )[1];
+  assert.equal(splash.image, "./public/okami-mark.png");
+  assert.notEqual(splash.backgroundColor, splash.dark.backgroundColor);
+  for (const asset of [expo.icon, splash.image]) {
+    const bytes = await readFile(`apps/mobile/${asset}`);
+    assert.equal(bytes.subarray(1, 4).toString(), "PNG");
+  }
   const storage = await readFile("apps/mobile/src/credential-storage.native.ts", "utf8");
   assert(storage.includes('keychainService: "openmuse.device-session"'));
   assert(storage.includes("openmuse.device-session.v1."));

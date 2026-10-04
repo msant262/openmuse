@@ -539,3 +539,37 @@ test("using the default companion clears the active asset without deleting the s
     f.view.close();
   }
 });
+
+test("Mini Muse stays selectable beside the new default and switching preserves saved companions", async () => {
+  const saved = { ...asset("favorite"), status: "ready" };
+  const selections: Record<string, unknown>[] = [];
+  const f = fixture(async (_path, body) => {
+    if (!body) return studio({ assets: [saved], builtinCompanion: "okami" });
+    selections.push(body as Record<string, unknown>);
+    return { selected: true };
+  });
+  try {
+    f.view.render();
+    await f.view.flush();
+    const mini = f.view.nodes().find((node) => node.props.accessibilityLabel === "Use Mini Muse");
+    assert.ok(mini);
+    (mini.props.onPress as () => void)();
+    await f.view.flush();
+    assert.equal(selections[0].companion, "mini-muse");
+    assert.equal(
+      f.view.nodes().find((node) => node.type === "AvatarRenderer")?.props.companion,
+      "mini-muse",
+    );
+    assert.ok(
+      f.view.nodes().some((node) => node.props.accessibilityLabel === "Use Companion favorite"),
+    );
+    const wolf = f.view.nodes().find((node) => node.props.accessibilityLabel === "Use Okami wolf");
+    assert.ok(wolf);
+    (wolf.props.onPress as () => void)();
+    await f.view.flush();
+    assert.equal(selections[1].companion, "okami");
+    assert.notEqual(selections[0].requestId, selections[1].requestId);
+  } finally {
+    f.view.close();
+  }
+});
