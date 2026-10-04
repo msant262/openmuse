@@ -1753,6 +1753,42 @@ export class AgentService {
       Number(task.state.appliedRevision ?? 0),
       result,
     );
+    const failedChecks = completion.checks.filter((check) => !check.passed);
+    if (
+      failedChecks.length &&
+      failedChecks.every((check) => check.criterionId.startsWith("document-design-review:"))
+    ) {
+      // This recovery contract applies only to the server's new authored-document
+      // gate. Missing external effects and other partial results keep their prior
+      // terminal behavior; a model-proposed criterion cannot opt into this path.
+      const designed = new Set(
+        (
+          await this.db.list<{ id: string; fileId?: string; designVersion?: number }>(
+            owner,
+            "document-generations",
+          )
+        )
+          .filter(
+            (entry) =>
+              entry.designVersion === 2 && entry.fileId && task.artifactIds.includes(entry.fileId),
+          )
+          .map((entry) => `document-design-review:${entry.fileId}`),
+      );
+      if (failedChecks.every((check) => designed.has(check.criterionId)))
+        return {
+          status: "queued" as const,
+          result: task.result ?? "",
+          completion,
+          question: "",
+          error: null,
+          state: {
+            ...task.state,
+            documentReviewPending: true,
+            continuation: true,
+            lastUpdate: `Document delivery remains incomplete. ${completion.remaining.join(" ")} Correct any reported layout issue using create_document with replaceFileId and a fresh operationId, then inspect and confirm all pages of the final bytes. Do not claim the document is reviewed or delivered yet.`,
+          },
+        };
+    }
     if (
       completion.checks.some(
         (check) =>
@@ -1786,7 +1822,11 @@ export class AgentService {
         completion.status === "verified"
           ? null
           : "The available result is partial; some requested facts or actions could not be verified.",
-      state: { ...task.state, verificationRevision: Number(task.state.appliedRevision ?? 0) },
+      state: {
+        ...task.state,
+        ...(task.state.documentReviewPending ? { documentReviewPending: false } : {}),
+        verificationRevision: Number(task.state.appliedRevision ?? 0),
+      },
     };
   }
   private async publishOutcome(owner: string, saved: AgentTask) {

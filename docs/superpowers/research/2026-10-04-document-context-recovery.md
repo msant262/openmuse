@@ -87,3 +87,42 @@ includes the slightly larger argument-paging tool schema. The reconstruction lac
 the original full delegated brief, intermediate assistant text and task state; it
 demonstrates retained evidence and lower context pressure, not an exact replay of
 the lost failure. A fresh connected-provider smoke is still required.
+
+## Follow-up: premature completion in `5d32491`
+
+The next connected run reached completion without a provider interruption. Its
+failure was a different, directly observable control-flow defect. In
+`artifacts/document-design/live-5d32491/pptx/pptx-receipt.json`, operation 61
+confirmed `passed:false` for pages 5–8 of the final document, operation 66 approved
+only page 9, and operation 67 called `finish_task` with a success claim. The
+verification correctly returned `complete:false` and partial completion. However,
+`finish_task` unconditionally installed the failed outcome, and the loop's
+`shouldContinue` stopped before the model could act on the incomplete result.
+
+The narrow repair keeps this completion request nonterminal only when every
+failed criterion belongs to an actual server-authored `designVersion:2` document
+still in the task's deliverables. It returns `repairable:true`, the exact pending
+pages when known, and repair/reinspection guidance. It does not emit the rejected
+summary as a result or publish it. A model turn that ends in prose with the same
+missing gate queues continuation with that guidance. Missing external delivery or
+other failed criteria retain their existing partial/failure semantics. Passing
+still requires the same owned bytes, hash, revision, image observation and complete
+page coverage.
+
+RED: `artifacts/document-design/completion-repair-red.log`, three real worker
+cases ended prematurely. GREEN:
+`artifacts/document-design/completion-repair-focused.log`, **38/38**, including:
+
+- Missing review → rejected finish → inspection with actual pixels → confirmation
+  → verified delivery.
+- Failed review → rejected finish → replacement bytes → fresh inspection and
+  confirmation → only the repaired document delivered.
+- Premature final prose → queued continuation → verified delivery.
+- Missing email delivery plus document review → existing terminal partial result.
+- Rejected finish and prose across worker continuations share the original
+  four-inference budget, then stop in `waiting_input/budgetExhausted`; no inference
+  resumes without a budget extension and no premature thread publication occurs.
+
+The independent reviewer confirmed the five focused cases and the unchanged
+verification/authorization boundaries. This fixes repairability; it does not make
+aesthetic judgments pass automatically or increase the work budget.

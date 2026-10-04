@@ -750,6 +750,7 @@ export class TaskVerification {
       const fileId = generated.fileId as string;
       let reviewed = false,
         evidenceIds: string[] = [];
+      let missingPages: number[] = [];
       try {
         const sha256 = createHash("sha256")
           .update(await this.files.bytes(owner, fileId))
@@ -762,6 +763,7 @@ export class TaskVerification {
             sha256,
           );
           reviewed = result.passed;
+          missingPages = result.missingPages;
           evidenceIds = reviewed ? result.receiptIds : [];
         }
       } catch {
@@ -774,7 +776,7 @@ export class TaskVerification {
       });
       if (!reviewed)
         remaining.push(
-          `Render and visually review every page of document ${fileId} with inspect_document and confirm_document_review before delivery`,
+          `Render and visually review every page of document ${fileId} with inspect_document and confirm_document_review before delivery${missingPages.length ? `. Pages still requiring a passing review: ${missingPages.join(", ")}` : ""}`,
         );
     }
     if (!current) remaining.push("Apply the latest direction and verify its result");

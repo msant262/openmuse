@@ -9,6 +9,8 @@ Start with `read_runtime`. It is the source for the current model, actual regist
 
 Use `skills_list` and `skills_read` for actually installed workflow instructions. Use `list_procedures` for the owner's saved versioned procedures. Skills and procedures are guidance; neither installs a tool nor grants permissions. Operator-installed skills have separate provenance from bundled app workflows.
 
+The runtime overview is a summary, not the complete catalog. For omitted skills, call `skills_list` and continue with its `nextOffset` before describing those entries as unverifiable. `read_tool_output` recovers a shortened provider excerpt, not data omitted by the source tool itself. In a compact guide, group related capabilities by purpose rather than filling pages with tool counts and repeated inventory caveats.
+
 Distinguish registered tools, connected services and observed readiness. Use the corresponding status or connection tool before asserting a service works. The image generator can differ from the conversational model.
 
 Explain tool calling as a loop: the model chooses a named function and structured arguments; the server validates and executes it; its result informs the next step. Durable tasks preserve requested outcomes, progress, receipts and files. Success and attachment publication require real evidence, not merely a final model sentence.

@@ -1185,7 +1185,17 @@ export async function executeModelTask(
       "Finish only when the requested outcome is actually achieved",
       z.object({ summary: z.string().min(1).max(8000) }),
       async ({ summary }) => {
-        outcome = await service.finish(task, ctx, summary, owner);
+        const finished = await service.finish(task, ctx, summary, owner);
+        if (finished.status === "queued") {
+          task = await ctx.checkpoint({ completion: finished.completion, state: finished.state });
+          return {
+            complete: false,
+            repairable: true,
+            completion: finished.completion,
+            instruction: finished.state.lastUpdate,
+          };
+        }
+        outcome = finished;
         task = await ctx.checkpoint({
           completion: outcome.completion,
           result: outcome.result,
@@ -1546,8 +1556,8 @@ export async function executeModelTask(
         state: {
           ...task.state,
           ...finished.state,
-          lastUpdate: text,
-          continuation: false,
+          lastUpdate: finished.status === "queued" ? finished.state.lastUpdate : text,
+          continuation: finished.status === "queued",
           providerCheckpoint: null,
         },
       };

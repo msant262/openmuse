@@ -29,6 +29,16 @@ O harness liga conversa, ferramentas, serviços e entrega.
 - **Uma explicação importante** também precisa de [espaço](https://example.com/referencia) para seus trechos em negrito, *ênfase* e continuação legível.
   - Uma observação aninhada precisa respeitar o espaço do marcador e manter cada linha alinhada com a anterior.
 `;
+const liveLimitsRegression = `# Recursos e limites · 2/2
+
+- Status consultado: Docker desativado/não configurado e rede desativada; não há shell local disponível indicado por esse status.
+- Geração de imagem é independente do modelo conversacional. Provedores constam no status, mas isso não prova uma geração concluída.
+- Não verificáveis pelo inventário: treinamento, raciocínio oculto e arquivos-fontes fora das ferramentas registradas.
+- A lista deste runtime não é catálogo de skills de outro produto.
+
+**Em resumo:** o modelo seleciona; o servidor valida e executa; evidências sustentam a entrega. Conexões e prontidão são verificadas à parte.
+
+*Fatos observados no app em 04 out 2026 · sem pesquisa externa.*`;
 async function slides(content: string) {
   const bytes = await createDocumentPptx(composeDocument(content, "Guia", { cover: false }));
   const zip = await JSZip.loadAsync(bytes);
@@ -56,6 +66,82 @@ function textBox(document: ReturnType<DOMParser["parseFromString"]>, text: strin
   assert.ok(shape, `Missing native text: ${text}`);
   return bounds(shape as Element);
 }
+
+test("the live limits section fits a measured wide layout without splitting its summary", async () => {
+  const result = await slides(liveLimitsRegression);
+  assert.equal(result.length, 1, "a wider body must avoid the live draft's orphan ninth slide");
+  const contents = result[0].documentElement?.textContent?.replace(/\s+/g, "") ?? "";
+  for (const block of composeDocument(liveLimitsRegression, "Guia").blocks) {
+    const runs =
+      block.type === "paragraph"
+        ? [block.runs]
+        : block.type === "list"
+          ? block.items.map((item) => item.runs)
+          : [];
+    for (const group of runs)
+      assert.ok(
+        contents.includes(
+          group
+            .map((run) => run.text)
+            .join("")
+            .replace(/\s+/g, ""),
+        ),
+      );
+  }
+  assert.ok(textBox(result[0], "Fatos observados").bottom <= 6.55);
+});
+
+test("a paragraph that fits a slide is kept intact even after preceding dense prose", async () => {
+  const preceding = Array.from({ length: 12 }, (_, i) => `Introdução ${i + 1}`).join("\n");
+  const paragraph = "INÍCIO DO RESUMO\nSegunda linha do resumo\nFIM DO RESUMO";
+  const following = Array.from({ length: 15 }, (_, i) => `Detalhe ${i + 1}`).join("\n");
+  const result = await slides(`## Contexto\n\n${preceding}\n\n${paragraph}\n\n${following}`);
+  const containing = result.filter((page) =>
+    page.documentElement?.textContent?.includes("INÍCIO DO RESUMO"),
+  );
+  assert.equal(containing.length, 1);
+  assert.ok(
+    containing[0].documentElement?.textContent?.includes("FIM DO RESUMO"),
+    "short paragraphs do not straddle slides",
+  );
+});
+
+test("a subheading follows its complete paragraph onto the next slide", async () => {
+  const preceding = Array.from({ length: 10 }, (_, i) => `Introdução ${i + 1}`).join("\n");
+  const paragraph = Array.from({ length: 6 }, (_, i) => `Explicação ${i + 1}`).join("\n");
+  const following = Array.from({ length: 15 }, (_, i) => `Detalhe ${i + 1}`).join("\n");
+  const result = await slides(
+    `## Contexto\n\n${preceding}\n\n### Síntese importante\n\n${paragraph}\n\n${following}`,
+  );
+  const page = result.find((page) =>
+    page.documentElement?.textContent?.includes("Síntese importante"),
+  );
+  assert.ok(page);
+  assert.ok(
+    page.documentElement?.textContent?.includes("Explicação 6"),
+    "heading and its complete paragraph remain together",
+  );
+  assert.ok(textBox(page, "Síntese importante").bottom < textBox(page, "Explicação 1").y);
+});
+
+test("oversized prose preserves every line without one-line continuation slides", async () => {
+  const lines = Array.from(
+    { length: 29 },
+    (_, i) => `Linha preservada ${String(i + 1).padStart(2, "0")}`,
+  );
+  const result = await slides(`## Conteúdo extenso\n\n${lines.join("\n")}`);
+  const observed = result.map((page) =>
+    Array.from(page.getElementsByTagName("a:t"))
+      .map((node) => node.textContent ?? "")
+      .filter((text) => text.startsWith("Linha preservada")),
+  );
+  assert.ok(observed.length >= 3);
+  assert.ok(
+    observed.every((page) => page.length >= 2),
+    "continuations have at least two lines",
+  );
+  assert.deepEqual(observed.flat(), lines, "pagination cannot drop, repeat or reorder lines");
+});
 
 test("short table takeaway stays below the native table instead of creating an empty slide", async () => {
   const result = await slides(

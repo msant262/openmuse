@@ -7,7 +7,7 @@ import { documentAccentText, documentColorContrast } from "./document-colors.ts"
 // Upstream exposes CommonJS-shaped declarations for its ESM constructor.
 const PptxGenJS = PptxModule as unknown as typeof PptxModule.default;
 
-import type { DocumentModel, DocumentRun } from "./document-model.ts";
+import type { DocumentBlock, DocumentModel, DocumentRun } from "./document-model.ts";
 import { normalizeOfficePackage } from "./document-office-package.ts";
 
 const bodyFont = "DejaVu Sans";
@@ -137,6 +137,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     continuation = false,
     pendingSection = false;
   let flow: { slide: PptxModule.default.Slide; y: number } | undefined;
+  let wideFlow = false;
   let captionArea: { slide: PptxModule.default.Slide; y: number } | undefined;
   const captionSize = 18,
     captionLeading = (captionSize * 1.29) / 72,
@@ -243,8 +244,16 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     rect(slide, 0.72, 0.42, 0.62, 0.045, accent);
     return Math.max(1.6, 0.68 + h + 0.3);
   };
-  const sectionTitle = (slide: PptxModule.default.Slide) => {
-    if (section.length === 1) return title(slide, section[0]);
+  const sectionTitle = (slide?: PptxModule.default.Slide, compact = false) => {
+    if (section.length === 1) {
+      if (slide) title(slide, section[0]);
+      return Math.max(
+        compact ? 1.4 : 1.6,
+        0.68 +
+          (wrapRuns([{ text: section[0] }], 30, 11.89, fonts, true).length * 30 * 1.29) / 72 +
+          (compact ? 0.15 : 0.3),
+      );
+    }
     let y = 0.68;
     for (const [index, heading] of section.entries()) {
       const size = index === 0 ? 30 : 20;
@@ -253,22 +262,38 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
         throw new Error(
           "Consecutive slide headings are too long; shorten them or separate sections with content or an explicit divider",
         );
-      y +=
+      if (slide)
         lineText(slide, lines, 0.72, y, 11.89, size, {
           fontFace: index === 0 ? displayFont : bodyFont,
           color: index === 0 ? ink : muted,
-        }) + 0.15;
+        });
+      y += (lines.length * size * 1.29) / 72 + 0.15;
     }
-    rect(slide, 0.72, 0.42, 0.62, 0.045, accent);
-    return Math.max(1.6, y + 0.15);
+    if (slide) rect(slide, 0.72, 0.42, 0.62, 0.045, accent);
+    return Math.max(compact ? 1.4 : 1.6, y + (compact ? 0 : 0.15));
   };
   const flowSlide = () => {
-    const slide = base("editorial-text");
+    const slide = base(wideFlow ? "wide-text" : "editorial-text");
     if (model.design.eyebrow)
-      text(slide, [{ text: model.design.eyebrow }], 0.72, 0.5, 11.8, 0.3, 11, {
-        bold: true,
-        color: accentText,
-      });
+      text(
+        slide,
+        [{ text: model.design.eyebrow }],
+        0.72,
+        wideFlow ? 0.13 : 0.5,
+        11.8,
+        wideFlow ? 0.22 : 0.3,
+        11,
+        {
+          bold: true,
+          color: accentText,
+        },
+      );
+    if (wideFlow) {
+      const y = sectionTitle(slide, true);
+      continuation = true;
+      pendingSection = false;
+      return { slide, y };
+    }
     let headingY = 1.3;
     for (const [index, heading] of section.entries()) {
       const size = index === 0 ? 29 : 20;
@@ -292,21 +317,103 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     sectionTitle(slide);
     pendingSection = false;
   };
+  type Prose = {
+    runs: readonly DocumentRun[];
+    size: number;
+    bullet?: { ordered: boolean; value: number; level: number };
+  };
+  const prose = (block: DocumentBlock): Prose[] | undefined => {
+    if (block.type === "paragraph") return [{ runs: block.runs, size: 21 }];
+    if (block.type === "heading" && block.level > 2)
+      return [{ runs: [{ text: block.text, bold: true }], size: 23 }];
+    if (block.type === "list")
+      return block.items.map((item, index) => ({
+        runs: item.runs,
+        size: 21,
+        bullet: {
+          ordered: item.ordered ?? block.ordered,
+          value: item.number ?? block.start + index,
+          level: item.level,
+        },
+      }));
+    return undefined;
+  };
+  const proseWidth = (width: number, item: Prose) =>
+    width -
+    (item.bullet
+      ? Math.min(4, item.bullet.level) * 0.25 +
+        0.3 +
+        (18 + fonts.regular.widthOfTextAtSize("\u00a0", item.size)) / 72
+      : 0);
+  // Prefer the editorial column, but do not create a continuation when the same
+  // complete section fits a full-width layout at the same font sizes and spacing.
+  const prepareFlow = (index: number) => {
+    if (flow) return;
+    wideFlow = false;
+    const items: Prose[] = [];
+    for (let offset = index; offset < model.blocks.length; offset++) {
+      const next = prose(model.blocks[offset]);
+      if (!next) break;
+      items.push(...next);
+    }
+    const height = (width: number) =>
+      items.reduce(
+        (sum, item) =>
+          sum +
+          (wrapRuns(item.runs, item.size, proseWidth(width, item), fonts).length *
+            item.size *
+            1.29) /
+            72 +
+          0.19,
+        0,
+      ) -
+      0.19 +
+      0.035;
+    if (
+      items.length &&
+      height(8.15) > 6.55 - 1.23 &&
+      height(11.89) <= 6.55 - sectionTitle(undefined, true)
+    )
+      wideFlow = true;
+  };
   const body = (
     runs: readonly DocumentRun[],
     size = 21,
     bullet?: { ordered: boolean; value: number; level: number },
+    keepNext?: Prose,
   ) => {
     const indent = bullet ? Math.min(4, bullet.level) * 0.25 + 0.3 : 0;
     // Native numbering reserves 18pt inside the first text box. Measure its spacer
     // too, and give continuation lines the same text origin. Otherwise LibreOffice
     // wraps an already positioned line again and overlays the next line.
     const markerInset = bullet ? (18 + fonts.regular.widthOfTextAtSize("\u00a0", size)) / 72 : 0;
-    const width = 8.15 - indent - markerInset;
+    const columnWidth = wideFlow ? 11.89 : 8.15,
+      columnX = wideFlow ? 0.72 : 4.12,
+      top = wideFlow ? sectionTitle(undefined, true) : 1.23,
+      width = columnWidth - indent - markerInset;
     const lines = wrapRuns(runs, size, width, fonts);
     const leading = (size * 1.29) / 72;
+    const height = lines.length * leading + 0.035;
+    const nextLines = keepNext
+      ? wrapRuns(keepNext.runs, keepNext.size, proseWidth(columnWidth, keepNext), fonts).length
+      : 0;
+    const nextLeading = keepNext ? (keepNext.size * 1.29) / 72 : 0;
+    const nextHeight = keepNext
+      ? 0.19 +
+        (height + 0.19 + nextLines * nextLeading <= 6.55 - top
+          ? nextLines
+          : Math.min(2, nextLines)) *
+          nextLeading
+      : 0;
+    // A complete paragraph/list item stays together when it fits a fresh page.
+    // For oversized blocks, leave at least two lines on either side of a break.
+    if (flow && height + nextHeight <= 6.55 - top && flow.y + height + nextHeight > 6.55)
+      flow = flowSlide();
     for (const [index, line] of lines.entries()) {
-      if (!flow || flow.y + leading > 6.55) flow = flowSlide();
+      const capacity = flow ? Math.floor((6.55 - flow.y - 0.035 + 1e-8) / leading) : 0;
+      if (!flow || capacity < 1 || (lines.length - index > capacity && capacity === 1))
+        flow = flowSlide();
+      else if (lines.length - index === capacity + 1 && capacity === 2) flow = flowSlide();
       text(
         flow.slide,
         index === 0 && bullet
@@ -314,9 +421,9 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
               runIndex === 0 ? { ...run, text: `\u00a0${run.text}` } : run,
             )
           : line,
-        4.12 + indent + (index === 0 ? 0 : markerInset),
+        columnX + indent + (index === 0 ? 0 : markerInset),
         flow.y,
-        index === 0 ? 8.15 - indent : width,
+        index === 0 ? columnWidth - indent : width,
         leading + 0.035,
         size,
         index === 0 && bullet
@@ -370,6 +477,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
       }
     }
     captionArea = undefined;
+    if (prose(block)) prepareFlow(blockIndex);
     if (block.type === "heading") {
       if (block.level <= 2) {
         // Adjacent headings describe one hierarchy until content or an explicit
@@ -378,7 +486,13 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
         continuation = false;
         flow = undefined;
         pendingSection = true;
-      } else body([{ text: block.text, bold: true }], 23);
+      } else
+        body(
+          [{ text: block.text, bold: true }],
+          23,
+          undefined,
+          model.blocks[blockIndex + 1] ? prose(model.blocks[blockIndex + 1])?.[0] : undefined,
+        );
       continue;
     }
     if (block.type === "paragraph") {
@@ -401,6 +515,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     }
     flow = undefined;
     if (block.type === "code") {
+      wideFlow = false;
       body([{ text: block.text, code: true }], 18);
     } else if (block.type === "quote") {
       const lines = wrapRuns(block.runs, 27, 9.6, fonts);
