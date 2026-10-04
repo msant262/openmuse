@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import type { ModelMessage } from "@tanstack/ai";
 import { resolveLiveToolResultMaxChars } from "./openclaw/tool-result-limits.ts";
 
+// Recognize only this known procedural instruction. Future warnings or page-
+// specific guidance in the field must remain verbatim, even for an older draft.
+const historicalInspectionInstruction =
+  "Examine the actual page image for clipping, overlap, readability, hierarchy and data accuracy. Use confirm_document_review in the next turn. Correct a failed draft with create_document.replaceFileId and a fresh operationId, then inspect its new bytes.";
+
 function safeEnd(text: string, end: number) {
   return end > 0 && end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]) ? end - 1 : end;
 }
@@ -25,6 +30,10 @@ function byteSlice(text: string, bytes: number, fromEnd = false) {
 export class ToolOutputStore {
   private outputs = new Map<string, string>();
   private documentArguments = new Map<string, string>();
+  private projectionDependencies: { toolCallId: string; dependsOnToolCallId: string }[] = [];
+  dependencies(): readonly { toolCallId: string; dependsOnToolCallId: string }[] {
+    return this.projectionDependencies;
+  }
   observe(messages: readonly ModelMessage[]) {
     for (const message of messages)
       if (message.role === "tool" && message.toolCallId && typeof message.content === "string")
@@ -94,6 +103,83 @@ export class ToolOutputStore {
     }
     return documents;
   }
+  private duplicateSkills(messages: readonly ModelMessage[], required: readonly string[]) {
+    const requiredIds = new Set(required),
+      mandatoryCalls = new Set<string>();
+    const calls = new Map<string, string>();
+    for (const message of messages) {
+      if (message.toolCalls?.some((call) => requiredIds.has(call.id)))
+        for (const call of message.toolCalls) mandatoryCalls.add(call.id);
+      for (const call of message.toolCalls ?? []) {
+        if (call.function.name !== "skills_read") continue;
+        try {
+          calls.set(call.id, JSON.parse(call.function.arguments).id);
+        } catch {
+          /* Invalid calls are unchanged. */
+        }
+      }
+    }
+    const groups = new Map<
+      string,
+      { id: string; raw: string; receipt: Record<string, unknown> }[]
+    >();
+    for (const message of messages) {
+      if (message.role !== "tool" || !message.toolCallId || !calls.has(message.toolCallId))
+        continue;
+      const raw = this.outputs.get(message.toolCallId);
+      if (!raw) continue;
+      try {
+        const receipt = JSON.parse(raw);
+        if (
+          receipt?.error ||
+          receipt.skipped ||
+          receipt.outcomeUnknown ||
+          receipt.paused ||
+          receipt.dispatched === false ||
+          (receipt.status !== undefined && receipt.status !== "succeeded") ||
+          receipt.id !== calls.get(message.toolCallId) ||
+          !/^(builtin|operator):[a-z0-9][a-z0-9-]{0,63}$/.test(receipt.id) ||
+          receipt.source !== receipt.id.split(":")[0] ||
+          receipt.authority !== "workflow_guidance" ||
+          receipt.truncated !== false ||
+          typeof receipt.content !== "string" ||
+          Buffer.byteLength(receipt.content) > 32768 ||
+          createHash("sha256").update(receipt.content).digest("hex") !== receipt.sha256
+        )
+          continue;
+        // Byte-identical whole receipts also preserve policy/provenance changes.
+        const key = createHash("sha256").update(raw).digest("hex");
+        const group = groups.get(key) ?? [];
+        group.push({ id: message.toolCallId, raw, receipt });
+        groups.set(key, group);
+      } catch {
+        /* Unverified or projected content is never deduplicated. */
+      }
+    }
+    const duplicates = new Map<string, string>();
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      // Do not increase mandatory context by pulling in a formerly optional group.
+      const keeper = group.findLast((entry) => mandatoryCalls.has(entry.id)) ?? group.at(-1);
+      if (!keeper) continue;
+      for (const entry of group) {
+        if (entry.id === keeper.id) continue;
+        const content = JSON.stringify({
+          ...entry.receipt,
+          content: `[Identical complete workflow retained at toolCallId ${keeper.id}. Read the original result with read_tool_output if needed.]`,
+          _historyProjection: {
+            kind: "duplicate_skill_read",
+            identicalToToolCallId: keeper.id,
+            sourceBytes: Buffer.byteLength(String(entry.receipt.content)),
+          },
+        });
+        if (Buffer.byteLength(content) >= Buffer.byteLength(entry.raw)) continue;
+        duplicates.set(entry.id, content);
+        this.projectionDependencies.push({ toolCallId: entry.id, dependsOnToolCallId: keeper.id });
+      }
+    }
+    return duplicates;
+  }
   read(args: { toolCallId: string; part?: "result" | "arguments"; offset: number; limit: number }) {
     const text = (args.part === "arguments" ? this.documentArguments : this.outputs).get(
       args.toolCallId,
@@ -127,14 +213,29 @@ export class ToolOutputStore {
     required: readonly string[],
     contextTokens = 32768,
   ): ModelMessage[] {
+    this.projectionDependencies = [];
+    const duplicates = this.duplicateSkills(messages, required);
     const protectedCalls = new Set(required);
+    const inspectionCalls = new Map<string, string>();
+    for (const message of messages)
+      for (const call of message.toolCalls ?? [])
+        if (call.function.name === "inspect_document") {
+          try {
+            inspectionCalls.set(call.id, JSON.parse(call.function.arguments).fileId);
+          } catch {
+            /* Leave invalid calls untouched. */
+          }
+        }
     const documents = this.documents(messages);
     const created = new Map<string, Set<string>>();
     const superseded = new Set<string>();
+    const supersededFiles = new Set<string>();
     for (const document of documents) {
       const previous = document.replacesFileId && created.get(document.replacesFileId);
-      if (previous && document.fileId !== document.replacesFileId)
+      if (previous && document.fileId !== document.replacesFileId) {
         for (const id of previous) superseded.add(id);
+        supersededFiles.add(document.replacesFileId as string);
+      }
       const ids = created.get(document.fileId) ?? new Set<string>();
       ids.add(document.id);
       created.set(document.fileId, ids);
@@ -148,6 +249,38 @@ export class ToolOutputStore {
       resolveLiveToolResultMaxChars({ contextWindowTokens: contextTokens }),
     );
     return messages.map((message) => {
+      if (message.role === "tool" && message.toolCallId) {
+        const duplicate = duplicates.get(message.toolCallId);
+        if (duplicate) return { ...message, content: duplicate };
+        const fileId = inspectionCalls.get(message.toolCallId);
+        if (fileId && supersededFiles.has(fileId) && typeof message.content === "string") {
+          try {
+            const receipt = JSON.parse(message.content);
+            const instruction = "Superseded draft; inspect the current document before delivery.";
+            if (
+              receipt?.documentFileId === fileId &&
+              receipt.fileImage === true &&
+              receipt.attachment === false &&
+              receipt.mimeType === "image/png" &&
+              !receipt.error &&
+              !receipt.skipped &&
+              !receipt.outcomeUnknown &&
+              !receipt.paused &&
+              receipt.dispatched !== false &&
+              (receipt.status === undefined || receipt.status === "succeeded") &&
+              /^[a-f0-9]{64}$/i.test(receipt.fileId ?? "") &&
+              /^[a-f0-9]{64}$/i.test(receipt.receiptId ?? "") &&
+              /^[a-f0-9]{64}$/i.test(receipt.documentSha256 ?? "") &&
+              Array.isArray(receipt.pages) &&
+              receipt.pages.every((page: unknown) => Number.isInteger(page) && Number(page) > 0) &&
+              receipt.instruction === historicalInspectionInstruction
+            )
+              return { ...message, content: JSON.stringify({ ...receipt, instruction }) };
+          } catch {
+            /* Preserve every field of unrecognized inspection receipts. */
+          }
+        }
+      }
       if (
         message.role === "assistant" &&
         message.toolCalls?.some((call) => superseded.has(call.id))

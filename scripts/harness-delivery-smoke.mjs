@@ -55,6 +55,23 @@ export function smokeProviderDiagnostics(task, scrub) {
               ? admission.stage
               : undefined,
             requirements: requirements(admission.requirements),
+            context:
+              admission.context && typeof admission.context === "object"
+                ? {
+                    baseTokens: number(admission.context.baseTokens),
+                    outputReserveTokens: number(admission.context.outputReserveTokens),
+                    mandatoryMessages: number(admission.context.mandatoryMessages),
+                    mandatoryMessageBytes: number(admission.context.mandatoryMessageBytes),
+                    tools: (Array.isArray(admission.context.tools) ? admission.context.tools : [])
+                      .slice(0, 256)
+                      .map((tool) => ({
+                        name: string(tool.name),
+                        calls: number(tool.calls),
+                        argumentBytes: number(tool.argumentBytes),
+                        resultBytes: number(tool.resultBytes),
+                      })),
+                  }
+                : undefined,
             candidates: (Array.isArray(admission.candidates) ? admission.candidates : [])
               .slice(0, 64)
               .map((candidate) => ({
@@ -75,6 +92,31 @@ export function smokeProviderDiagnostics(task, scrub) {
 export function smokeOperationEvidence(operation, scrub) {
   const value = scrub(operation);
   const summary = { tool: value.toolName, status: value.status };
+  if (value.toolName === "skills_read") {
+    const output = value.receipt;
+    return {
+      ...summary,
+      id: value.id,
+      toolCallId: value.toolCallId,
+      taskId: value.taskId,
+      revision: value.revision,
+      args: { id: typeof value.args?.id === "string" ? value.args.id.slice(0, 100) : undefined },
+      output:
+        output && typeof output === "object"
+          ? {
+              id: typeof output.id === "string" ? output.id.slice(0, 100) : undefined,
+              source: ["builtin", "operator"].includes(output.source) ? output.source : undefined,
+              sha256: /^[a-f0-9]{64}$/.test(output.sha256 ?? "") ? output.sha256 : undefined,
+              contentSha256:
+                typeof output.content === "string" ? sha256(output.content) : undefined,
+              contentBytes:
+                typeof output.content === "string" ? Buffer.byteLength(output.content) : undefined,
+              truncated: typeof output.truncated === "boolean" ? output.truncated : undefined,
+              failed: Boolean(output.error),
+            }
+          : undefined,
+    };
+  }
   if (
     !/^(?:primitive\.)?(?:create_document|inspect_document|confirm_document_review|view_file|finish_task)$/.test(
       value.toolName,

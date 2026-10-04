@@ -27,6 +27,8 @@ export type ContextOptions = {
   tools?: readonly unknown[];
   outputSchema?: unknown;
   observations?: readonly ContextObservation[];
+  /** Trusted provider-projection aliases must retain their complete source group. */
+  toolDependencies?: readonly { toolCallId: string; dependsOnToolCallId: string }[];
   now?: number;
 };
 export type ContextModelResolver = (requirements: {
@@ -194,6 +196,58 @@ export class ContextBudget {
     };
     return ContextBudget.cost(ContextBudget.project(messages, budget, true), budget) + 4096;
   }
+  /** Bounded numeric evidence of admission pressure; no source text leaves here. */
+  static minimumDiagnostics<T extends Message | ModelMessage>(
+    messages: T[],
+    options: Omit<ContextOptions, "model"> & { imageContextTokens?: number },
+  ) {
+    const budget = {
+      ...options,
+      model: {
+        id: "required-context",
+        contextTokens: 4000000,
+        outputReserveTokens: 4096,
+        imageContextTokens: options.imageContextTokens,
+      },
+    };
+    const mandatory = ContextBudget.project(messages, budget, true);
+    const names = new Map<string, string>();
+    const tools = new Map<
+      string,
+      { name: string; calls: number; argumentBytes: number; resultBytes: number }
+    >();
+    for (const message of mandatory)
+      for (const call of ("toolCalls" in message ? message.toolCalls : []) ?? []) {
+        names.set(call.id, call.function.name);
+        const counts = tools.get(call.function.name) ?? {
+          name: call.function.name,
+          calls: 0,
+          argumentBytes: 0,
+          resultBytes: 0,
+        };
+        counts.calls++;
+        counts.argumentBytes += Buffer.byteLength(call.function.arguments);
+        tools.set(call.function.name, counts);
+      }
+    for (const message of mandatory) {
+      if (message.role !== "tool") continue;
+      const name = names.get(message.toolCallId ?? "");
+      const counts = name && tools.get(name);
+      if (counts)
+        counts.resultBytes += Buffer.byteLength(
+          typeof message.content === "string"
+            ? message.content
+            : JSON.stringify(message.content ?? ""),
+        );
+    }
+    return {
+      baseTokens: ContextBudget.cost([], budget),
+      outputReserveTokens: 4096,
+      mandatoryMessages: mandatory.length,
+      mandatoryMessageBytes: Buffer.byteLength(JSON.stringify(mandatory)),
+      tools: [...tools.values()].slice(0, 256),
+    };
+  }
   private static project<T extends Message | ModelMessage>(
     messages: T[],
     options: ContextOptions,
@@ -281,6 +335,20 @@ export class ContextBudget {
       const key = find(index);
       groups.set(key, [...(groups.get(key) ?? []), index]);
     }
+    const dependencies = new Map<number, Set<number>>();
+    for (const dependency of options.toolDependencies ?? []) {
+      const caller = calls.get(dependency.toolCallId),
+        source = calls.get(dependency.dependsOnToolCallId);
+      if (caller === undefined || source === undefined)
+        throw new AppError(
+          "CONTEXT_DEPENDENCY_MISSING: a projected workflow must retain its complete source",
+          409,
+        );
+      const group = find(caller),
+        linked = dependencies.get(group) ?? new Set<number>();
+      linked.add(find(source));
+      dependencies.set(group, linked);
+    }
     const lastUser = normalized.findLastIndex((message) => message.role === "user");
     const mandatory = new Set<number>();
     const anchored = new Set<string>();
@@ -306,7 +374,18 @@ export class ContextBudget {
         409,
       );
     const selected = new Set<number>();
-    for (const group of mandatory) for (const index of groups.get(group) ?? []) selected.add(index);
+    const include = (group: number, added = new Set<number>(), visited = new Set<number>()) => {
+      if (visited.has(group)) return added;
+      visited.add(group);
+      for (const index of groups.get(group) ?? [])
+        if (!selected.has(index)) {
+          selected.add(index);
+          added.add(index);
+        }
+      for (const source of dependencies.get(group) ?? []) include(source, added, visited);
+      return added;
+    };
+    for (const group of mandatory) include(group);
     const project = () => normalized.filter((_, index) => selected.has(index));
     if (ContextBudget.cost(project(), options) > available)
       throw new AppError(
@@ -314,13 +393,13 @@ export class ContextBudget {
         422,
       );
     if (minimumOnly) return project();
-    for (const [group, indexes] of [...groups].sort(
+    for (const [group] of [...groups].sort(
       (a, b) => b[1][b[1].length - 1] - a[1][a[1].length - 1],
     )) {
       if (mandatory.has(group)) continue;
-      for (const index of indexes) selected.add(index);
+      const added = include(group);
       if (ContextBudget.cost(project(), options) > available)
-        for (const index of indexes) selected.delete(index);
+        for (const index of added) selected.delete(index);
     }
     return project();
   }

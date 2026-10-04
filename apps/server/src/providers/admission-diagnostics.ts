@@ -25,6 +25,27 @@ export const modelAdmissionSchema = z
           .strict(),
       )
       .max(64),
+    context: z
+      .object({
+        baseTokens: z.number().int().nonnegative(),
+        outputReserveTokens: z.number().int().nonnegative(),
+        mandatoryMessages: z.number().int().nonnegative(),
+        mandatoryMessageBytes: z.number().int().nonnegative(),
+        tools: z
+          .array(
+            z
+              .object({
+                name: z.string().min(1).max(256),
+                calls: z.number().int().nonnegative(),
+                argumentBytes: z.number().int().nonnegative(),
+                resultBytes: z.number().int().nonnegative(),
+              })
+              .strict(),
+          )
+          .max(256),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -34,12 +55,14 @@ export function modelAdmission(
   models: readonly string[],
   router?: ModelRouter,
   considered: readonly string[] = models,
+  context?: z.infer<typeof modelAdmissionSchema>["context"],
 ) {
   const configured = new Set(models.map(canonicalModel));
   const candidates = new Set(considered.map(canonicalModel));
   const result = modelAdmissionSchema.safeParse({
     stage,
     requirements,
+    context,
     candidates: (router?.status().models ?? [])
       .filter((model) => configured.has(canonicalModel(model.model)))
       .slice(0, 64)

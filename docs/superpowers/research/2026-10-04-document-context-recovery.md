@@ -126,3 +126,31 @@ cases ended prematurely. GREEN:
 The independent reviewer confirmed the five focused cases and the unchanged
 verification/authorization boundaries. This fixes repairability; it does not make
 aesthetic judgments pass automatically or increase the work budget.
+
+## Follow-up: repeated workflow and superseded preview instructions
+
+The `32ea8b3` connected PPTX run stopped before reviewing its last eight-slide
+document. Its admission checkpoint recorded 131,289 required units against the
+configured 131,072 limit. The final document was visually readable, but that did
+not satisfy its missing harness review or publication. Evidence remains in
+`artifacts/document-design/live-32ea8b3/pptx/pptx-receipt.json`.
+
+The provider projection now deduplicates byte-identical, complete `skills_read`
+receipts only after checking their workflow authority, source, ID and content
+hash. It retains one complete copy, preferring an already mandatory tool group.
+Explicit context dependencies keep any projected alias together with its complete
+source. Different versions, policies, provenance, failed reads and incomplete
+reads remain unchanged. Original results remain in canonical history and can be
+paged after interruption and restart.
+
+For a successfully replaced document, the projection also shortens the exact
+known procedural instruction on its old inspection receipts. All hashes, IDs,
+pages, observations and other evidence fields remain intact. New or page-specific
+warnings are preserved verbatim; current-document instructions are unchanged.
+The fixture covering eleven superseded previews reduces mandatory context by
+more than 1,800 units without changing the review gate or model limits.
+
+Admission failures now include bounded numeric counts for mandatory messages and
+each tool's argument/result bytes. Smoke evidence records skill hashes and byte
+counts without exporting workflow text. This makes the next pressure incident
+diagnosable without exposing provider checkpoints or private content.

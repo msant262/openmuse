@@ -206,6 +206,7 @@ export function tanstackAgent(options: {
                 );
               const requiredOperationIds = (await options.requiredOperationIds?.()) ?? [];
               const projected = outputStore.project(config.messages, requiredOperationIds);
+              const toolDependencies = outputStore.dependencies();
               const observations = ContextBudget.observations(projected);
               const imageContextTokens = options.providers?.routing?.imageContextTokens ?? 8192;
               const requirements = options.contextModel
@@ -217,6 +218,7 @@ export function tanstackAgent(options: {
                       systemPrompts,
                       tools,
                       requiredOperationIds,
+                      toolDependencies,
                       observations,
                       imageContextTokens,
                     }),
@@ -242,6 +244,15 @@ export function tanstackAgent(options: {
                         [options.model, ...(options.fallbacks ?? [])],
                         options.modelRouter ??
                           (options.providers && sharedModelRouter(options.providers)),
+                        undefined,
+                        ContextBudget.minimumDiagnostics(projected, {
+                          systemPrompts,
+                          tools,
+                          requiredOperationIds,
+                          toolDependencies,
+                          observations,
+                          imageContextTokens,
+                        }),
                       ),
                   });
                 throw error;
@@ -255,6 +266,7 @@ export function tanstackAgent(options: {
                       systemPrompts,
                       tools,
                       requiredOperationIds,
+                      toolDependencies,
                       observations,
                     })
                   : projected,

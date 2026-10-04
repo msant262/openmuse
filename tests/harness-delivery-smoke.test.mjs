@@ -77,6 +77,28 @@ test("provider diagnostics retain exact admission numbers without checkpoint con
 test("smoke preserves exact document call IDs, revisions and errors while bounding scrubbed prose", () => {
   const secret = "do-not-export-this-credential";
   const scrub = (value) => scrubConfiguredValue(value, configuredSecretScrubber([secret]));
+  const skill = smokeOperationEvidence(
+    {
+      toolName: "skills_read",
+      status: "succeeded",
+      toolCallId: "read-skill",
+      args: { id: "builtin:slides" },
+      receipt: {
+        id: "builtin:slides",
+        source: "builtin",
+        content: `Private workflow ${secret}`,
+        sha256: "a".repeat(64),
+        truncated: false,
+      },
+    },
+    scrub,
+  );
+  assert.equal(skill.args.id, "builtin:slides");
+  assert.equal(skill.output.sha256, "a".repeat(64));
+  assert.ok(skill.output.contentBytes > 0);
+  assert.equal(skill.output.contentSha256.length, 64);
+  assert.equal(skill.output.content, undefined);
+  assert.doesNotMatch(JSON.stringify(skill), /Private workflow|do-not-export/);
   const receiptId = "a".repeat(64),
     fileId = "b".repeat(64);
   const failed = smokeOperationEvidence(

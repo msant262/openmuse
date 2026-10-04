@@ -397,6 +397,9 @@ test("context admission failures persist numeric requirements and capabilities b
   assert.ok(checkpoint);
   assert.equal(checkpoint.code, "MODEL_CAPABILITY_UNAVAILABLE");
   assert.equal(checkpoint.admission?.stage, "context_projection");
+  assert.ok((checkpoint.admission?.context?.baseTokens ?? 0) > 131072);
+  assert.equal(checkpoint.admission?.context?.mandatoryMessages, 1);
+  assert.deepEqual(checkpoint.admission?.context?.tools, []);
   assert.ok((checkpoint.admission?.requirements.contextTokens ?? 0) > 131072);
   assert.deepEqual(
     checkpoint.admission?.candidates.map(({ model, eligible, considered, capabilities }) => ({
