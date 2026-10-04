@@ -48,6 +48,10 @@ export async function modelFixture(
     toolNamespace?: string;
     chatFinishReason?: (index: number) => string | undefined;
     streamContentType?: string | null;
+    researchReview?: (
+      body: string,
+      index: number,
+    ) => { complete: boolean; missing: string[]; nextSteps: string[] };
   } = {},
 ) {
   const {
@@ -60,11 +64,13 @@ export async function modelFixture(
     partialTool,
   } = options;
   const requests: { path: string; body: string }[] = [];
+  const reviewRequests: { path: string; body: string }[] = [];
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
     const index = requests.length;
-    requests.push({ path: request.url ?? "", body });
+    const isReview = body.includes("PUBLIC_RESEARCH_DELIVERY_REVIEW");
+    (isReview ? reviewRequests : requests).push({ path: request.url ?? "", body });
     const contentType =
       options.streamContentType === undefined ? "text/event-stream" : options.streamContentType;
     const streamHeaders = contentType === null ? {} : { "Content-Type": contentType };
@@ -153,8 +159,18 @@ export async function modelFixture(
       response.end("data: [DONE]\n\n");
       return;
     }
-    const call = await reply(index);
-    const text = options.text?.(index);
+    const call = isReview ? undefined : await reply(index);
+    // Existing tests isolate the execution loop. Dedicated review tests supply
+    // rejection/repair decisions at this external model boundary.
+    const text = isReview
+      ? JSON.stringify(
+          options.researchReview?.(body, reviewRequests.length - 1) ?? {
+            complete: true,
+            missing: [],
+            nextSteps: [],
+          },
+        )
+      : options.text?.(index);
     if (request.url?.endsWith("/chat/completions")) {
       response.writeHead(200, streamHeaders);
       const emit = (delta: object, finishReason: string | null = null) =>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import type {
   AgentProfileFields,
   AgentProfilePatch,
@@ -11,7 +11,7 @@ import { DEFAULT_AGENT_PROFILE } from "../../../packages/domain/src/brand";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
 import { useMuseThread } from "./threads";
-import { Button, Card, CheckRow, ErrorNotice, Field, useUI } from "./ui";
+import { Button, Card, ErrorNotice, Field, ToggleRow, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type Target = {
@@ -25,8 +25,14 @@ type HistoryEntry = RevisionEntry<{ fields: AgentProfilePatch; origin?: { kind: 
 type HistoryPage = { entries: HistoryEntry[]; nextCursor?: string };
 type ScopedHistory = HistoryPage & { target: Target; profile: EffectiveAgentProfile };
 
-export function ProfileSettings({ document = false }: { document?: boolean } = {}) {
-  const { s } = useUI();
+export function ProfileSettings({
+  document = false,
+  contained = false,
+}: {
+  document?: boolean;
+  contained?: boolean;
+} = {}) {
+  const { colors, s } = useUI();
 
   const { t, locale } = useI18n();
   const { api } = useWorkspace();
@@ -238,19 +244,52 @@ export function ProfileSettings({ document = false }: { document?: boolean } = {
       true,
     );
   }
-  return (
-    <Card style={{ gap: 12 }}>
+  const footer = (
+    <View
+      style={{
+        gap: 8,
+        padding: contained ? 22 : 0,
+        borderTopWidth: contained ? 1 : 0,
+        borderTopColor: colors.line,
+        backgroundColor: contained ? colors.raised : undefined,
+      }}
+    >
+      <ErrorNotice error={error} />
+      {Object.keys(patch).length > 0 && profile && (
+        <Text style={[s.muted, { color: colors.text }]}>{t("Unsaved changes")}</Text>
+      )}
+      {enabled && (
+        <Text style={s.small}>
+          {scope === "global" ? t("Every conversation") : t("Current conversation")}
+        </Text>
+      )}
+      <Button
+        primary
+        busy={busy}
+        disabled={!profile || !Object.keys(patch).length}
+        onPress={() => void save()}
+      >
+        {t("Save conversation preferences")}
+      </Button>
+      {savedTarget === currentTarget && !Object.keys(patch).length && (
+        <Text style={s.small}>{t("Conversation preferences saved")}</Text>
+      )}
+    </View>
+  );
+  const form = (
+    <View style={{ gap: 12 }}>
       {!document && <Text style={s.heading}>{t("How we talk")}</Text>}
       {!document && (
         <Text style={s.muted}>{t("A name and a personality that feel right for you.")}</Text>
       )}
       {enabled && advanced && (
-        <View style={[s.row, { gap: 8 }]}>
+        <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
           {(["global", "conversation"] as const).map((item) => (
             <Button
               key={item}
               small
-              primary={scope === item}
+              disabled={!profile || busy}
+              selected={scope === item}
               onPress={() => {
                 if (scope === item) return;
                 target.current = undefined;
@@ -289,6 +328,31 @@ export function ProfileSettings({ document = false }: { document?: boolean } = {
         multiline
         style={document ? { minHeight: 300, lineHeight: 25, fontSize: 16 } : undefined}
       />
+      <View style={{ gap: 2, borderRadius: 16, overflow: "hidden" }}>
+        <ToggleRow
+          label={t("Light humor")}
+          description={t("A little wit when the moment fits.")}
+          disabled={!profile || busy}
+          checked={fields.humor === "light"}
+          onPress={() => edit("humor", fields.humor === "light" ? "none" : "light")}
+        />
+        <ToggleRow
+          label={t("Use emojis")}
+          description={t("Expressive replies and reactions to your messages.")}
+          disabled={!profile || busy}
+          checked={fields.emojis}
+          onPress={() => edit("emojis", !fields.emojis)}
+        />
+        <ToggleRow
+          label={t("Structured replies")}
+          description={t("Clear lists and short sections for longer answers.")}
+          disabled={!profile || busy}
+          checked={fields.textStyle === "structured"}
+          onPress={() =>
+            edit("textStyle", fields.textStyle === "structured" ? "plain" : "structured")
+          }
+        />
+      </View>
       <Pressable
         accessibilityRole="button"
         aria-expanded={advanced}
@@ -312,7 +376,8 @@ export function ProfileSettings({ document = false }: { document?: boolean } = {
               <Button
                 key={language}
                 small
-                primary={fields.language === language}
+                disabled={!profile || busy}
+                selected={fields.language === language}
                 onPress={() => edit("language", language)}
               >
                 {t(label)}
@@ -327,12 +392,13 @@ export function ProfileSettings({ document = false }: { document?: boolean } = {
             placeholder={t("en-US or pt-BR")}
           />
           <Text style={s.text}>{t("Tone")}</Text>
-          <View style={[s.row, { gap: 8 }]}>
+          <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
             {(["warm", "concise", "thoughtful"] as const).map((value) => (
               <Button
                 key={value}
                 small
-                primary={fields.tone === value}
+                disabled={!profile || busy}
+                selected={fields.tone === value}
                 onPress={() => edit("tone", value)}
               >
                 {t(value)}
@@ -340,12 +406,13 @@ export function ProfileSettings({ document = false }: { document?: boolean } = {
             ))}
           </View>
           <Text style={s.text}>{t("Formality")}</Text>
-          <View style={[s.row, { gap: 8 }]}>
+          <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
             {(["casual", "neutral", "formal"] as const).map((value) => (
               <Button
                 key={value}
                 small
-                primary={fields.formality === value}
+                disabled={!profile || busy}
+                selected={fields.formality === value}
                 onPress={() => edit("formality", value)}
               >
                 {t(value)}
@@ -353,53 +420,20 @@ export function ProfileSettings({ document = false }: { document?: boolean } = {
             ))}
           </View>
           <Text style={s.text}>{t("Reply length")}</Text>
-          <View style={[s.row, { gap: 8 }]}>
+          <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
             {(["concise", "balanced", "detailed"] as const).map((value) => (
               <Button
                 key={value}
                 small
-                primary={fields.responseLength === value}
+                disabled={!profile || busy}
+                selected={fields.responseLength === value}
                 onPress={() => edit("responseLength", value)}
               >
                 {t(value)}
               </Button>
             ))}
           </View>
-          <CheckRow
-            label={t("Light humor")}
-            checked={fields.humor === "light"}
-            onPress={() => edit("humor", fields.humor === "light" ? "none" : "light")}
-          />
-          <CheckRow
-            label={t("Use emojis")}
-            checked={fields.emojis}
-            onPress={() => edit("emojis", !fields.emojis)}
-          />
-          <CheckRow
-            label={t("Structured replies")}
-            checked={fields.textStyle === "structured"}
-            onPress={() =>
-              edit("textStyle", fields.textStyle === "structured" ? "plain" : "structured")
-            }
-          />
         </View>
-      )}
-      <ErrorNotice error={error} />
-      {enabled && (
-        <Text style={s.small}>
-          {scope === "global" ? t("Every conversation") : t("Current conversation")}
-        </Text>
-      )}
-      <Button
-        primary
-        busy={busy}
-        disabled={!profile || !Object.keys(patch).length}
-        onPress={() => void save()}
-      >
-        {t("Save conversation preferences")}
-      </Button>
-      {savedTarget === currentTarget && !Object.keys(patch).length && (
-        <Text style={s.small}>{t("Conversation preferences saved")}</Text>
       )}
       {(advanced || document) && (
         <>
@@ -479,6 +513,25 @@ export function ProfileSettings({ document = false }: { document?: boolean } = {
           {t("Reload saved preferences")}
         </Button>
       )}
+    </View>
+  );
+  if (contained)
+    return (
+      <View style={{ flex: 1, minHeight: 0 }}>
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 8, paddingBottom: 24 }}
+        >
+          {form}
+        </ScrollView>
+        {footer}
+      </View>
+    );
+  return (
+    <Card style={{ gap: 20 }}>
+      {form}
+      {footer}
     </Card>
   );
 }

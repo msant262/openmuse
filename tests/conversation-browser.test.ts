@@ -4,6 +4,8 @@ import test from "node:test";
 import { EventType } from "@ag-ui/core";
 import { lastValueFrom, toArray } from "rxjs";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
+import { modelProviderConfig } from "../apps/server/src/providers/config.ts";
+import { writeProtected } from "../apps/server/src/providers/credential-store.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
@@ -22,6 +24,72 @@ const delegate = {
   name: "delegate_task",
   arguments: { kind: "agent", title: "Read the article", prompt: `Summarize ${url}` },
 };
+
+test("a spoken handoff ends after its durable receipt without a second status paragraph", async (t) => {
+  const fixture = await modelFixture(t, (index) => (index === 0 ? delegate : undefined), {
+    text: (index) =>
+      index === 0
+        ? "Vou conferir os números e já te trago o resumo."
+        : "A checagem foi encaminhada.",
+  });
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const events = await run(new ConversationAgent(server.agent.config, server.agent, "owner"));
+  assert.equal((await server.agent.snapshot("owner")).tasks.length, 1);
+  assert.ok(events.some((event) => event.type === EventType.TOOL_CALL_RESULT));
+  assert.equal(
+    fixture.requests.length,
+    1,
+    "admission plus an existing reply needs no extra model turn",
+  );
+  const text = events
+    .filter((event) => event.type === EventType.TEXT_MESSAGE_CHUNK)
+    .map((event) => event.delta)
+    .join("");
+  assert.match(text, /Vou conferir/);
+  assert.doesNotMatch(text, /encaminhada/);
+});
+
+test("a subscription response buffered until its terminal receipt still acknowledges a handoff only once", async (t) => {
+  const fixture = await modelFixture(t, (index) => (index === 0 ? delegate : undefined), {
+    toolNamespace: "openmuse",
+    text: (index) => (index === 0 ? "Vou conferir os números." : "A checagem foi encaminhada."),
+  });
+  const server = await taskRuntime(t, { agentBackend: "model", model: "chatgpt/gpt-6-luna" });
+  const providers = modelProviderConfig(server.agent.config.dataDir, {});
+  server.agent.config.modelProviders = providers;
+  await writeProtected(providers.chatgptFile, {
+    issuer: "https://auth.openai.com",
+    subject: "account",
+    client_id: "oaiapp_fixture",
+    ext_agent_host_id: "urn:uuid:12345678-1234-4123-8123-123456789abc",
+    access_token: "subscription-access",
+    refresh_token: "subscription-refresh",
+    token_type: "Bearer",
+    expires_in: 3600,
+    scopes: ["chatgpt.tokens.use.direct"],
+    saved_at: new Date().toISOString(),
+  });
+  const originalFetch = globalThis.fetch;
+  const inferenceUrl = process.env.OPENAI_BASE_URL;
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    const request = new Request(input, init);
+    assert.equal(request.url, "https://api.openai.com/v1/responses");
+    return originalFetch(`${inferenceUrl}/responses`, {
+      method: request.method,
+      headers: request.headers,
+      body: await request.text(),
+      signal: request.signal,
+    });
+  });
+  const events = await run(new ConversationAgent(server.agent.config, server.agent, "owner"));
+  assert.ok(!events.some((e) => e.type === EventType.RUN_ERROR), JSON.stringify(events));
+  assert.equal((await server.agent.snapshot("owner")).tasks.length, 1);
+  assert.equal(
+    fixture.requests.length,
+    1,
+    "buffered text must count before another inference starts",
+  );
+});
 
 test("research runs in the worker while another chat message gets its own reply", {
   timeout: 15000,

@@ -77,6 +77,7 @@ export function tanstackAgent(options: {
   finalResponseOnStepLimit?: boolean;
   /** A successful handoff finishes the foreground turn without polling its worker. */
   finalResponseWhen?: () => boolean;
+  finalResponsePrompt?: () => string | undefined;
   /** Reserve the preceding turn for handing unfinished work to a durable worker. */
   handoffBeforeFinalResponse?: {
     tools: () => readonly string[];
@@ -98,6 +99,8 @@ export function tanstackAgent(options: {
     execute: () => Promise<unknown>,
   ) => Promise<unknown>;
   onMessages?: (messages: ModelMessage[], phase: string) => Promise<void>;
+  /** Observe accepted model text before downstream stream buffering and the next loop decision. */
+  onText?: (delta: string) => void;
   shouldContinue?: () => boolean;
   onStepLimit?: () => void;
   loadBrowserImage?: BrowserImageLoader;
@@ -230,6 +233,9 @@ export function tanstackAgent(options: {
         middleware: [
           {
             name: "openmuse-context",
+            onChunk: (_ctx, chunk) => {
+              if (chunk.type === "TEXT_MESSAGE_CONTENT") options.onText?.(chunk.delta);
+            },
             onConfig: async (ctx: ChatMiddlewareContext, config: ChatMiddlewareConfig) => {
               canonicalMessages = config.messages;
               await options.onMessages?.(config.messages, ctx.phase);
@@ -260,7 +266,8 @@ export function tanstackAgent(options: {
               if (handoff) systemPrompts.push(handoff.prompt);
               if (finalResponse)
                 systemPrompts.push(
-                  "This is the final response for this chat run. Tools are unavailable. Answer the user's request now using the observations already returned. Cite source URLs for verified details and prices. If research is incomplete, give the useful verified results and briefly explain what could not be verified. Do not invent findings or claim that pending delegated work has finished. Do not ask more questions or ask the user to say continue, restart, or repeat the request.",
+                  options.finalResponsePrompt?.() ??
+                    "This is the final response for this chat run. Tools are unavailable. Answer the user's request now using the observations already returned. Cite source URLs for verified details and prices. If research is incomplete, give the useful verified results and briefly explain what could not be verified. Do not invent findings or claim that pending delegated work has finished. Do not ask more questions or ask the user to say continue, restart, or repeat the request.",
                 );
               const requiredOperationIds = (await options.requiredOperationIds?.()) ?? [];
               const projected = outputStore.project(config.messages, requiredOperationIds);

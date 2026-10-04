@@ -36,7 +36,7 @@ function fixture(request: (path: string, body?: unknown) => Promise<unknown>) {
     new URL("../apps/mobile/src/profile-settings.tsx", import.meta.url),
     "ProfileSettings",
     {
-      "react-native": { Text: "Text", View: "View", Pressable: "Button" },
+      "react-native": { Text: "Text", View: "View", Pressable: "Button", ScrollView: "ScrollView" },
       "../../../packages/domain/src/brand": { DEFAULT_AGENT_PROFILE },
       "./agent-workspace": {
         useAgentWorkspace: () => ({
@@ -57,7 +57,7 @@ function fixture(request: (path: string, body?: unknown) => Promise<unknown>) {
       "./ui": {
         Button: "Button",
         Card: "Card",
-        CheckRow: "CheckRow",
+        ToggleRow: "ToggleRow",
         ErrorNotice: "ErrorNotice",
         Field: "Field",
         s: {},

@@ -1,5 +1,6 @@
 import {
   Bell,
+  Check,
   ChevronLeft,
   ChevronRight,
   Cpu,
@@ -69,8 +70,8 @@ export function SettingsDialog({
       label={t("Settings")}
       onClose={onClose}
       onBack={compact && mobileDetail ? () => setMobileDetail(false) : onClose}
-      width={760}
-      height={570}
+      width={840}
+      height={680}
     >
       <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
         {(!compact || !mobileDetail) && (
@@ -107,15 +108,29 @@ export function SettingsDialog({
                       marginBottom: 2,
                       backgroundColor:
                         section === id && !compact
-                          ? colors.subtle
+                          ? colors.selected
                           : pressed
                             ? colors.subtle
                             : "transparent",
                     },
                   ]}
                 >
-                  <Icon size={17} strokeWidth={1.6} color={colors.text} />
-                  <Text style={{ color: colors.text, fontSize: 14, flex: 1 }}>{t(title)}</Text>
+                  <Icon
+                    size={17}
+                    strokeWidth={1.6}
+                    color={section === id ? colors.selectedText : colors.text}
+                  />
+                  <Text
+                    style={{
+                      color: section === id ? colors.selectedText : colors.text,
+                      fontSize: 14,
+                      flex: 1,
+                      fontWeight: section === id ? "600" : "400",
+                    }}
+                  >
+                    {t(title)}
+                  </Text>
+                  {!compact && section === id && <Check size={15} color={colors.selectedText} />}
                   {compact && <ChevronRight size={16} color={colors.muted} />}
                 </Pressable>
               ))}
@@ -140,118 +155,105 @@ export function SettingsDialog({
               <Text style={[s.heading, { fontSize: 17, flex: 1 }]}>{t(current.title)}</Text>
               <IconButton icon={X} label={t("Close settings")} onPress={onClose} />
             </View>
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{
-                paddingHorizontal: 22,
-                paddingBottom: 26,
-                paddingTop: 4,
-                gap: 24,
-              }}
-            >
-              {section === "proactivity" && <ProactivitySettings />}
-              {section === "general" && (
-                <>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={onCustomize}
-                    style={[
-                      s.row,
-                      { gap: 13, padding: 14, backgroundColor: colors.subtle, borderRadius: 18 },
-                    ]}
-                  >
-                    <View style={{ width: 44, height: 44, borderRadius: 22, overflow: "hidden" }}>
-                      <Mascot size={44} framing="portrait" />
-                    </View>
-                    <View style={{ flex: 1, gap: 3 }}>
-                      <Text style={[s.text, { fontWeight: "500" }]}>
-                        {data?.identity.name || "OkamiBot"}
-                      </Text>
-                      <Text style={s.small}>{t("Customize your companion")}</Text>
-                    </View>
-                    <ChevronRight size={16} color={colors.muted} />
-                  </Pressable>
-                  <View
-                    style={{ borderRadius: 18, backgroundColor: colors.subtle, overflow: "hidden" }}
-                  >
+            {section === "personality" ? (
+              <ProfileSettings contained />
+            ) : (
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{
+                  paddingHorizontal: 22,
+                  paddingBottom: 26,
+                  paddingTop: 4,
+                  gap: 24,
+                }}
+              >
+                {section === "proactivity" && <ProactivitySettings />}
+                {section === "general" && (
+                  <>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel={t("App language")}
-                      aria-expanded={languageOpen}
-                      onPress={() => setLanguageOpen(!languageOpen)}
-                      style={[s.row, { padding: 16, gap: 12, minHeight: 56 }]}
-                    >
-                      <Globe2 size={18} color={colors.muted} />
-                      <Text style={[s.text, { flex: 1 }]}>{t("Language")}</Text>
-                      <Text style={s.muted}>{locale === "pt-BR" ? "Português" : "English"}</Text>
-                      <ChevronRight size={16} color={colors.muted} />
-                    </Pressable>
-                    {languageOpen && (
-                      <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: colors.line }}>
-                        <AppLanguagePicker />
-                      </View>
-                    )}
-                  </View>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => setSection("models")}
-                    style={[
-                      s.row,
-                      { padding: 16, gap: 12, backgroundColor: colors.subtle, borderRadius: 18 },
-                    ]}
-                  >
-                    <Cpu size={18} color={colors.muted} />
-                    <Text style={[s.text, { flex: 1 }]}>{t("Conversation model")}</Text>
-                    <ChevronRight size={16} color={colors.muted} />
-                  </Pressable>
-                  <AssistantChatPreferences />
-                </>
-              )}
-              {section === "models" && <ModelSettings />}
-              {section === "appearance" && <ThemePicker />}
-              {section === "connectors" && <ConnectionsScreen />}
-              {section === "personality" && <ProfileSettings />}
-              {section === "memory" && <MemorySettings />}
-              {section === "notifications" && (
-                <>
-                  <NativePushSettings />
-                  <Button icon={Bell} onPress={showNotifications}>
-                    {t("Open notifications")}
-                  </Button>
-                </>
-              )}
-              {section === "permissions" && (
-                <>
-                  <Text style={s.muted}>
-                    {t("Review requests before your assistant takes an action on your behalf.")}
-                  </Text>
-                  <Text style={s.heading}>{t("Needs review")}</Text>
-                  {actions.length === 0 && (
-                    <Text style={s.muted}>{t("Nothing needs your approval right now.")}</Text>
-                  )}
-                  {actions.map((action) => (
-                    <Pressable
-                      key={action.id}
-                      accessibilityRole="button"
-                      onPress={() => {
-                        onClose();
-                        open({ type: "review", action });
-                      }}
+                      onPress={onCustomize}
                       style={[
                         s.row,
-                        { padding: 16, gap: 12, backgroundColor: colors.subtle, borderRadius: 16 },
+                        { gap: 13, padding: 14, backgroundColor: colors.subtle, borderRadius: 18 },
                       ]}
                     >
-                      <ShieldCheck size={20} color={colors.muted} />
-                      <Text style={[s.text, { flex: 1 }]}>{action.title}</Text>
+                      <View style={{ width: 44, height: 44, borderRadius: 22, overflow: "hidden" }}>
+                        <Mascot size={44} framing="portrait" />
+                      </View>
+                      <View style={{ flex: 1, gap: 3 }}>
+                        <Text style={[s.text, { fontWeight: "500" }]}>
+                          {data?.identity.name || "OkamiBot"}
+                        </Text>
+                        <Text style={s.small}>{t("Customize your companion")}</Text>
+                      </View>
                       <ChevronRight size={16} color={colors.muted} />
                     </Pressable>
-                  ))}
-                  <Text style={s.heading}>{t("Approvals history")}</Text>
-                  {workspace.actions
-                    .filter((action) => action.status !== "awaiting_review")
-                    .map((action) => (
+                    <View
+                      style={{
+                        borderRadius: 18,
+                        backgroundColor: colors.subtle,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t("App language")}
+                        aria-expanded={languageOpen}
+                        onPress={() => setLanguageOpen(!languageOpen)}
+                        style={[s.row, { padding: 16, gap: 12, minHeight: 56 }]}
+                      >
+                        <Globe2 size={18} color={colors.muted} />
+                        <Text style={[s.text, { flex: 1 }]}>{t("Language")}</Text>
+                        <Text style={s.muted}>{locale === "pt-BR" ? "Português" : "English"}</Text>
+                        <ChevronRight size={16} color={colors.muted} />
+                      </Pressable>
+                      {languageOpen && (
+                        <View
+                          style={{ padding: 16, borderTopWidth: 1, borderTopColor: colors.line }}
+                        >
+                          <AppLanguagePicker />
+                        </View>
+                      )}
+                    </View>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => setSection("models")}
+                      style={[
+                        s.row,
+                        { padding: 16, gap: 12, backgroundColor: colors.subtle, borderRadius: 18 },
+                      ]}
+                    >
+                      <Cpu size={18} color={colors.muted} />
+                      <Text style={[s.text, { flex: 1 }]}>{t("Conversation model")}</Text>
+                      <ChevronRight size={16} color={colors.muted} />
+                    </Pressable>
+                    <AssistantChatPreferences />
+                  </>
+                )}
+                {section === "models" && <ModelSettings />}
+                {section === "appearance" && <ThemePicker />}
+                {section === "connectors" && <ConnectionsScreen />}
+                {section === "memory" && <MemorySettings />}
+                {section === "notifications" && (
+                  <>
+                    <NativePushSettings />
+                    <Button icon={Bell} onPress={showNotifications}>
+                      {t("Open notifications")}
+                    </Button>
+                  </>
+                )}
+                {section === "permissions" && (
+                  <>
+                    <Text style={s.muted}>
+                      {t("Review requests before your assistant takes an action on your behalf.")}
+                    </Text>
+                    <Text style={s.heading}>{t("Needs review")}</Text>
+                    {actions.length === 0 && (
+                      <Text style={s.muted}>{t("Nothing needs your approval right now.")}</Text>
+                    )}
+                    {actions.map((action) => (
                       <Pressable
                         key={action.id}
                         accessibilityRole="button"
@@ -259,20 +261,47 @@ export function SettingsDialog({
                           onClose();
                           open({ type: "review", action });
                         }}
-                        style={{
-                          paddingVertical: 10,
-                          gap: 4,
-                          borderBottomWidth: 1,
-                          borderBottomColor: colors.line,
-                        }}
+                        style={[
+                          s.row,
+                          {
+                            padding: 16,
+                            gap: 12,
+                            backgroundColor: colors.subtle,
+                            borderRadius: 16,
+                          },
+                        ]}
                       >
-                        <Text style={s.text}>{action.title}</Text>
-                        <Text style={s.small}>{action.result || t(action.status)}</Text>
+                        <ShieldCheck size={20} color={colors.muted} />
+                        <Text style={[s.text, { flex: 1 }]}>{action.title}</Text>
+                        <ChevronRight size={16} color={colors.muted} />
                       </Pressable>
                     ))}
-                </>
-              )}
-            </ScrollView>
+                    <Text style={s.heading}>{t("Approvals history")}</Text>
+                    {workspace.actions
+                      .filter((action) => action.status !== "awaiting_review")
+                      .map((action) => (
+                        <Pressable
+                          key={action.id}
+                          accessibilityRole="button"
+                          onPress={() => {
+                            onClose();
+                            open({ type: "review", action });
+                          }}
+                          style={{
+                            paddingVertical: 10,
+                            gap: 4,
+                            borderBottomWidth: 1,
+                            borderBottomColor: colors.line,
+                          }}
+                        >
+                          <Text style={s.text}>{action.title}</Text>
+                          <Text style={s.small}>{action.result || t(action.status)}</Text>
+                        </Pressable>
+                      ))}
+                  </>
+                )}
+              </ScrollView>
+            )}
           </View>
         )}
       </View>
@@ -290,7 +319,12 @@ export function CompanionDialog({ onClose }: { onClose: () => void }) {
       title={t("Customize your companion")}
       onClose={onClose}
       wide
-      contentStyle={{ paddingTop: 16 }}
+      scroll={tab !== "personality"}
+      contentStyle={
+        tab === "personality"
+          ? { paddingHorizontal: 0, paddingBottom: 0, paddingTop: 16 }
+          : { paddingTop: 16 }
+      }
     >
       <View
         style={{
@@ -322,7 +356,7 @@ export function CompanionDialog({ onClose }: { onClose: () => void }) {
           </Pressable>
         ))}
       </View>
-      {tab === "appearance" ? <AvatarStudio embedded /> : <ProfileSettings />}
+      {tab === "appearance" ? <AvatarStudio embedded /> : <ProfileSettings contained />}
     </Sheet>
   );
 }

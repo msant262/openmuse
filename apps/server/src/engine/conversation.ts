@@ -1,6 +1,7 @@
 import { browserTools } from "../browser-tools.ts";
 import { designReferenceTools } from "../design-catalog.ts";
 import { desktopTools } from "../desktop-tools.ts";
+import { humanizerContext } from "../humanizer-context.ts";
 import { searchTools } from "../search-tools.ts";
 import "../config.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -391,6 +392,7 @@ export class ConversationAgent extends AbstractAgent {
     const browserAbort = new AbortController();
     let credentialPaused = false;
     let workDelegated = false;
+    let hasSpoken = false;
     let credentialQueue: Promise<unknown> = Promise.resolve();
     let selectedModel = selection?.model ?? this.service.config.model;
     const delegateTools = (tools: ToolDefinition[]) =>
@@ -847,7 +849,14 @@ export class ConversationAgent extends AbstractAgent {
       providers: this.config.modelProviders ?? modelProviderConfig(this.config.dataDir),
       maxSteps: 10,
       finalResponseWhen: () => workDelegated,
-      shouldContinue: () => !credentialPaused,
+      onText: (delta) => {
+        if (delta.trim()) hasSpoken = true;
+      },
+      shouldContinue: () => !credentialPaused && !(workDelegated && hasSpoken),
+      finalResponsePrompt: () =>
+        workDelegated
+          ? "The task receipt confirms the work was accepted and its result will arrive in this conversation. Give a single short, natural acknowledgment in the person's saved style. No queue, routing or background-process narration, no provisional research report, no claim of completion, and no invitation to keep chatting."
+          : undefined,
       finalResponseOnStepLimit: true,
       handoffBeforeFinalResponse: {
         tools: () => (workDelegated ? [] : ["delegate_task"]),
@@ -861,6 +870,7 @@ export class ConversationAgent extends AbstractAgent {
         ]);
         return (
           buildProfileContext(profile, "chat") +
+          (await humanizerContext(this.config, this.owner)) +
           companionMessageContext(
             input.messages,
             reactions.filter((r) => r.threadId === input.threadId),

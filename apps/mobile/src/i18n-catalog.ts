@@ -194,6 +194,12 @@ export const ptBR: Record<string, string> = {
   Tone: "Tom",
   Formality: "Formalidade",
   "Reply length": "Tamanho das respostas",
+  "A little wit when the moment fits.": "Leveza e bom humor quando combina com o momento.",
+  "Expressive replies and reactions to your messages.":
+    "Expressividade nas respostas e reações às suas mensagens.",
+  "Clear lists and short sections for longer answers.":
+    "Listas claras e trechos curtos nas respostas mais longas.",
+  "Unsaved changes": "Alterações não salvas",
   "Light humor": "Humor leve",
   "Use emojis": "Usar emojis",
   "Structured replies": "Respostas estruturadas",

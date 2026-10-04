@@ -1,5 +1,5 @@
 import { ArrowUpRight, Check, ChevronRight, type LucideIcon, X } from "lucide-react-native";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -50,12 +50,12 @@ const createUIStyles = (colors: ThemeColors) =>
     input: {
       borderWidth: 1,
       borderColor: colors.line,
-      borderRadius: 19,
+      borderRadius: 12,
       paddingHorizontal: 16,
       paddingVertical: 12,
       color: colors.text,
       fontSize: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.input,
       minHeight: 45,
     },
     field: { gap: 7, marginBottom: 16 },
@@ -69,7 +69,7 @@ const createUIStyles = (colors: ThemeColors) =>
       paddingVertical: 10,
       borderRadius: 24,
     },
-    primary: { backgroundColor: colors.blue },
+    primary: { backgroundColor: colors.accent },
     secondary: { backgroundColor: colors.subtle },
     buttonText: { color: colors.text, fontSize: 14, fontWeight: "600" },
     chip: {
@@ -126,6 +126,7 @@ export function Button({
   small,
   danger,
   expanded,
+  selected,
   style,
 }: {
   children: ReactNode;
@@ -137,11 +138,18 @@ export function Button({
   small?: boolean;
   danger?: boolean;
   expanded?: boolean;
+  selected?: boolean;
   style?: ViewStyle;
 }) {
   const { colors, s } = useUI();
 
-  const color = danger ? colors.danger : colors.text;
+  const color = danger
+    ? colors.danger
+    : selected
+      ? colors.selectedText
+      : primary
+        ? colors.onAccent
+        : colors.text;
   return (
     <Pressable
       accessibilityRole="button"
@@ -149,10 +157,16 @@ export function Button({
       aria-disabled={!!(disabled || busy)}
       aria-busy={!!busy}
       aria-expanded={expanded}
+      aria-pressed={selected}
       onPress={onPress}
       style={({ pressed }) => [
         s.button,
         primary ? s.primary : s.secondary,
+        selected !== undefined && {
+          borderWidth: 1,
+          borderColor: selected ? colors.selectedBorder : colors.line,
+          backgroundColor: selected ? colors.selected : colors.subtle,
+        },
         small && { minHeight: 38, paddingVertical: 7, paddingHorizontal: 13 },
         (disabled || busy) && { opacity: 0.5 },
         pressed && { transform: [{ scale: 0.98 }] },
@@ -165,6 +179,7 @@ export function Button({
         <Icon size={15} color={color} />
       ) : null}
       <Text style={[s.buttonText, { color }]}>{children}</Text>
+      {selected && <Check size={14} color={color} />}
     </Pressable>
   );
 }
@@ -215,16 +230,26 @@ export function Chip({ children, tint }: { children: ReactNode; tint?: string })
 }
 export function Field({ label, ...props }: TextInputProps & { label: string }) {
   const { colors, s } = useUI();
+  const [focused, setFocused] = useState(false);
 
   return (
     <View style={s.field}>
-      <Text style={[s.small, { fontWeight: "600", color: colors.text }]}>{label}</Text>
+      <Text style={[s.text, { fontSize: 13, fontWeight: "500" }]}>{label}</Text>
       <TextInput
         placeholderTextColor={colors.muted}
         accessibilityLabel={label}
         {...props}
+        onFocus={(event) => {
+          setFocused(true);
+          props.onFocus?.(event);
+        }}
+        onBlur={(event) => {
+          setFocused(false);
+          props.onBlur?.(event);
+        }}
         style={[
           s.input,
+          focused && { borderColor: colors.selectedBorder },
           props.multiline && { minHeight: 120, textAlignVertical: "top" },
           props.style,
         ]}
@@ -465,15 +490,90 @@ export function CheckRow({
           height: 19,
           borderRadius: 5,
           borderWidth: 1,
-          borderColor: checked ? colors.text : colors.line,
-          backgroundColor: checked ? colors.text : colors.card,
+          borderColor: checked ? colors.accent : colors.controlBorder,
+          backgroundColor: checked ? colors.accent : colors.card,
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        {checked && <Check size={13} color={colors.onFeature} />}
+        {checked && <Check size={13} color={colors.onAccent} />}
       </View>
       <Text style={[s.text, { flex: 1 }]}>{label}</Text>
+    </Pressable>
+  );
+}
+export function ToggleRow({
+  label,
+  description,
+  checked,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  description?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const { colors, s } = useUI();
+  const { t } = useI18n();
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityLabel={label}
+      accessibilityHint={description}
+      aria-checked={checked}
+      aria-disabled={!!disabled}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        s.row,
+        {
+          minHeight: 72,
+          gap: 16,
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+          borderRadius: 14,
+          opacity: disabled ? 0.5 : 1,
+          backgroundColor: pressed ? colors.hover : colors.subtle,
+        },
+      ]}
+    >
+      <View style={{ flex: 1, gap: 3 }}>
+        <Text style={[s.text, { fontWeight: "500" }]}>{label}</Text>
+        {!!description && (
+          <Text style={[s.muted, { fontSize: 12, lineHeight: 18 }]}>{description}</Text>
+        )}
+      </View>
+      <View style={{ gap: 4, alignItems: "center", minWidth: 64 }}>
+        <View
+          style={{
+            width: 42,
+            height: 26,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: checked ? colors.accent : colors.controlBorder,
+            backgroundColor: checked ? colors.accent : colors.input,
+            padding: 3,
+            alignItems: checked ? "flex-end" : "flex-start",
+            justifyContent: "center",
+          }}
+        >
+          <View
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 9,
+              backgroundColor: checked ? colors.onAccent : colors.controlBorder,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {checked && <Check size={12} strokeWidth={3} color={colors.accent} />}
+          </View>
+        </View>
+        <Text style={[s.small, { fontSize: 10 }]}>{t(checked ? "On" : "Off")}</Text>
+      </View>
     </Pressable>
   );
 }
