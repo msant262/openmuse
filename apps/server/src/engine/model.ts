@@ -1324,7 +1324,7 @@ export async function executeModelTask(
           call,
           execute,
           call.name === "inspect_document" ||
-            !/^(web_fetch$|search_web$|search_app_tools$|design_references$|skills_(list|search|read)$|confirm_document_review$|view_file$|read_|inspect_|get_|list_|computer_status|desktop_observe|browser_(research|snapshot|screenshot)|set_plan|ask_user|finish_task|AGUI)/.test(
+            !/^(web_fetch$|search_web$|search_app_tools$|design_references$|skills_(list|search|read)$|confirm_document_review$|image_generation_status$|view_file$|read_|inspect_|get_|list_|computer_status|desktop_observe|browser_(research|snapshot|screenshot)|set_plan|ask_user|finish_task|AGUI)/.test(
               call.name,
             ),
         );

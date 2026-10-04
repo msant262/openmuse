@@ -154,3 +154,27 @@ Admission failures now include bounded numeric counts for mandatory messages and
 each tool's argument/result bytes. Smoke evidence records skill hashes and byte
 counts without exporting workflow text. This makes the next pressure incident
 diagnosable without exposing provider checkpoints or private content.
+
+## Follow-up: capability reads incorrectly classified as effects
+
+The next connected run (`4c3e9ba`) still stopped at 131,243 units. Its new
+diagnostics showed 76,512 units of base instructions/tool schemas and 41,515
+mandatory message bytes. The mandatory tool list included `image_generation_status`
+and a parallel group with three skill reads and a design reference. Only two
+document drafts had been created. This evidence ruled out repeated drafts alone
+as a sufficient explanation.
+
+The worker's effect classifier omitted `image_generation_status` from its
+read-only tools. That status lookup only reads available image capabilities, but
+the journal marked it as an effect and required its complete parallel call group
+in every subsequent inference. The correction classifies this exact tool as a
+read. Actual generation, document creation and inspection remain mandatory
+effects; tool-pair grouping and provider capacity are unchanged.
+
+The regression executes the real worker/provider protocol through capability
+lookup, file creation and completion, then projects a mixed capability/reference
+batch using the journal's required IDs. It failed with
+`CONTEXT_REQUIRED_TOO_LARGE` before the correction and fits afterwards, retaining
+the complete file operation and leaving optional reads in canonical history.
+Evidence: `artifacts/document-design/image-status-context-red.log` and
+`artifacts/document-design/image-status-context-green.log`.

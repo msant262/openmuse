@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { ModelMessage } from "@tanstack/ai";
 import { bindingHash } from "../apps/server/src/conversation-inbox.ts";
+import { ContextBudget } from "../apps/server/src/engine/context-budget.ts";
 import { TaskWorker } from "../apps/server/src/engine/worker.ts";
 import type { ComputerSnapshot } from "../packages/domain/src/computer.ts";
 import { modelFixture } from "./helpers/model.ts";
@@ -21,6 +23,92 @@ const runningComputer: ComputerSnapshot = {
   containmentGuaranteed: true,
   readiness: { account: { state: "ready" }, runtime: { state: "ready" } },
 };
+
+test("image capability lookup does not pin its parallel reference reads as completed effects", async (t) => {
+  await modelFixture(
+    t,
+    (index) =>
+      [
+        { name: "image_generation_status", arguments: {} },
+        {
+          name: "create_document",
+          arguments: {
+            operationId: "context-document",
+            name: "context.txt",
+            format: "text",
+            content: "Verified local document.",
+          },
+        },
+        { name: "finish_task", arguments: { summary: "Created the requested text file." } },
+      ][index],
+  );
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await server.agent.createTask("owner", {
+    prompt: "Check runtime capabilities, then create a small TXT attachment.",
+  });
+  await server.agent.worker.tick();
+  const operations = await server.agent.journal.operations("owner", task.id);
+  const lookup = operations.find((op) => op.toolName === "image_generation_status");
+  const creation = operations.find((op) => op.toolName === "create_document");
+  assert.equal(lookup?.status, "succeeded");
+  assert.equal(creation?.status, "succeeded");
+  assert.ok(lookup?.toolCallId && creation?.toolCallId);
+  const required = await server.agent.journal.requiredHistoryIds("owner", task.id);
+  // Reproduce a completed parallel batch: one status read must not make its
+  // large design-reference sibling mandatory for every subsequent inference.
+  const messages: ModelMessage[] = [
+    { role: "user", content: "Deliver the saved document." },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: lookup.toolCallId,
+          type: "function",
+          function: { name: lookup.toolName, arguments: "{}" },
+        },
+        {
+          id: "reference",
+          type: "function",
+          function: { name: "design_references", arguments: "{}" },
+        },
+      ],
+    },
+    { role: "tool", toolCallId: lookup.toolCallId, content: JSON.stringify(lookup.receipt) },
+    { role: "tool", toolCallId: "reference", content: "Optional reference text. ".repeat(1500) },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: creation.toolCallId,
+          type: "function",
+          function: { name: creation.toolName, arguments: JSON.stringify(creation.args) },
+        },
+      ],
+    },
+    { role: "tool", toolCallId: creation.toolCallId, content: JSON.stringify(creation.receipt) },
+  ];
+  const projected = ContextBudget.limit(messages, {
+    requiredOperationIds: required,
+    model: { id: "fixture", contextTokens: 16000 },
+  });
+  assert.ok(
+    projected.some(
+      (message) => message.role === "tool" && message.toolCallId === creation.toolCallId,
+    ),
+  );
+  assert.ok(
+    !projected.some(
+      (message) => message.role === "tool" && message.toolCallId === lookup.toolCallId,
+    ),
+  );
+  assert.equal(lookup.effect, false);
+  assert.equal(creation.effect, true);
+  assert.deepEqual(required, [creation.toolCallId]);
+  const saved = await server.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", JSON.stringify(saved.completion));
+});
 
 test("a completed computer status lookup verifies observation while its subject is running", async (t) => {
   await modelFixture(
