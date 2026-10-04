@@ -81,6 +81,24 @@ test("post-conversation review saves a sourced preference without a remember com
   );
 });
 
+test("a quiet learning review retains its reason without creating memory", async (t) => {
+  const summary = "Only an acknowledgement; no durable fact or reusable method.";
+  await modelFixture(t, () => ({ name: "finish_learning", arguments: { summary } }));
+  const server = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    memoryLearningEnabled: true,
+  });
+  await source(server, "thanks", "Obrigado, está tudo certo.");
+  const id = await server.agent.learning.scheduleDue("owner");
+  assert.ok(id);
+  await server.agent.worker.tick();
+  const task = await server.agent.getTask("owner", id);
+  assert.equal(task.status, "succeeded");
+  assert.equal(task.state.learningSummary, summary);
+  assert.equal((await server.agent.memory.recall("owner")).length, 0);
+});
+
 test("learning refuses unsupported quotes, credentials, wrong owners and forgotten provenance", async (t) => {
   const server = await taskRuntime(t);
   const message = {

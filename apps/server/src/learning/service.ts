@@ -312,7 +312,8 @@ export class PersonalLearning {
         .map((o) => o.id),
     );
     let changes = written.size,
-      finished = false;
+      finished = false,
+      learningSummary = "";
     const countChanges = async () => {
       changes = (await this.service.journal.operations(owner, task.id)).filter(
         (o) => o.status === "succeeded" && ["learn_memory", "learn_procedure"].includes(o.toolName),
@@ -419,6 +420,7 @@ export class PersonalLearning {
               `Learning is incomplete: ${JSON.stringify([...pendingWrites])}. Repair these writes before finishing.`,
               409,
             );
+          learningSummary = summary;
           finished = true;
           return { finished: true, changes, summary };
         },
@@ -550,7 +552,7 @@ export class PersonalLearning {
       result: changes
         ? `Saved ${changes} personal learning changes`
         : "No durable learning in this review",
-      state: { ...task.state, learningChanges: changes, learningWriteErrors: [] },
+      state: { ...task.state, learningChanges: changes, learningSummary, learningWriteErrors: [] },
       completion: { status: "verified", checks: [], remaining: [] },
     };
   }

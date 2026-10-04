@@ -122,6 +122,8 @@ try {
       name,
       status: task.status,
       error: task.error,
+      summary: task.state.learningSummary,
+      sources: task.input.learningSources,
       memories,
       operations: (await server.agent.journal.operations(owner, id)).map((o) => ({
         name: o.toolName,
