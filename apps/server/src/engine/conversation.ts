@@ -586,7 +586,7 @@ export class ConversationAgent extends AbstractAgent {
         description: publicReadDescription,
         parameters: z.object({
           url: z.url().max(4096),
-          mode: z.enum(["auto", "http", "browser"]).default("auto"),
+          mode: z.enum(["auto", "http", "headless", "browser"]).default("auto"),
         }),
         execute: async ({ url, mode }) => {
           browserAbort.signal.throwIfAborted();

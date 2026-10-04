@@ -111,6 +111,16 @@ export async function publicFixture() {
     if (path.startsWith("/redirect-private")) {
       response.writeHead(302, { location: "http://127.0.0.1:8790/health" });
       response.end();
+    } else if (path === "/json-results") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(
+        `<title>Live count</title><main id="results">The count is being prepared.</main><script>fetch('/count.json').then(r=>r.json()).then(data=>document.getElementById('results').textContent='Votes: '+data.votes);</script>`,
+      );
+    } else if (path === "/count.json") {
+      setTimeout(() => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end('{"votes":12345}');
+      }, 1700);
     } else if (path === "/delayed-results") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(`<!doctype html><title>Live results</title><main><h1>Live results</h1><div id="results" class="results-placeholder">Location 0</div></main><script>

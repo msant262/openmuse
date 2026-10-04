@@ -27,6 +27,25 @@ const savedSession: BrowserSession = {
   updatedAt: "2026-09-15T00:00:00.000Z",
 };
 
+test("public reader transport accepts a worker response after the former 45-second cutoff", {
+  timeout: 70_000,
+}, async (t) => {
+  const page = {
+    url: "https://example.org/",
+    title: "Slow results",
+    text: "Votes: 12345",
+    truncated: false,
+  };
+  const { service } = await browserFixture(t, async (path, body) => {
+    if (path.endsWith("/read")) {
+      await new Promise((resolve) => setTimeout(resolve, 46_000));
+      return { data: page };
+    }
+    return { data: { ...savedSession, id: body.id, url: body.url } };
+  });
+  assert.equal((await service.observe("owner", page.url)).text, page.text);
+});
+
 test("browser API reopens an owned profile at the edited address and renews console access", async (t) => {
   const calls: { path: string; body: Record<string, unknown> }[] = [];
   const { db, config } = await browserFixture(t, (path, body) => {

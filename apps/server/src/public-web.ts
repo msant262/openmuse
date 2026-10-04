@@ -17,6 +17,7 @@ export class WebReadError extends Error {
 }
 
 export type RenderedPublicPage = {
+  dataSources?: { url: string; kind: string }[];
   url: string;
   title: string;
   text: string;
@@ -26,7 +27,73 @@ export type RenderedPublicPage = {
   extraction?: { status: "readable" | "partial"; reason?: string };
 };
 export const publicReadDescription =
-  "Read a public URL: HTTP first, automatically render JavaScript when the page is blocked or still loading. Returns observed text, links, extraction status and provenance. Use mode=browser if HTTP text lacks the requested data; mode=http skips rendering. Partial/loading pages are not verified results. No login or site actions.";
+  "Read public HTML/JSON over HTTP, including embedded application JSON and published data/API URLs. Default auto never launches a browser. Inspect dataSources and prefer relevant API/MCP tools before requesting mode=headless for JavaScript-only data. Headless uses the VPS, never the personal graphical browser. mode=browser is a legacy alias for headless. Partial content is not verified evidence.";
+
+export const publicResearchInstructions =
+  " For research choose the least costly relevant source: first search_tools for topic-specific configured API/MCP read tools (search by the requested data, not only web_fetch); use search_app_tools for connected-app APIs when relevant. Use available structured tools before page scraping. Do not invent endpoints, install connectors, or ask for new credentials for a public lookup. Next use search_web and web_fetch HTTP, inspecting embedded JSON and dataSources for published public data endpoints. Fetch relevant data URLs directly with web_fetch before rendering. If those paths are unavailable or insufficient, explicitly call web_fetch mode=headless for JavaScript/network data; this never opens the personal graphical browser. Only use personal/graphical navigation as a last resort for a task that actually requires interactive/session access. WebMCP is a site/browser capability, not a universal HTTP API: use it only when actually exposed by an available supported tool. Never claim a MCP/WebMCP/API was tried without a tool receipt. Stop when the requested facts are obtained, retain successful evidence after later failures, and declare outcome=partial when the requested data remains missing. Headless navigation and pending application data each get up to 60 seconds, returning sooner when ready. A deadline limits resource use; waiting a fixed number of seconds does not verify data.";
+
+function pageData(root: Node, base: string) {
+  const dataSources: { url: string; kind: string }[] = [];
+  const embedded: string[] = [];
+  let remaining = 12000,
+    truncated = false;
+  const add = (raw: string, kind: string) => {
+    try {
+      const url = new URL(raw, base);
+      if (
+        !/^https?:$/.test(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.href.length > 4096 ||
+        dataSources.some((source) => source.url === url.href) ||
+        dataSources.length >= 30
+      )
+        return;
+      dataSources.push({ url: url.href, kind });
+    } catch {
+      /* Invalid published data links are ignored. */
+    }
+  };
+  for (const node of htmlNodes(root, (node) => ["link", "a"].includes(node.nodeName))) {
+    const href = htmlAttribute(node, "href");
+    if (
+      href &&
+      (/json|rss|atom|csv/i.test(htmlAttribute(node, "type") ?? "") ||
+        /\.(?:json|rss|csv)(?:[?#]|$)/i.test(href))
+    )
+      add(href, "published-data-link");
+  }
+  for (const script of htmlNodes(root, (node) => node.nodeName === "script").slice(0, 80)) {
+    const raw = children(script)
+      .map((node) => ("value" in node ? node.value : ""))
+      .join("");
+    if (htmlAttribute(script, "type")?.toLowerCase() === "application/json") {
+      const src = htmlAttribute(script, "src");
+      if (src) add(src, "json-resource");
+      try {
+        const value = JSON.stringify(JSON.parse(raw));
+        if (remaining > 0) embedded.push(value.slice(0, remaining));
+        if (value.length > remaining) truncated = true;
+        remaining = Math.max(0, remaining - value.length);
+      } catch {
+        /* Only JSON, never eval or JavaScript assignments. */
+      }
+    }
+    // Discover literal data URLs published in configuration; never execute the
+    // scripts, fabricate a path, follow a tool instruction or send credentials.
+    if (raw.length > 128000) continue;
+    for (const match of raw.matchAll(/"(?:[^"\\]|\\.){0,4096}"|'[^'\r\n]{0,4096}'/g)) {
+      try {
+        const value = match[0][0] === '"' ? JSON.parse(match[0]) : match[0].slice(1, -1);
+        if (/^(?:https?:\/\/|\/[^/])/.test(value) && /\.json(?:[?#]|$)/i.test(value))
+          add(value, "published-json-url");
+      } catch {
+        /* Not a literal URL. */
+      }
+    }
+  }
+  return { dataSources, embedded: embedded.join("\n"), truncated };
+}
 
 /** Every request connects to the validated address, preserving Host/TLS hostname.
  * No cookies, ambient authentication, proxy credentials or browser session are used. */
@@ -307,10 +374,12 @@ export class PublicWeb {
           "text/html",
           "application/xhtml+xml",
           "text/plain",
+          "text/csv",
           "application/json",
           "text/xml",
           "application/xml",
           "application/rss+xml",
+          "application/atom+xml",
         ].includes(contentType)
       )
         throw new WebReadError(
@@ -325,18 +394,13 @@ export class PublicWeb {
     url: string,
     signal?: AbortSignal,
     options: {
-      mode?: "auto" | "http" | "browser";
+      mode?: "auto" | "http" | "headless" | "browser";
       render?: (url: string, signal?: AbortSignal) => Promise<RenderedPublicPage>;
     } = {},
   ) {
-    let page: Awaited<ReturnType<PublicWeb["readHttp"]>> | undefined;
-    let reason = "Requested rendered content";
-    if (options.mode !== "browser") {
+    if (options.mode !== "browser" && options.mode !== "headless") {
       try {
-        page = await this.readHttp(url, signal);
-        if (page.extraction.status === "readable" || options.mode === "http" || !options.render)
-          return page;
-        reason = page.extraction.reason ?? "Application content is still loading";
+        return await this.readHttp(url, signal);
       } catch (error) {
         signal?.throwIfAborted();
         // Never convert network/URL policy rejection or cancellation into browser dispatch.
@@ -347,7 +411,23 @@ export class PublicWeb {
           !["HTTP_403", "HTTP_429", "PAGE_BLOCKED"].includes(error.code)
         )
           throw error;
-        reason = error.code;
+        return {
+          url,
+          title: new URL(url).hostname,
+          text: "",
+          links: [],
+          dataSources: [],
+          truncated: false,
+          error: error.message,
+          code: error.code,
+          extraction: {
+            status: "partial" as const,
+            reason:
+              "HTTP access failed. Try an available structured tool or another source; explicitly request mode=headless if JavaScript is needed.",
+          },
+          observedAt: new Date().toISOString(),
+          provenance: { backend: "http" as const, authenticated: false as const },
+        };
       }
     }
     if (!options.render)
@@ -364,11 +444,12 @@ export class PublicWeb {
     return {
       ...rendered,
       text: rendered.text.slice(0, maxText),
-      links: rendered.links ?? page?.links ?? [],
+      links: rendered.links ?? [],
+      dataSources: rendered.dataSources ?? [],
       truncated: rendered.truncated || rendered.text.length > maxText,
       extraction: rendered.extraction ?? { status: "readable" as const },
       observedAt: new Date().toISOString(),
-      provenance: { backend: "browser" as const, fallbackReason: reason },
+      provenance: { backend: "browser" as const, mode: "headless" as const },
     };
   }
   private async readHttp(url: string, signal?: AbortSignal) {
@@ -383,12 +464,20 @@ export class PublicWeb {
       ? htmlText(main ?? htmlNodes(root, (node) => node.nodeName === "body")[0] ?? root)
       : document.body.trim();
     const products = html ? productData(root) : [];
+    const data = html
+      ? pageData(root, document.url)
+      : { dataSources: [], embedded: "", truncated: false };
     const structured = products.length
       ? "\nStructured product data from this page (untrusted): " + JSON.stringify(products)
       : "";
-    const text = structured
+    const extracted = structured
       ? visibleText.slice(0, 19000) + structured.slice(0, 11000)
       : visibleText;
+    const text = data.embedded
+      ? extracted.slice(0, 17500) +
+        "\nEmbedded application JSON (untrusted source data):\n" +
+        data.embedded
+      : extracted;
     // A 200 response can be the application's loading shell. Ignore empty ad
     // placeholders, but don't certify the surrounding boilerplate as its data.
     const pending =
@@ -410,14 +499,14 @@ export class PublicWeb {
       htmlNodes(root, (node) => node.nodeName === "script" && Boolean(htmlAttribute(node, "src")))
         .length > 0;
     const extraction =
-      pending || shell
+      pending || (shell && !data.embedded && !products.length)
         ? {
             status: "partial" as const,
             reason:
-              "Application content is still loading; render this URL before claiming its data.",
+              "Application content is still loading. Inspect published dataSources or available structured tools first; explicitly use mode=headless if rendering is needed.",
           }
         : { status: "readable" as const };
-    if (!readablePage({ url: document.url, title, text }))
+    if (!readablePage({ url: document.url, title, text }) && !data.dataSources.length)
       throw new WebReadError(
         "PAGE_BLOCKED",
         "The site returned a challenge or no readable public text. Use another source, or browser only if interactive rendering is necessary.",
@@ -445,8 +534,11 @@ export class PublicWeb {
       title,
       text: text.slice(0, maxText),
       links,
+      dataSources: data.dataSources,
       extraction,
       truncated:
+        data.truncated ||
+        (Boolean(data.embedded) && extracted.length > 17500) ||
         text.length > maxText ||
         (Boolean(structured) && (visibleText.length > 19000 || structured.length > 11000)),
       observedAt: new Date().toISOString(),
