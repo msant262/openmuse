@@ -13,6 +13,7 @@ type SearchableReference = {
 const normalize = (text: string) => text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 const words = (text: string) =>
   normalize(text)
+    .replace(/\bsem[ -]serifas?\b/g, "sans")
     .replace(/\bsans[ -]serif\b/g, "sans")
     .match(/[a-z0-9]+/g) ?? [];
 

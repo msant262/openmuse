@@ -114,6 +114,12 @@ test("natural Portuguese briefs retrieve matching composition and typography ins
   assert.equal(exact.references[0]?.id, "linear.app");
   assert.equal((await catalog.list({ query: "Cal" })).references[0]?.id, "cal");
   assert.equal((await catalog.list({ query: "plasmaquantumxyz" })).total, 0);
+  const sans = await catalog.recommend({ query: "tipografia sem serifa" });
+  const englishSans = await catalog.recommend({ query: "sans-serif typography" });
+  assert.equal(sans.total, englishSans.total);
+  assert.ok(sans.references.length);
+  for (const { matchedTerms } of sans.references)
+    assert.deepEqual(matchedTerms, ["sans"], "sem serifa means sans-serif, not serif");
 });
 
 test("recommendations expose bounded source excerpts for contrasting composition, with full catalog access", async () => {
