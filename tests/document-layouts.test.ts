@@ -60,6 +60,20 @@ test("layout choices change presentation composition with an identical theme and
   }
 });
 
+test("section subtitles stay with their table and process instead of creating title-only slides", async () => {
+  const content = `## Comparison\n### Three distinct roles\n\n| Layer | Role |\n| --- | --- |\n| Tool | Execute |\n| Skill | Guide |\n| Task | Deliver |\n\n---\n\n## Process\n### From request to evidence\n\n\`\`\`steps\n{"items":[{"title":"Understand"},{"title":"Execute"},{"title":"Verify"}]}\n\`\`\``;
+  for (const layout of layouts) {
+    const pages = await slideTexts(
+      await createDocumentPptx(composeDocument(content, "Guide", { cover: false, layout })),
+    );
+    assert.equal(pages.length, 2, `${layout} should keep each heading with its figure`);
+    for (const text of ["Comparison", "Three distinct roles", "Tool", "Task"])
+      assert.ok(pages[0].documentElement?.textContent?.includes(text));
+    for (const text of ["Process", "From request to evidence", "Understand", "Verify"])
+      assert.ok(pages[1].documentElement?.textContent?.includes(text));
+  }
+});
+
 test("Word layout families change editable cover structure and metric grid", async () => {
   const documents = await Promise.all(
     layouts.map(async (layout) => {

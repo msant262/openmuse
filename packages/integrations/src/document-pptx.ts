@@ -574,7 +574,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     captionArea = undefined;
     if (prose(block)) prepareFlow(blockIndex);
     if (block.type === "heading") {
-      if (block.level <= 2) {
+      if (block.level <= 2 || pendingSection) {
         // Adjacent headings describe one hierarchy until content or an explicit
         // divider is encountered; they are not requests for empty slides.
         section = pendingSection ? [...section, block.text] : [block.text];
