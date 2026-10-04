@@ -1,6 +1,82 @@
 # OkamiBot: instalação e aceite em 4 de outubro de 2026
 
-**Revisão atual publicada: API `55f9d8d`; web e Android `7529b63`.** O novo
+**Revisão atual publicada: API `7f81a03`; web e Android `7529b63`.** A publicação
+de documentos com design foi concluída após o ensaio conectado de PPTX. O guia
+redesenhado de produção concluiu com revisão verificada das três páginas.
+
+O catálogo incorpora as **74 referências DESIGN.md** do VoltAgent/awesome-design-md,
+fixadas em `f6961238d5cddcf8042a74a70fc400ec67181abb`, com licença MIT, origem e
+hashes. O renderer oferece oito perfis adaptados, PDFs diagramados e DOCX/PPTX
+com conteúdo nativo editável. As skills orientam composição, consulta das fontes,
+renderização, revisão de todas as páginas e reparo antes da entrega. As adaptações
+e suas licenças estão em `third_party/document-skills` e nos registros de pesquisa
+de 4 de outubro em `docs/superpowers/research/`.
+
+Passaram **1.210/1.210 testes**, TypeScript de servidor/mobile e Biome sem erros
+em `643e9de`. A revisão `7f81a03` altera somente duas skills Markdown: esclarece
+que espaço em branco normal e continuação legível de tabela não exigem reescrita.
+A imagem final compilou; ambas as skills foram lidas pelo catálogo da imagem e
+seus hashes correspondem às fontes. Os 24 testes focados incluem a classificação correta
+da consulta de capacidades de imagem como leitura. Ela estava marcada como efeito
+e tornava obrigatórios lotes de leituras de skills/referências. A projeção também
+deduplica workflows idênticos e compacta fontes/instruções de rascunhos substituídos,
+preservando originais, hashes, recibos e a retomada. Limites dos modelos e revisão
+visual obrigatória permanecem iguais. Evidências:
+`artifacts/document-design/verification-643e9de.json` e
+[diagnóstico de contexto](superpowers/research/2026-10-04-document-context-recovery.md).
+
+O ensaio conectado final produziu um **PPTX editável de sete slides**, com tabela
+nativa, os cinco passos juntos e todas as páginas revistas. A tarefa terminou em
+`succeeded`, conclusão `verified`, e publicou o arquivo na conversa isolada correta.
+A inspeção visual independente não encontrou cortes ou sobreposição. O arquivo tem
+33.552 bytes e SHA-256
+`dc379a31871f3613de7ebe28b8afbc9de7094725ffb87a796da0c86c69c78857`.
+PDF e DOCX já haviam passado no ensaio `2afac00`, com três páginas cada; os reparos
+posteriores de layout afetaram PPTX. Falhas anteriores foram preservadas, incluindo
+o bloqueio de `4c3e9ba`, que revelou a classificação incorreta da consulta de imagem.
+Recibos e revisão final: `artifacts/document-design/live-643e9de/`.
+
+A imagem publicada é
+`sha256:3a3e4b56c323f95d2a892302a578f26b7639877c2f2cc226e89760bf232597df`.
+A API está saudável, a manutenção terminou e os dois recursos de controle humano
+foram preservados. GUMC/avatar, perfil, seleção de modelo e pausa na revisão 16
+permaneceram iguais. A troca da API reproduziu a quarentena nativa já conhecida;
+reiniciar apenas `okami-executor@lenovo-okami` recuperou todas as capacidades no
+epoch 26, com o mesmo ID e geração da sessão gráfica. Não se afirma correção geral
+desse defeito de reconexão. Evidências: `deployment-7f81a03.log`,
+`deployment-state-7f81a03.json` e `packaged-skills-7f81a03.jsonl` em
+`artifacts/document-design/`.
+
+O guia de produção foi gerado pela tarefa
+`6d658c75-b3fc-4078-b981-26d9e451c1e4`, na conversa
+`4d059062-e308-44c8-b770-8160d124a41e`. A revisão corrigiu uma nota final isolada,
+mas depois rejeitou repetidamente espaço em branco numa seção substancial. Foi
+necessária orientação editorial pelo canal normal de diretivas. Após essa mudança
+de revisão, o modelo tentou concluir sem uma inspeção atual; a verificação bloqueou
+a entrega. A mesma tarefa foi retomada pelos controles da API, recebeu e confirmou
+os pixels das três páginas na revisão 2 e terminou em `succeeded/verified`.
+
+A inspeção independente do arquivo final confirmou fluxo completo, tabela legível,
+memória/privacidade/limites e ausência de cortes ou sobreposição. O PDF tem
+**três páginas e 58.893 bytes**, SHA-256
+`6d7787f1b590a4bf985133a31ec56495d61b375496d6f06658cb1b40ea303383`.
+Arquivo, recibos e revisão estão em
+`artifacts/document-design/production-guide-resumed/`. O ensaio não demonstra
+conclusão sem intervenção editorial, nem uma correção geral de retomada após diretivas.
+
+O aceite público confirmou o resultado na conversa original, abertura da tarefa
+concluída em **Trabalhos recentes**, PDF no desktop e em viewport de 390 px, e
+download HTTP 200 com o mesmo tamanho, três páginas e hash. Capturas foram
+inspecionadas; sem erros JavaScript, overflow horizontal ou escritas de produto.
+Pareamentos de teste foram revogados. **Limite da interface:** a tarefa criada
+diretamente pela API não tem cartão de anexo inline de `delegate_task`; o arquivo
+abre pela tarefa em Trabalhos recentes. A primeira tentativa de aceite assumia
+esse cartão e falhou; outra expôs um seletor ambíguo, corrigido no ensaio final. Evidência final:
+`artifacts/document-design/public-guide-task-2/`; tentativas anteriores preservadas.
+
+## Histórico: harness OpenClaw (`55f9d8d`)
+
+**Revisão anterior publicada: API `55f9d8d`; web e Android `7529b63`.** O novo
 harness reutiliza cinco módulos portáveis do OpenClaw (política de entrega,
 parser de skills, dois classificadores de repetição e limites de resultados),
 com MIT e procedência incluídos na imagem. A integração acrescenta catálogo real

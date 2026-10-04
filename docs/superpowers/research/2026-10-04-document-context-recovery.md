@@ -178,3 +178,38 @@ batch using the journal's required IDs. It failed with
 the complete file operation and leaving optional reads in canonical history.
 Evidence: `artifacts/document-design/image-status-context-red.log` and
 `artifacts/document-design/image-status-context-green.log`.
+
+## Connected acceptance and editorial recovery
+
+The `643e9de` connected PPTX run completed with verified delivery of seven slides,
+native editable text and a native table. All final pages passed rendered review;
+independent inspection confirmed the five-step process stayed together and no
+text was clipped. The final SHA-256 is
+`dc379a31871f3613de7ebe28b8afbc9de7094725ffb87a796da0c86c69c78857`.
+Evidence is in `artifacts/document-design/live-643e9de/`. The complete code suite
+passed 1,210 tests, with server/mobile types and lint passing.
+
+The production PDF run exposed an editorial loop rather than further context
+overflow: after fixing a lone final note, the model repeatedly rejected a readable
+three-page document solely because its substantial final section had whitespace.
+It also treated readable table continuation as inherently invalid. The two skill
+updates in `7f81a03` require concrete defects or missing requirements, respect the
+requested page range and preserve a complete readable layout. Review receipts,
+image observation, hashes and coverage gates remain unchanged. Both packaged
+skills were parsed successfully and matched source hashes after the image build.
+
+A normal task directive clarified this scope. The model then tried to finish
+without current-revision review, so both the file-evidence and document-review
+checks failed and the task ended unverified. The repairable completion path is
+deliberately limited to failures of the document-review gate alone; this combined
+failure still requires normal task recovery. No gate was weakened to admit it.
+Retrying the same task with explicit current-revision inspection guidance produced
+an inspection of all three existing pages, an honest passing confirmation and
+verified completion at revision 2. Independent inspection found no clipping or
+overlap. The production task therefore required editorial/recovery intervention;
+it is not evidence of uninterrupted autonomous completion.
+
+Task: `6d658c75-b3fc-4078-b981-26d9e451c1e4`; final PDF SHA-256:
+`6d7787f1b590a4bf985133a31ec56495d61b375496d6f06658cb1b40ea303383`.
+Receipts, exact bytes and independent review are retained in
+`artifacts/document-design/production-guide-resumed/`.
