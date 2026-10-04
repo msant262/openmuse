@@ -26,6 +26,16 @@ const input = (content: string) => ({
 const offeredTools = (body: string) =>
   (JSON.parse(body).tools ?? []).map((tool: { name: string }) => tool.name);
 
+// This fixture already knows these native argument shapes. A deferred schema is
+// still an available capability; only the reserved handoff removes that capability.
+const capabilityAvailable = (body: string, name: string) => {
+  const tools = JSON.parse(body).tools ?? [];
+  return tools.some(
+    (tool: { name: string; description?: string }) =>
+      tool.name === name || (tool.name === "search_tools" && tool.description?.includes(name)),
+  );
+};
+
 test("research retains a bounded handoff before the final answer and delivers the requested image", async (t) => {
   const fixture = await modelFixture(
     t,
@@ -35,7 +45,8 @@ test("research retains a bounded handoff before the final answer and delivers th
         return index === 10
           ? { name: "generate_image", arguments: imageArgs }
           : { name: "finish_task", arguments: { summary: "Infográfico pronto e anexado." } };
-      if (tools.includes("web_fetch")) return { name: "web_fetch", arguments: { url: source } };
+      if (capabilityAvailable(fixture.requests[index].body, "web_fetch"))
+        return { name: "web_fetch", arguments: { url: source } };
       if (tools.includes("delegate_task"))
         return {
           name: "delegate_task",
@@ -128,7 +139,8 @@ test("the handoff slot does not queue a second job after image generation was al
   const fixture = await modelFixture(t, (index) => {
     const tools = offeredTools(fixture.requests[index].body);
     if (index === 0) return { name: "generate_image", arguments: imageArgs };
-    if (tools.includes("agent_status")) return { name: "agent_status", arguments: {} };
+    if (capabilityAvailable(fixture.requests[index].body, "agent_status"))
+      return { name: "agent_status", arguments: {} };
     if (tools.includes("delegate_task"))
       return { name: "delegate_task", arguments: { prompt: "Create another infographic" } };
     return undefined;
@@ -146,7 +158,7 @@ test("the handoff slot does not queue a second job after image generation was al
 
 test("research that only needs a written answer ends without a background job", async (t) => {
   const fixture = await modelFixture(t, (index) =>
-    offeredTools(fixture.requests[index].body).includes("agent_status")
+    capabilityAvailable(fixture.requests[index].body, "agent_status")
       ? { name: "agent_status", arguments: {} }
       : undefined,
   );
@@ -166,7 +178,8 @@ test("a failed delegation does not suppress the reserved handoff", async (t) => 
   const fixture = await modelFixture(t, (index) => {
     const tools = offeredTools(fixture.requests[index].body);
     if (index === 0) return { name: "delegate_task", arguments: taskArgs };
-    if (tools.includes("web_fetch")) return { name: "web_fetch", arguments: { url: source } };
+    if (capabilityAvailable(fixture.requests[index].body, "web_fetch"))
+      return { name: "web_fetch", arguments: { url: source } };
     if (tools.includes("delegate_task")) return { name: "delegate_task", arguments: taskArgs };
     return undefined;
   });
@@ -202,7 +215,8 @@ test("cancelling the last research call does not start the reserved handoff", {
 }, async (t) => {
   const fixture = await modelFixture(t, (index) => {
     const tools = offeredTools(fixture.requests[index].body);
-    if (tools.includes("web_fetch")) return { name: "web_fetch", arguments: { url: source } };
+    if (capabilityAvailable(fixture.requests[index].body, "web_fetch"))
+      return { name: "web_fetch", arguments: { url: source } };
     if (tools.includes("delegate_task"))
       return { name: "delegate_task", arguments: { prompt: "Create an infographic" } };
     return undefined;

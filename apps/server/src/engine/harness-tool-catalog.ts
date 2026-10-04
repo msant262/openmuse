@@ -13,4 +13,12 @@ export const harnessToolCatalog = [
     name: "AGUISendStateDelta",
     description: "Apply incremental updates to application state using JSON Patch operations",
   },
+  {
+    name: "search_tools",
+    description: "Search the currently authorized tool catalog; schemas are loaded on demand.",
+  },
+  {
+    name: "describe_tools",
+    description: "Load schemas for exact tool names, then call their original native tools.",
+  },
 ] as const;

@@ -10,7 +10,11 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 
 test("chat can inspect its actual runtime and owned procedures without external research or private config", async (t) => {
   const fixture = await modelFixture(t, (index) =>
-    index === 0 ? { name: "read_runtime", arguments: {} } : undefined,
+    index === 0
+      ? { name: "read_runtime", arguments: {} }
+      : index === 1
+        ? { name: "describe_tools", arguments: { names: ["generate_image"] } }
+        : undefined,
   );
   const server = await taskRuntime(t, {
     agentBackend: "model",
@@ -91,7 +95,7 @@ test("chat can inspect its actual runtime and owned procedures without external 
   assert.equal((await server.db.list("owner", "tasks")).length, 0);
   assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR));
   assert.match(fixture.requests[0].body, /read_runtime/);
-  const imageTool = JSON.parse(fixture.requests[0].body).tools.find(
+  const imageTool = JSON.parse(fixture.requests[2].body).tools.find(
     (tool: { name: string }) => tool.name === "generate_image",
   );
   assert.match(imageTool.description, /returns only a task card/);

@@ -28,6 +28,7 @@ import type { ModelSelection, ProviderContinuationCheckpoint } from "../provider
 import { continuationMessages, modelAdapter } from "../providers/models.ts";
 import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
 import { harnessToolCatalog } from "./harness-tool-catalog.ts";
+import { ToolDiscovery } from "./tool-discovery.ts";
 import { ToolOutputStore } from "./tool-output.ts";
 import { ToolProgress } from "./tool-progress.ts";
 
@@ -109,6 +110,8 @@ export function tanstackAgent(options: {
     type: "tanstack",
     factory: ({ input, abortController }) => {
       const converted = convertInputToTanStackAI(input);
+      const discovery = new ToolDiscovery(options.tools);
+      const discoveryTools = discovery.tools();
       let canonicalMessages = converted.messages;
       const outputStore = new ToolOutputStore();
       const progress = new ToolProgress();
@@ -157,6 +160,7 @@ export function tanstackAgent(options: {
           options.loadBrowserImage,
           options.loadFileImage,
           {
+            projectTools: (tools) => discovery.select(tools),
             workClass: options.workClass,
             requirements: options.requirements,
             router: options.modelRouter,
@@ -180,6 +184,7 @@ export function tanstackAgent(options: {
               await options.onMessages?.(config.messages, ctx.phase);
               outputStore.observe(config.messages);
               progress.observe(config.messages);
+              discovery.restore(config.messages);
               const systemPrompts = [((await options.promptContext?.()) ?? "") + system];
               if (progressWarnings.size) {
                 systemPrompts.push([...progressWarnings].join("\n"));
@@ -194,11 +199,12 @@ export function tanstackAgent(options: {
                   ? options.handoffBeforeFinalResponse
                   : undefined;
               const handoffTools = handoff?.tools();
-              const tools = finalResponse
+              const dispatchTools = finalResponse
                 ? []
                 : handoffTools
                   ? config.tools.filter((tool) => handoffTools.includes(tool.name))
                   : config.tools;
+              const tools = discovery.select(dispatchTools);
               if (handoff) systemPrompts.push(handoff.prompt);
               if (finalResponse)
                 systemPrompts.push(
@@ -259,7 +265,7 @@ export function tanstackAgent(options: {
               }
               return {
                 systemPrompts,
-                tools,
+                tools: dispatchTools,
                 providerMessages: model
                   ? ContextBudget.limit(projected, {
                       model,
@@ -276,7 +282,7 @@ export function tanstackAgent(options: {
         ] as ChatMiddleware[],
         tools: [
           ...converted.tools,
-          ...[...options.tools, outputTool, ...stateTools].map((tool) =>
+          ...[...options.tools, ...discoveryTools, outputTool, ...stateTools].map((tool) =>
             toolDefinition({
               name: tool.name,
               description: tool.description,
