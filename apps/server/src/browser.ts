@@ -60,6 +60,10 @@ const sessionSchema = z.object({
   control: z.enum(["agent", "human"]).optional(),
 });
 const readSchema = z.object({
+  dataSources: z
+    .array(z.object({ url: z.string().max(4096), kind: z.string().max(100) }))
+    .max(30)
+    .optional(),
   url: z.string(),
   title: z.string().max(300),
   text: z.string().max(100_000),
@@ -110,6 +114,7 @@ const failureSchema = z.object({
 });
 type ChatBrowser = { id: string; sessionId: string };
 type BrowserRouting = {
+  requiredTransport?: "native" | "vps";
   taskId?: string;
   capability?: "browser.dom" | "browser.screenshot";
   operationClass?: BrowserOperationClass;
@@ -498,6 +503,7 @@ export class BrowserService {
           : (routing?.accountId ?? previous?.accountId ?? task?.state.credentialRef?.id),
       artifactVersions: routing?.artifactVersions ?? requiredArtifacts,
       operationClass,
+      requiredTransport: routing?.requiredTransport,
     };
     const execute = async (binding: ExecutorBinding) => {
       signal?.throwIfAborted();
@@ -1021,6 +1027,12 @@ export class BrowserService {
             bodyHash: browserBodyHash(serialized),
           })
         : undefined;
+    // Navigation may take 60s (plus Chromium startup); public reads may wait
+    // another 60s for application data. Each request needs transport headroom.
+    const timeoutMs =
+      path.endsWith("/read") || path === "/sessions" || path === "/sessions/human"
+        ? 90_000
+        : 45_000;
     let response: Response;
     try {
       response = await fetch(`${this.config.workerUrl}${path}`, {
@@ -1032,8 +1044,8 @@ export class BrowserService {
         },
         body: body === undefined ? undefined : serialized,
         signal: signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(45000)])
-          : AbortSignal.timeout(45000),
+          ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+          : AbortSignal.timeout(timeoutMs),
       });
     } catch {
       if (
@@ -1357,6 +1369,12 @@ export class BrowserService {
     signal?: AbortSignal,
     routingTaskId?: string,
   ) {
+    if (this.native && !this.router)
+      throw new BrowserError(
+        "BROWSER_EXECUTOR_UNAVAILABLE",
+        "Headless public reading is unavailable; the personal browser will not be opened automatically.",
+        503,
+      );
     return this.runAutomated(
       owner,
       taskId,
@@ -1373,6 +1391,7 @@ export class BrowserService {
       undefined,
       trackResources,
       {
+        requiredTransport: "vps",
         taskId: routingTaskId ?? (taskId ? `public:${taskId}` : undefined),
         operationClass: "public_read",
         artifactVersions: [],
@@ -1381,6 +1400,16 @@ export class BrowserService {
   }
   async observeForThread(owner: string, threadId: string, url: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
+    if (this.router || this.native)
+      return this.observe(
+        owner,
+        url,
+        undefined,
+        undefined,
+        undefined,
+        signal,
+        `public:chat:${threadId}`,
+      );
     // Persist the association before contacting the worker so failed/lost responses
     // and later chat turns keep using the same profile instead of exhausting its limit.
     const old = await this.db.get<ChatBrowser>(owner, "chat-browsers", threadId);

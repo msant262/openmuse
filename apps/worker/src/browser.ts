@@ -23,7 +23,7 @@ import { type NativeBrowserConfig, nativeLaunchOptions } from "./native-config.t
 import { validatePublicUrl } from "./network.ts";
 import { observationContent } from "./observation-content.ts";
 import { startEgressProxy } from "./proxy.ts";
-import { readPublicContent } from "./public-read.ts";
+import { observePublicDataRequests, readPublicContent } from "./public-read.ts";
 import { ReviewedActions } from "./reviewed-actions.ts";
 import { extractSearch } from "./search.ts";
 
@@ -36,6 +36,7 @@ export interface Session {
   control?: "agent" | "human";
 }
 type Running = {
+  publicData: ReturnType<typeof observePublicDataRequests>;
   context: BrowserContext;
   page: Page;
   touched: number;
@@ -187,9 +188,10 @@ export async function createBrowserManager(options: {
     await running.get(id)?.agent.invalidate();
     const target = await validatePublicUrl(url);
     const { page } = active(id);
+    active(id).publicData.reset();
     if (agent) guardAgent(id);
     try {
-      await page.goto(target.url.href, { waitUntil: "domcontentloaded", timeout: 20_000 });
+      await page.goto(target.url.href, { waitUntil: "domcontentloaded", timeout: 60_000 });
       // Chromium can follow redirects outside Playwright's initial route hook.
       // The proxy blocks those sockets, but its 403 is still an HTTP response:
       // validate the final location so the API does not report it as success.
@@ -356,6 +358,7 @@ export async function createBrowserManager(options: {
       const page = await context.newPage();
       page.setDefaultTimeout(10_000);
       const instance: Running = {
+        publicData: observePublicDataRequests(page),
         context,
         page,
         touched: Date.now(),
@@ -703,7 +706,7 @@ export async function createBrowserManager(options: {
         await instance.agent.prepareObservation();
         const { page } = instance;
         await validatePublicUrl(page.url());
-        const result = await readPublicContent(page);
+        const result = await readPublicContent(page, instance.publicData);
         await validatePublicUrl(result.url);
         const session: Session = {
           id,
@@ -720,6 +723,7 @@ export async function createBrowserManager(options: {
           title: result.title,
           ...observationContent(result),
           links: result.links,
+          dataSources: result.dataSources,
           extraction: result.extraction,
         };
       }),

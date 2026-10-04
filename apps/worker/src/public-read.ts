@@ -1,7 +1,71 @@
-import type { Page } from "playwright";
+import type { Page, Request } from "playwright";
+
+/** Observe already-issued public GET requests; never replay requests, headers or bodies. */
+export function observePublicDataRequests(page: Page) {
+  const pending = new Set<Request>();
+  const sources = new Map<string, { url: string; kind: string }>();
+  let generation = 0,
+    saturated = false;
+  page.on("request", (request) => {
+    if (request.method() !== "GET" || !["xhr", "fetch"].includes(request.resourceType())) return;
+    if (pending.size >= 64) {
+      saturated = true;
+      return;
+    }
+    pending.add(request);
+  });
+  page.on("requestfailed", (request) => pending.delete(request));
+  page.on("requestfinished", (request) => {
+    if (!pending.has(request)) return;
+    const observedGeneration = generation;
+    void (async () => {
+      try {
+        const response = await request.response();
+        if (
+          observedGeneration !== generation ||
+          !response?.ok() ||
+          sources.size >= 30 ||
+          !/\b(?:application\/(?:[\w.-]+\+)?json|text\/csv)\b/i.test(
+            response.headers()["content-type"] ?? "",
+          )
+        )
+          return;
+        const url = new URL(response.url());
+        if (
+          /^https?:$/.test(url.protocol) &&
+          !url.username &&
+          !url.password &&
+          url.href.length <= 4096 &&
+          ![...url.searchParams.keys()].some((key) =>
+            /token|secret|password|api.?key|authorization/i.test(key),
+          )
+        )
+          sources.set(url.href, { url: url.href, kind: "observed-data-request" });
+      } catch {
+        /* Failed responses are not data sources. */
+      } finally {
+        pending.delete(request);
+      }
+    })();
+  });
+  return {
+    reset() {
+      generation++;
+      pending.clear();
+      sources.clear();
+      saturated = false;
+    },
+    snapshot() {
+      return { pending: pending.size > 0 || saturated, sources: [...sources.values()] };
+    },
+  };
+}
 
 /** Fixed reader: no caller-supplied selectors or JavaScript, no clicks. */
-export async function readPublicContent(page: Page) {
+export async function readPublicContent(
+  page: Page,
+  network?: ReturnType<typeof observePublicDataRequests>,
+) {
   const sample = () =>
     page.evaluate(() => {
       const text = document.body?.innerText ?? "";
@@ -28,7 +92,10 @@ export async function readPublicContent(page: Page) {
         title: document.title.slice(0, 300),
         text: text.slice(0, 2_000_000),
         sourceLength: text.length,
-        pending: pending || (!text.trim() && Boolean(document.querySelector("script[src]"))),
+        pending:
+          pending ||
+          document.readyState !== "complete" ||
+          (!text.trim() && Boolean(document.querySelector("script[src]"))),
         structured: Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
           .slice(0, 20)
           .map((node) => (node.textContent ?? "").slice(0, 100_000)),
@@ -56,42 +123,31 @@ export async function readPublicContent(page: Page) {
       };
     });
   const started = Date.now();
-  let previous = "",
-    stableSince = started,
-    result = await sample();
-  while (Date.now() - started < 6000) {
+  let result = await sample();
+  while (Date.now() - started < 60_000) {
     if (
       /^(access denied|client challenge|just a moment|attention required|verify you are human|(?:403 )?forbidden)\b/i.test(
         result.title,
       )
     )
       break;
-    const signature = `${result.url}\n${result.text}`;
-    if (signature !== previous) {
-      previous = signature;
-      stableSince = Date.now();
-    }
-    // DOMContentLoaded precedes hydration. Wait for useful text to settle,
-    // bounded independently of analytics/polling connections that never go idle.
-    if (
-      !result.pending &&
-      result.text.trim() &&
-      Date.now() - started >= 1000 &&
-      Date.now() - stableSince >= 400
-    )
-      break;
+    // Wait on loading state and actual data requests, not a minimum elapsed
+    // sleep or whole-page networkidle (analytics/polling may never stop).
+    if (!result.pending && !network?.snapshot().pending && result.text.trim()) break;
     await new Promise((resolve) => setTimeout(resolve, 200));
     result = await sample();
   }
   const { pending, ...content } = result;
   return {
     ...content,
-    extraction: pending
-      ? {
-          status: "partial" as const,
-          reason:
-            "Application data did not finish loading within the read deadline. Follow a relevant source link or use another source.",
-        }
-      : { status: "readable" as const },
+    dataSources: network?.snapshot().sources ?? [],
+    extraction:
+      pending || network?.snapshot().pending
+        ? {
+            status: "partial" as const,
+            reason:
+              "Application data did not finish loading within the read deadline. Follow a relevant source link or use another source.",
+          }
+        : { status: "readable" as const },
   };
 }

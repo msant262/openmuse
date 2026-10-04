@@ -18,6 +18,25 @@ after(async () => {
   await fixture?.close();
 });
 
+test("headless reading follows pending data requests and exposes their actual API URL", {
+  timeout: 20_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-data-request-"));
+  const browser = await createBrowserManager({ dataDir });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/json-results");
+    const page = await browser.read(id);
+    assert.match(page.text, /Votes: 12345/);
+    assert.ok(
+      page.dataSources.some((source) => source.url === "https://browser.fixture.test/count.json"),
+    );
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("public read waits for delayed application data instead of reporting its loading shell", {
   timeout: 20_000,
 }, async () => {

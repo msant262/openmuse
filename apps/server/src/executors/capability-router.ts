@@ -66,6 +66,7 @@ export type BrowserChoice = {
   artifactVersions: ArtifactRequirement[];
   operationClass: BrowserOperationClass;
   excludeExecutorId?: string;
+  requiredTransport?: "native" | "vps";
 };
 
 /** Owns routing bindings only. Work admission and physical leases stay in M3/M4. */
@@ -183,6 +184,7 @@ export class CapabilityRouter {
       );
       const supports = (value: BrowserExecutor) =>
         value.ready &&
+        (!request.requiredTransport || value.transport === request.requiredTransport) &&
         value.executorId !== request.excludeExecutorId &&
         value.capabilities.some(
           (capability) =>

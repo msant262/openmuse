@@ -6,7 +6,7 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const resolve = async () => [{ address: "93.184.216.34", family: 4 }];
 
-test("public reading identifies pending application content and renders it before returning evidence", async () => {
+test("public reading identifies pending content and explicitly renders it before returning evidence", async () => {
   const { PublicWeb, readablePage } = await import("../apps/server/src/public-web.ts");
   const web = new PublicWeb({
     resolve,
@@ -23,6 +23,7 @@ test("public reading identifies pending application content and renders it befor
   const raw = await web.read("https://news.example/live");
   assert.equal(readablePage(raw), false, "a loading shell must not count as observed data");
   const page = await web.read("https://news.example/live", undefined, {
+    mode: "headless",
     render: async (url) => ({
       url,
       title: "Live results",
@@ -60,6 +61,7 @@ test("rendering that remains incomplete cannot become evidence and cancellation 
     request: async () => ({ status: 403, headers: {}, body: "Denied" }),
   });
   const partial = await web.read("https://news.example/live", undefined, {
+    mode: "headless",
     render: async (url) => ({
       url,
       title: "Live results",
@@ -72,6 +74,7 @@ test("rendering that remains incomplete cannot become evidence and cancellation 
   const controller = new AbortController();
   await assert.rejects(
     web.read("https://news.example/live", controller.signal, {
+      mode: "headless",
       render: async (url) => {
         controller.abort(new Error("Read cancelled"));
         return { url, title: "Live results", text: "Result", truncated: false };
@@ -81,7 +84,7 @@ test("rendering that remains incomplete cannot become evidence and cancellation 
   );
 });
 
-test("public reading recovers an HTTP rejection with one normal browser read but never retries unsafe URLs", async () => {
+test("explicit headless reading recovers a blocked source but never retries unsafe URLs", async () => {
   const { PublicWeb } = await import("../apps/server/src/public-web.ts");
   const web = new PublicWeb({
     resolve,
@@ -92,9 +95,9 @@ test("public reading recovers an HTTP rejection with one normal browser read but
     calls++;
     return { url, title: "Store", text: "Lipstick: €12, available.", truncated: false };
   };
-  const page = await web.read("https://shop.example/", undefined, { render });
+  const page = await web.read("https://shop.example/", undefined, { mode: "headless", render });
   assert.match(page.text, /Lipstick: €12/);
-  await assert.rejects(web.read("http://127.0.0.1/", undefined, { render }), {
+  await assert.rejects(web.read("http://127.0.0.1/", undefined, { mode: "headless", render }), {
     code: "BLOCKED_URL",
   });
   assert.equal(calls, 1);

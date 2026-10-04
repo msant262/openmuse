@@ -10,14 +10,16 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 const html =
   '<html><title>Promoções de maquiagem</title><main><h1>Batom</h1><p>Preço atual €12, em estoque na Alemanha.</p><a href="/batom">Ver produto</a></main></html>';
 
-test("worker web_fetch renders pending data automatically and records the rendered source", async (t) => {
+test("worker web_fetch explicitly escalates pending HTTP data to headless and records the source", async (t) => {
   await modelFixture(t, (index) =>
     index === 0
       ? { name: "web_fetch", arguments: { url: "https://news.example/live" } }
-      : {
-          name: "finish_task",
-          arguments: { summary: "Candidate A has 52% of 12345 votes: https://news.example/live" },
-        },
+      : index === 1
+        ? { name: "web_fetch", arguments: { url: "https://news.example/live", mode: "headless" } }
+        : {
+            name: "finish_task",
+            arguments: { summary: "Candidate A has 52% of 12345 votes: https://news.example/live" },
+          },
   );
   const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
   t.mock.method(f.agent.web, "document", async (url: string) => ({
@@ -49,7 +51,9 @@ test("worker web_fetch renders pending data automatically and records the render
   assert.equal(result.status, "succeeded", result.error ?? result.result);
   assert.match(result.evidence[0].excerpt, /12345/);
   const op = (await f.agent.journal.operations("owner", task.id)).find(
-    (op) => op.toolName === "web_fetch",
+    (op) =>
+      op.toolName === "web_fetch" &&
+      (op.receipt as { provenance?: { backend: string } })?.provenance?.backend === "browser",
   );
   assert.ok(op);
   assert.equal((op.receipt as { provenance: { backend: string } }).provenance.backend, "browser");

@@ -56,6 +56,15 @@ const research = {
   operationClass: "public_read" as const,
 };
 
+test("a headless request never selects the native GUI, including after a VPS outage", async (t) => {
+  const { router, fallback } = await setup(t);
+  const request = { ...research, requiredTransport: "vps" as const };
+  const binding = await router.choose(request);
+  assert.equal(binding.executorId, "openmuse-server");
+  fallback.ready = false;
+  await assert.rejects(router.choose(request), { code: "BROWSER_EXECUTOR_UNAVAILABLE" });
+});
+
 test("concrete browser operations never classify an action, import or unknown endpoint as public reading", () => {
   assert.equal(classifyBrowserOperation("snapshot", true), "public_read");
   assert.equal(classifyBrowserOperation("open", true), "public_read");
@@ -277,9 +286,8 @@ test("production task starts public research on VPS when Lenovo is already offli
   );
 });
 
-test("HTTP rendering fallback uses a public VPS binding when the personal executor is offline", async (t) => {
+test("explicit headless reading uses VPS even while the personal executor is online", async (t) => {
   const server = await browserFallbackFixture(t);
-  await server.offline();
   const task = await server.runTask(async (_invoke, task, context) => {
     const page = await server.agent.browser.observe(
       "local-user",

@@ -23,7 +23,7 @@ export async function startEgressProxy(port = 0) {
           path: `${target.url.pathname}${target.url.search}`,
           method: incoming.method,
           headers,
-          timeout: 30_000,
+          timeout: 90_000,
           agent: false,
         },
         (result) => {
@@ -55,7 +55,7 @@ export async function startEgressProxy(port = 0) {
       if (client.destroyed) return;
       const upstream = connect({ host: target.address, port: 443, family: target.family });
       sockets.add(upstream);
-      upstream.setTimeout(60_000, () => upstream.destroy());
+      upstream.setTimeout(90_000, () => upstream.destroy());
       upstream.on("close", () => {
         sockets.delete(upstream);
         client.destroy();
