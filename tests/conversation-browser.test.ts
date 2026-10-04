@@ -71,7 +71,7 @@ test("a subscription response buffered until its terminal receipt still acknowle
   });
   const originalFetch = globalThis.fetch;
   const inferenceUrl = process.env.OPENAI_BASE_URL;
-  t.mock.method(globalThis, "fetch", async (input, init) => {
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
     assert.equal(request.url, "https://api.openai.com/v1/responses");
     return originalFetch(`${inferenceUrl}/responses`, {
