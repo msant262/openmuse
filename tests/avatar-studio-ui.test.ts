@@ -145,6 +145,117 @@ function errors(view: ReturnType<typeof fixture>["view"]) {
     .join(" ");
 }
 
+function fill(view: ReturnType<typeof fixture>["view"], label: string, value: string) {
+  const field = view.nodes().find((item) => item.type === "Field" && item.props.label === label);
+  assert.ok(field, `Missing field ${label}`);
+  (field.props.onChangeText as (value: string) => void)(value);
+  view.render();
+}
+
+test("saved companions can be renamed without changing selection, with cancel and validation", async () => {
+  const calls: { path: string; body?: unknown }[] = [];
+  const saved = { ...asset("saved"), status: "ready" };
+  const f = fixture(async (path, body) => {
+    calls.push({ path, body });
+    if (path.endsWith("/rename")) return { ...saved, label: "Lua" };
+    return studio({ assets: [saved], activeAssetId: "saved" });
+  });
+  try {
+    f.view.render();
+    await f.view.flush();
+    choose(f.view, "Rename Companion saved");
+    assert.equal(f.view.field("Companion name"), "Companion saved");
+    fill(f.view, "Companion name", "discarded");
+    f.view.button("Cancel").onPress();
+    f.view.render();
+    assert.equal(f.view.field("Companion name"), undefined);
+    assert.equal(calls.length, 1);
+    choose(f.view, "Rename Companion saved");
+    fill(f.view, "Companion name", "   ");
+    assert.equal(f.view.button("Save name").disabled, true);
+    fill(f.view, "Companion name", "  Lua  ");
+    f.view.button("Save name").onPress();
+    await f.view.flush();
+    assert.equal(f.view.field("Companion name"), undefined);
+    assert.deepEqual(
+      calls.slice(1).map((item) => item.path),
+      ["/api/agent/avatars/saved/rename"],
+    );
+    assert.equal((calls[1].body as { label: string }).label, "Lua");
+    const selected = f.view.nodes().find((item) => item.props.accessibilityLabel === "Use Lua");
+    assert.equal(selected?.props["aria-selected"], true);
+    const preview = f.view.nodes().find((item) => item.type === "AvatarRenderer");
+    assert.ok(preview);
+    assert.equal((preview.props.asset as { label: string }).label, "Lua");
+    assert.deepEqual(f.notifications, ["Companion renamed"]);
+  } finally {
+    f.view.close();
+  }
+});
+
+test("rename failures retain the draft and retry the same request, while stale owner responses are ignored", async () => {
+  const saved = { ...asset("saved"), status: "ready" };
+  const response = deferred<unknown>();
+  const bodies: unknown[] = [];
+  const f = fixture(async (path, body) => {
+    if (!body) return studio({ assets: [saved] });
+    assert.equal(path, "/api/agent/avatars/saved/rename");
+    bodies.push(body);
+    if (bodies.length === 1) throw new Error("Offline");
+    return response.promise;
+  });
+  try {
+    f.view.render();
+    await f.view.flush();
+    choose(f.view, "Rename Companion saved");
+    fill(f.view, "Companion name", "Lua");
+    f.view.button("Save name").onPress();
+    await f.view.flush();
+    assert.equal(f.view.field("Companion name"), "Lua");
+    assert.match(errors(f.view), /Offline/);
+    f.view.button("Try again").onPress();
+    await f.view.flush();
+    assert.deepEqual(bodies[1], bodies[0]);
+    assert.equal(f.view.button("Cancel").disabled, true);
+    f.api.identityKey = "owner-two";
+    f.view.render();
+    await f.view.flush();
+    assert.equal(f.view.field("Companion name"), undefined);
+    response.resolve({ ...saved, label: "Lua" });
+    await f.view.flush();
+    assert.equal(
+      f.view.nodes().some((item) => item.props.accessibilityLabel === "Use Lua"),
+      false,
+    );
+    assert.deepEqual(f.notifications, []);
+    assert.equal(f.refreshes, 0);
+  } finally {
+    f.view.close();
+  }
+});
+
+test("creation accepts an optional companion name and clears it for the next companion", async () => {
+  const calls: { path: string; body?: unknown }[] = [];
+  const f = fixture(async (path, body) => {
+    calls.push({ path, body });
+    return body ? job({ label: "Lua" }) : studio();
+  });
+  try {
+    f.view.render();
+    await f.view.flush();
+    describe(f.view, "A gentle fox");
+    fill(f.view, "Companion name (optional)", "  Lua  ");
+    f.view.button("Generate companions").onPress();
+    await f.view.flush();
+    assert.equal((calls[1].body as { label: string }).label, "Lua");
+    f.view.button("Create another").onPress();
+    f.view.render();
+    assert.equal(f.view.field("Companion name (optional)"), "");
+  } finally {
+    f.view.close();
+  }
+});
+
 test("opening a blank avatar draft does not revive an old unselected generation", async () => {
   const calls: string[] = [];
   const saved = { ...asset("saved"), status: "ready" };

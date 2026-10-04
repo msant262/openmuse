@@ -95,6 +95,9 @@ export const avatarStudioStyles = (colors: ThemeColors) =>
       gap: 12,
     },
     gallery: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+    savedItem: { width: 122, alignItems: "stretch" },
+    renameButton: { minHeight: 44, alignItems: "center", justifyContent: "center" },
+    renameText: { color: colors.blueDark, fontSize: 12, fontWeight: "600" },
     savedCard: {
       width: 122,
       minHeight: 152,

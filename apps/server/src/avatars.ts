@@ -11,6 +11,7 @@ import {
   avatarGenerationInput,
   avatarImportInput,
   avatarMotions,
+  avatarRenameInput,
   avatarRequestId,
   avatarRetryInput,
   avatarSelectionInput,
@@ -204,6 +205,19 @@ export class AvatarService {
         409,
       );
     return result;
+  }
+  async rename(owner: string, id: string, raw: unknown) {
+    const input = avatarRenameInput.parse(raw);
+    await this.asset(owner, id);
+    await this.mutation(owner, input.requestId, { kind: "rename", id, label: input.label }, [
+      {
+        kind: "avatar-assets",
+        id,
+        mode: "merge",
+        value: { label: input.label, updatedAt: now() },
+      },
+    ]);
+    return this.decorate(owner, await this.asset(owner, id));
   }
   async selectExisting(owner: string, id: string, requestId: string) {
     avatarRequestId.parse(requestId);
@@ -689,6 +703,9 @@ export function avatarRoutes(service: AvatarService) {
   );
   app.post("/import", async (c) =>
     c.json(await service.import(c.get("owner"), await c.req.json()), 201),
+  );
+  app.post("/:id/rename", async (c) =>
+    c.json(await service.rename(c.get("owner"), c.req.param("id"), await c.req.json())),
   );
   app.post("/:id/select", async (c) => {
     const input = z

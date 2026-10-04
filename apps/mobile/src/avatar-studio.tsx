@@ -29,7 +29,7 @@ type Action = {
   target: Target;
   path: string;
   body: Record<string, unknown>;
-  kind: "generate" | "select" | "saved" | "retry" | "default";
+  kind: "generate" | "select" | "saved" | "retry" | "default" | "rename";
 };
 type StudioError = { message: string; retry: "load" | "action" | "poll" };
 const inProgress = (job?: AvatarGeneration) =>
@@ -57,6 +57,8 @@ export function AvatarStudio({
   const columns = Platform.OS === "web" && width >= 900;
   const [studio, setStudio] = useState<Scoped<AvatarStudioState>>();
   const [draft, setDraft] = useState<Scoped<string>>();
+  const [nameDraft, setNameDraft] = useState<Scoped<string>>();
+  const [renameDraft, setRenameDraft] = useState<Scoped<{ assetId: string; label: string }>>();
   const [focused, setFocused] = useState<Scoped<AvatarGeneration>>();
   const [choice, setChoice] = useState<Scoped<{ generationId: string; assetId: string }>>();
   const [pending, setPending] = useState<Scoped<Action["kind"]>>();
@@ -89,6 +91,8 @@ export function AvatarStudio({
     expected.api.identityKey === expected.identityKey;
   const data = studio?.target === owner ? studio.value : undefined;
   const prompt = draft?.target === owner ? draft.value : "";
+  const name = nameDraft?.target === owner ? nameDraft.value : "";
+  const renaming = renameDraft?.target === owner ? renameDraft.value : undefined;
   const job = focused?.target === owner ? focused.value : undefined;
   const selectedId =
     choice?.target === owner && choice.value.generationId === job?.id
@@ -99,6 +103,7 @@ export function AvatarStudio({
   const preview = selected ?? active;
   const busy = pending?.target === owner;
   const error = failure?.target === owner ? failure.value : undefined;
+  const renameError = error?.retry === "action" && retryAction.current?.kind === "rename";
   const working = inProgress(job);
   const confirming = confirmation?.target === owner && confirmation.value === job?.id;
   const selectedAssets = new Set(
@@ -147,7 +152,13 @@ export function AvatarStudio({
           return updated ? { target: expected, value: updated } : before;
         }
         const latest = next.generations.find(inProgress);
-        if (latest) setDraft({ target: expected, value: latest.prompt });
+        if (latest) {
+          setDraft({ target: expected, value: latest.prompt });
+          setNameDraft({
+            target: expected,
+            value: latest.label === "Meu personagem" ? "" : latest.label,
+          });
+        }
         return latest ? { target: expected, value: latest } : undefined;
       });
       setFailure(undefined);
@@ -248,6 +259,36 @@ export function AvatarStudio({
         );
         setFocused(undefined);
         setChoice(undefined);
+      } else if (action.kind === "rename") {
+        const asset = await expected.api.request<AvatarAsset>(action.path, action.body);
+        if (!current(expected)) return;
+        const updateCandidates = (generation: AvatarGeneration) => ({
+          ...generation,
+          candidates: generation.candidates.map((item) => (item.id === asset.id ? asset : item)),
+        });
+        setStudio((before) =>
+          before?.target === expected
+            ? {
+                target: expected,
+                value: {
+                  ...before.value,
+                  assets: mergeAssets(before.value.assets, [asset]),
+                  generations: before.value.generations.map(updateCandidates),
+                },
+              }
+            : before,
+        );
+        setFocused((before) =>
+          before?.target === expected
+            ? {
+                target: expected,
+                value: updateCandidates(before.value),
+              }
+            : before,
+        );
+        setRenameDraft(undefined);
+        notify(t("Companion renamed"));
+        void refresh().catch(() => {});
       } else if (action.kind === "saved") {
         const asset = await expected.api.request<AvatarAsset>(action.path, action.body);
         if (!current(expected)) return;
@@ -284,7 +325,11 @@ export function AvatarStudio({
             message:
               cause instanceof Error
                 ? cause.message
-                : t("Could not update your companion. Your description is still here."),
+                : t(
+                    action.kind === "rename"
+                      ? "Could not rename your companion. Your name is still here."
+                      : "Could not update your companion. Your description is still here.",
+                  ),
             retry: "action",
           },
         });
@@ -298,9 +343,30 @@ export function AvatarStudio({
     void run({
       target: owner,
       path: "/api/agent/avatars/generations",
-      body: { requestId: Crypto.randomUUID(), prompt: prompt.trim() },
+      body: {
+        requestId: Crypto.randomUUID(),
+        prompt: prompt.trim(),
+        ...(name.trim() && { label: name.trim() }),
+      },
       kind: "generate",
     });
+  }
+  function saveName() {
+    if (!current(owner) || !renaming?.label.trim() || busy) return;
+    void run({
+      target: owner,
+      path: `/api/agent/avatars/${encodeURIComponent(renaming.assetId)}/rename`,
+      body: { requestId: Crypto.randomUUID(), label: renaming.label.trim() },
+      kind: "rename",
+    });
+  }
+  function closeRename() {
+    if (!current(owner) || busy) return;
+    setRenameDraft(undefined);
+    if (retryAction.current?.kind === "rename") {
+      retryAction.current = undefined;
+      setFailure(undefined);
+    }
   }
   function selectCandidate() {
     if (!current(owner) || !job || !selected || job.status !== "awaiting_selection" || busy) return;
@@ -430,6 +496,16 @@ export function AvatarStudio({
               "Any creature, character, color or personality. We’ll create four directions for you.",
             )}
           </Text>
+          <Field
+            label={t("Companion name (optional)")}
+            value={name}
+            placeholder={t("Give your companion a name")}
+            maxLength={80}
+            editable={!busy && !working}
+            onChangeText={(value) => {
+              if (current(owner)) setNameDraft({ target: owner, value });
+            }}
+          />
           {loading === owner && <Text style={styles.hint}>{t("Loading your companions…")}</Text>}
           {data && !data.capabilities.images && (
             <View style={styles.notice}>
@@ -473,6 +549,10 @@ export function AvatarStudio({
                     onPress={() => {
                       if (!current(owner) || busy) return;
                       setDraft({ target: owner, value: previous.prompt });
+                      setNameDraft({
+                        target: owner,
+                        value: previous.label === "Meu personagem" ? "" : previous.label,
+                      });
                       setFocused({ target: owner, value: previous });
                       setChoice(undefined);
                       setConfirmation(undefined);
@@ -488,7 +568,7 @@ export function AvatarStudio({
                 ))}
             </View>
           )}
-          {error && (
+          {error && !renameError && (
             <View style={styles.notice}>
               <ErrorNotice error={error.message} />
               <Button disabled={busy || loading === owner} onPress={retryFailure}>
@@ -682,6 +762,7 @@ export function AvatarStudio({
               setConfirmation(undefined);
               setFailure(undefined);
               setDraft({ target: owner, value: "" });
+              setNameDraft({ target: owner, value: "" });
             }}
           >
             {t("Create another")}
@@ -692,43 +773,99 @@ export function AvatarStudio({
         ) : (
           <View style={styles.gallery}>
             {gallery.map((asset) => (
-              <Pressable
-                key={asset.id}
-                accessibilityRole="button"
-                accessibilityLabel={t("Use {name}", { name: asset.label })}
-                aria-selected={data?.activeAssetId === asset.id}
-                aria-disabled={busy}
-                disabled={busy}
-                onPress={() => {
-                  if (!current(owner)) return;
-                  void run({
-                    target: owner,
-                    path: `/api/agent/avatars/${encodeURIComponent(asset.id)}/select`,
-                    body: { requestId: Crypto.randomUUID() },
-                    kind: "saved",
-                  });
-                }}
-                style={[
-                  styles.savedCard,
-                  data?.activeAssetId === asset.id && styles.candidateSelected,
-                ]}
-              >
-                <AvatarRenderer
-                  asset={asset}
-                  active={false}
-                  reducedMotion
-                  framing="portrait"
-                  size={88}
-                  accessibilityLabel={asset.label}
-                />
-                <Text style={styles.savedName} numberOfLines={2}>
-                  {asset.label}
-                </Text>
-                {data?.activeAssetId === asset.id && (
-                  <Text style={styles.activeLabel}>{t("Selected")}</Text>
-                )}
-              </Pressable>
+              <View key={asset.id} style={styles.savedItem}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("Use {name}", { name: asset.label })}
+                  aria-selected={data?.activeAssetId === asset.id}
+                  aria-disabled={busy}
+                  disabled={busy}
+                  onPress={() => {
+                    if (!current(owner)) return;
+                    void run({
+                      target: owner,
+                      path: `/api/agent/avatars/${encodeURIComponent(asset.id)}/select`,
+                      body: { requestId: Crypto.randomUUID() },
+                      kind: "saved",
+                    });
+                  }}
+                  style={[
+                    styles.savedCard,
+                    data?.activeAssetId === asset.id && styles.candidateSelected,
+                  ]}
+                >
+                  <AvatarRenderer
+                    asset={asset}
+                    active={false}
+                    reducedMotion
+                    framing="portrait"
+                    size={88}
+                    accessibilityLabel={asset.label}
+                  />
+                  <Text style={styles.savedName} numberOfLines={2}>
+                    {asset.label}
+                  </Text>
+                  {data?.activeAssetId === asset.id && (
+                    <Text style={styles.activeLabel}>{t("Selected")}</Text>
+                  )}
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("Rename {name}", { name: asset.label })}
+                  aria-expanded={renaming?.assetId === asset.id}
+                  disabled={busy}
+                  onPress={() => {
+                    if (!current(owner) || busy) return;
+                    closeRename();
+                    setRenameDraft({
+                      target: owner,
+                      value: { assetId: asset.id, label: asset.label },
+                    });
+                  }}
+                  style={styles.renameButton}
+                >
+                  <Text style={styles.renameText}>{t("Rename")}</Text>
+                </Pressable>
+              </View>
             ))}
+          </View>
+        )}
+        {renaming && (
+          <View style={styles.notice}>
+            <Text style={styles.sectionTitle}>{t("Rename companion")}</Text>
+            <Field
+              key={renaming.assetId}
+              label={t("Companion name")}
+              value={renaming.label}
+              maxLength={80}
+              autoFocus
+              editable={!busy}
+              returnKeyType="done"
+              onSubmitEditing={saveName}
+              onChangeText={(label) => {
+                if (current(owner))
+                  setRenameDraft({ target: owner, value: { ...renaming, label } });
+              }}
+            />
+            {renameError && <ErrorNotice error={error.message} />}
+            <View style={styles.actions}>
+              <Button
+                primary
+                busy={busy && pending.value === "rename"}
+                disabled={busy || !renaming.label.trim()}
+                onPress={saveName}
+              >
+                {t("Save name")}
+              </Button>
+              <Button disabled={busy} onPress={closeRename}>
+                {t("Cancel")}
+              </Button>
+              {renameError && (
+                <Button disabled={busy} onPress={retryFailure}>
+                  {t("Try again")}
+                </Button>
+              )}
+            </View>
           </View>
         )}
       </View>
