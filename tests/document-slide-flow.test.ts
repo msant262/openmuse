@@ -22,11 +22,11 @@ const listRegression = `# O harness coordena o trabalho
 O harness liga conversa, ferramentas, serviços e entrega.
 
 1. O modelo interpreta o pedido e seleciona uma ferramenta registrada, com argumentos estruturados.
-2. O servidor valida e executa a chamada; o resultado retorna como observação.
+2. O servidor **valida e executa** a chamada; o resultado retorna como observação.
 3. O ciclo continua com novas chamadas e verificações, se necessário.
 4. Tarefas duráveis preservam objetivo, progresso, recibos e arquivos entre etapas.
 
-- **Uma explicação importante** também precisa de espaço para seus trechos em negrito, *ênfase* e continuação legível.
+- **Uma explicação importante** também precisa de [espaço](https://example.com/referencia) para seus trechos em negrito, *ênfase* e continuação legível.
   - Uma observação aninhada precisa respeitar o espaço do marcador e manter cada linha alinhada com a anterior.
 `;
 async function slides(content: string) {
@@ -186,6 +186,11 @@ test("measured bullet lines fit after native indentation and cannot be wrapped a
         properties?.getElementsByTagName("a:buChar")[0];
       if (!bullet) continue;
       bullets++;
+      assert.equal(
+        paragraph.getElementsByTagName("a:pPr").length,
+        1,
+        "later rich runs must not override the paragraph's native marker",
+      );
       const extent = shape.getElementsByTagName("a:ext")[0];
       assert.ok(extent);
       const available =
@@ -207,6 +212,11 @@ test("measured bullet lines fit after native indentation and cannot be wrapped a
     }
   }
   assert.equal(bullets, 6, "all original native markers and nesting remain editable");
+  assert.equal(
+    result.flatMap((slide) => Array.from(slide.getElementsByTagName("a:hlinkClick"))).length,
+    1,
+    "the inline hyperlink survives normalization",
+  );
 });
 
 test("rendered list lines stay inside the column with separated text bounds", {
@@ -252,6 +262,7 @@ test("rendered list lines stay inside the column with separated text bounds", {
     const pdf = await loading.promise;
     let observedLines = 0;
     let observedText = "";
+    const markers: string[] = [];
     for (let number = 1; number <= pdf.numPages; number++) {
       const page = await pdf.getPage(number);
       const content = await page.getTextContent();
@@ -265,6 +276,7 @@ test("rendered list lines stay inside the column with separated text bounds", {
       }> = [];
       for (const item of content.items) {
         if (!("str" in item) || !item.str.trim() || Math.abs(item.height - 21) > 0.1) continue;
+        if (/^(?:[•·]|\d+\.)$/.test(item.str.trim())) markers.push(item.str.trim());
         if (!/^(?:[•·]|\d+\.)$/.test(item.str.trim())) observedText += item.str;
         const style = content.styles[item.fontName];
         const top = page.view[3] - item.transform[5] - (style.ascent ?? 1) * item.height;
@@ -298,6 +310,11 @@ test("rendered list lines stay inside the column with separated text bounds", {
       observedLines += lines.length;
     }
     assert.ok(observedLines >= 12, "the fixture must wrap into multiple actual rendered lines");
+    assert.deepEqual(
+      markers,
+      ["1.", "2.", "3.", "4.", "•", "•"],
+      "rich runs retain the visible native numbers and both unordered markers",
+    );
     for (const block of composeDocument(listRegression).blocks) {
       const runs =
         block.type === "paragraph"
