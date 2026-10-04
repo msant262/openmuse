@@ -143,6 +143,26 @@ test("oversized prose preserves every line without one-line continuation slides"
   assert.deepEqual(observed.flat(), lines, "pagination cannot drop, repeat or reorder lines");
 });
 
+test("a paragraph that fits only without its subheading may split to keep the heading attached", async () => {
+  const lines = Array.from({ length: 13 }, (_, i) => `Explicação ${i + 1}`);
+  const result = await slides(
+    `## Conteúdo extenso\n\n### Síntese importante\n\n${lines.join("\n")}`,
+  );
+  const page = result.find((page) =>
+    page.documentElement?.textContent?.includes("Síntese importante"),
+  );
+  assert.ok(
+    page?.documentElement?.textContent?.includes("Explicação 2"),
+    "the heading must retain at least two lines of its following paragraph",
+  );
+  const observed = result.flatMap((page) =>
+    Array.from(page.getElementsByTagName("a:t"))
+      .map((node) => node.textContent ?? "")
+      .filter((text) => text.startsWith("Explicação")),
+  );
+  assert.deepEqual(observed, lines);
+});
+
 test("short table takeaway stays below the native table instead of creating an empty slide", async () => {
   const result = await slides(
     `## Ferramenta, skill ou tarefa?\n\n${table}\n\nExecuta • orienta • define.\n\n## Próximo assunto\n\nInformação adicional.`,

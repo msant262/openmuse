@@ -138,6 +138,7 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
     pendingSection = false;
   let flow: { slide: PptxModule.default.Slide; y: number } | undefined;
   let wideFlow = false;
+  let splitAfterHeading = false;
   let captionArea: { slide: PptxModule.default.Slide; y: number } | undefined;
   const captionSize = 18,
     captionLeading = (captionSize * 1.29) / 72,
@@ -398,6 +399,10 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
       ? wrapRuns(keepNext.runs, keepNext.size, proseWidth(columnWidth, keepNext), fonts).length
       : 0;
     const nextLeading = keepNext ? (keepNext.size * 1.29) / 72 : 0;
+    const keepPrevious = splitAfterHeading;
+    // If a heading and its next paragraph cannot share a whole page, the next
+    // paragraph must use the space reserved here instead of moving away intact.
+    splitAfterHeading = Boolean(keepNext && height + 0.19 + nextLines * nextLeading > 6.55 - top);
     const nextHeight = keepNext
       ? 0.19 +
         (height + 0.19 + nextLines * nextLeading <= 6.55 - top
@@ -407,7 +412,12 @@ export async function createDocumentPptx(model: DocumentModel): Promise<Uint8Arr
       : 0;
     // A complete paragraph/list item stays together when it fits a fresh page.
     // For oversized blocks, leave at least two lines on either side of a break.
-    if (flow && height + nextHeight <= 6.55 - top && flow.y + height + nextHeight > 6.55)
+    if (
+      !keepPrevious &&
+      flow &&
+      height + nextHeight <= 6.55 - top &&
+      flow.y + height + nextHeight > 6.55
+    )
       flow = flowSlide();
     for (const [index, line] of lines.entries()) {
       const capacity = flow ? Math.floor((6.55 - flow.y - 0.035 + 1e-8) / leading) : 0;
