@@ -27,3 +27,12 @@ The memory-flush lifecycle and periodic heartbeat comparison uses OpenClaw
 `da979df299e88c3711f6ee2cd3c7443dd045584b`; its existing MIT attribution lives in
 `third_party/openclaw`. Source content and user-controlled memory remain data,
 never executable authority. Configured model selection and budgets are retained.
+
+History retrieval adapts `tools/session_search_tool.py` at
+[`1298c8e74baa73e1a2b90124228d017261ac6bc4`](https://github.com/NousResearch/hermes-agent/blob/1298c8e74baa73e1a2b90124228d017261ac6bc4/tools/session_search_tool.py):
+discovery followed by canonical message reads/scrolling, bounded message text,
+and demotion of repetitive automation. The PostgreSQL adapter uses the existing
+owner-scoped stores, lexical relevance and per-thread diversity; it adds later
+user updates so an old plan can be checked against subsequent cancellation.
+Search supports accent normalization and English/Portuguese stemming, not
+cross-language embedding similarity.

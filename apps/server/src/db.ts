@@ -18,6 +18,7 @@ import type {
 import { initializeDurableConversations } from "./durable-schema.ts";
 import { initializeTaskRuntime } from "./engine/task-schema.ts";
 import { AppError } from "./errors.ts";
+import { initializeHistoryRetrieval, type ThreadWindow } from "./history-retrieval.ts";
 import { backgroundFailure } from "./log.ts";
 import { memoryFingerprintFields } from "./memory-fingerprint.ts";
 import { initializeThreadCompaction, type ThreadMessagePage } from "./thread-compaction.ts";
@@ -950,16 +951,19 @@ export class Store {
   ): Promise<AgentMemory[]> {
     await this.repairMemoryFingerprints(owner);
     const result = await this.db.query(
-      `SELECT data FROM records fact WHERE owner=$1 AND kind='memories'
+      `WITH matched AS (SELECT data,id,updated_at,
+       CASE WHEN $2='' THEN 0 ELSE ts_rank_cd(openmuse_search_vector(data->>'text'),openmuse_search_query($2)) END AS score
+       FROM records fact WHERE owner=$1 AND kind='memories'
        AND ($6::boolean OR (openmuse_memory_fingerprint_valid(data) AND COALESCE(data->>'status','active')='active'
        AND (data->>'validUntil' IS NULL OR (data->>'validUntil')::timestamptz>$4::timestamptz)
        AND NOT EXISTS(SELECT 1 FROM records suppression WHERE suppression.owner=fact.owner
          AND suppression.kind='memory-suppressions'
          AND suppression.id=fact.data->>'fingerprint'
          AND fact.data->>'suppressionOverride' IS DISTINCT FROM suppression.id)))
-       AND strpos(lower(data->>'text'),lower($2))>0
-       AND ($5::text IS NULL OR (updated_at,id)<(SELECT updated_at,id FROM records WHERE owner=$1 AND kind='memories' AND id=$5))
-       ORDER BY updated_at DESC,id DESC LIMIT $3`,
+       AND ($2='' OR openmuse_search_vector(data->>'text') @@ openmuse_search_query($2) OR id=$2)),
+       ranked AS (SELECT data,id,row_number() OVER (ORDER BY score DESC,updated_at DESC,id DESC) AS position FROM matched)
+       SELECT data FROM ranked WHERE ($5::text IS NULL OR position>(SELECT position FROM ranked WHERE id=$5))
+       ORDER BY position LIMIT $3`,
       [owner, query, Math.min(101, Math.max(1, limit)), now, cursor ?? null, includeInactive],
     );
     return result.rows.map((row) => row.data as unknown as AgentMemory);
@@ -1033,26 +1037,93 @@ export class Store {
     return result.rows.length > 0;
   }
   /** Latest canonical transcript per thread, filtered in SQL; never load cumulative run copies. */
-  async searchThreads(owner: string, query: string, limit: number, archived: boolean) {
+  async searchThreads(
+    owner: string,
+    query: string,
+    limit: number,
+    archived: boolean,
+    time: { before?: string; after?: string } = {},
+  ) {
     const result = await this.db.query(
       `WITH latest AS (
-      SELECT DISTINCT ON (data->>'threadId') data FROM records
-      WHERE owner=$1 AND kind='thread-runs' AND data->>'status'<>'running'
-      ORDER BY data->>'threadId',data->>'createdAt' DESC,id DESC
-    ), transcript AS (
-      SELECT thread_id, data AS message, acquired_at AS date FROM thread_messages WHERE owner=$1
-      UNION ALL SELECT latest.data->>'threadId', message, latest.data->>'createdAt' FROM latest,
-        jsonb_array_elements(COALESCE(latest.data->'messages','[]'::jsonb)) message
-        WHERE NOT EXISTS(SELECT 1 FROM thread_messages canonical WHERE canonical.owner=$1 AND canonical.thread_id=latest.data->>'threadId')
-    ) SELECT jsonb_build_object('threadId',thread.id,'name',thread.data->>'name',
-      'messageId',message->>'id','role',message->>'role','excerpt',substring(message->>'content' FROM greatest(1,strpos(lower(message->>'content'),lower($2))-80) FOR 500),'date',transcript.date) AS data
-      FROM transcript JOIN records thread ON thread.owner=$1 AND thread.kind='threads' AND thread.id=transcript.thread_id
-      WHERE ($4::boolean OR thread.data->>'archived'='false') AND message->>'role' IN ('user','assistant')
-      AND jsonb_typeof(message->'content')='string' AND strpos(lower(message->>'content'),lower($2))>0
-      ORDER BY transcript.date DESC,message->>'id' LIMIT $3`,
-      [owner, query, Math.min(30, Math.max(1, limit)), archived],
+        SELECT DISTINCT ON (data->>'threadId') data FROM records WHERE owner=$1 AND kind='thread-runs' AND data->>'status'<>'running'
+        ORDER BY data->>'threadId',data->>'createdAt' DESC,id DESC
+      ), transcript AS (
+        SELECT thread_id,data AS message,acquired_at AS date FROM thread_messages WHERE owner=$1
+        UNION ALL SELECT latest.data->>'threadId',message,latest.data->>'createdAt' FROM latest,
+          jsonb_array_elements(COALESCE(latest.data->'messages','[]'::jsonb)) message
+          WHERE NOT EXISTS(SELECT 1 FROM thread_messages canonical WHERE canonical.owner=$1
+            AND canonical.thread_id=latest.data->>'threadId' AND canonical.id=message->>'id')
+      ), hits AS (
+        SELECT thread.id AS thread_id,thread.data->>'name' AS name,message,date,
+          CASE WHEN message->>'id' LIKE 'publication-%' THEN 2 WHEN message->>'role'='user' THEN 0 ELSE 1 END AS source_priority,
+          ts_rank_cd(openmuse_search_vector(message->>'content'),openmuse_search_query($2)) AS score
+        FROM transcript JOIN records thread ON thread.owner=$1 AND thread.kind='threads' AND thread.id=transcript.thread_id
+        WHERE ($4::boolean OR COALESCE(thread.data->>'archived','false')='false') AND thread.data->>'deletedAt' IS NULL
+          AND message->>'role' IN ('user','assistant') AND jsonb_typeof(message->'content')='string'
+          AND (openmuse_search_vector(message->>'content') @@ openmuse_search_query($2) OR message->>'id'=$2)
+          AND ($5::text IS NULL OR date<$5) AND ($6::text IS NULL OR date>$6)
+      ), ranked AS (SELECT *, row_number() OVER (PARTITION BY thread_id ORDER BY source_priority,score DESC,date DESC,message->>'id') AS per_thread FROM hits)
+      SELECT jsonb_build_object('threadId',thread_id,'name',name,'messageId',message->>'id','role',message->>'role',
+        'excerpt',ts_headline('simple',message->>'content',openmuse_search_query($2),'StartSel=, StopSel=, MaxWords=70, MinWords=20'),
+        'date',date,'source',CASE WHEN source_priority=2 THEN 'automation' ELSE 'conversation' END,'score',score) AS data
+      FROM ranked WHERE per_thread<=3 ORDER BY source_priority,score DESC,date DESC,message->>'id' LIMIT $3`,
+      [
+        owner,
+        query,
+        Math.min(30, Math.max(1, limit)),
+        archived,
+        time.before ? new Date(time.before).toISOString() : null,
+        time.after ? new Date(time.after).toISOString() : null,
+      ],
     );
-    return result.rows.map((row) => row.data);
+    return result.rows.map((row) => ({
+      ...row.data,
+      excerpt: String(row.data.excerpt ?? "").slice(0, 500),
+    }));
+  }
+  async readThreadWindow(
+    owner: string,
+    threadId: string,
+    messageId: string,
+    before = 3,
+    after = 5,
+  ): Promise<ThreadWindow> {
+    const result = await this.db.query(
+      `WITH latest AS (SELECT data FROM records WHERE owner=$1 AND kind='thread-runs' AND data->>'threadId'=$2 AND data->>'status'<>'running'
+         ORDER BY data->>'createdAt' DESC,id DESC LIMIT 1), transcript AS (
+        SELECT position,data,acquired_at AS date FROM thread_messages WHERE owner=$1 AND thread_id=$2
+        UNION ALL SELECT n AS position,message AS data,latest.data->>'createdAt' AS date FROM latest,
+          jsonb_array_elements(COALESCE(latest.data->'messages','[]'::jsonb)) WITH ORDINALITY AS m(message,n)
+          WHERE NOT EXISTS(SELECT 1 FROM thread_messages canonical WHERE canonical.owner=$1 AND canonical.thread_id=$2 AND canonical.id=message->>'id')
+      ), anchor AS (SELECT position FROM transcript WHERE data->>'id'=$3), visible AS (
+        SELECT data || jsonb_build_object('position',position,'date',date) AS data,position FROM transcript
+        WHERE position BETWEEN (SELECT position FROM anchor)-$4 AND (SELECT position FROM anchor)+$5
+      ), updates AS (
+        SELECT data || jsonb_build_object('position',position,'date',date) AS data,position FROM transcript
+        WHERE data->>'role'='user' AND position>(SELECT position FROM anchor) ORDER BY position DESC LIMIT 5
+      ) SELECT jsonb_build_object(
+        'messages',COALESCE((SELECT jsonb_agg(data ORDER BY position) FROM visible),'[]'::jsonb),
+        'recentUserUpdates',COALESCE((SELECT jsonb_agg(data ORDER BY position) FROM updates),'[]'::jsonb),
+        'hasOlder',EXISTS(SELECT 1 FROM transcript WHERE position<(SELECT min(position) FROM visible)),
+        'hasNewer',EXISTS(SELECT 1 FROM transcript WHERE position>(SELECT max(position) FROM visible))) AS data
+      FROM records thread WHERE thread.owner=$1 AND thread.kind='threads' AND thread.id=$2 AND thread.data->>'deletedAt' IS NULL`,
+      [
+        owner,
+        threadId,
+        messageId,
+        Math.min(10, Math.max(0, before)),
+        Math.min(10, Math.max(0, after)),
+      ],
+    );
+    return (
+      (result.rows[0]?.data as unknown as ThreadWindow) ?? {
+        messages: [],
+        recentUserUpdates: [],
+        hasOlder: false,
+        hasNewer: false,
+      }
+    );
   }
   async insertThreadPublication(
     owner: string,
@@ -1143,6 +1214,7 @@ export async function createStore(
   );
   await initializeDurableConversations((sql) => database.query(sql));
   await initializeThreadCompaction((sql) => database.query(sql));
+  await initializeHistoryRetrieval((sql) => database.query(sql));
   await initializeThreadLifecycle((sql) => database.query(sql));
   await initializeTaskRuntime((sql) => database.query(sql));
   await database.query(
