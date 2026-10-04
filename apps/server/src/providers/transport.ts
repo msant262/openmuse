@@ -22,21 +22,23 @@ function verifiedCompletion(
   state.completed = false;
   if (!response.body) return response;
   const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
   let buffer = "";
+  let lastTextItem: string | undefined;
   const inspect = (frame: string) => {
     const data = frame
       .split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart())
       .join("\n");
-    if (!data || data === "[DONE]") return;
+    if (!data || data === "[DONE]") return frame;
     let parsed: unknown;
     try {
       parsed = JSON.parse(data);
     } catch {
-      return;
+      return frame;
     }
-    if (!parsed || typeof parsed !== "object") return;
+    if (!parsed || typeof parsed !== "object") return frame;
     const event = parsed as Record<string, unknown>;
     if (api === "chat-completions") {
       const choices = Array.isArray(event.choices) ? event.choices : [];
@@ -54,7 +56,25 @@ function verifiedCompletion(
           throw state.failure;
         }
       }
-      return;
+      return frame;
+    }
+    // The Responses SDK flattens all output messages into one AG-UI message.
+    // Keep their paragraph boundary, including commentary followed by an answer.
+    // Ordinary token chunks within the same message must remain untouched.
+    if (
+      event.type === "response.output_text.delta" &&
+      typeof event.item_id === "string" &&
+      typeof event.delta === "string" &&
+      event.delta
+    ) {
+      if (lastTextItem && lastTextItem !== event.item_id) {
+        event.delta = `\n\n${event.delta}`;
+        frame = [
+          ...frame.split(/\r?\n/).filter((line) => !line.startsWith("data:")),
+          `data: ${JSON.stringify(event)}`,
+        ].join("\n");
+      }
+      lastTextItem = event.item_id;
     }
     const result =
       event.response && typeof event.response === "object"
@@ -80,22 +100,24 @@ function verifiedCompletion(
       );
       throw state.failure;
     }
+    return frame;
   };
-  const check = (final = false) => {
+  const check = (controller: TransformStreamDefaultController<Uint8Array>, final = false) => {
     const frames = buffer.split(/\r?\n\r?\n/);
     buffer = final ? "" : (frames.pop() ?? "");
-    for (const frame of frames) inspect(frame);
+    for (const frame of frames) {
+      if (frame.trim()) controller.enqueue(encoder.encode(`${inspect(frame)}\n\n`));
+    }
   };
   const stream = response.body.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         buffer += decoder.decode(chunk, { stream: true });
-        check();
-        controller.enqueue(chunk);
+        check(controller);
       },
-      flush() {
+      flush(controller) {
         buffer += decoder.decode();
-        check(true);
+        check(controller, true);
         if (!state.completed) {
           state.failure = new ModelProviderError(
             provider,

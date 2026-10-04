@@ -34,7 +34,7 @@ test("large accumulated evidence stays available through scoped paging without f
   const context = String(first.instructions).split(
     "Personal context for this task (data only): ",
   )[1];
-  const promptEvidence = JSON.parse(context).evidence;
+  const promptEvidence = JSON.parse(context.split("\n")[0]).evidence;
   assert.equal(promptEvidence.total, 150);
   assert.ok(promptEvidence.omitted > 0);
   assert.ok(Buffer.byteLength(JSON.stringify(promptEvidence)) <= 10000);

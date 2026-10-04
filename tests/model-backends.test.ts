@@ -536,3 +536,89 @@ test("keyless compatible transport removes placeholder auth and image requests r
   await image.generate({ model: "untrusted-model-override", prompt: "Draw a flower" });
   assert.equal(calls, 2);
 });
+
+test("separate Responses messages retain a paragraph boundary through the SDK", async (t) => {
+  await modelFixture(t, () => undefined);
+  const upstream = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (!request.url.endsWith("/responses")) return upstream(input, init);
+    const frames = [
+      {
+        type: "response.created",
+        response: { id: "multi", model: "fixture", status: "in_progress" },
+      },
+      ...[
+        { id: "commentary", phase: "commentary", parts: ["Vou conferir a ", "apuração."] },
+        { id: "answer", phase: "final_answer", parts: ["Já te ", "conto, gata."] },
+      ].flatMap(({ id, phase, parts }, output_index) => [
+        {
+          type: "response.output_item.added",
+          output_index,
+          item: {
+            id,
+            type: "message",
+            role: "assistant",
+            phase,
+            status: "in_progress",
+            content: [],
+          },
+        },
+        ...parts.map((delta) => ({
+          type: "response.output_text.delta",
+          item_id: id,
+          output_index,
+          content_index: 0,
+          delta,
+        })),
+        {
+          type: "response.output_item.done",
+          output_index,
+          item: {
+            id,
+            type: "message",
+            role: "assistant",
+            phase,
+            status: "completed",
+            content: [{ type: "output_text", text: parts.join(""), annotations: [] }],
+          },
+        },
+      ]),
+      {
+        type: "response.completed",
+        response: { id: "multi", model: "fixture", status: "completed", output: [] },
+      },
+    ];
+    const bytes = new TextEncoder().encode(
+      frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join(""),
+    );
+    // Split inside UTF-8 and SSE frames, as a real transport may do.
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i + 7));
+          controller.close();
+        },
+      }),
+      { headers: { "Content-Type": "text/event-stream" } },
+    );
+  });
+  const outcome = await run(
+    tanstackAgent({
+      model: "openai/fixture",
+      providers: modelProviderConfig(await directory(t)),
+      maxSteps: 1,
+      prompt: "Reply.",
+      tools: [],
+    }),
+  );
+  assert.equal(outcome.error, undefined);
+  assert.equal(outcome.finished, true);
+  assert.equal(
+    outcome.events
+      .filter((e) => e.type === EventType.TEXT_MESSAGE_CHUNK)
+      .map((e) => e.delta)
+      .join(""),
+    "Vou conferir a apuração.\n\nJá te conto, gata.",
+  );
+});
