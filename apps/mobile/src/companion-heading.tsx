@@ -29,14 +29,31 @@ export function CompanionHeading({
         opacity: pressed ? 0.65 : 1,
       })}
     >
-      <Mascot size={54} variant={variant} />
       <View
         style={{
-          paddingHorizontal: 14,
-          paddingVertical: showStatus ? 7 : 8,
-          marginTop: -4,
+          width: 60,
+          height: 60,
+          borderRadius: 30,
+          borderWidth: 1,
+          borderColor: colors.line,
+          backgroundColor: colors.card,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <View style={{ width: 54, height: 54, borderRadius: 27, overflow: "hidden" }}>
+          <Mascot size={54} variant={variant} />
+        </View>
+      </View>
+      <View
+        style={{
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+          marginTop: 5,
           borderRadius: showStatus ? 20 : 24,
           backgroundColor: colors.card,
+          borderWidth: 1,
+          borderColor: colors.line,
           shadowColor: colors.shadow,
           shadowOffset: { width: 0, height: 6 },
           shadowOpacity: 0.06,

@@ -95,7 +95,7 @@ export function AvatarMediaStage({
         width: size,
         height: size,
         overflow: "hidden",
-        borderRadius: framing === "portrait" ? size / 2 : 0,
+        borderRadius: framing === "portrait" ? size / 2 : size * 0.22,
       }}
     >
       <View
@@ -145,7 +145,7 @@ export function AvatarMediaStage({
             color: colors.muted,
             fontSize: 10,
             textAlign: "center",
-            backgroundColor: "rgba(255,255,255,0.9)",
+            backgroundColor: colors.card,
             borderRadius: 8,
           }}
         >

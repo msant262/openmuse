@@ -536,7 +536,7 @@ export function LinkRow({
     </Pressable>
   );
 }
-/** A transparent companion, shared by the floating header and the agent portrait. */
+/** Companion media shared by the floating header and the agent portrait. */
 export function Mascot({
   size = 42,
   variant: _variant = "sky",
