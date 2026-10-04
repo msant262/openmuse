@@ -1,6 +1,63 @@
 # OkamiBot: instalação e aceite em 4 de outubro de 2026
 
-**Revisão atual publicada: API, web e Android `7529b63`.** A publicação corrigiu
+**Revisão atual publicada: API `55f9d8d`; web e Android `7529b63`.** O novo
+harness reutiliza cinco módulos portáveis do OpenClaw (política de entrega,
+parser de skills, dois classificadores de repetição e limites de resultados),
+com MIT e procedência incluídos na imagem. A integração acrescenta catálogo real
+de `SKILL.md`, inventário do runtime, paginação de resultados, criação local de
+PDF/texto/Markdown e correções de contexto/retomada.
+
+Passaram **1.130 testes**, TypeScript servidor/mobile e Biome sem erros (230
+avisos e quatro informações). Outros 60 contratos Python de executor/desktop
+passaram; cinco testes de deployment passaram após corrigir o filtro de inputs
+do Docker. A primeira montagem da imagem falhou por esse filtro e está
+preservada no registro, sem ter sido publicada.
+
+Dois ensaios com os provedores conectados passaram pela conversa real, worker e
+publicação de origem numa base isolada: PDF de três páginas (20.358 bytes) e PNG
+de 1086×1448 (1.275.641 bytes). O PDF consultou runtime e skills locais. A imagem
+tem os valores textuais corretos; a proporção da barra decorativa é aproximada,
+não uma reprodução matemática exata. Credenciais foram montadas somente para
+leitura, copiadas para armazenamento temporário privado e renovação OAuth foi
+bloqueada no ensaio; não houve acesso à base de conversas de produção.
+
+A tarefa original do PDF, que estava em `waiting_provider`, foi retomada pelos
+controles normais mantendo o mesmo ID, conversa e 62 operações anteriores.
+Concluiu na terceira tentativa, com quatro rodadas adicionais do modelo (16→20):
+quatro leituras de fontes, `create_document` e `finish_task`. O PDF baixado tem
+**quatro páginas e 25.011 bytes**, SHA-256
+`340a6895922c1d2fbb9d913db0dd45674bf62afbf6ea66af54e48fcb1b7b1da6`.
+Seu texto real foi extraído e conferido; o status é `succeeded`, com conclusão
+verificada e arquivo na conversa original. Evidências:
+`artifacts/openclaw-harness/live/` e `artifacts/openclaw-harness/production-pdf/`.
+
+O aceite público confirmou o cartão concluído e o anexo na conversa original,
+renderização do PDF no desktop e em viewport de 390 px, e abertura/download
+HTTP 200 com o mesmo tamanho, quatro páginas e hash. Sem erros JavaScript ou
+escritas de produto; pareamentos temporários revogados. O Chromium completo
+em Xvfb renderizou o leitor; o shell headless padrão não tinha essa capacidade.
+Tentativas anteriores e capturas foram preservadas em
+`artifacts/openclaw-harness/public-pdf-ui/`.
+
+A publicação preservou GUMC/avatar, Codex, a política de pausa na revisão 16 e
+os dois recursos de controle humano; manutenção encerrada. Reproduziu a
+quarentena nativa após troca da API. Reiniciar o supervisor recuperou prontidão
+no epoch 24. Esse defeito não foi apresentado como corrigido: os logs antigos
+não distinguem qual etapa de contenção falhou. Revisão e limites:
+[auditoria do harness](superpowers/research/2026-10-04-openclaw-harness-audit.md).
+
+Durante o aceite, o domínio público apresentou 502/530 (Cloudflare 1033), com
+API privada saudável. Os logs registraram perda das quatro conexões IPv6,
+timeouts e recuperação automática por IPv4 às 00:35 UTC. Após o aceite visual,
+o túnel foi fixado em `edge-ip-version: "4"`, mantendo HTTP/2; configuração
+validada, quatro conexões IPv4 registradas e interface/API públicas HTTP 200
+às 00:39 UTC. É mitigação da falha observada, não diagnóstico completo da rota
+IPv6. Evidências: `public-tunnel-*.log` e `public-final-health.json` na mesma
+pasta de artefatos. O backup da configuração está privado na VPS.
+
+## Histórico: entrega no chat e configuração Google (`7529b63`)
+
+**Revisão anterior: API, web e Android `7529b63`.** A publicação corrigiu
 o esgotamento do loop de pesquisa no chat: existe uma rodada reservada para
 delegar a entrega antes da resposta final. Google sem configuração OAuth nativa
 abre o serviço correspondente no catálogo, com ativação privada; não expõe
@@ -24,11 +81,6 @@ APK ARM64 público: 58.963.289 bytes, SHA-256
 `0d1546469055abb68823236f3234f55a50a7b000b50501e7fa6e4ab89b00bd3f`.
 Builds limpos e assinatura existente conferidos. Evidências:
 `artifacts/chat-handoff/` e `artifacts/android/chat-handoff-release/`.
-
-A revisão ampla posterior do harness está documentada no
-[comparativo OpenClaw](superpowers/research/2026-10-04-openclaw-harness-audit.md).
-Seu aceite de publicação e recuperação do PDF será registrado após os ensaios
-completos; testes locais não representam uma publicação.
 
 ## Histórico: catálogo Composio (`249443b`)
 

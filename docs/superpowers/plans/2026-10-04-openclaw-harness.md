@@ -9,8 +9,8 @@ Spec: `docs/superpowers/specs/2026-10-04-openclaw-harness.md`. User authorizatio
 - [x] Vendor portable OpenClaw no-progress detection and result-limit policy with MIT notices. Integrate guards and output paging in `engine/tanstack-agent.ts`; preserve canonical receipts and recovery tools.
 - [x] Add generic server document generation through existing media/file effect and artifact abstractions. Test Unicode, pagination, verification, replay, permissions and chat delegation.
 - [x] Review integrated changes and run focused plus complete checks. 1130/1130 tests passed; final server/mobile TypeScript and Biome passed (230 existing warnings, four infos). Separate executor/desktop lifecycle contracts: 60/60.
-- [ ] Exercise real connected-provider chat deliveries and repair any remaining failures exposed by them.
-- [ ] Publish a clean source revision, resume the preserved production PDF, verify the originating attachment and record evidence.
-- [ ] Update deployment acceptance and report concrete results and remaining configuration requirements.
+- [x] Exercise real connected-provider chat deliveries and repair any remaining failures exposed by them. PDF and PNG delivered through chat→worker→origin publication at `55f9d8d`; exact generated chart geometry remains a documented limitation.
+- [x] Publish a clean source revision, resume the preserved production PDF, verify the originating attachment and record evidence. API `55f9d8d`; original task succeeded with a four-page PDF after four additional model rounds, preserving 62 operations.
+- [x] Update deployment acceptance and report concrete results and remaining configuration requirements. Public desktop/mobile PDF rendering and download passed; temporary pairings revoked. Tunnel IPv6 outage was mitigated by a validated IPv4 pin; app/API returned 200 with four registered connections.
 
 Work ownership: context/provider reviewer owns projection and resume fixes; runtime reviewer owns self-description/policy wiring and runtime audit; document reviewer owns server creation and artifact validation; root owns loop/output integration, overall audit, integration testing and publication. Shared files are coordinated directly.
