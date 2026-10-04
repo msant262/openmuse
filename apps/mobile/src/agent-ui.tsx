@@ -643,7 +643,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
           >
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ selected: selected === "request" }}
+              aria-selected={selected === "request"}
               onPress={() => setSelected("request")}
               style={{
                 padding: 12,
@@ -662,7 +662,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
             {!!events.length && !!task.plan.length && (
               <Pressable
                 accessibilityRole="button"
-                accessibilityState={{ selected: selected === "plan" }}
+                aria-selected={selected === "plan"}
                 onPress={() => setSelected("plan")}
                 style={{
                   padding: 12,
@@ -681,7 +681,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                   <Pressable
                     key={event.id}
                     accessibilityRole="button"
-                    accessibilityState={{ selected: selected === `event:${event.id}` }}
+                    aria-selected={selected === `event:${event.id}`}
                     onPress={() => setSelected(`event:${event.id}`)}
                     style={{
                       paddingHorizontal: 12,
@@ -711,7 +711,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                   <Pressable
                     key={step.id}
                     accessibilityRole="button"
-                    accessibilityState={{ selected: selected === `step:${step.id}` }}
+                    aria-selected={selected === `step:${step.id}`}
                     onPress={() => setSelected(`step:${step.id}`)}
                     style={{
                       padding: 12,
@@ -734,7 +734,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                 ))}
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ selected: selected === "summary" }}
+              aria-selected={selected === "summary"}
               onPress={() => setSelected("summary")}
               style={{
                 padding: 12,
@@ -1006,7 +1006,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                 )}
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityState={{ expanded: manage }}
+                  aria-expanded={manage}
                   onPress={() => setManage(!manage)}
                   style={[
                     s.between,
@@ -1105,7 +1105,7 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Open finance tracker: ${artifact.title}`}
-        accessibilityState={{ expanded: details }}
+        aria-expanded={details}
         onPress={() => setDetails(!details)}
       >
         <View
@@ -1503,7 +1503,7 @@ function IdeaCard({ idea }: { idea: Idea }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`View idea: ${idea.title}`}
-        accessibilityState={{ expanded }}
+        aria-expanded={expanded}
         onPress={() => setExpanded(!expanded)}
         style={{ flexDirection: "row", gap: 14 }}
       >
@@ -1709,7 +1709,7 @@ function GoalListRow({ goal, onOpen }: { goal: Goal; onOpen: () => void }) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t("Expand goal")}
-          accessibilityState={{ expanded }}
+          aria-expanded={expanded}
           onPress={() => (goal.milestones.length ? setExpanded(!expanded) : onOpen())}
           style={{ paddingTop: 3, width: 23 }}
         >
@@ -1874,7 +1874,7 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
       )}
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ expanded: showArtifacts }}
+        aria-expanded={showArtifacts}
         onPress={() => setShowArtifacts(!showArtifacts)}
         style={[
           s.row,
@@ -2284,7 +2284,7 @@ export function NotificationsSheet() {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={t("Notification details")}
-                    accessibilityState={{ expanded: expanded === item.id }}
+                    aria-expanded={expanded === item.id}
                     onPress={() => setExpanded(expanded === item.id ? undefined : item.id)}
                     style={{ padding: 7 }}
                   >
@@ -2461,7 +2461,7 @@ export function AppsScreen() {
                     key={item}
                     accessibilityRole="radio"
                     accessibilityLabel={`${statusLabel(item)} avatar`}
-                    accessibilityState={{ checked: avatar === item }}
+                    aria-checked={avatar === item}
                     onPress={() => setAvatar(item)}
                     style={{
                       padding: 7,

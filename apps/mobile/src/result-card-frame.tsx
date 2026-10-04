@@ -48,7 +48,6 @@ export function ResultCardFooter({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${action}: ${title}`}
-      accessibilityState={expanded === undefined ? undefined : { expanded }}
       aria-expanded={expanded}
       onPress={onPress}
       style={({ pressed }) => ({

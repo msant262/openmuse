@@ -90,7 +90,6 @@ export function AvatarMediaStage({
     <View
       accessibilityRole="image"
       accessibilityLabel={caption ?? accessibilityLabel ?? t("Your companion")}
-      accessibilityState={{ busy: !posterLoaded && !frameReady && !posterFallback }}
       aria-busy={!posterLoaded && !frameReady && !posterFallback}
       style={{
         width: size,

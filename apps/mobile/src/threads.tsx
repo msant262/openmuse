@@ -384,7 +384,7 @@ export function ThreadsSheet({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={t("More options")}
-              accessibilityState={{ expanded: tools }}
+              aria-expanded={tools}
               onPress={() => setTools(!tools)}
               style={{
                 width: 32,
@@ -624,7 +624,8 @@ function ThreadMenuRow({
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ selected: !!selected, disabled: !!disabled }}
+        aria-selected={!!selected}
+        aria-disabled={!!disabled}
         disabled={disabled}
         onPress={onPress}
         style={({ pressed }) => ({

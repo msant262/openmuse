@@ -1,5 +1,5 @@
 import * as Crypto from "expo-crypto";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import type { ProcedureVersion } from "../../../packages/domain/src/playbooks";
 import { useI18n } from "./i18n";
@@ -20,8 +20,31 @@ export function PlaybooksPanel() {
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<ProcedureVersion[]>([]);
   const [historyCursor, setHistoryCursor] = useState<string>();
+  const generation = useRef(0);
+  const scope = useRef({ api, identity: api.identityKey });
+  scope.current = { api, identity: api.identityKey };
+  const receipts = useRef(new Map<string, string>());
+  function requestContext() {
+    const captured = { ...scope.current, generation: generation.current };
+    const sameOwner = () =>
+      scope.current.api === captured.api && scope.current.identity === captured.identity;
+    return {
+      sameOwner,
+      current: () => sameOwner() && generation.current === captured.generation,
+    };
+  }
   useEffect(() => {
     let live = true;
+    generation.current++;
+    receipts.current.clear();
+    setValues([]);
+    setSelected(undefined);
+    setHistory([]);
+    setHistoryCursor(undefined);
+    setInputs({});
+    setError("");
+    setStatus("");
+    setBusy(false);
     void api
       .request<ProcedureVersion[]>("/api/agent/playbooks")
       .then((value) => {
@@ -32,39 +55,51 @@ export function PlaybooksPanel() {
       });
     return () => {
       live = false;
+      generation.current++;
     };
-  }, [api]);
+  }, [api, api.identityKey]);
   async function manage(
     action: "archive" | "restore" | "pin" | "unpin" | "rollback",
     version?: number,
   ) {
     if (!selected || busy) return;
+    const context = requestContext();
     setBusy(true);
     setError("");
+    const body = {
+      action,
+      version,
+      expectedVersion: selected.version,
+      reason: "Changed in procedure settings",
+    };
+    const binding = JSON.stringify({ owner: api.identityKey, id: selected.id, ...body });
+    let requestId = receipts.current.get(binding);
+    if (!requestId) {
+      requestId = Crypto.randomUUID();
+      receipts.current.set(binding, requestId);
+    }
     try {
       const value = await api.request<ProcedureVersion>(
         `/api/agent/playbooks/${selected.id}/manage`,
-        {
-          action,
-          version,
-          expectedVersion: selected.version,
-          requestId: Crypto.randomUUID(),
-          reason: "Changed in procedure settings",
-        },
+        { ...body, requestId },
       );
-      setSelected(value);
+      if (!context.sameOwner()) return;
+      receipts.current.delete(binding);
       setValues((items) => items.map((item) => (item.id === value.id ? value : item)));
+      if (!context.current()) return;
+      setSelected(value);
       setHistory([]);
       setHistoryCursor(undefined);
       setStatus(t("Saved"));
     } catch (error) {
-      setError(String(error));
+      if (context.current()) setError(String(error));
     } finally {
-      setBusy(false);
+      if (context.current()) setBusy(false);
     }
   }
   async function loadHistory(cursor?: string) {
     if (!selected || busy) return;
+    const context = requestContext();
     setBusy(true);
     setError("");
     try {
@@ -74,6 +109,7 @@ export function PlaybooksPanel() {
       }>(
         `/api/agent/playbooks/${selected.id}/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
       );
+      if (!context.current()) return;
       setHistory((old) =>
         cursor
           ? [...old, ...page.entries.map((entry) => entry.value)]
@@ -81,13 +117,14 @@ export function PlaybooksPanel() {
       );
       setHistoryCursor(page.nextCursor);
     } catch (error) {
-      setError(String(error));
+      if (context.current()) setError(String(error));
     } finally {
-      setBusy(false);
+      if (context.current()) setBusy(false);
     }
   }
   async function run() {
     if (!selected || busy) return;
+    const context = requestContext();
     setBusy(true);
     setError("");
     const key = `${api.identityKey}:procedure-run:${selected.id}`;
@@ -103,6 +140,7 @@ export function PlaybooksPanel() {
         JSON.parse(raw),
       );
       await messageStorage.write(key, "null");
+      if (!context.current()) return;
       setStatus(
         t("{status}: {id}. Follow it in Tasks.", {
           status: t(result.status),
@@ -110,9 +148,9 @@ export function PlaybooksPanel() {
         }),
       );
     } catch (error) {
-      setError(String(error));
+      if (context.current()) setError(String(error));
     } finally {
-      setBusy(false);
+      if (context.current()) setBusy(false);
     }
   }
   return (
@@ -129,6 +167,9 @@ export function PlaybooksPanel() {
           key={value.id}
           small
           onPress={() => {
+            generation.current++;
+            setBusy(false);
+            setError("");
             setSelected(value);
             setInputs({});
             setStatus("");

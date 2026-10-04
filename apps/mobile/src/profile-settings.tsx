@@ -291,7 +291,6 @@ export function ProfileSettings({ document = false }: { document?: boolean } = {
       />
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ expanded: advanced }}
         aria-expanded={advanced}
         onPress={() => setAdvanced((value) => !value)}
         style={[s.button, s.secondary, { alignSelf: "flex-start", minHeight: 44 }]}

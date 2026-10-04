@@ -124,7 +124,7 @@ function SidebarItem({
       accessibilityRole="button"
       accessibilityLabel={label}
       {...(Platform.OS === "web" ? { title: label } : {})}
-      accessibilityState={{ selected: !!active }}
+      aria-selected={!!active}
       onPress={onPress}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
@@ -409,7 +409,7 @@ export function DesktopShell({
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={t("Main chat")}
-                    accessibilityState={{ selected: selection.id === mainId }}
+                    aria-selected={selection.id === mainId}
                     onPress={() => openThread({ id: mainId, existing: true })}
                     style={[s.row, { gap: 9, flex: 1 }]}
                   >
@@ -441,7 +441,7 @@ export function DesktopShell({
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityState={{ selected: archivedChats }}
+                  aria-selected={archivedChats}
                   onPress={() => setArchivedChats(!archivedChats)}
                   style={[s.row, { padding: 10, gap: 9 }]}
                 >
@@ -477,7 +477,7 @@ export function DesktopShell({
                           accessibilityLabel={t(desktopCopy.openConversation, {
                             name: thread.name,
                           })}
-                          accessibilityState={{ selected: selection.id === thread.id }}
+                          aria-selected={selection.id === thread.id}
                           onPress={() => openThread({ id: thread.id, existing: thread.existing })}
                           style={[s.row, { flex: 1, minWidth: 0, gap: 9 }]}
                         >
@@ -572,7 +572,7 @@ export function DesktopShell({
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={t(desktopCopy.conversationMenu)}
-                      accessibilityState={{ expanded: sideChatsVisible }}
+                      aria-expanded={sideChatsVisible}
                       onPress={() =>
                         width >= 1240 && !workspacePane
                           ? setSideChatsOpen(!sideChatsOpen)
@@ -895,7 +895,7 @@ export function AgentInspector({
             key={id}
             accessibilityRole="tab"
             accessibilityLabel={label}
-            accessibilityState={{ selected: tab === id }}
+            aria-selected={tab === id}
             onPress={() => setTab(id)}
             style={[d.inspectorTab, { height: 52, gap: 5 }, tab === id && d.inspectorTabActive]}
           >
@@ -1150,7 +1150,7 @@ export function AssistantAppearance() {
               key={item.id}
               accessibilityRole="radio"
               accessibilityLabel={item.label}
-              accessibilityState={{ checked: avatar === item.id }}
+              aria-checked={avatar === item.id}
               disabled={busy}
               onPress={() => setAvatar(item.id)}
               style={[

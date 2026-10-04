@@ -76,7 +76,7 @@ export function McpConnections({ query = "" }: { query?: string }) {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={t("Manage {name}", { name: row.id })}
-                accessibilityState={{ expanded: expanded === row.id }}
+                aria-expanded={expanded === row.id}
                 onPress={() => setExpanded(expanded === row.id ? undefined : row.id)}
                 style={[s.row, { flex: 1, minWidth: 0, gap: 11, paddingVertical: 10 }]}
               >

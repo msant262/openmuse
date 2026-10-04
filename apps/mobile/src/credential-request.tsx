@@ -175,7 +175,6 @@ export function CredentialRequestCard({
             </Text>
             <TextInput
               accessibilityLabel={t(field.label)}
-              accessibilityState={{ disabled }}
               aria-disabled={disabled}
               aria-required={field.required}
               autoCapitalize="none"
@@ -207,7 +206,7 @@ export function CredentialRequestCard({
             <Text style={s.text}>{t("Verification code")}</Text>
             <TextInput
               accessibilityLabel={t("Verification code")}
-              accessibilityState={{ disabled: challengeBusy }}
+              aria-disabled={challengeBusy}
               autoCapitalize="none"
               autoComplete="off"
               autoCorrect={false}

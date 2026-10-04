@@ -210,7 +210,6 @@ export function ComputerSheet({ embedded = false }: { embedded?: boolean } = {})
                 key={item}
                 accessibilityRole="tab"
                 accessibilityLabel={t(item)}
-                accessibilityState={{ selected: tab === item }}
                 aria-selected={tab === item}
                 onPress={() => setTab(item)}
                 style={{

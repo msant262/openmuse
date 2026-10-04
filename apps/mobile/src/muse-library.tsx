@@ -242,7 +242,7 @@ export function MuseLibrary({
               <Pressable
                 accessibilityRole="tab"
                 accessibilityLabel={t(item.label)}
-                accessibilityState={{ selected: category === item.id }}
+                aria-selected={category === item.id}
                 onPress={() => {
                   setCategory(item.id);
                   setGroup(index >= 3 ? "media" : "artifacts");
@@ -289,7 +289,7 @@ export function MuseLibrary({
                   key={item}
                   accessibilityRole="tab"
                   accessibilityLabel={t(item === "artifacts" ? "Artifacts" : "Media")}
-                  accessibilityState={{ selected: group === item }}
+                  aria-selected={group === item}
                   onPress={() => {
                     setGroup(item);
                     setCategory("all");

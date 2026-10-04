@@ -367,7 +367,7 @@ export function ConnectionsCatalog({
           <Pressable
             key={value}
             accessibilityRole="tab"
-            accessibilityState={{ selected: tab === value }}
+            aria-selected={tab === value}
             onPress={() => setTab(value)}
             style={{
               flex: 1,

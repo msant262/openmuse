@@ -146,7 +146,8 @@ export function Button({
     <Pressable
       accessibilityRole="button"
       disabled={disabled || busy}
-      accessibilityState={{ disabled: !!(disabled || busy), busy: !!busy, expanded }}
+      aria-disabled={!!(disabled || busy)}
+      aria-busy={!!busy}
       aria-expanded={expanded}
       onPress={onPress}
       style={({ pressed }) => [
@@ -268,12 +269,14 @@ export function ErrorNotice({ error }: { error?: string }) {
 export function ModalSurface({
   children,
   onClose,
+  onBack = onClose,
   label,
   width: maxWidth = 760,
   height,
 }: {
   children: ReactNode;
   onClose: () => void;
+  onBack?: () => void;
   label: string;
   width?: number;
   height?: number;
@@ -284,7 +287,7 @@ export function ModalSurface({
   const insets = useSafeAreaInsets();
   const compact = width < 700;
   return (
-    <Modal transparent animationType={compact ? "slide" : "fade"} visible onRequestClose={onClose}>
+    <Modal transparent animationType={compact ? "slide" : "fade"} visible onRequestClose={onBack}>
       <View style={[s.modalShade, compact && { padding: 0, justifyContent: "flex-end" }]}>
         <Pressable
           accessible={false}
@@ -452,7 +455,6 @@ export function CheckRow({
     <Pressable
       accessibilityRole="checkbox"
       accessibilityLabel={label}
-      accessibilityState={{ checked }}
       aria-checked={checked}
       onPress={onPress}
       style={[s.row, { gap: 10, paddingVertical: 9 }]}

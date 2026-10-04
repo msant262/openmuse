@@ -376,7 +376,7 @@ export function AvatarStudio({
               <Pressable
                 key={value}
                 accessibilityRole="button"
-                accessibilityState={{ selected: motion === value }}
+                aria-selected={motion === value}
                 onPress={() => setMotion(value)}
                 style={[styles.motionButton, motion === value && styles.motionSelected]}
               >
@@ -517,10 +517,7 @@ export function AvatarStudio({
                               accessibilityLabel={t("Choose option {number}", {
                                 number: index + 1,
                               })}
-                              accessibilityState={{
-                                checked,
-                                disabled: busy || job.status !== "awaiting_selection",
-                              }}
+                              aria-disabled={busy || job.status !== "awaiting_selection"}
                               aria-checked={checked}
                               disabled={busy || job.status !== "awaiting_selection"}
                               onPress={() => {
@@ -645,7 +642,8 @@ export function AvatarStudio({
                 key={asset.id}
                 accessibilityRole="button"
                 accessibilityLabel={t("Use {name}", { name: asset.label })}
-                accessibilityState={{ selected: data?.activeAssetId === asset.id, disabled: busy }}
+                aria-selected={data?.activeAssetId === asset.id}
+                aria-disabled={busy}
                 disabled={busy}
                 onPress={() => {
                   if (!current(owner)) return;

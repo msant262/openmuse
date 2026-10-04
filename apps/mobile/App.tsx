@@ -8,6 +8,7 @@ import {
   Menu,
   MessageCircle,
   Newspaper,
+  Settings,
   Shapes,
   SquareCheck,
   X,
@@ -540,7 +541,10 @@ function WorkspaceShell({
       <View style={{ position: "absolute", left: 16, top: 17 }}>
         <IconButton icon={Menu} label={t(desktopCopy.conversationMenu)} onPress={openThreads} />
       </View>
-      <View pointerEvents="box-none" style={{ alignItems: "center", paddingTop: 1 }}>
+      <View
+        pointerEvents="box-none"
+        style={{ alignItems: "center", paddingTop: 1, paddingHorizontal: 92 }}
+      >
         <CompanionHeading
           name={agentName}
           status={status}
@@ -548,6 +552,29 @@ function WorkspaceShell({
           onPress={() => setAgentOpen(true)}
         />
       </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t("Settings")}
+        onPress={() => setSettingsOpen(true)}
+        style={({ pressed }) => ({
+          position: "absolute",
+          right: 12,
+          top: 17,
+          width: 88,
+          minHeight: 48,
+          paddingVertical: 6,
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 4,
+          borderRadius: 16,
+          backgroundColor: pressed ? colors.subtle : colors.card,
+        })}
+      >
+        <Settings size={21} strokeWidth={1.8} color={colors.text} />
+        <Text style={{ color: colors.text, fontSize: 12, textAlign: "center" }}>
+          {t("Settings")}
+        </Text>
+      </Pressable>
     </View>
   );
   const mobileNavigation = (
@@ -588,7 +615,7 @@ function WorkspaceShell({
               key={item.id}
               accessibilityRole="tab"
               accessibilityLabel={t(item.label)}
-              accessibilityState={{ selected: active }}
+              aria-selected={active}
               onPress={() => navigateSection(item.id)}
               style={{
                 flex: 1,

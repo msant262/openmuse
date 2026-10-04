@@ -33,7 +33,8 @@ export function ThemePicker() {
             key={id}
             accessibilityRole="radio"
             accessibilityLabel={t(label)}
-            accessibilityState={{ checked: mode === id, disabled: busy }}
+            aria-checked={mode === id}
+            aria-disabled={busy}
             disabled={busy}
             onPress={() => {
               setBusy(true);

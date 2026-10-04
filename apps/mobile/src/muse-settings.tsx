@@ -65,7 +65,13 @@ export function SettingsDialog({
     open({ type: "notifications" });
   }
   return (
-    <ModalSurface label={t("Settings")} onClose={onClose} width={760} height={570}>
+    <ModalSurface
+      label={t("Settings")}
+      onClose={onClose}
+      onBack={compact && mobileDetail ? () => setMobileDetail(false) : onClose}
+      width={760}
+      height={570}
+    >
       <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
         {(!compact || !mobileDetail) && (
           <View
@@ -86,7 +92,7 @@ export function SettingsDialog({
                 <Pressable
                   key={id}
                   accessibilityRole="button"
-                  accessibilityState={{ selected: section === id }}
+                  aria-selected={section === id}
                   onPress={() => {
                     setSection(id);
                     setMobileDetail(true);
@@ -172,7 +178,7 @@ export function SettingsDialog({
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={t("App language")}
-                      accessibilityState={{ expanded: languageOpen }}
+                      aria-expanded={languageOpen}
                       onPress={() => setLanguageOpen(!languageOpen)}
                       style={[s.row, { padding: 16, gap: 12, minHeight: 56 }]}
                     >
@@ -303,7 +309,7 @@ export function CompanionDialog({ onClose }: { onClose: () => void }) {
           <Pressable
             key={id}
             accessibilityRole="tab"
-            accessibilityState={{ selected: tab === id }}
+            aria-selected={tab === id}
             onPress={() => setTab(id)}
             style={{
               paddingHorizontal: 24,

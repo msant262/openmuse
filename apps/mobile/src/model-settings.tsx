@@ -92,10 +92,7 @@ export function ModelSettings() {
                 accessibilityRole="radio"
                 aria-checked={selected === model.id}
                 accessibilityLabel={model.label}
-                accessibilityState={{
-                  checked: selected === model.id,
-                  disabled: !model.available || busy,
-                }}
+                aria-disabled={!model.available || busy}
                 disabled={!model.available || busy}
                 onPress={() => {
                   setSelected(model.id);

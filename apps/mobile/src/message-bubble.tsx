@@ -132,7 +132,7 @@ export function MessageBubble({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={t("Message actions")}
-        accessibilityState={{ expanded: !!menu }}
+        aria-expanded={!!menu}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         onPress={showMenu}

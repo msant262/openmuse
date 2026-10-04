@@ -651,13 +651,13 @@ test("result footer exposes expansion explicitly to web and native accessibility
   view.render();
   const closed = node(view, "Pressable", "Open report: Saved report");
   assert.equal(closed["aria-expanded"], false);
-  assert.equal((closed.accessibilityState as { expanded: boolean }).expanded, false);
+  assert.equal(closed["aria-expanded"], false);
   press(closed);
   assert.equal(pressed, 1);
   view.render({ ...props, expanded: true, action: "Show summary" });
   const opened = node(view, "Pressable", "Show summary: Saved report");
   assert.equal(opened["aria-expanded"], true);
-  assert.equal((opened.accessibilityState as { expanded: boolean }).expanded, true);
+  assert.equal(opened["aria-expanded"], true);
   view.close();
 });
 

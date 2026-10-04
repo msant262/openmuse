@@ -1408,7 +1408,6 @@ export function ChatScreen({
             <View style={{ paddingHorizontal: 12, paddingBottom: 8, gap: 4 }}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityState={{ expanded: showDirections }}
                 aria-expanded={showDirections}
                 onPress={() => setShowDirections((value) => !value)}
                 style={[s.row, { minHeight: 36, gap: 6 }]}
@@ -1715,7 +1714,6 @@ export function ChatScreen({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={t("Attach a document")}
-              accessibilityState={{ expanded: picking }}
               aria-expanded={picking}
               onPress={() => setPicking(!picking)}
               style={({ pressed }) => ({

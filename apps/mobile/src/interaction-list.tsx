@@ -32,7 +32,6 @@ export function InteractionList({
             accessibilityLabel={t("Previous questions and answers ({count})", {
               count: history.length,
             })}
-            accessibilityState={{ expanded }}
             aria-expanded={expanded}
             onPress={() => setExpanded(!expanded)}
             style={[

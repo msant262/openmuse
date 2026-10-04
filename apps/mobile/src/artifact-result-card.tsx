@@ -138,7 +138,6 @@ export function ArtifactResultCard({ artifact }: { artifact: AgentArtifact }) {
           accessibilityRole="button"
           accessibilityLabel={`${action}: ${artifact.title}`}
           aria-expanded={expanded}
-          accessibilityState={{ expanded }}
           onPress={() => setExpanded(true)}
           style={{ backgroundColor: tint, padding: 22, gap: 12 }}
         >

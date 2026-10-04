@@ -37,7 +37,7 @@ export function MemorySettings({ document = false }: { document?: boolean } = {}
     try {
       await api.request("/api/agent/memories", {
         text,
-        ...(validUntil ? { validUntil, timezone: "Europe/Berlin" } : {}),
+        ...(validUntil ? { validUntil } : {}),
       });
       setText("");
       setValidUntil("");

@@ -99,7 +99,6 @@ export function InteractionCard({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t(answered ? "Answer saved" : "Question closed")}
-          accessibilityState={{ expanded: receiptExpanded }}
           aria-expanded={receiptExpanded}
           onPress={() => setReceiptExpanded(!receiptExpanded)}
           style={[s.row, { gap: 10, minHeight: 44 }]}
@@ -175,7 +174,6 @@ export function InteractionCard({
           {field.type === "text" ? (
             <TextInput
               accessibilityLabel={t(field.label)}
-              accessibilityState={{ disabled }}
               aria-disabled={disabled}
               aria-required={field.required}
               editable={!disabled}
@@ -231,7 +229,6 @@ export function InteractionCard({
                   key={option.id}
                   accessibilityRole={field.type === "single" ? "radio" : "checkbox"}
                   accessibilityLabel={option.label}
-                  accessibilityState={{ checked: selected, disabled }}
                   aria-checked={selected}
                   aria-disabled={disabled}
                   disabled={disabled}

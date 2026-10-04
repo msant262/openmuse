@@ -88,7 +88,9 @@ function ChoiceButton({
           label: option.label,
           position,
         })}
-        accessibilityState={{ disabled: disabled || pending, busy: pending, selected }}
+        aria-disabled={disabled || pending}
+        aria-busy={pending}
+        aria-selected={selected}
         disabled={disabled || pending}
         onPress={() => onChoose(option.id)}
         style={({ pressed }) => [
