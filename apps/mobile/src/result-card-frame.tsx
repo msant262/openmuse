@@ -1,16 +1,18 @@
 import { ChevronDown, ChevronRight, type LucideIcon } from "lucide-react-native";
 import type { ReactNode } from "react";
 import { Pressable, Text, View, type ViewStyle } from "react-native";
-import { Card, colors, s } from "./ui";
+import { Card, useUI } from "./ui";
 
 export function ResultCardFrame({ children, style }: { children: ReactNode; style?: ViewStyle }) {
+  const { colors } = useUI();
+
   return (
     <Card
       style={{
         padding: 0,
         borderRadius: 22,
         borderWidth: 1,
-        borderColor: "#E4E7E9",
+        borderColor: colors.line,
         overflow: "hidden",
         width: "100%",
         maxWidth: 560,
@@ -30,7 +32,7 @@ export function ResultCardFooter({
   icon: Icon,
   onPress,
   expanded,
-  tint = colors.sky,
+  tint,
 }: {
   title: string;
   subtitle: string;
@@ -40,6 +42,8 @@ export function ResultCardFooter({
   expanded?: boolean;
   tint?: string;
 }) {
+  const { colors, s } = useUI();
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -61,7 +65,7 @@ export function ResultCardFooter({
           width: 42,
           height: 46,
           borderRadius: 12,
-          backgroundColor: tint,
+          backgroundColor: tint ?? colors.sky,
           alignItems: "center",
           justifyContent: "center",
         }}

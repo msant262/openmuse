@@ -4,10 +4,12 @@ import { Text, View } from "react-native";
 import type { ProcedureVersion } from "../../../packages/domain/src/playbooks";
 import { useI18n } from "./i18n";
 import { messageStorage } from "./message-storage";
-import { Button, Card, ErrorNotice, Field, s } from "./ui";
+import { Button, Card, ErrorNotice, Field, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function PlaybooksPanel() {
+  const { s } = useUI();
+
   const { t } = useI18n();
   const { api, ask } = useWorkspace();
   const [values, setValues] = useState<ProcedureVersion[]>([]);

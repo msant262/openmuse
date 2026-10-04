@@ -15,6 +15,7 @@ function fixture(setLocale: (locale: "en" | "pt-BR") => Promise<void>) {
         useWindowDimensions: () => ({ width: 1440 }),
       },
       "./agent-workspace": {},
+      "./agent-identity-panel": {},
       "./avatar-presentation": {},
       "./avatar-thumbnail": {},
       "./computer": {},

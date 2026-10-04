@@ -17,10 +17,12 @@ import { LinuxWorkspace } from "./computer-workspace";
 import { DesktopViewer } from "./desktop";
 import { useI18n } from "./i18n";
 import { useInlinePreview } from "./preview";
-import { Button, Card, colors, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
+import { Button, Card, ErrorNotice, Field, LinkRow, Sheet, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function ComputerEntry({ compact = false }: { compact?: boolean } = {}) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { workspace, open } = useWorkspace();
   const available = workspace.connections.some(
@@ -40,7 +42,7 @@ export function ComputerEntry({ compact = false }: { compact?: boolean } = {}) {
           paddingHorizontal: compact ? 10 : 12,
           paddingVertical: compact ? 10 : 7,
           borderRadius: 20,
-          backgroundColor: compact ? "transparent" : "#F1F3F4",
+          backgroundColor: compact ? "transparent" : colors.subtle,
         },
       ]}
     >
@@ -57,7 +59,7 @@ export function ComputerEntry({ compact = false }: { compact?: boolean } = {}) {
             width: 5,
             height: 5,
             borderRadius: 3,
-            backgroundColor: available ? "#57AD85" : "#ACB0B5",
+            backgroundColor: available ? "#57AD85" : colors.hover,
           }}
         />
       )}
@@ -65,6 +67,8 @@ export function ComputerEntry({ compact = false }: { compact?: boolean } = {}) {
   );
 }
 export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const previewVisible = useInlinePreview();
   const { open } = useWorkspace();
@@ -75,7 +79,7 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
   }, [browser.previewUrl, browser.updatedAt]);
   return (
     <Card
-      style={{ padding: 13, backgroundColor: "#EEEEF0", gap: 12, maxWidth: 440, width: "100%" }}
+      style={{ padding: 13, backgroundColor: colors.subtle, gap: 12, maxWidth: 440, width: "100%" }}
     >
       <View style={[s.row, { gap: 10 }]}>
         <View style={[s.iconBox, { width: 36, height: 36, borderRadius: 9 }]}>
@@ -96,7 +100,12 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
         <Image
           accessibilityLabel={t("Browser preview: {title}", { title: browser.title })}
           source={{ uri: browser.previewUrl }}
-          style={{ width: "100%", aspectRatio: 1.6, borderRadius: 11, backgroundColor: "#FFF" }}
+          style={{
+            width: "100%",
+            aspectRatio: 1.6,
+            borderRadius: 11,
+            backgroundColor: colors.card,
+          }}
           resizeMode="contain"
           onError={() => setFailed(true)}
         />
@@ -105,7 +114,7 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
           style={{
             padding: 24,
             borderRadius: 12,
-            backgroundColor: "#FFF",
+            backgroundColor: colors.card,
             alignItems: "center",
             gap: 10,
           }}
@@ -134,6 +143,8 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
   );
 }
 export function ComputerSheet({ embedded = false }: { embedded?: boolean } = {}) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { workspace, api, refresh, close, open, navigate } = useWorkspace();
   const [url, setUrl] = useState("");
@@ -182,7 +193,9 @@ export function ComputerSheet({ embedded = false }: { embedded?: boolean } = {})
       contentStyle={{ padding: 0 }}
     >
       <View style={{ paddingHorizontal: 20, paddingTop: 14, paddingBottom: 10 }}>
-        <View style={[s.row, { gap: 3, padding: 4, borderRadius: 24, backgroundColor: "#EFEFF1" }]}>
+        <View
+          style={[s.row, { gap: 3, padding: 4, borderRadius: 24, backgroundColor: colors.subtle }]}
+        >
           {(["Desktop", "Browser", "Terminal", "Files"] as const).map((item) => {
             const Icon =
               item === "Desktop"
@@ -210,7 +223,7 @@ export function ComputerSheet({ embedded = false }: { embedded?: boolean } = {})
                   alignItems: "center",
                   justifyContent: "center",
                   borderRadius: 19,
-                  backgroundColor: tab === item ? "#FFFFFF" : "transparent",
+                  backgroundColor: tab === item ? colors.card : "transparent",
                 }}
               >
                 <Icon

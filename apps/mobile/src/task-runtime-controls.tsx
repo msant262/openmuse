@@ -6,10 +6,12 @@ import { type TaskBudget, taskBudgetSchema } from "../../../packages/domain/src/
 import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
 import { completionLabel, TimingSubmission } from "./task-runtime-state";
-import { Button, Card, colors, ErrorNotice, Field, s } from "./ui";
+import { Button, Card, ErrorNotice, Field, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function TaskCompletion({ task }: { task: AgentTask }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   if (!task.completion && !task.criteria?.length) return null;
   return (
@@ -49,6 +51,8 @@ export function TaskTimingControls({ task }: { task: AgentTask }) {
   return <TimingControls key={`${api.identityKey}:${task.id}`} task={task} />;
 }
 function TimingControls({ task }: { task: AgentTask }) {
+  const { s } = useUI();
+
   const { t, locale } = useI18n();
   const { api } = useWorkspace();
   const { mutate } = useAgentWorkspace();
@@ -228,6 +232,8 @@ export function TaskBudgetControls({ task }: { task: AgentTask }) {
   return <BudgetControls key={`${api.identityKey}:${task.id}`} task={task} />;
 }
 function BudgetControls({ task }: { task: AgentTask }) {
+  const { s } = useUI();
+
   const { t } = useI18n();
   const { api } = useWorkspace();
   const { mutate } = useAgentWorkspace();

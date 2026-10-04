@@ -7,7 +7,7 @@ import {
   normalizedRegion,
 } from "./annotation-geometry";
 import type { ConversationFileResource, ConversationFrame } from "./conversation-resources";
-import { Button, Card, colors, s } from "./ui";
+import { Button, Card, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export type AnnotationSource =
@@ -25,6 +25,18 @@ export function ConversationAnnotationComposer({
   onAdd: (annotation: Annotation) => void;
   onCancel: () => void;
 }) {
+  const { colors, s } = useUI();
+  const inputStyle = {
+    minHeight: 46,
+    maxHeight: 110,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 10,
+    padding: 10,
+    color: colors.text,
+    backgroundColor: colors.card,
+  } as const;
+
   const { api } = useWorkspace();
   const [quote, setQuote] = useState(source.kind === "message" ? source.quote.slice(0, 8000) : "");
   const [comment, setComment] = useState("");
@@ -158,6 +170,8 @@ function RegionSelector({
   uri: string;
   onRegion: (value: NormalizedRegion | undefined) => void;
 }) {
+  const { colors, s } = useUI();
+
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState(1);
@@ -205,7 +219,7 @@ function RegionSelector({
           width: "100%",
           maxWidth: 340,
           height: 250,
-          backgroundColor: "#161A1F",
+          backgroundColor: colors.code,
           overflow: "hidden",
           alignSelf: "center",
         }}
@@ -237,7 +251,7 @@ function RegionSelector({
                 top: (viewport.height - fitHeight) / 2 + region.y * fitHeight,
                 width: region.width * fitWidth,
                 height: region.height * fitHeight,
-                borderColor: "#FF2F66",
+                borderColor: colors.selectedBorder,
                 borderWidth: 2,
                 backgroundColor: "#FF2F6630",
               }}
@@ -280,14 +294,3 @@ function RegionSelector({
     </View>
   );
 }
-
-const inputStyle = {
-  minHeight: 46,
-  maxHeight: 110,
-  borderWidth: 1,
-  borderColor: colors.line,
-  borderRadius: 10,
-  padding: 10,
-  color: colors.text,
-  backgroundColor: "#FFF",
-} as const;

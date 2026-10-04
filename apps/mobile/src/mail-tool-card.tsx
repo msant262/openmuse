@@ -5,7 +5,7 @@ import { z } from "zod";
 import { BrowserRunContext } from "./browser-tool-card";
 import { useI18n } from "./i18n";
 import { ResultCardFrame } from "./result-card-frame";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 const messageSchema = z.object({
@@ -31,6 +31,8 @@ export function MailToolCard({
   loading: boolean;
   search?: boolean;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { open } = useWorkspace();
   const { active } = useContext(BrowserRunContext);
@@ -92,7 +94,7 @@ export function MailToolCard({
   return (
     <ResultCardFrame style={{ padding: 18, gap: 14 }}>
       <View style={[s.row, { gap: 10 }]}>
-        <View style={[s.iconBox, { backgroundColor: "#E9F5FC" }]}>
+        <View style={[s.iconBox, { backgroundColor: colors.subtle }]}>
           <Mail size={20} color={colors.blueDark} />
         </View>
         <View style={{ flex: 1 }}>

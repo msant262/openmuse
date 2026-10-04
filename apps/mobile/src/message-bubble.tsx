@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "./i18n";
-import { colors, s } from "./ui";
+import { useUI } from "./ui";
 
 async function copyMessage(text: string) {
   if (Platform.OS !== "web") {
@@ -49,6 +49,8 @@ export function MessageBubble({
   contextual: boolean;
   onQuote?: () => void;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -122,7 +124,7 @@ export function MessageBubble({
           borderRadius: 23,
           borderBottomRightRadius: user ? 18 : 23,
           borderBottomLeftRadius: user ? 23 : 18,
-          backgroundColor: user ? colors.blue : "#EDEDEF",
+          backgroundColor: user ? colors.blue : colors.subtle,
         }}
       >
         {children}
@@ -144,7 +146,7 @@ export function MessageBubble({
           justifyContent: "center",
           borderRadius: 18,
           opacity: hovered || focused || pressed ? 1 : contextual ? 0 : 0.45,
-          backgroundColor: pressed || focused ? "#EDEDEF" : "transparent",
+          backgroundColor: pressed || focused ? colors.subtle : "transparent",
         })}
       >
         <MoreHorizontal size={18} strokeWidth={1.7} color={colors.muted} />
@@ -174,7 +176,7 @@ export function MessageBubble({
                 borderRadius: 23,
                 borderBottomRightRadius: user ? 18 : 23,
                 borderBottomLeftRadius: user ? 23 : 18,
-                backgroundColor: user ? colors.blue : "#EDEDEF",
+                backgroundColor: user ? colors.blue : colors.subtle,
               }}
             >
               {children}
@@ -199,7 +201,7 @@ export function MessageBubble({
                 overflow: "hidden",
                 backgroundColor: colors.card,
                 paddingVertical: 6,
-                shadowColor: "#000",
+                shadowColor: colors.shadow,
                 shadowOffset: { width: 0, height: 8 },
                 shadowOpacity: 0.13,
                 shadowRadius: 28,
@@ -244,6 +246,8 @@ function MessageAction({
   onPress: () => void;
   last?: boolean;
 }) {
+  const { colors } = useUI();
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -254,7 +258,7 @@ function MessageAction({
         gap: 15,
         minHeight: 48,
         paddingHorizontal: 18,
-        backgroundColor: pressed ? "#F1F1F3" : "transparent",
+        backgroundColor: pressed ? colors.subtle : "transparent",
         borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth,
         borderBottomColor: colors.line,
       })}

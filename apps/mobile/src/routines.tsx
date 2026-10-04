@@ -4,11 +4,13 @@ import type { Routine } from "../../../packages/domain/src/agent";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
 import { cronDayTime, dayTimeCron } from "./routine-schedule";
-import { Button, Card, ErrorNotice, Field, s } from "./ui";
+import { Button, Card, ErrorNotice, Field, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export function RoutinesPanel() {
+  const { s } = useUI();
+
   const { t, locale } = useI18n();
   const { api, ask } = useWorkspace(),
     { mutate } = useAgentWorkspace();
@@ -114,6 +116,8 @@ function RoutineEditor({
   saved: () => void;
   cancel: () => void;
 }) {
+  const { s } = useUI();
+
   const { t } = useI18n();
   const { mutate } = useAgentWorkspace(),
     parsed = value ? cronDayTime(value.cron) : undefined;

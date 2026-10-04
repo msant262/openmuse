@@ -25,7 +25,7 @@ import { useCredentialPrompts } from "./credential-prompts";
 import { useI18n } from "./i18n";
 import { IntegrationSettings } from "./integration-settings";
 import { McpConnections } from "./mcp-connections";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type AccountsResponse = {
@@ -35,6 +35,8 @@ type AccountsResponse = {
 };
 
 function ServiceLogo({ item }: { item: Pick<ConnectionToolkit, "slug" | "name" | "logo"> }) {
+  const { colors } = useUI();
+
   const [failed, setFailed] = useState(false);
   return (
     <View
@@ -42,7 +44,7 @@ function ServiceLogo({ item }: { item: Pick<ConnectionToolkit, "slug" | "name" |
         width: 38,
         height: 38,
         borderRadius: 11,
-        backgroundColor: "#F2F2F4",
+        backgroundColor: colors.subtle,
         alignItems: "center",
         justifyContent: "center",
         overflow: "hidden",
@@ -73,6 +75,8 @@ export function ConnectionsCatalog({
     selectToolkit: (toolkit: ConnectionToolkit) => void,
   ) => ReactNode;
 }) {
+  const { colors, s } = useUI();
+
   const { api, notify } = useWorkspace();
   const { t } = useI18n();
   const prompts = useCredentialPrompts();
@@ -263,7 +267,7 @@ export function ConnectionsCatalog({
         {serviceAccounts.map((account) => (
           <View
             key={account.id}
-            style={{ padding: 15, backgroundColor: "#F3F3F4", borderRadius: 16, gap: 12 }}
+            style={{ padding: 15, backgroundColor: colors.subtle, borderRadius: 16, gap: 12 }}
           >
             <Text style={s.text}>{account.alias || account.serviceName}</Text>
             <Text style={s.small}>{t(connectionStatusLabel(account.status))}</Text>
@@ -355,7 +359,7 @@ export function ConnectionsCatalog({
           flexDirection: "row",
           padding: 4,
           borderRadius: 14,
-          backgroundColor: "#F0F0F2",
+          backgroundColor: colors.subtle,
           gap: 4,
         }}
       >
@@ -370,7 +374,7 @@ export function ConnectionsCatalog({
               paddingVertical: 10,
               alignItems: "center",
               borderRadius: 10,
-              backgroundColor: tab === value ? "#FFF" : "transparent",
+              backgroundColor: tab === value ? colors.card : "transparent",
             }}
           >
             <Text style={[s.text, { fontSize: 13, fontWeight: tab === value ? "600" : "400" }]}>
@@ -383,7 +387,7 @@ export function ConnectionsCatalog({
         <View
           style={[
             s.row,
-            { gap: 9, borderRadius: 24, paddingHorizontal: 14, backgroundColor: "#F0F0F2" },
+            { gap: 9, borderRadius: 24, paddingHorizontal: 14, backgroundColor: colors.subtle },
           ]}
         >
           <Search size={17} color={colors.muted} />
@@ -411,7 +415,10 @@ export function ConnectionsCatalog({
             key={request.id}
             accessibilityRole="button"
             onPress={() => prompts?.show(request)}
-            style={[s.row, { gap: 12, padding: 14, borderRadius: 16, backgroundColor: "#EDF3F8" }]}
+            style={[
+              s.row,
+              { gap: 12, padding: 14, borderRadius: 16, backgroundColor: colors.subtle },
+            ]}
           >
             <Link2 size={19} color={colors.blueDark} />
             <View style={{ flex: 1, gap: 3 }}>
@@ -489,7 +496,9 @@ export function ConnectionsCatalog({
                         (account) =>
                           account.toolkit === item.slug &&
                           connectionStatusLabel(account.status) === "Connected",
-                      ) && <Text style={[s.small, { color: "#438568" }]}>{t("Connected")}</Text>}
+                      ) && (
+                        <Text style={[s.small, { color: colors.success }]}>{t("Connected")}</Text>
+                      )}
                     </View>
                     <ChevronRight size={16} color={colors.muted} />
                   </Pressable>

@@ -30,7 +30,9 @@ import type { Artifact } from "../../../packages/domain/src";
 import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { FileContentPreview } from "./file-content-preview";
 import { useI18n } from "./i18n";
-import { Button, colors, Empty, ErrorNotice, IconButton, LinkRow, Sheet, s } from "./ui";
+import { useThemedStyles } from "./theme";
+import type { ThemeColors } from "./theme-palette";
+import { Button, Empty, ErrorNotice, IconButton, LinkRow, Sheet, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type Category = "all" | "documents" | "web" | "images" | "videos" | "audio";
@@ -109,6 +111,8 @@ export function LibraryFileIcon({ file, size = 44 }: { file: Artifact; size?: nu
 }
 
 function LibraryPreview({ file }: { file: Artifact }) {
+  const styles = useThemedStyles(createLibraryStyles);
+
   const { api } = useWorkspace();
   const { t } = useI18n();
   const { Icon, tint, ink, category } = fileAppearance(file);
@@ -166,6 +170,9 @@ export function MuseLibrary({
   uploadError: string;
   onUpload: () => void;
 }) {
+  const { colors, s } = useUI();
+  const styles = useThemedStyles(createLibraryStyles);
+
   const { api, open } = useWorkspace();
   const { t } = useI18n();
   const { width } = useWindowDimensions();
@@ -418,111 +425,112 @@ export function MuseLibrary({
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, minHeight: 0, flexDirection: "row", backgroundColor: colors.canvas },
-  mobileRoot: { paddingTop: 104 },
-  sidebar: {
-    width: 228,
-    paddingHorizontal: 12,
-    paddingTop: 17,
-    borderRightWidth: 1,
-    borderRightColor: colors.line,
-  },
-  search: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: 35,
-    borderRadius: 22,
-    backgroundColor: "#F0F0F1",
-    paddingHorizontal: 12,
-    gap: 8,
-    marginBottom: 14,
-  },
-  searchInput: { flex: 1, minWidth: 0, paddingVertical: 6, color: colors.text, fontSize: 13 },
-  categoryHeading: {
-    color: colors.muted,
-    fontSize: 12,
-    paddingHorizontal: 12,
-    marginTop: 12,
-    marginBottom: 7,
-  },
-  category: {
-    flexDirection: "row",
-    alignItems: "center",
-    minHeight: 37,
-    gap: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    marginVertical: 2,
-  },
-  selectedCategory: { backgroundColor: "#ECECEE" },
-  categoryLabel: { color: colors.muted, fontSize: 13 },
-  toolbar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 16,
-    paddingTop: 42,
-    paddingBottom: 23,
-    paddingHorizontal: 48,
-  },
-  title: { color: colors.text, fontSize: 28, fontWeight: "600", letterSpacing: -0.65 },
-  mobileToolbar: { paddingHorizontal: 18, paddingBottom: 8 },
-  segments: {
-    flexDirection: "row",
-    padding: 4,
-    height: 43,
-    borderWidth: 1,
-    borderColor: "#E9E9EB",
-    borderRadius: 25,
-    backgroundColor: "#FFFFFF",
-  },
-  segment: { flex: 1, justifyContent: "center", alignItems: "center", borderRadius: 21 },
-  selectedSegment: { backgroundColor: "#F1F1F2" },
-  content: { paddingHorizontal: 48, paddingBottom: 36 },
-  mobileContent: { paddingHorizontal: 18, paddingBottom: 24 },
-  recent: { color: colors.text, fontSize: 15, marginBottom: 20 },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 20 },
-  card: {
-    width: 252,
-    borderRadius: 22,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#ECECEE",
-    backgroundColor: "#FFF",
-  },
-  preview: {
-    width: "100%",
-    height: 182,
-    overflow: "hidden",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  cardInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 15,
-    paddingHorizontal: 13,
-    gap: 10,
-  },
-  cardName: { fontSize: 13, color: colors.text, fontWeight: "500" },
-  fileName: { fontSize: 16, color: colors.text, letterSpacing: -0.2 },
-  fileMeta: { fontSize: 12, lineHeight: 17, color: colors.muted },
-  listItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    minHeight: 72,
-    paddingVertical: 12,
-  },
-  rowMore: { width: 30, height: 40, alignItems: "center", justifyContent: "center" },
-  cardMore: {
-    position: "absolute",
-    bottom: 18,
-    right: 5,
-    width: 30,
-    height: 30,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});
+const createLibraryStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    root: { flex: 1, minHeight: 0, flexDirection: "row", backgroundColor: colors.canvas },
+    mobileRoot: { paddingTop: 104 },
+    sidebar: {
+      width: 228,
+      paddingHorizontal: 12,
+      paddingTop: 17,
+      borderRightWidth: 1,
+      borderRightColor: colors.line,
+    },
+    search: {
+      flexDirection: "row",
+      alignItems: "center",
+      height: 35,
+      borderRadius: 22,
+      backgroundColor: colors.subtle,
+      paddingHorizontal: 12,
+      gap: 8,
+      marginBottom: 14,
+    },
+    searchInput: { flex: 1, minWidth: 0, paddingVertical: 6, color: colors.text, fontSize: 13 },
+    categoryHeading: {
+      color: colors.muted,
+      fontSize: 12,
+      paddingHorizontal: 12,
+      marginTop: 12,
+      marginBottom: 7,
+    },
+    category: {
+      flexDirection: "row",
+      alignItems: "center",
+      minHeight: 37,
+      gap: 10,
+      paddingHorizontal: 12,
+      borderRadius: 10,
+      marginVertical: 2,
+    },
+    selectedCategory: { backgroundColor: colors.subtle },
+    categoryLabel: { color: colors.muted, fontSize: 13 },
+    toolbar: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 16,
+      paddingTop: 42,
+      paddingBottom: 23,
+      paddingHorizontal: 48,
+    },
+    title: { color: colors.text, fontSize: 28, fontWeight: "600", letterSpacing: -0.65 },
+    mobileToolbar: { paddingHorizontal: 18, paddingBottom: 8 },
+    segments: {
+      flexDirection: "row",
+      padding: 4,
+      height: 43,
+      borderWidth: 1,
+      borderColor: colors.line,
+      borderRadius: 25,
+      backgroundColor: colors.card,
+    },
+    segment: { flex: 1, justifyContent: "center", alignItems: "center", borderRadius: 21 },
+    selectedSegment: { backgroundColor: colors.subtle },
+    content: { paddingHorizontal: 48, paddingBottom: 36 },
+    mobileContent: { paddingHorizontal: 18, paddingBottom: 24 },
+    recent: { color: colors.text, fontSize: 15, marginBottom: 20 },
+    grid: { flexDirection: "row", flexWrap: "wrap", gap: 20 },
+    card: {
+      width: 252,
+      borderRadius: 22,
+      overflow: "hidden",
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.card,
+    },
+    preview: {
+      width: "100%",
+      height: 182,
+      overflow: "hidden",
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    cardInfo: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: 15,
+      paddingHorizontal: 13,
+      gap: 10,
+    },
+    cardName: { fontSize: 13, color: colors.text, fontWeight: "500" },
+    fileName: { fontSize: 16, color: colors.text, letterSpacing: -0.2 },
+    fileMeta: { fontSize: 12, lineHeight: 17, color: colors.muted },
+    listItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      minHeight: 72,
+      paddingVertical: 12,
+    },
+    rowMore: { width: 30, height: 40, alignItems: "center", justifyContent: "center" },
+    cardMore: {
+      position: "absolute",
+      bottom: 18,
+      right: 5,
+      width: 30,
+      height: 30,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+  });

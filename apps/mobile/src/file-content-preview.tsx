@@ -3,7 +3,7 @@ import { ActivityIndicator, Platform, Text, View } from "react-native";
 import type { Artifact } from "../../../packages/domain/src";
 import { AssistantResponse } from "./assistant-response";
 import { useI18n } from "./i18n";
-import { colors, ErrorNotice, s } from "./ui";
+import { ErrorNotice, useUI } from "./ui";
 
 function fileKind(file: Artifact) {
   if (file.mimeType === "text/html" || /\.html?$/i.test(file.name)) return "html";
@@ -31,6 +31,8 @@ export function FileContentPreview({
   height: number;
   passive?: boolean;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const [text, setText] = useState<string>();
   const [error, setError] = useState("");
@@ -114,7 +116,7 @@ export function FileContentPreview({
         width: "100%",
         maxWidth: 840,
         alignSelf: "center",
-        backgroundColor: "#FFFFFF",
+        backgroundColor: colors.card,
         padding: 36,
         minHeight: height,
       }}

@@ -1,4 +1,7 @@
 export const avatarCharacterPtBR: Record<string, string> = {
+  "Previous generations": "Gerações anteriores",
+  "Resume generation: {prompt}": "Retomar geração: {prompt}",
+  "View saved generation": "Ver geração salva",
   "Use default companion": "Usar companheiro padrão",
   "Your companion": "Seu companheiro",
   "Companion preview unavailable": "Prévia do companheiro indisponível",

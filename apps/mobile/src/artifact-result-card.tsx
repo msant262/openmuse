@@ -6,10 +6,12 @@ import { artifactPresentation, presentationRecord, type ResultItem } from "./art
 import { AssistantResponse } from "./assistant-response";
 import { useI18n } from "./i18n";
 import { ResultCardFooter, ResultCardFrame } from "./result-card-frame";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 
 /** The complete saved value remains accessible without a JSON dump in the conversation. */
 function ResultDetails({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const entries = Array.isArray(value)
@@ -52,6 +54,8 @@ function ResultDetails({ value, depth = 0 }: { value: unknown; depth?: number })
 }
 
 function Option({ item }: { item: ResultItem }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const [error, setError] = useState("");
   return (
@@ -99,6 +103,8 @@ function Option({ item }: { item: ResultItem }) {
 }
 
 export function ArtifactResultCard({ artifact }: { artifact: AgentArtifact }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [details, setDetails] = useState(false);
@@ -119,7 +125,11 @@ export function ArtifactResultCard({ artifact }: { artifact: AgentArtifact }) {
   const Icon =
     artifact.kind === "plan" ? ListChecks : artifact.kind === "comparison" ? Columns3 : FileText;
   const tint =
-    artifact.kind === "plan" ? "#F1F5EE" : artifact.kind === "comparison" ? "#EEF3F8" : "#F8F5EF";
+    artifact.kind === "plan"
+      ? colors.green
+      : artifact.kind === "comparison"
+        ? colors.sky
+        : colors.orange;
   const excerpt = presentation.previewExcerpt;
   return (
     <ResultCardFrame>

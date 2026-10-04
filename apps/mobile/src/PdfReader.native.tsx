@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { Text, View } from "react-native";
 import Pdf from "react-native-pdf";
 import { useI18n } from "./i18n";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 export interface PdfReaderProps {
   url: string;
   token: string;
@@ -11,6 +11,8 @@ export interface PdfReaderProps {
   height?: number;
 }
 export default function PdfReader({ url, token, pageCount, height = 530 }: PdfReaderProps) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const ref = useRef<React.ComponentRef<typeof Pdf>>(null);
   const [page, setPage] = useState(1);

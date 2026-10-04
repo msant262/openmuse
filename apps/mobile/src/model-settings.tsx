@@ -2,7 +2,7 @@ import { Check, Cpu } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useI18n } from "./i18n";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type Preferences = {
@@ -12,6 +12,8 @@ type Preferences = {
   fallbacks: string[];
 };
 export function ModelSettings() {
+  const { colors, s } = useUI();
+
   const { api } = useWorkspace();
   const { t } = useI18n();
   const [data, setData] = useState<Preferences>();
@@ -74,7 +76,7 @@ export function ModelSettings() {
           <View
             accessibilityRole="radiogroup"
             accessibilityLabel={t("Conversation model")}
-            style={{ backgroundColor: "#F3F3F4", borderRadius: 18, overflow: "hidden" }}
+            style={{ backgroundColor: colors.subtle, borderRadius: 18, overflow: "hidden" }}
           >
             {[
               {
@@ -122,13 +124,13 @@ export function ModelSettings() {
                     height: 21,
                     borderRadius: 11,
                     borderWidth: selected === model.id ? 0 : 1,
-                    borderColor: "#BBBCC0",
+                    borderColor: colors.line,
                     backgroundColor: selected === model.id ? colors.blueDark : "transparent",
                     alignItems: "center",
                     justifyContent: "center",
                   }}
                 >
-                  {selected === model.id && <Check size={14} color="#FFFFFF" />}
+                  {selected === model.id && <Check size={14} color={colors.onFeature} />}
                 </View>
               </Pressable>
             ))}

@@ -11,7 +11,7 @@ import { DEFAULT_AGENT_PROFILE } from "../../../packages/domain/src/brand";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
 import { useMuseThread } from "./threads";
-import { Button, Card, CheckRow, ErrorNotice, Field, s } from "./ui";
+import { Button, Card, CheckRow, ErrorNotice, Field, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type Target = {
@@ -25,7 +25,9 @@ type HistoryEntry = RevisionEntry<{ fields: AgentProfilePatch; origin?: { kind: 
 type HistoryPage = { entries: HistoryEntry[]; nextCursor?: string };
 type ScopedHistory = HistoryPage & { target: Target; profile: EffectiveAgentProfile };
 
-export function ProfileSettings() {
+export function ProfileSettings({ document = false }: { document?: boolean } = {}) {
+  const { s } = useUI();
+
   const { t, locale } = useI18n();
   const { api } = useWorkspace();
   const { selection, enabled } = useMuseThread();
@@ -238,8 +240,10 @@ export function ProfileSettings() {
   }
   return (
     <Card style={{ gap: 12 }}>
-      <Text style={s.heading}>{t("How we talk")}</Text>
-      <Text style={s.muted}>{t("A name and a personality that feel right for you.")}</Text>
+      {!document && <Text style={s.heading}>{t("How we talk")}</Text>}
+      {!document && (
+        <Text style={s.muted}>{t("A name and a personality that feel right for you.")}</Text>
+      )}
       {enabled && advanced && (
         <View style={[s.row, { gap: 8 }]}>
           {(["global", "conversation"] as const).map((item) => (
@@ -263,16 +267,19 @@ export function ProfileSettings() {
       )}
       <Field
         label={t("Assistant name")}
+        editable={!!profile && !busy}
         value={fields.assistantName}
         onChangeText={(value) => edit("assistantName", value)}
       />
       <Field
         label={t("What should I call you?")}
+        editable={!!profile && !busy}
         value={fields.preferredUserName}
         onChangeText={(value) => edit("preferredUserName", value)}
       />
       <Field
         label={t("Personality and preferences")}
+        editable={!!profile && !busy}
         value={fields.personality}
         onChangeText={(value) => edit("personality", value)}
         placeholder={t(
@@ -280,6 +287,7 @@ export function ProfileSettings() {
         )}
         maxLength={1500}
         multiline
+        style={document ? { minHeight: 300, lineHeight: 25, fontSize: 16 } : undefined}
       />
       <Pressable
         accessibilityRole="button"
@@ -314,6 +322,7 @@ export function ProfileSettings() {
           </View>
           <Field
             label={t("Reply language")}
+            editable={!!profile && !busy}
             value={fields.language}
             onChangeText={(value) => edit("language", value)}
             placeholder={t("en-US or pt-BR")}
@@ -393,7 +402,7 @@ export function ProfileSettings() {
       {savedTarget === currentTarget && !Object.keys(patch).length && (
         <Text style={s.small}>{t("Conversation preferences saved")}</Text>
       )}
-      {advanced && (
+      {(advanced || document) && (
         <>
           <Button disabled={busy || !profile} onPress={() => void save(true)}>
             {scope === "global"

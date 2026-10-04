@@ -3,7 +3,7 @@ import { Text, View } from "react-native";
 import type { Artifact, BrowserSession } from "../../../packages/domain/src";
 import { useI18n } from "./i18n";
 import { FileThreadCard } from "./thread-artifacts";
-import { Button, Card, ErrorNotice, s } from "./ui";
+import { Button, Card, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export type ConversationFileResource = {
@@ -44,6 +44,8 @@ export function ConversationResourceLibrary({
   onAnnotateFile: (resource: ConversationFileResource) => void;
   onAnnotateFrame: (frame: ConversationFrame) => void;
 }) {
+  const { s } = useUI();
+
   const { t } = useI18n();
   const { api } = useWorkspace();
   const [library, setLibrary] = useState<Library>();

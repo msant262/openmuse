@@ -30,7 +30,6 @@ import {
 } from "lucide-react-native";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   Linking,
   Modal,
   Platform,
@@ -42,19 +41,21 @@ import {
   View,
 } from "react-native";
 import type { Section } from "../../../packages/domain/src";
+import { AgentIdentityPanel } from "./agent-identity-panel";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useAvatarPresentation } from "./avatar-presentation";
 import { CompanionHeading } from "./companion-heading";
 import { cachedConversationTitle, isEmptyConversationCache } from "./conversation-label";
-import { desktopStyles as d } from "./desktop-shell-styles";
+import { desktopStyles as createDesktopStyles } from "./desktop-shell-styles";
 import { useI18n } from "./i18n";
 import { MemorySettings } from "./memory-settings";
 import { messageStorage } from "./message-storage";
 import { isProductTask, productNotifications, taskPreview } from "./muse-surfaces-model";
 import { ProfileSettings } from "./profile-settings";
+import { useThemedStyles } from "./theme";
 import { ThreadActions } from "./thread-actions";
 import { type Selection, useMuseThread } from "./threads";
-import { Button, Card, CheckRow, colors, ErrorNotice, HeaderFade, Mascot, s } from "./ui";
+import { Button, Card, CheckRow, ErrorNotice, HeaderFade, Mascot, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 // Kept together so the workspace language catalog can translate the desktop shell.
@@ -114,6 +115,9 @@ function SidebarItem({
   active?: boolean;
   onPress: () => void;
 }) {
+  const { colors } = useUI();
+  const d = useThemedStyles(createDesktopStyles);
+
   const [hovered, setHovered] = useState(false);
   return (
     <Pressable
@@ -126,12 +130,12 @@ function SidebarItem({
       onHoverOut={() => setHovered(false)}
       style={({ pressed }) => [
         d.railItem,
-        hovered && { backgroundColor: "#F0F0F1" },
+        hovered && { backgroundColor: colors.subtle },
         active && d.activeItem,
         pressed && { opacity: 0.7 },
       ]}
     >
-      <Icon size={22} strokeWidth={1.7} color={active ? colors.text : "#737477"} />
+      <Icon size={22} strokeWidth={1.7} color={active ? colors.text : colors.muted} />
     </Pressable>
   );
 }
@@ -169,6 +173,9 @@ export function DesktopShell({
   onThreads: () => void;
   pending: number;
 }) {
+  const { colors, s } = useUI();
+  const d = useThemedStyles(createDesktopStyles);
+
   const { t, locale } = useI18n();
   const { width } = useWindowDimensions();
   const [sideChatsOpen, setSideChatsOpen] = useState(true);
@@ -340,6 +347,34 @@ export function DesktopShell({
           </View>
           {sideChatsVisible && (
             <View testID="desktop-side-chats" style={d.sidebar}>
+              <View style={{ paddingHorizontal: 18, gap: 16, paddingBottom: 18 }}>
+                <Text style={[s.heading, { fontSize: 21 }]}>{t("Conversations")}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("New conversation")}
+                  disabled={enabled && loading}
+                  onPress={() => {
+                    setArchivedChats(false);
+                    newSideChat();
+                  }}
+                  style={({ pressed }) => ({
+                    flexDirection: "row",
+                    gap: 10,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minHeight: 46,
+                    paddingHorizontal: 14,
+                    backgroundColor: colors.accent,
+                    borderRadius: 13,
+                    opacity: pressed || (enabled && loading) ? 0.7 : 1,
+                  })}
+                >
+                  <Plus size={19} color={colors.onAccent} />
+                  <Text style={{ color: colors.onAccent, fontSize: 14, fontWeight: "600" }}>
+                    {t("New conversation")}
+                  </Text>
+                </Pressable>
+              </View>
               <View style={d.sideChatToolbar}>
                 <View style={d.search}>
                   <Search size={15} color={colors.muted} />
@@ -367,17 +402,35 @@ export function DesktopShell({
                 <View
                   style={[
                     d.conversationItem,
-                    selection.id === mainId && d.activeItem,
+                    selection.id === mainId && d.selectedConversation,
                     { paddingRight: 3 },
                   ]}
                 >
                   <Pressable
                     accessibilityRole="button"
+                    accessibilityLabel={t("Main chat")}
+                    accessibilityState={{ selected: selection.id === mainId }}
                     onPress={() => openThread({ id: mainId, existing: true })}
                     style={[s.row, { gap: 9, flex: 1 }]}
                   >
-                    <MessageCircle size={16} color={colors.muted} />
-                    <Text style={[d.conversationLabel, { flex: 1 }]}>{t("Main chat")}</Text>
+                    <MessageCircle
+                      size={19}
+                      color={selection.id === mainId ? colors.selectedText : colors.muted}
+                    />
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <Text
+                        style={[
+                          d.conversationLabel,
+                          {
+                            fontWeight: "600",
+                            color: selection.id === mainId ? colors.selectedText : colors.text,
+                          },
+                        ]}
+                      >
+                        {t("Main chat")}
+                      </Text>
+                      <Text style={s.small}>{t("Your everyday conversation")}</Text>
+                    </View>
                   </Pressable>
                   <ThreadActions
                     id={mainId}
@@ -406,7 +459,7 @@ export function DesktopShell({
                   showsVerticalScrollIndicator={false}
                 >
                   <Text style={[d.sectionLabel, { marginHorizontal: 10, marginBottom: 8 }]}>
-                    {t(archivedChats ? "Archived" : "Side chats")}
+                    {t(archivedChats ? "Archived" : "Other conversations")}
                   </Text>
                   {conversationList
                     .filter((thread) => thread.name.toLowerCase().includes(search.toLowerCase()))
@@ -415,7 +468,7 @@ export function DesktopShell({
                         key={thread.id}
                         style={[
                           d.conversationItem,
-                          selection.id === thread.id && d.activeItem,
+                          selection.id === thread.id && d.selectedConversation,
                           { paddingRight: 2 },
                         ]}
                       >
@@ -430,7 +483,16 @@ export function DesktopShell({
                         >
                           <MessageCircle size={16} strokeWidth={1.7} color={colors.muted} />
                           <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                            <Text numberOfLines={1} style={d.conversationLabel}>
+                            <Text
+                              numberOfLines={1}
+                              style={[
+                                d.conversationLabel,
+                                selection.id === thread.id && {
+                                  fontWeight: "600",
+                                  color: colors.selectedText,
+                                },
+                              ]}
+                            >
                               {thread.name}
                             </Text>
                             <Text style={d.conversationDate}>{thread.detail}</Text>
@@ -447,15 +509,15 @@ export function DesktopShell({
                 </ScrollView>
               ) : (
                 <View style={d.sideChatEmpty}>
-                  <MessageCircle size={27} strokeWidth={1.5} color="#929297" />
+                  <MessageCircle size={27} strokeWidth={1.5} color={colors.muted} />
                   <Text style={d.sideChatEmptyTitle}>
-                    {archivedChats ? t("No archived conversations.") : t("Start a side chat")}
+                    {archivedChats ? t("No archived conversations.") : t("Other conversations")}
                   </Text>
                   <Text style={d.sideChatEmptyCopy}>
                     {t(
                       archivedChats
                         ? "Archived conversations stay saved and can be restored here."
-                        : "Side chats are an optional way to organize your conversations by topic.",
+                        : "Start a new conversation for a separate topic. Your main conversation stays here.",
                     )}
                   </Text>
                   <Button
@@ -470,22 +532,6 @@ export function DesktopShell({
                   </Button>
                 </View>
               )}
-              {!!conversationList.length && (
-                <View style={{ padding: 16 }}>
-                  <Button
-                    small
-                    icon={Plus}
-                    disabled={enabled && loading}
-                    onPress={() => {
-                      setArchivedChats(false);
-                      newSideChat();
-                    }}
-                  >
-                    {t("New side chat")}
-                  </Button>
-                </View>
-              )}
-              {loading && <ActivityIndicator color={colors.muted} style={{ marginBottom: 20 }} />}
             </View>
           )}
         </>
@@ -645,11 +691,11 @@ export function DesktopShell({
                 bottom: 18,
                 width: 264,
                 padding: 7,
-                backgroundColor: "#FFFFFF",
+                backgroundColor: colors.card,
                 borderRadius: 22,
                 borderWidth: 1,
                 borderColor: colors.line,
-                shadowColor: "#000",
+                shadowColor: colors.shadow,
                 shadowOffset: { width: 0, height: 8 },
                 shadowOpacity: 0.13,
                 shadowRadius: 26,
@@ -686,7 +732,7 @@ export function DesktopShell({
                       minHeight: 46,
                       gap: 13,
                       borderRadius: 15,
-                      backgroundColor: pressed ? "#F0F0F1" : "transparent",
+                      backgroundColor: pressed ? colors.subtle : "transparent",
                       ...(index === 3
                         ? { borderTopWidth: 1, borderTopColor: colors.line, marginTop: 5 }
                         : {}),
@@ -720,15 +766,18 @@ export function AgentInspector({
   compact?: boolean;
   width?: number;
 }) {
+  const { colors } = useUI();
+  const d = useThemedStyles(createDesktopStyles);
+
   const { t, locale } = useI18n();
   const { data } = useAgentWorkspace();
   const { workspace, open } = useWorkspace();
   const [tab, setTab] = useState("activity");
   const tabs = [
-    { id: "activity", label: t("Activity"), icon: List },
-    { id: "approvals", label: t("Approvals"), icon: ShieldCheck },
-    { id: "upcoming", label: t("Upcoming"), icon: Clock3 },
-    { id: "identity", label: t("Personality"), icon: Fingerprint },
+    { id: "activity", label: t("Activity"), caption: t("Activity"), icon: List },
+    { id: "approvals", label: t("Approvals"), caption: t("Reviews"), icon: ShieldCheck },
+    { id: "upcoming", label: t("Upcoming"), caption: t("Schedule"), icon: Clock3 },
+    { id: "identity", label: t("Personality & memory"), caption: t("Agent"), icon: Fingerprint },
   ];
   const tasks = [...(data?.tasks ?? [])]
     .filter(isProductTask)
@@ -820,7 +869,7 @@ export function AgentInspector({
               width: 6,
               height: 6,
               borderRadius: 3,
-              backgroundColor: connected ? "#59A478" : "#A0A0A4",
+              backgroundColor: connected ? "#59A478" : colors.hover,
             }}
           />
           <Text
@@ -841,16 +890,25 @@ export function AgentInspector({
         accessibilityRole="tablist"
         style={[d.inspectorTabs, compact && { marginHorizontal: 16, padding: 4 }]}
       >
-        {tabs.map(({ id, label, icon: Icon }) => (
+        {tabs.map(({ id, label, caption, icon: Icon }) => (
           <Pressable
             key={id}
             accessibilityRole="tab"
             accessibilityLabel={label}
             accessibilityState={{ selected: tab === id }}
             onPress={() => setTab(id)}
-            style={[d.inspectorTab, compact && { height: 41 }, tab === id && d.inspectorTabActive]}
+            style={[d.inspectorTab, { height: 52, gap: 5 }, tab === id && d.inspectorTabActive]}
           >
             <Icon size={17} strokeWidth={1.6} color={tab === id ? colors.text : colors.muted} />
+            <Text
+              style={{
+                color: tab === id ? colors.text : colors.muted,
+                fontSize: 10,
+                fontWeight: tab === id ? "600" : "400",
+              }}
+            >
+              {caption}
+            </Text>
           </Pressable>
         ))}
       </View>
@@ -859,24 +917,11 @@ export function AgentInspector({
         contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 20, paddingBottom: 20, gap: 3 }}
       >
         {tab === "identity" ? (
-          <View style={{ gap: 16, paddingHorizontal: 4 }}>
-            <Text style={[d.inspectorSection, compact && { fontSize: 18 }]}>
-              {t("Name and personality")}
-            </Text>
-            <Text style={s.muted}>
-              {data?.identity.profile?.fields.personality || t(desktopCopy.customizeCaption)}
-            </Text>
-            <Button small icon={Pencil} onPress={onSettings}>
-              {t(desktopCopy.customize)}
-            </Button>
-            <Text style={[d.inspectorSection, compact && { fontSize: 18 }]}>
-              {t("Preferences")}
-            </Text>
-            <Text style={s.muted}>{t(desktopCopy.settingsSubtitle)}</Text>
-            <Button small icon={Settings2} onPress={onSettings}>
-              {t("Settings")}
-            </Button>
-          </View>
+          <AgentIdentityPanel
+            name={name}
+            onCustomize={onSettings}
+            onOpen={(type) => showDetail({ type })}
+          />
         ) : tab === "approvals" ? (
           <>
             <Text style={[d.inspectorSection, compact && { fontSize: 18 }]}>{t("Approvals")}</Text>
@@ -979,6 +1024,8 @@ export function AgentInspector({
 
 /** Shared by sign-in and Settings so the saved interface language stays consistent. */
 export function AppLanguagePicker({ compact = false }: { compact?: boolean } = {}) {
+  const { s } = useUI();
+
   const { width } = useWindowDimensions();
   const { locale, setLocale, t } = useI18n();
   const [languageBusy, setLanguageBusy] = useState(false);
@@ -1076,6 +1123,9 @@ function useIdentityPreferences() {
 }
 
 export function AssistantAppearance() {
+  const { colors, s } = useUI();
+  const d = useThemedStyles(createDesktopStyles);
+
   const { t } = useI18n();
   const { data, busy, error, save } = useIdentityPreferences();
   const [avatar, setAvatar] = useState(data?.identity.avatar || "sky");
@@ -1106,8 +1156,8 @@ export function AssistantAppearance() {
               style={[
                 d.avatarOption,
                 {
-                  backgroundColor: avatar === item.id ? colors.sky : "#F7F8FA",
-                  borderColor: avatar === item.id ? "#A6C9E8" : "transparent",
+                  backgroundColor: avatar === item.id ? colors.sky : colors.raised,
+                  borderColor: avatar === item.id ? colors.selectedBorder : "transparent",
                 },
               ]}
             >
@@ -1129,6 +1179,8 @@ export function AssistantAppearance() {
 }
 
 export function AssistantChatPreferences() {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { data, busy, error, save } = useIdentityPreferences();
   const [updates, setUpdates] = useState(data?.identity.showChatUpdates !== false);
@@ -1138,7 +1190,7 @@ export function AssistantChatPreferences() {
   );
   return (
     <View>
-      <Card style={{ gap: 14, padding: 16, backgroundColor: "#F0F0F1", borderRadius: 18 }}>
+      <Card style={{ gap: 14, padding: 16, backgroundColor: colors.subtle, borderRadius: 18 }}>
         <Text style={s.heading}>{t(desktopCopy.chatPreferences)}</Text>
         <CheckRow
           label={t(desktopCopy.backgroundUpdates)}

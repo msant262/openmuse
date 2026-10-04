@@ -1,5 +1,6 @@
 import { CopilotKitProvider } from "@copilotkit/react-native/headless";
 import { StatusBar } from "expo-status-bar";
+import * as SystemUI from "expo-system-ui";
 import {
   Check,
   Lightbulb,
@@ -36,7 +37,7 @@ import { CompanionHeading } from "./src/companion-heading";
 import { ComputerDraftProvider } from "./src/computer-drafts";
 import { CredentialPromptsProvider } from "./src/credential-prompts";
 import { AgentInspector, AppLanguagePicker, DesktopShell, desktopCopy } from "./src/desktop-shell";
-import { desktopStyles as d } from "./src/desktop-shell-styles";
+import { desktopStyles as createDesktopStyles } from "./src/desktop-shell-styles";
 import { Details } from "./src/details";
 import { useI18n } from "./src/i18n";
 import { WorkspaceSearch } from "./src/muse-search";
@@ -44,18 +45,9 @@ import { CompanionDialog, SettingsDialog } from "./src/muse-settings";
 import { isProductTask, productNotifications } from "./src/muse-surfaces-model";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ShareReceiver } from "./src/share-receiver";
+import { useTheme, useThemedStyles } from "./src/theme";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
-import {
-  Button,
-  Card,
-  colors,
-  ErrorNotice,
-  Field,
-  HeaderFade,
-  IconButton,
-  Mascot,
-  s,
-} from "./src/ui";
+import { Button, Card, ErrorNotice, Field, HeaderFade, IconButton, Mascot, useUI } from "./src/ui";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
@@ -83,6 +75,19 @@ const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   files: { title: "Library", subtitle: "Documents, forms and filled copies." },
 };
 export default function App() {
+  const { scheme, colors: themeColors } = useTheme();
+  useEffect(() => {
+    if (Platform.OS !== "web") {
+      void SystemUI.setBackgroundColorAsync(themeColors.canvas);
+      return;
+    }
+    if (typeof document === "undefined") return;
+    document.documentElement.style.colorScheme = scheme;
+    document.documentElement.style.backgroundColor = themeColors.canvas;
+    document.body.style.backgroundColor = themeColors.canvas;
+  }, [scheme, themeColors]);
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const [session, setSession] = useState(authManager.snapshot);
   const [accessKey, setAccessKey] = useState("");
@@ -140,7 +145,7 @@ export default function App() {
   }, [restore]);
   return (
     <SafeAreaProvider>
-      <StatusBar style="dark" />
+      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
       {session.token ? (
         <CopilotKitProvider
           runtimeUrl={`${API_URL}/api/copilotkit`}
@@ -229,6 +234,8 @@ export default function App() {
   );
 }
 function WorkspaceApp({ auth, sessionError }: { auth: AuthManager; sessionError: string }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const api = useMemo(() => new MuseApi(auth), [auth]);
   const [workspace, setWorkspace] = useState<Workspace>();
@@ -346,6 +353,9 @@ function WorkspaceShell({
   error: string;
   prompt?: { id: number; text: string };
 }) {
+  const { colors, s } = useUI();
+  const d = useThemedStyles(createDesktopStyles);
+
   const { t } = useI18n();
   const { api, workspace, section, navigate, close } = useWorkspace();
   const { data } = useAgentWorkspace();
@@ -378,8 +388,15 @@ function WorkspaceShell({
   const { width } = useWindowDimensions();
   const desktop = Platform.OS === "web" && width >= 1024;
   const workspaceDetail =
-    desktop && detail && ["file", "computer", "browser"].includes(detail.type) ? detail : undefined;
-  const workspaceKind = workspaceDetail?.type === "file" ? "document" : "computer";
+    desktop &&
+    detail &&
+    ["file", "computer", "browser", "agent-soul", "agent-memory"].includes(detail.type)
+      ? detail
+      : undefined;
+  const workspaceKind =
+    workspaceDetail && ["file", "agent-soul", "agent-memory"].includes(workspaceDetail.type)
+      ? "document"
+      : "computer";
   useEffect(() => {
     if (workspaceDetail && workspaceKind === "computer") navigate("chat");
   }, [workspaceDetail?.type, workspaceKind, navigate]);
@@ -552,15 +569,15 @@ function WorkspaceShell({
           width: "100%",
           maxWidth: 370,
           padding: 4,
-          backgroundColor: "#FFF",
+          backgroundColor: colors.card,
           borderRadius: 40,
-          shadowColor: "#132631",
+          shadowColor: colors.shadow,
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.07,
           shadowRadius: 18,
           elevation: 3,
           borderWidth: 1,
-          borderColor: "#F8F8F8",
+          borderColor: colors.line,
         }}
       >
         {nav.map((item) => {
@@ -578,7 +595,7 @@ function WorkspaceShell({
                 height: 48,
                 alignItems: "center",
                 justifyContent: "center",
-                backgroundColor: active ? "#EDEDEF" : "transparent",
+                backgroundColor: active ? colors.subtle : "transparent",
                 borderRadius: 28,
               }}
             >
@@ -681,13 +698,13 @@ function WorkspaceShell({
               ]}
             >
               <Check size={16} color={colors.blue} />
-              <Text style={{ color: "#FFF", fontSize: 13, flexShrink: 1 }}>{toast}</Text>
+              <Text style={{ color: colors.onFeature, fontSize: 13, flexShrink: 1 }}>{toast}</Text>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={t("Dismiss notification")}
                 onPress={clearToast}
               >
-                <X size={16} color="#FFF" />
+                <X size={16} color={colors.onFeature} />
               </Pressable>
             </View>
           </View>

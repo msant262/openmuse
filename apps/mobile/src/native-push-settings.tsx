@@ -2,9 +2,11 @@ import { useState } from "react";
 import { Text, View } from "react-native";
 import { useI18n } from "./i18n";
 import { enableNativePush } from "./native-push";
-import { Button, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 export function NativePushSettings() {
+  const { s } = useUI();
+
   const { t } = useI18n();
   const { api } = useWorkspace();
   const [status, setStatus] = useState(""),

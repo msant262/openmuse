@@ -1,7 +1,7 @@
 import { Pressable, Text, View } from "react-native";
 import { useAvatarPresentation } from "./avatar-presentation";
 import { useI18n } from "./i18n";
-import { colors, Mascot } from "./ui";
+import { Mascot, useUI } from "./ui";
 export function CompanionHeading({
   name,
   status,
@@ -13,6 +13,8 @@ export function CompanionHeading({
   variant?: "sky" | "sand" | "lilac";
   onPress: () => void;
 }) {
+  const { colors } = useUI();
+
   const { t } = useI18n();
   const { state } = useAvatarPresentation();
   const showStatus = state !== "idle" || status !== t("Here when you need me");
@@ -34,8 +36,8 @@ export function CompanionHeading({
           paddingVertical: showStatus ? 7 : 8,
           marginTop: -4,
           borderRadius: showStatus ? 20 : 24,
-          backgroundColor: "#FFFFFF",
-          shadowColor: "#171719",
+          backgroundColor: colors.card,
+          shadowColor: colors.shadow,
           shadowOffset: { width: 0, height: 6 },
           shadowOpacity: 0.06,
           shadowRadius: 14,

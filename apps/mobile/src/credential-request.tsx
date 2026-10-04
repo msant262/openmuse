@@ -9,7 +9,7 @@ import {
   credentialFormError,
 } from "./credential-state";
 import { useI18n } from "./i18n";
-import { Button, Card, colors, ErrorNotice, s } from "./ui";
+import { Button, Card, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 function responseId(requestId: string) {
@@ -29,6 +29,8 @@ export function CredentialRequestCard({
   onCancelled?: (request: CredentialInteractionRequest) => void;
   embedded?: boolean;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { api } = useWorkspace();
   const [current, setCurrent] = useState(request);

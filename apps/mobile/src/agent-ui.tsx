@@ -81,7 +81,6 @@ import {
   Card,
   CheckRow,
   Chip,
-  colors,
   Empty,
   ErrorNotice,
   Field,
@@ -91,7 +90,7 @@ import {
   resultSummary,
   SectionHeading,
   Sheet,
-  s,
+  useUI,
 } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -115,6 +114,8 @@ function activeTask(task: AgentTask) {
   return !["succeeded", "failed", "cancelled"].includes(task.status);
 }
 export function AgentStatus() {
+  const { colors, s } = useUI();
+
   const { data, error, refresh } = useAgentWorkspace();
   const { t } = useI18n();
   if (data?.worker.running && !error) return null;
@@ -144,6 +145,8 @@ export function TaskCard({
   compact?: boolean;
   onOpen?: () => void;
 }) {
+  const { colors, s } = useUI();
+
   const { open } = useWorkspace();
   const { t } = useI18n();
   const waiting = ["waiting_input", "waiting_approval", "waiting_provider"].includes(task.status);
@@ -166,9 +169,9 @@ export function TaskCard({
     >
       <View style={{ width: 30, paddingTop: 2 }}>
         {task.status === "succeeded" ? (
-          <CheckCircle2 size={20} color="#649D7B" />
+          <CheckCircle2 size={20} color={colors.success} />
         ) : waiting ? (
-          <Circle size={20} color="#B18C50" />
+          <Circle size={20} color={colors.danger} />
         ) : (
           <ListChecks size={20} color={colors.muted} />
         )}
@@ -182,7 +185,7 @@ export function TaskCard({
           {t(statusLabel(task.status))} · {stamp(task.updatedAt)}
         </Text>
       </View>
-      <ChevronRight size={16} color="#A5A6A9" style={{ marginTop: 5 }} />
+      <ChevronRight size={16} color={colors.muted} style={{ marginTop: 5 }} />
     </Pressable>
   );
 }
@@ -202,6 +205,8 @@ export function ChatWork() {
   );
 }
 export function AgentActivityScreen() {
+  const { colors, s } = useUI();
+
   const { data, mutate } = useAgentWorkspace();
   const { ask, open } = useWorkspace();
   const { t, locale } = useI18n();
@@ -264,13 +269,13 @@ export function AgentActivityScreen() {
                 borderRadius: 12,
                 alignItems: "center",
                 justifyContent: "center",
-                backgroundColor: "#F2F3F4",
+                backgroundColor: colors.subtle,
               }}
             >
               {entry.artifact ? (
                 <FileText size={18} color={colors.muted} />
               ) : entry.status === "succeeded" ? (
-                <CheckCircle2 size={18} color="#519270" />
+                <CheckCircle2 size={18} color={colors.success} />
               ) : (
                 <Clock3 size={18} color={colors.muted} />
               )}
@@ -425,6 +430,8 @@ export function AgentActivityScreen() {
   );
 }
 export function EvidenceList({ items }: { items: Evidence[] }) {
+  const { colors, s } = useUI();
+
   const { workspace, open } = useWorkspace();
   const [error, setError] = useState("");
   return (
@@ -481,6 +488,8 @@ export function TaskDetail({ taskId }: { taskId: string }) {
   return <TaskDetailContent key={`${api.identityKey}:${taskId}`} taskId={taskId} />;
 }
 function TaskDetailContent({ taskId }: { taskId: string }) {
+  const { colors, s } = useUI();
+
   const previewVisible = useInlinePreview();
   const { t } = useI18n();
   const { width, height } = useWindowDimensions();
@@ -599,7 +608,9 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
     <Sheet
       title={task?.title || "Task"}
       headerAccessory={
-        <Text style={[s.small, { color: task?.status === "succeeded" ? "#568767" : colors.muted }]}>
+        <Text
+          style={[s.small, { color: task?.status === "succeeded" ? colors.success : colors.muted }]}
+        >
           {task ? t(statusLabel(task.status)) : t("Loading saved progress…")}
         </Text>
       }
@@ -623,7 +634,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
               flexGrow: 0,
               flexShrink: wide ? 0 : 1,
               maxHeight: wide ? undefined : Math.min(220, height * 0.26),
-              backgroundColor: "#F5F5F6",
+              backgroundColor: colors.subtle,
               borderRightWidth: wide ? 1 : 0,
               borderBottomWidth: wide ? 0 : 1,
               borderColor: colors.line,
@@ -639,7 +650,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                 borderRadius: 11,
                 gap: 8,
                 flexDirection: "row",
-                backgroundColor: selected === "request" ? "#E9E9EB" : "transparent",
+                backgroundColor: selected === "request" ? colors.subtle : "transparent",
               }}
             >
               <Circle size={15} color={colors.muted} style={{ marginTop: 2 }} />
@@ -658,7 +669,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                   borderRadius: 11,
                   gap: 10,
                   flexDirection: "row",
-                  backgroundColor: selected === "plan" ? "#E9E9EB" : "transparent",
+                  backgroundColor: selected === "plan" ? colors.subtle : "transparent",
                 }}
               >
                 <ListChecks size={16} color={colors.muted} style={{ marginTop: 3 }} />
@@ -678,7 +689,8 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                       borderRadius: 11,
                       gap: 10,
                       flexDirection: "row",
-                      backgroundColor: selected === `event:${event.id}` ? "#E9E9EB" : "transparent",
+                      backgroundColor:
+                        selected === `event:${event.id}` ? colors.subtle : "transparent",
                     }}
                   >
                     <View style={{ paddingTop: 3 }}>
@@ -706,11 +718,12 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                       borderRadius: 11,
                       gap: 10,
                       flexDirection: "row",
-                      backgroundColor: selected === `step:${step.id}` ? "#E9E9EB" : "transparent",
+                      backgroundColor:
+                        selected === `step:${step.id}` ? colors.subtle : "transparent",
                     }}
                   >
                     {step.status === "succeeded" ? (
-                      <CheckCircle2 size={15} color="#649D7B" style={{ marginTop: 3 }} />
+                      <CheckCircle2 size={15} color={colors.success} style={{ marginTop: 3 }} />
                     ) : (
                       <Circle size={15} color={colors.muted} style={{ marginTop: 3 }} />
                     )}
@@ -728,7 +741,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                 borderRadius: 11,
                 gap: 10,
                 flexDirection: "row",
-                backgroundColor: selected === "summary" ? "#E7E7E9" : "transparent",
+                backgroundColor: selected === "summary" ? colors.subtle : "transparent",
               }}
             >
               <CheckCircle2 size={16} color={colors.text} style={{ marginTop: 2 }} />
@@ -747,7 +760,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                 {task.plan.map((step) => (
                   <View key={step.id} style={{ flexDirection: "row", gap: 12 }}>
                     {step.status === "succeeded" ? (
-                      <CheckCircle2 size={19} color="#649D7B" />
+                      <CheckCircle2 size={19} color={colors.success} />
                     ) : (
                       <Circle size={19} color={colors.muted} />
                     )}
@@ -1050,6 +1063,8 @@ export function ArtifactCard({ artifact }: { artifact: AgentArtifact }) {
 }
 
 function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
+  const { colors, s } = useUI();
+
   const [details, setDetails] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const { mutate } = useAgentWorkspace();
@@ -1085,7 +1100,7 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
   const period = record(artifact.data.period);
   return (
     <Card
-      style={{ gap: 12, padding: 10, backgroundColor: "#EEEEF0", maxWidth: 440, width: "100%" }}
+      style={{ gap: 12, padding: 10, backgroundColor: colors.subtle, maxWidth: 440, width: "100%" }}
     >
       <Pressable
         accessibilityRole="button"
@@ -1098,7 +1113,7 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
             minHeight: 200,
             borderRadius: 16,
             overflow: "hidden",
-            backgroundColor: "#080B10",
+            backgroundColor: colors.code,
             padding: 20,
           }}
         >
@@ -1114,7 +1129,7 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
               <Rect width="100%" height="100%" fill="url(#finance)" />
             </Svg>
           </View>
-          <Text style={{ color: "#D4DCFC", fontSize: 11, lineHeight: 18, marginBottom: 20 }}>
+          <Text style={{ color: colors.blueDark, fontSize: 11, lineHeight: 18, marginBottom: 20 }}>
             Read from your imported transactions.{"\n"}
             {String(period?.from ?? "")} — {String(period?.to ?? "")}
             {"\n"}
@@ -1130,9 +1145,9 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
             ).map(([label, key]) => (
               <View
                 key={key}
-                style={{ flex: 1, padding: 11, borderRadius: 12, backgroundColor: "#1D2025" }}
+                style={{ flex: 1, padding: 11, borderRadius: 12, backgroundColor: colors.code }}
               >
-                <Text style={{ color: "#A4A7AD", fontSize: 9 }}>{label}</Text>
+                <Text style={{ color: colors.muted, fontSize: 9 }}>{label}</Text>
                 <Text
                   selectable
                   numberOfLines={1}
@@ -1141,13 +1156,15 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
                   style={{
                     fontSize: 17,
                     fontWeight: "600",
-                    color: key === "saved" ? "#58D3AE" : "#FFF",
+                    color: key === "saved" ? colors.success : colors.onFeature,
                     marginTop: 5,
                   }}
                 >
                   {amount(artifact.data[key])}
                 </Text>
-                <Text style={{ color: "#7E8289", fontSize: 8, marginTop: 4 }}>source currency</Text>
+                <Text style={{ color: colors.muted, fontSize: 8, marginTop: 4 }}>
+                  source currency
+                </Text>
               </View>
             ))}
           </View>
@@ -1173,7 +1190,7 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
                   <Text style={s.text}>{String(row.name)}</Text>
                   <Text style={s.text}>{amount(row.amount)}</Text>
                 </View>
-                <View style={{ height: 7, backgroundColor: "#DFE8EB", borderRadius: 8 }}>
+                <View style={{ height: 7, backgroundColor: colors.subtle, borderRadius: 8 }}>
                   <View
                     style={{
                       width: `${Math.min(100, (Number(row.amount) / spending) * 100)}%`,
@@ -1239,6 +1256,8 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
   );
 }
 export function DelegateSheet() {
+  const { s } = useUI();
+
   const { workspace, close, open } = useWorkspace();
   const { delegate } = useAgentWorkspace();
   const { selection, enabled } = useMuseThread();
@@ -1361,6 +1380,8 @@ export function DelegateSheet() {
   );
 }
 export function IdeasScreen() {
+  const { colors, s } = useUI();
+
   const { data, mutate } = useAgentWorkspace();
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
@@ -1426,7 +1447,7 @@ export function IdeasScreen() {
                 gap: 14,
               }}
             >
-              <CheckCircle2 size={20} color="#73A287" />
+              <CheckCircle2 size={20} color={colors.success} />
               <View style={{ flex: 1, gap: 10 }}>
                 <Text style={s.text}>{idea.title}</Text>
                 {!!idea.taskId && <TaskLink taskId={idea.taskId} />}
@@ -1455,6 +1476,8 @@ function TaskLink({ taskId, onOpen }: { taskId: string; onOpen?: () => void }) {
   );
 }
 function IdeaCard({ idea }: { idea: Idea }) {
+  const { colors, s } = useUI();
+
   const { mutate } = useAgentWorkspace();
   const { t } = useI18n();
   const { open } = useWorkspace();
@@ -1526,6 +1549,8 @@ function IdeaCard({ idea }: { idea: Idea }) {
   );
 }
 export function GoalsScreen() {
+  const { colors, s } = useUI();
+
   const { data } = useAgentWorkspace();
   const { t } = useI18n();
   const [adding, setAdding] = useState<string>();
@@ -1547,11 +1572,11 @@ export function GoalsScreen() {
                 height: 16,
                 borderRadius: 8,
                 borderWidth: 5,
-                borderColor: "#D9F1E2",
+                borderColor: colors.line,
                 backgroundColor: "#24A46B",
               }}
             />
-            <Text style={[s.heading, { color: "#189A58" }]}>{t("Tracking")}</Text>
+            <Text style={[s.heading, { color: colors.success }]}>{t("Tracking")}</Text>
           </View>
           <Button small icon={Plus} onPress={() => setAdding("Tracking")}>
             {t("Track")}
@@ -1565,7 +1590,7 @@ export function GoalsScreen() {
             onPress={() => setSelectedMonitor(item.id)}
             style={[s.row, { gap: 12, paddingVertical: 13 }]}
           >
-            <Square size={21} color="#A7AAAC" />
+            <Square size={21} color={colors.muted} />
             <View style={{ flex: 1, gap: 4 }}>
               <Text style={s.text}>{item.title}</Text>
               <Text numberOfLines={2} style={s.muted}>
@@ -1576,7 +1601,7 @@ export function GoalsScreen() {
                     : t(statusLabel(item.status))}
               </Text>
             </View>
-            <MoreHorizontal size={19} color="#A3A6A8" />
+            <MoreHorizontal size={19} color={colors.muted} />
           </Pressable>
         ))}
         {!monitors.length && (
@@ -1601,7 +1626,7 @@ export function GoalsScreen() {
               height: 16,
               borderRadius: 8,
               borderWidth: 5,
-              borderColor: "#D7E9FA",
+              borderColor: colors.selectedBorder,
               backgroundColor: "#3D9BDE",
             }}
           />
@@ -1638,7 +1663,7 @@ export function GoalsScreen() {
                   minHeight: 38,
                   borderRadius: 20,
                   paddingHorizontal: 14,
-                  backgroundColor: "#F4F4F5",
+                  backgroundColor: colors.subtle,
                 },
               ]}
             >
@@ -1674,6 +1699,8 @@ export function GoalsScreen() {
   );
 }
 function GoalListRow({ goal, onOpen }: { goal: Goal; onOpen: () => void }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   return (
@@ -1688,14 +1715,14 @@ function GoalListRow({ goal, onOpen }: { goal: Goal; onOpen: () => void }) {
         >
           {goal.milestones.length ? (
             expanded ? (
-              <ChevronDown size={21} color="#A7AAAC" />
+              <ChevronDown size={21} color={colors.muted} />
             ) : (
-              <ChevronRight size={21} color="#A7AAAC" />
+              <ChevronRight size={21} color={colors.muted} />
             )
           ) : goal.status === "completed" ? (
-            <Check size={21} color="#649D7B" />
+            <Check size={21} color={colors.success} />
           ) : (
-            <Square size={21} color="#A7AAAC" />
+            <Square size={21} color={colors.muted} />
           )}
         </Pressable>
         <Pressable accessibilityRole="button" onPress={onOpen} style={{ flex: 1, gap: 4 }}>
@@ -1710,7 +1737,7 @@ function GoalListRow({ goal, onOpen }: { goal: Goal; onOpen: () => void }) {
           onPress={onOpen}
           style={{ padding: 3 }}
         >
-          <MoreHorizontal size={19} color="#A7AAAC" />
+          <MoreHorizontal size={19} color={colors.muted} />
         </Pressable>
       </View>
       {expanded && (
@@ -1723,9 +1750,9 @@ function GoalListRow({ goal, onOpen }: { goal: Goal; onOpen: () => void }) {
               style={[s.row, { gap: 12, paddingVertical: 12 }]}
             >
               {milestone.done ? (
-                <Check size={20} color="#649D7B" />
+                <Check size={20} color={colors.success} />
               ) : (
-                <Square size={20} color="#A7AAAC" />
+                <Square size={20} color={colors.muted} />
               )}
               <Text style={[s.text, { flex: 1 }]}>{milestone.title}</Text>
             </Pressable>
@@ -1792,6 +1819,8 @@ function GoalForm({ onDone, category }: { onDone: () => void; category?: string 
   );
 }
 function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void }) {
+  const { colors, s } = useUI();
+
   const { data, mutate, delegate } = useAgentWorkspace();
   const { open } = useWorkspace();
   const { t } = useI18n();
@@ -1925,7 +1954,7 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
             style={{ flexDirection: "row", gap: 14 }}
           >
             <View style={{ alignItems: "center", width: 15 }}>
-              <Circle size={13} color="#9B9C9F" />
+              <Circle size={13} color={colors.muted} />
               <View style={{ width: 1, flex: 1, backgroundColor: colors.line, marginTop: 6 }} />
             </View>
             <View style={{ flex: 1, gap: 5, paddingBottom: 10 }}>
@@ -1938,7 +1967,7 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
           </Pressable>
         ))}
         <View style={{ flexDirection: "row", gap: 14 }}>
-          <Circle size={13} color="#9B9C9F" />
+          <Circle size={13} color={colors.muted} />
           <View style={{ flex: 1, gap: 5 }}>
             <Text style={s.text}>{t("Goal created")}</Text>
             <Text style={s.small}>{stamp(goal.createdAt)}</Text>
@@ -1950,6 +1979,8 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
 }
 
 function MonitorForm({ onDone }: { onDone: () => void }) {
+  const { s } = useUI();
+
   const { workspace } = useWorkspace();
   const { mutate } = useAgentWorkspace();
   const { t } = useI18n();
@@ -2074,6 +2105,8 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
   );
 }
 function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: () => void }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { mutate } = useAgentWorkspace();
   const [error, setError] = useState("");
@@ -2174,6 +2207,8 @@ function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: (
   );
 }
 export function NotificationsSheet() {
+  const { colors, s } = useUI();
+
   const { data, mutate } = useAgentWorkspace();
   const { t } = useI18n();
   const [expanded, setExpanded] = useState<string>();
@@ -2203,7 +2238,7 @@ export function NotificationsSheet() {
             }}
           >
             <View style={{ width: 28, paddingTop: 3 }}>
-              <Bell size={20} color={item.read ? "#A1A2A5" : colors.blueDark} />
+              <Bell size={20} color={item.read ? colors.muted : colors.blueDark} />
             </View>
             <View style={{ flex: 1, gap: 7 }}>
               <View style={s.between}>
@@ -2272,6 +2307,8 @@ export function NotificationsSheet() {
   );
 }
 export function AppsScreen() {
+  const { colors, s } = useUI();
+
   const { navigate, open } = useWorkspace();
   const { t } = useI18n();
   const [panel, setPanel] = useState<"routines" | "playbooks" | "notifications" | "recovery">();
@@ -2463,6 +2500,8 @@ export function AppsScreen() {
 }
 
 export function FileRecoveryPanel() {
+  const { s } = useUI();
+
   const { api } = useWorkspace();
   const [snapshot, setSnapshot] = useState<FileRecoverySnapshot>();
   const [error, setError] = useState("");

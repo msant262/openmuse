@@ -41,6 +41,7 @@ import {
   type ProposalInput,
 } from "../../../packages/domain/src";
 import type { ComputerCommand } from "../../../packages/domain/src/computer";
+import { AgentDocument } from "./agent-document";
 import { DelegateSheet, NotificationsSheet, TaskDetail } from "./agent-ui";
 import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import BrowserConsole from "./BrowserConsole";
@@ -56,7 +57,6 @@ import {
   Button,
   Card,
   CheckRow,
-  colors,
   dateLabel,
   Empty,
   ErrorNotice,
@@ -64,13 +64,15 @@ import {
   LinkRow,
   resultSummary,
   Sheet,
-  s,
   timeLabel,
+  useUI,
 } from "./ui";
 import { type Detail, useWorkspace } from "./workspace";
 export function Details({ detail, embedded = false }: { detail: Detail; embedded?: boolean }) {
   const { t } = useI18n();
   const { close, navigate } = useWorkspace();
+  if (detail.type === "agent-soul" || detail.type === "agent-memory")
+    return <AgentDocument kind={detail.type} embedded={embedded} />;
   if (detail.type === "computer") return <ComputerSheet embedded={embedded} />;
   if (detail.type === "task") return <TaskDetail taskId={detail.taskId} />;
   if (detail.type === "delegate") return <DelegateSheet />;
@@ -111,6 +113,8 @@ export function Details({ detail, embedded = false }: { detail: Detail; embedded
   );
 }
 function MailDetail({ mail: m }: { mail: Mail }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { workspace: w, api, refresh, open, close } = useWorkspace();
   const [error, setError] = useState("");
@@ -250,6 +254,8 @@ function actionRequestKey() {
   ).join("");
 }
 function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { workspace: w, api, refresh, open, close, notify } = useWorkspace();
   const requestKey = useRef<string | undefined>(undefined);
@@ -429,6 +435,8 @@ function EventEditor({
   draft?: EventDraft;
   neighbors?: CalendarEvent[];
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const seed = e || draft;
   const { workspace: w, api, open, close, refresh, notify } = useWorkspace();
@@ -616,6 +624,8 @@ function EventEditor({
   );
 }
 function ReviewDetail({ initial }: { initial: ActionProposal }) {
+  const { colors, s } = useUI();
+
   const { t, locale } = useI18n();
   const { workspace: w, api, refresh, close, open } = useWorkspace();
   const [local, setLocal] = useState(initial);
@@ -861,6 +871,8 @@ function arrayText(value: unknown) {
   return Array.isArray(value) ? value.map(String).join(", ") : "";
 }
 function ReviewLine({ label, value }: { label: string; value: string }) {
+  const { colors, s } = useUI();
+
   return (
     <View
       style={{
@@ -879,6 +891,8 @@ function ReviewLine({ label, value }: { label: string; value: string }) {
   );
 }
 function FileDetail({ file: initial, embedded = false }: { file: Artifact; embedded?: boolean }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { api, refresh, open, close } = useWorkspace();
   const [f, setFile] = useState(initial);
@@ -1051,7 +1065,7 @@ function FileDetail({ file: initial, embedded = false }: { file: Artifact; embed
     >
       <View style={{ flex: 1, minHeight: 0, flexDirection: split ? "row" : "column" }}>
         <ScrollView
-          style={{ flex: 1, minWidth: 0, backgroundColor: "#F2F2F3" }}
+          style={{ flex: 1, minWidth: 0, backgroundColor: colors.subtle }}
           contentContainerStyle={{ flexGrow: 1 }}
           keyboardShouldPersistTaps="handled"
         >
@@ -1123,6 +1137,8 @@ function BrowserDetail({
   initial: BrowserSession;
   embedded?: boolean;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { height } = useWindowDimensions();
   const previewHeight = embedded

@@ -5,6 +5,7 @@ export default ({ config }) => ({
     ...(config.plugins || []),
     ["expo-video", { supportsBackgroundPlayback: false, supportsPictureInPicture: false }],
     "expo-asset",
+    "expo-system-ui",
     ["expo-secure-store", { configureAndroidBackup: true }],
     [
       "./plugins/with-local-android.cjs",

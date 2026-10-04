@@ -31,7 +31,7 @@ import { useI18n } from "./i18n";
 import { messageStorage, removeConversationCache } from "./message-storage";
 import { ThreadActions } from "./thread-actions";
 import { navigateFromThreadMenu, parseThreadSelection } from "./thread-selection";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 function newThreadId() {
@@ -238,6 +238,8 @@ export function ThreadsSheet({
   onClose: () => void;
   onSettings?: () => void;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -291,7 +293,7 @@ export function ThreadsSheet({
         .filter((item) => matches(item.name));
   return (
     <Modal transparent animationType="fade" visible onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.12)" }}>
+      <View style={{ flex: 1, backgroundColor: colors.overlay }}>
         <Pressable accessible={false} onPress={onClose} style={StyleSheet.absoluteFill} />
         <View
           accessibilityViewIsModal
@@ -302,18 +304,53 @@ export function ThreadsSheet({
             position: "absolute",
             left: width >= 760 ? 78 : 12,
             top: Math.max(insets.top + 12, width >= 760 ? 54 : 12),
-            width: Math.min(320, width - 24),
+            width: Math.min(360, width - 24),
             maxHeight: height - insets.top - insets.bottom - 40,
             backgroundColor: colors.canvas,
             borderRadius: 25,
-            padding: 12,
-            shadowColor: "#000",
+            padding: 18,
+            shadowColor: colors.shadow,
             shadowOpacity: 0.16,
             shadowRadius: 30,
             shadowOffset: { width: 0, height: 10 },
             elevation: 16,
           }}
         >
+          <View style={[s.between, { paddingBottom: 16 }]}>
+            <Text style={[s.heading, { fontSize: 22 }]}>{t("Conversations")}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("Close conversations")}
+              onPress={onClose}
+              style={{ padding: 8 }}
+            >
+              <X size={21} color={colors.text} />
+            </Pressable>
+          </View>
+          {enabled && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("New conversation")}
+              disabled={loading}
+              onPress={() => navigateFromThreadMenu(onClose, start)}
+              style={({ pressed }) => ({
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
+                minHeight: 48,
+                borderRadius: 13,
+                marginBottom: 15,
+                backgroundColor: colors.accent,
+                opacity: loading || pressed ? 0.7 : 1,
+              })}
+            >
+              <Plus size={20} color={colors.onAccent} />
+              <Text style={{ color: colors.onAccent, fontSize: 15, fontWeight: "600" }}>
+                {t("New conversation")}
+              </Text>
+            </Pressable>
+          )}
           <View style={[s.row, { gap: 5, paddingBottom: 9 }]}>
             <View
               style={[
@@ -321,7 +358,7 @@ export function ThreadsSheet({
                 {
                   flex: 1,
                   gap: 7,
-                  backgroundColor: "#EEEEF0",
+                  backgroundColor: colors.subtle,
                   borderRadius: 22,
                   paddingHorizontal: 12,
                   minHeight: 37,
@@ -355,18 +392,10 @@ export function ThreadsSheet({
                 alignItems: "center",
                 justifyContent: "center",
                 borderRadius: 18,
-                backgroundColor: tools ? "#EEEEF0" : "transparent",
+                backgroundColor: tools ? colors.subtle : "transparent",
               }}
             >
               <MoreHorizontal size={19} color={colors.muted} />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t("Close details")}
-              onPress={onClose}
-              style={{ width: 28, height: 36, alignItems: "center", justifyContent: "center" }}
-            >
-              <X size={17} color={colors.muted} />
             </Pressable>
           </View>
           <ScrollView
@@ -440,6 +469,7 @@ export function ThreadsSheet({
                     {matches(t("Main chat")) && (
                       <ThreadMenuRow
                         title={t("Main chat")}
+                        description={t("Your everyday conversation")}
                         action={
                           enabled ? (
                             <ThreadActions
@@ -463,22 +493,9 @@ export function ThreadsSheet({
                         <View
                           style={[s.between, { paddingLeft: 10, marginTop: 8, marginBottom: 3 }]}
                         >
-                          <Text style={[s.muted, { fontSize: 13 }]}>
-                            {archived ? t("Archived") : t("Side chats")}
+                          <Text style={[s.muted, { fontSize: 12, fontWeight: "600" }]}>
+                            {archived ? t("Archived") : t("Other conversations")}
                           </Text>
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={t("New side chat")}
-                            onPress={() => navigateFromThreadMenu(onClose, start)}
-                            style={{
-                              width: 34,
-                              height: 32,
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <Plus size={17} strokeWidth={1.6} color={colors.muted} />
-                          </Pressable>
                         </View>
                         {threads.isLoading && <ActivityIndicator color={colors.blueDark} />}
                         <ErrorNotice error={error || threads.error?.message} />
@@ -553,6 +570,22 @@ export function ThreadsSheet({
               </View>
             )}
           </ScrollView>
+          {!tools && (
+            <View
+              style={{
+                borderTopWidth: 1,
+                borderTopColor: colors.line,
+                paddingTop: 10,
+                marginTop: 12,
+              }}
+            >
+              <ThreadMenuRow
+                title={t(archived ? "Show active" : "Archived")}
+                icon={Archive}
+                onPress={() => setArchived(!archived)}
+              />
+            </View>
+          )}
         </View>
       </View>
     </Modal>
@@ -561,6 +594,7 @@ export function ThreadsSheet({
 
 function ThreadMenuRow({
   title,
+  description,
   icon: Icon,
   selected,
   onPress,
@@ -568,19 +602,24 @@ function ThreadMenuRow({
   disabled,
 }: {
   title: string;
+  description?: string;
   icon?: typeof MessageCircle;
   selected?: boolean;
   onPress: () => void;
   action?: ReactNode;
   disabled?: boolean;
 }) {
+  const { colors } = useUI();
+
   return (
     <View
       style={{
         flexDirection: "row",
         alignItems: "center",
-        borderRadius: 11,
-        backgroundColor: selected ? "#EEEEF0" : "transparent",
+        borderRadius: 13,
+        borderWidth: 1,
+        borderColor: selected ? colors.selectedBorder : "transparent",
+        backgroundColor: selected ? colors.selected : "transparent",
       }}
     >
       <Pressable
@@ -593,17 +632,30 @@ function ThreadMenuRow({
           flexDirection: "row",
           alignItems: "center",
           gap: 10,
-          minHeight: 38,
+          minHeight: description ? 66 : 48,
           paddingHorizontal: 10,
           borderRadius: 11,
           opacity: disabled ? 0.5 : 1,
-          backgroundColor: pressed ? "#E8E8EA" : "transparent",
+          backgroundColor: pressed ? colors.subtle : "transparent",
         })}
       >
         {Icon && <Icon size={17} strokeWidth={1.6} color={colors.text} />}
-        <Text numberOfLines={1} style={{ flex: 1, fontSize: 14, color: colors.text }}>
-          {title}
-        </Text>
+        <View style={{ flex: 1, gap: 4, paddingVertical: 9 }}>
+          <Text
+            numberOfLines={2}
+            style={{
+              fontSize: 15,
+              lineHeight: 21,
+              fontWeight: selected || description ? "600" : "400",
+              color: selected ? colors.selectedText : colors.text,
+            }}
+          >
+            {title}
+          </Text>
+          {!!description && (
+            <Text style={{ fontSize: 12, color: colors.muted }}>{description}</Text>
+          )}
+        </View>
       </Pressable>
       {action}
     </View>

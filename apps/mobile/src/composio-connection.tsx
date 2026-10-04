@@ -5,7 +5,7 @@ import type { CredentialInteractionRequest } from "../../../packages/domain/src/
 import { connectionRequestStatus, safeConnectionAuthorizationUrl } from "./connections-state";
 import { credentialRequestPath } from "./credential-prompts-state";
 import { useI18n } from "./i18n";
-import { Button, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 /** The hosted form owns authentication; this view only receives connection metadata. */
@@ -20,6 +20,8 @@ export function ComposioConnectionContent({
   onBusy: (busy: boolean) => void;
   onSetup: () => void;
 }) {
+  const { s } = useUI();
+
   const { api } = useWorkspace();
   const { t } = useI18n();
   const [current, setCurrent] = useState(request);

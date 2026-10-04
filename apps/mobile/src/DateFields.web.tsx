@@ -1,6 +1,6 @@
 import { Text, View } from "react-native";
 import { useI18n } from "./i18n";
-import { colors, s } from "./ui";
+import { useUI } from "./ui";
 
 interface DateFieldsProps {
   label: string;
@@ -10,6 +10,8 @@ interface DateFieldsProps {
   onChange: (date: string, time: string) => void;
 }
 export default function DateFields({ label, date, time, allDay, onChange }: DateFieldsProps) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const style = {
     border: `1px solid ${colors.line}`,
@@ -17,7 +19,7 @@ export default function DateFields({ label, date, time, allDay, onChange }: Date
     padding: 13,
     fontSize: 14,
     color: colors.text,
-    background: "#FFF",
+    background: colors.input,
     fontFamily: "inherit",
     width: "100%",
     boxSizing: "border-box" as const,

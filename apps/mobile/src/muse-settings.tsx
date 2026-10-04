@@ -7,6 +7,7 @@ import {
   Globe2,
   LayoutGrid,
   type LucideIcon,
+  Moon,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -23,11 +24,13 @@ import { ModelSettings } from "./model-settings";
 import { NativePushSettings } from "./native-push-settings";
 import { ProfileSettings } from "./profile-settings";
 import { ConnectionsScreen } from "./screens";
-import { Button, colors, IconButton, Mascot, ModalSurface, Sheet, s } from "./ui";
+import { ThemePicker } from "./theme-picker";
+import { Button, IconButton, Mascot, ModalSurface, Sheet, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 const sections: { id: string; title: string; icon: LucideIcon }[] = [
   { id: "general", title: "General", icon: Settings2 },
+  { id: "appearance", title: "App theme", icon: Moon },
   { id: "models", title: "Models", icon: Cpu },
   { id: "connectors", title: "Connectors", icon: LayoutGrid },
   { id: "personality", title: "Personalization", icon: Sparkles },
@@ -43,6 +46,8 @@ export function SettingsDialog({
   onClose: () => void;
   onCustomize: () => void;
 }) {
+  const { colors, s } = useUI();
+
   const { width } = useWindowDimensions();
   const { t, locale } = useI18n();
   const { data } = useAgentWorkspace();
@@ -94,9 +99,9 @@ export function SettingsDialog({
                       marginBottom: 2,
                       backgroundColor:
                         section === id && !compact
-                          ? "#ECECEE"
+                          ? colors.subtle
                           : pressed
-                            ? "#F0F0F2"
+                            ? colors.subtle
                             : "transparent",
                     },
                   ]}
@@ -144,7 +149,7 @@ export function SettingsDialog({
                     onPress={onCustomize}
                     style={[
                       s.row,
-                      { gap: 13, padding: 14, backgroundColor: "#F0F0F1", borderRadius: 18 },
+                      { gap: 13, padding: 14, backgroundColor: colors.subtle, borderRadius: 18 },
                     ]}
                   >
                     <View style={{ width: 44, height: 44, borderRadius: 22, overflow: "hidden" }}>
@@ -159,7 +164,7 @@ export function SettingsDialog({
                     <ChevronRight size={16} color={colors.muted} />
                   </Pressable>
                   <View
-                    style={{ borderRadius: 18, backgroundColor: "#F0F0F1", overflow: "hidden" }}
+                    style={{ borderRadius: 18, backgroundColor: colors.subtle, overflow: "hidden" }}
                   >
                     <Pressable
                       accessibilityRole="button"
@@ -184,7 +189,7 @@ export function SettingsDialog({
                     onPress={() => setSection("models")}
                     style={[
                       s.row,
-                      { padding: 16, gap: 12, backgroundColor: "#F0F0F1", borderRadius: 18 },
+                      { padding: 16, gap: 12, backgroundColor: colors.subtle, borderRadius: 18 },
                     ]}
                   >
                     <Cpu size={18} color={colors.muted} />
@@ -195,6 +200,7 @@ export function SettingsDialog({
                 </>
               )}
               {section === "models" && <ModelSettings />}
+              {section === "appearance" && <ThemePicker />}
               {section === "connectors" && <ConnectionsScreen />}
               {section === "personality" && <ProfileSettings />}
               {section === "memory" && <MemorySettings />}
@@ -225,7 +231,7 @@ export function SettingsDialog({
                       }}
                       style={[
                         s.row,
-                        { padding: 16, gap: 12, backgroundColor: "#F0F0F1", borderRadius: 16 },
+                        { padding: 16, gap: 12, backgroundColor: colors.subtle, borderRadius: 16 },
                       ]}
                     >
                       <ShieldCheck size={20} color={colors.muted} />
@@ -266,6 +272,8 @@ export function SettingsDialog({
 }
 
 export function CompanionDialog({ onClose }: { onClose: () => void }) {
+  const { colors } = useUI();
+
   const { t } = useI18n();
   const [tab, setTab] = useState("appearance");
   return (
@@ -279,7 +287,7 @@ export function CompanionDialog({ onClose }: { onClose: () => void }) {
         style={{
           alignSelf: "center",
           flexDirection: "row",
-          backgroundColor: "#EDEDEF",
+          backgroundColor: colors.subtle,
           padding: 4,
           borderRadius: 24,
           marginBottom: 22,
@@ -298,7 +306,7 @@ export function CompanionDialog({ onClose }: { onClose: () => void }) {
               paddingHorizontal: 24,
               paddingVertical: 9,
               borderRadius: 20,
-              backgroundColor: tab === id ? "#FFF" : "transparent",
+              backgroundColor: tab === id ? colors.card : "transparent",
             }}
           >
             <Text style={{ color: colors.text, fontSize: 14 }}>{t(label)}</Text>

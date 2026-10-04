@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { AppState, Platform, Text, View } from "react-native";
 import type { PickedAttachment } from "./attachment-cache";
 import { useI18n } from "./i18n";
-import { Button, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 export function VoiceInput({
   save,
   active,
@@ -22,6 +22,8 @@ export function VoiceInput({
   startRequest?: number;
   save: (file: PickedAttachment, transcribe?: boolean, includeSubtitles?: boolean) => Promise<void>;
 }) {
+  const { s } = useUI();
+
   const { t } = useI18n();
   const recorder = useAudioRecorder({
     ...RecordingPresets.HIGH_QUALITY,

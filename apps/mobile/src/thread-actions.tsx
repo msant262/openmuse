@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useI18n } from "./i18n";
 import { useMuseThread } from "./threads";
-import { Button, colors, ErrorNotice, Field, ModalSurface, s } from "./ui";
+import { Button, ErrorNotice, Field, ModalSurface, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function ThreadActions({
@@ -19,6 +19,8 @@ export function ThreadActions({
   existing?: boolean;
   main?: boolean;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { api } = useWorkspace();
   const { changed, forget, select, selection, mainId } = useMuseThread();

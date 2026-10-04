@@ -2,10 +2,12 @@ import { ExternalLink, KeyRound } from "lucide-react-native";
 import { useState } from "react";
 import { Linking, Text, TextInput, View } from "react-native";
 import { useI18n } from "./i18n";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function ComposioSetup({ onConnected }: { onConnected: () => void }) {
+  const { colors, s } = useUI();
+
   const { api } = useWorkspace();
   const { t } = useI18n();
   const [apiKey, setApiKey] = useState("");
@@ -26,7 +28,7 @@ export function ComposioSetup({ onConnected }: { onConnected: () => void }) {
     }
   }
   return (
-    <View style={{ padding: 18, gap: 14, borderRadius: 18, backgroundColor: "#F3F3F4" }}>
+    <View style={{ padding: 18, gap: 14, borderRadius: 18, backgroundColor: colors.subtle }}>
       <View style={[s.row, { gap: 9 }]}>
         <KeyRound size={19} color={colors.muted} />
         <Text style={[s.heading, { flex: 1 }]}>{t("Activate the app catalog")}</Text>
@@ -61,7 +63,7 @@ export function ComposioSetup({ onConnected }: { onConnected: () => void }) {
           editable={!busy}
           placeholder={t("Paste your project key")}
           placeholderTextColor={colors.muted}
-          style={[s.input, { minWidth: 0, backgroundColor: "#FFF" }]}
+          style={[s.input, { minWidth: 0, backgroundColor: colors.card }]}
         />
       </View>
       <ErrorNotice error={error} />

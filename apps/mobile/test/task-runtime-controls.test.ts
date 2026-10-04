@@ -86,8 +86,7 @@ function harness(
       Card: "Card",
       ErrorNotice: "ErrorNotice",
       Field: "Field",
-      colors: {},
-      s: {},
+      useUI: () => ({ colors: {}, s: {} }),
     },
     "./workspace": {
       useWorkspace: () => ({ api: { identityKey: "paired-device", request: transport.request } }),

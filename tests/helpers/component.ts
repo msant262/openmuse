@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { lightColors } from "../../apps/mobile/src/theme-palette.ts";
 
 type Node = { type: unknown; props: Record<string, unknown> };
 type Cell = { value?: unknown; current?: unknown; deps?: readonly unknown[]; cleanup?: () => void };
@@ -61,7 +62,20 @@ export function componentHarness(
     },
   };
   const jsx = (type: unknown, props: Record<string, unknown>) => ({ type, props });
-  const modules = { ...dependencies, react: hooks, "react/jsx-runtime": { jsx, jsxs: jsx } };
+  const modules = {
+    "./theme": {
+      useTheme: () => ({ mode: "light", scheme: "light", colors: lightColors }),
+      useThemedStyles: (create: unknown) =>
+        typeof create === "function" ? create(lightColors) : {},
+    },
+    ...dependencies,
+    "./ui": {
+      useUI: () => ({ colors: lightColors, s: {} }),
+      ...((dependencies["./ui"] as object) ?? {}),
+    },
+    react: hooks,
+    "react/jsx-runtime": { jsx, jsxs: jsx },
+  };
   const js = ts.transpileModule(readFileSync(source, "utf8"), {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,

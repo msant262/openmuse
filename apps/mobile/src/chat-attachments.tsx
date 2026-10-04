@@ -22,7 +22,7 @@ import { useI18n } from "./i18n";
 import { sha256 } from "./message-hash";
 import { messageStorage } from "./message-storage";
 import { FileThreadCard } from "./thread-artifacts";
-import { Button, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { VoiceInput } from "./voice-input";
 import { useWorkspace } from "./workspace";
 
@@ -137,6 +137,8 @@ function TranscriptOutput({
   reference: TranscriptFileReference;
   preview: boolean;
 }) {
+  const { s } = useUI();
+
   const { api } = useWorkspace();
   const [file, setFile] = useState<Artifact>();
   const [excerpt, setExcerpt] = useState("");
@@ -212,6 +214,8 @@ export function ChatAttachments({
   transcript: (text: string) => Promise<void>;
   voiceRequest?: number;
 }) {
+  const { s } = useUI();
+
   const { t } = useI18n();
   const { api, refresh } = useWorkspace();
   const key = `${api.identityKey}:chat-uploads:${threadId}`;

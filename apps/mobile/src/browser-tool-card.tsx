@@ -7,7 +7,7 @@ import { resultSourceUrl } from "./artifact-presentation";
 import { useI18n } from "./i18n";
 import { useInlinePreview } from "./preview";
 import { ResultCardFrame } from "./result-card-frame";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export const BrowserRunContext = createContext({ running: false, active: false });
@@ -48,6 +48,8 @@ export function BrowserToolCard({
   result: unknown;
   loading: boolean;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { api, workspace, open } = useWorkspace();
   const { active } = useContext(BrowserRunContext);
@@ -166,7 +168,7 @@ export function BrowserToolCard({
         {working ? (
           <ActivityIndicator size="small" color={colors.blueDark} />
         ) : visited ? (
-          <Check size={17} color="#47896C" accessibilityLabel={t("Page read")} />
+          <Check size={17} color={colors.success} accessibilityLabel={t("Page read")} />
         ) : null}
       </View>
       {preview && (
@@ -178,7 +180,7 @@ export function BrowserToolCard({
           <Image
             accessibilityLabel={t("Browser preview: {title}", { title: visited?.title ?? "" })}
             source={{ uri: api.url(preview) }}
-            style={{ width: "100%", aspectRatio: 1.7, backgroundColor: "#F5F6F7" }}
+            style={{ width: "100%", aspectRatio: 1.7, backgroundColor: colors.subtle }}
             resizeMode="contain"
             onError={() => setPreviewFailed(true)}
           />

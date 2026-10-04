@@ -13,7 +13,7 @@ import { readDesktop } from "./desktop-requests";
 import { desktopPoint, type RenderedDesktop, renderDesktopFrame } from "./desktop-state";
 import { useI18n } from "./i18n";
 import { desktopPollDelay } from "./preview-policy";
-import { Button, Card, ErrorNotice, Field, s } from "./ui";
+import { Button, Card, ErrorNotice, Field, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type Status = DesktopSession & {
@@ -23,6 +23,8 @@ type Status = DesktopSession & {
   runtimePaused?: boolean;
 };
 export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {}) {
+  const { colors, s } = useUI();
+
   const { api, refresh } = useWorkspace();
   const { t } = useI18n();
   const [status, setStatus] = useState<Status>();
@@ -378,7 +380,7 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
             style={{
               width: imageWidth,
               height: imageHeight,
-              backgroundColor: "#15191E",
+              backgroundColor: colors.code,
               borderRadius: 8,
               overflow: "hidden",
             }}
@@ -455,7 +457,7 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
                 }}
               />
             ) : (
-              <Text style={{ color: "#FFF", padding: 24 }}>
+              <Text style={{ color: colors.onFeature, padding: 24 }}>
                 {t("Waiting for a fresh desktop frame…")}
               </Text>
             )}

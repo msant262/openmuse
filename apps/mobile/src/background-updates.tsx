@@ -4,10 +4,12 @@ import { Pressable, Text, View } from "react-native";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
 import { productNotifications } from "./muse-surfaces-model";
-import { colors, ErrorNotice, s } from "./ui";
+import { ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function BackgroundUpdates() {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { data, mutate } = useAgentWorkspace();
   const { open } = useWorkspace();
@@ -36,7 +38,7 @@ export function BackgroundUpdates() {
         style={[
           s.row,
           {
-            backgroundColor: "#F1F5F8",
+            backgroundColor: colors.subtle,
             borderRadius: 17,
             paddingLeft: 12,
             paddingRight: 5,

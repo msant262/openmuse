@@ -22,7 +22,7 @@ import {
 } from "./credential-prompts-state";
 import { CredentialRequestCard } from "./credential-request";
 import { useI18n } from "./i18n";
-import { Button, colors, IconButton, ModalSurface, s } from "./ui";
+import { Button, IconButton, ModalSurface, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type CredentialPrompts = {
@@ -37,6 +37,8 @@ export function useCredentialPrompts() {
 
 /** One owner-scoped modal for every credential request, regardless of the visible screen. */
 export function CredentialPromptsProvider({ children }: { children: ReactNode }) {
+  const { colors, s } = useUI();
+
   const { api, notify, navigate } = useWorkspace();
   const { refresh: refreshAgent } = useAgentWorkspace();
   const { t } = useI18n();
@@ -168,8 +170,8 @@ export function CredentialPromptsProvider({ children }: { children: ReactNode })
       {active && (
         <ModalSurface label={t("Secure connection")} onClose={hide} width={500}>
           <View style={[s.row, { paddingHorizontal: 22, paddingTop: 18, gap: 12 }]}>
-            <View style={[s.iconBox, { backgroundColor: "#EBF2EE" }]}>
-              <ShieldCheck size={23} color="#47896C" />
+            <View style={[s.iconBox, { backgroundColor: colors.subtle }]}>
+              <ShieldCheck size={23} color={colors.success} />
             </View>
             <View style={{ flex: 1, gap: 2 }}>
               <Text style={s.small}>{t("Secure connection")}</Text>
@@ -218,6 +220,8 @@ export function CredentialPromptsProvider({ children }: { children: ReactNode })
 
 /** Conversation and task history only contain receipts; values live in the modal. */
 export function CredentialRequestReceipt({ request }: { request: CredentialInteractionRequest }) {
+  const { colors, s } = useUI();
+
   const prompts = useContext(CredentialPromptsContext);
   const { api } = useWorkspace();
   const { t } = useI18n();

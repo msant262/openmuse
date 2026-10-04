@@ -10,7 +10,7 @@ import { questionReceiptAnswers } from "./artifact-presentation";
 import { CredentialRequestReceipt } from "./credential-prompts";
 import { useI18n } from "./i18n";
 import { QuestionSubmission, questionAnswerError, questionOptionSpace } from "./interaction-state";
-import { Button, Card, colors, ErrorNotice, s } from "./ui";
+import { Button, Card, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function InteractionCard({
@@ -20,6 +20,8 @@ export function InteractionCard({
   request: InteractionRequest;
   onAnswered?: () => void;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { api, open } = useWorkspace();
   const [current, setCurrent] = useState(request);
@@ -103,7 +105,7 @@ export function InteractionCard({
           style={[s.row, { gap: 10, minHeight: 44 }]}
         >
           {answered ? (
-            <CheckCircle2 size={20} color="#47896C" />
+            <CheckCircle2 size={20} color={colors.success} />
           ) : (
             <CircleHelp size={20} color={colors.muted} />
           )}

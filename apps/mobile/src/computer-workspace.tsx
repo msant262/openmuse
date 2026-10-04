@@ -21,13 +21,15 @@ import type {
 } from "../../../packages/domain/src/computer";
 import { useComputerDraft } from "./computer-drafts";
 import { useI18n } from "./i18n";
-import { Button, Card, colors, Empty, ErrorNotice, Field, LinkRow, s, timeLabel } from "./ui";
+import { Button, Card, Empty, ErrorNotice, Field, LinkRow, timeLabel, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 const mono = Platform.OS === "ios" ? "Menlo" : "monospace";
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { api } = useWorkspace();
   const [snapshot, setSnapshot] = useState<ComputerSnapshot>();
@@ -185,7 +187,9 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
         <>
           <View style={{ display: tab === "Terminal" ? "flex" : "none", gap: 16 }}>
             {editingCommand || command.length > 0 || snapshot.commands.length === 0 ? (
-              <View style={{ borderRadius: 22, backgroundColor: "#F1F3F4", padding: 18, gap: 8 }}>
+              <View
+                style={{ borderRadius: 22, backgroundColor: colors.subtle, padding: 18, gap: 8 }}
+              >
                 <Text style={{ color: colors.muted, fontSize: 12, fontFamily: mono }}>
                   {t("Terminal").toUpperCase()}
                 </Text>
@@ -283,6 +287,8 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
 }
 
 function CommandReceipt({ run }: { run: ComputerCommand }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(true);
   return (
@@ -294,7 +300,7 @@ function CommandReceipt({ run }: { run: ComputerCommand }) {
             {
               color:
                 run.status === "succeeded"
-                  ? "#248258"
+                  ? colors.success
                   : run.status === "running"
                     ? colors.blueDark
                     : colors.danger,
@@ -349,6 +355,8 @@ function CommandReceipt({ run }: { run: ComputerCommand }) {
 }
 
 function ComputerFiles({ running, active }: { running: boolean; active: boolean }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { api, workspace, open, refresh } = useWorkspace();
   const [path, setPath] = useComputerDraft("path");
@@ -489,7 +497,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
         {editor?.path || path}
       </Text>
       <ErrorNotice error={error} />
-      {!!notice && <Text style={[s.small, { color: "#248258" }]}>{notice}</Text>}
+      {!!notice && <Text style={[s.small, { color: colors.success }]}>{notice}</Text>}
       {!running && (
         <Text style={s.muted}>{t("Start the computer to browse or edit its saved files.")}</Text>
       )}

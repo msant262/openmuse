@@ -16,9 +16,10 @@ import type {
 } from "../../../packages/domain/src/avatar-character";
 import { useAgentWorkspace } from "./agent-workspace";
 import { AvatarRenderer } from "./avatar-renderer";
-import { avatarStudioStyles as styles } from "./avatar-studio-styles";
+import { avatarStudioStyles as createAvatarStudioStyles } from "./avatar-studio-styles";
 import { useI18n } from "./i18n";
-import { Button, ErrorNotice, Field } from "./ui";
+import { useThemedStyles } from "./theme";
+import { Button, ErrorNotice, Field, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type Target = { api: ReturnType<typeof useWorkspace>["api"]; identityKey: string };
@@ -45,6 +46,9 @@ export function AvatarStudio({
   onPreviewActiveChange?: (active: boolean) => void;
   embedded?: boolean;
 } = {}) {
+  const { colors } = useUI();
+  const styles = useThemedStyles(createAvatarStudioStyles);
+
   const { api, notify } = useWorkspace();
   const { refresh } = useAgentWorkspace();
   const { t } = useI18n();
@@ -60,6 +64,7 @@ export function AvatarStudio({
   const [confirmation, setConfirmation] = useState<Scoped<string>>();
   const [motion, setMotion] = useState<AvatarMotionState>("idle");
   const [pollVersion, setPollVersion] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const target = useRef<Target | undefined>(undefined);
   const mounted = useRef(true);
   const operation = useRef<Action | undefined>(undefined);
@@ -140,7 +145,8 @@ export function AvatarStudio({
           const updated = next.generations.find((item) => item.id === before.value.id);
           return updated ? { target: expected, value: updated } : before;
         }
-        const latest = next.generations.find((item) => item.status !== "succeeded");
+        const latest = next.generations.find(inProgress);
+        if (latest) setDraft({ target: expected, value: latest.prompt });
         return latest ? { target: expected, value: latest } : undefined;
       });
       setFailure(undefined);
@@ -400,7 +406,13 @@ export function AvatarStudio({
             maxLength={2000}
             editable={!busy}
             onChangeText={(value) => {
-              if (current(owner)) setDraft({ target: owner, value });
+              if (!current(owner)) return;
+              setDraft({ target: owner, value });
+              if (!working && value !== job?.prompt) {
+                setFocused(undefined);
+                setChoice(undefined);
+                setConfirmation(undefined);
+              }
             }}
           />
           <Text style={styles.description}>
@@ -434,6 +446,38 @@ export function AvatarStudio({
           >
             {t("Generate companions")}
           </Button>
+          {!!data?.generations.length && !working && (
+            <View style={{ gap: 10 }}>
+              <Button small expanded={historyOpen} onPress={() => setHistoryOpen(!historyOpen)}>
+                {t("Previous generations")}
+              </Button>
+              {historyOpen &&
+                data.generations.map((previous) => (
+                  <Pressable
+                    key={previous.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={t("Resume generation: {prompt}", {
+                      prompt: previous.prompt,
+                    })}
+                    disabled={busy}
+                    onPress={() => {
+                      if (!current(owner) || busy) return;
+                      setDraft({ target: owner, value: previous.prompt });
+                      setFocused({ target: owner, value: previous });
+                      setChoice(undefined);
+                      setConfirmation(undefined);
+                      setHistoryOpen(false);
+                    }}
+                    style={styles.notice}
+                  >
+                    <Text numberOfLines={2} style={styles.description}>
+                      {previous.prompt}
+                    </Text>
+                    <Text style={styles.hint}>{t("View saved generation")}</Text>
+                  </Pressable>
+                ))}
+            </View>
+          )}
           {error && (
             <View style={styles.notice}>
               <ErrorNotice error={error.message} />
@@ -450,7 +494,7 @@ export function AvatarStudio({
                   accessibilityRole="text"
                   accessibilityLiveRegion="polite"
                 >
-                  <ActivityIndicator size="small" color="#697176" />
+                  <ActivityIndicator size="small" color={colors.muted} />
                   <Text style={styles.description}>{t(phaseLabel)}</Text>
                 </View>
               )}

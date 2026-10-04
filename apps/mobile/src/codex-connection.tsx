@@ -2,7 +2,7 @@ import { CheckCircle2, ExternalLink, Image as ImageIcon } from "lucide-react-nat
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Linking, Text, View } from "react-native";
 import { useI18n } from "./i18n";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type Connection = {
@@ -18,6 +18,8 @@ type Connection = {
   };
 };
 export function CodexConnection() {
+  const { colors, s } = useUI();
+
   const { api } = useWorkspace();
   const { t } = useI18n();
   const [data, setData] = useState<Connection>();
@@ -69,7 +71,7 @@ export function CodexConnection() {
       ? flow.url
       : undefined;
   return (
-    <View style={{ backgroundColor: "#F3F3F4", borderRadius: 18, padding: 16, gap: 13 }}>
+    <View style={{ backgroundColor: colors.subtle, borderRadius: 18, padding: 16, gap: 13 }}>
       <View style={[s.row, { gap: 11 }]}>
         <ImageIcon size={20} color={colors.text} />
         <View style={{ flex: 1, gap: 3 }}>
@@ -78,7 +80,7 @@ export function CodexConnection() {
             {data?.connected ? t("Connected with Codex") : t("Your ChatGPT subscription")}
           </Text>
         </View>
-        {data?.connected && <CheckCircle2 size={18} color="#519270" />}
+        {data?.connected && <CheckCircle2 size={18} color={colors.success} />}
       </View>
       <Text style={s.muted}>
         {t(
@@ -121,7 +123,7 @@ export function CodexConnection() {
           {!!flow?.code && (
             <View
               style={{
-                backgroundColor: "#FFF",
+                backgroundColor: colors.card,
                 borderRadius: 12,
                 padding: 17,
                 alignItems: "center",

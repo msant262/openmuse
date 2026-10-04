@@ -3,6 +3,7 @@ import { Image, type ImageSourcePropType, StyleSheet, Text, View } from "react-n
 import { type AvatarPlaybackSource, type AvatarVisual, companionPoster } from "./avatar-media";
 import type { AvatarRendererKind } from "./avatar-renderer.types";
 import { useI18n } from "./i18n";
+import { useUI } from "./ui";
 
 export type AvatarVideoProps = {
   source: AvatarPlaybackSource;
@@ -36,6 +37,8 @@ export function AvatarMediaStage({
   onReady?: (kind: AvatarRendererKind) => void;
   Video: ComponentType<AvatarVideoProps>;
 }) {
+  const { colors } = useUI();
+
   const { t } = useI18n();
   // Polling may renew URL signatures. Keep already loaded media until it actually fails.
   const [poster, setPoster] = useState(visual.poster);
@@ -140,7 +143,7 @@ export function AvatarMediaStage({
             bottom: 3,
             left: 5,
             right: 5,
-            color: "#77767D",
+            color: colors.muted,
             fontSize: 10,
             textAlign: "center",
             backgroundColor: "rgba(255,255,255,0.9)",

@@ -8,7 +8,7 @@ import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
 import { messageStorage } from "./message-storage";
 import { ProactivitySubmission, proactivityTaskLabel } from "./proactivity-state";
-import { Button, Card, ErrorNotice, Field, s } from "./ui";
+import { Button, Card, ErrorNotice, Field, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function ProactivityCard({
@@ -18,6 +18,8 @@ export function ProactivityCard({
   suggestion: ProactivitySuggestion;
   onAnswered?: () => void;
 }) {
+  const { s } = useUI();
+
   const { t, locale } = useI18n();
   const { api, open } = useWorkspace();
   const { data } = useAgentWorkspace();

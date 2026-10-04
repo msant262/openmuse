@@ -2,7 +2,7 @@ import { ChevronDown, ChevronRight, Globe2 } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { Linking, Pressable, Text, View } from "react-native";
 import { useI18n } from "./i18n";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type Connection = {
@@ -15,6 +15,8 @@ type Connection = {
   status: string;
 };
 export function McpConnections({ query = "" }: { query?: string }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { api, notify } = useWorkspace();
   const [rows, setRows] = useState<Connection[]>([]),
@@ -61,13 +63,13 @@ export function McpConnections({ query = "" }: { query?: string }) {
     <View style={{ gap: 8 }}>
       <Text style={[s.muted, { fontSize: 13 }]}>{t("Connected apps")}</Text>
       {error ? <ErrorNotice error={error} /> : null}
-      <View style={{ backgroundColor: "#F0F0F1", borderRadius: 16, paddingHorizontal: 16 }}>
+      <View style={{ backgroundColor: colors.subtle, borderRadius: 16, paddingHorizontal: 16 }}>
         {visible.map((row, index) => (
           <View
             key={row.id}
             style={{
               borderBottomWidth: index < visible.length - 1 ? 1 : 0,
-              borderBottomColor: "#E7E7E9",
+              borderBottomColor: colors.line,
             }}
           >
             <View style={[s.row, { minHeight: 49, gap: 8 }]}>
@@ -85,7 +87,7 @@ export function McpConnections({ query = "" }: { query?: string }) {
                     borderRadius: 7,
                     alignItems: "center",
                     justifyContent: "center",
-                    backgroundColor: "#FFF",
+                    backgroundColor: colors.card,
                   }}
                 >
                   <Globe2 size={19} color={colors.text} strokeWidth={1.6} />

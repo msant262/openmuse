@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import type { ActionLogEntry } from "../../../packages/domain/src";
 import { useI18n } from "./i18n";
-import { Button, Card, Chip, ErrorNotice, s } from "./ui";
+import { Button, Card, Chip, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function ActionLogScreen() {
+  const { s } = useUI();
+
   const { t, locale } = useI18n();
   const { api } = useWorkspace();
   const [entries, setEntries] = useState<ActionLogEntry[]>([]);

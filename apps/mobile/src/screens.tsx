@@ -49,7 +49,6 @@ import {
   Button,
   Card,
   Chip,
-  colors,
   dateLabel,
   Empty,
   ErrorNotice,
@@ -60,8 +59,8 @@ import {
   resultSummary,
   SectionHeading,
   Sheet,
-  s,
   timeLabel,
+  useUI,
 } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -73,6 +72,8 @@ function eventDate(event: CalendarEvent) {
   return event.allDay ? event.start : localDateTime(event.start, event.timeZone).date;
 }
 export function TodayScreen() {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { workspace: w, navigate, open, ask } = useWorkspace();
   const wide = useWindowDimensions().width > 1180;
@@ -87,7 +88,7 @@ export function TodayScreen() {
       <View
         style={[
           {
-            backgroundColor: "#E8F2F8",
+            backgroundColor: colors.subtle,
             borderRadius: 24,
             padding: 32,
             minHeight: 228,
@@ -114,7 +115,7 @@ export function TodayScreen() {
           >
             {t("Your day, with a little more room to breathe.")}
           </Text>
-          <Text style={[s.muted, { maxWidth: 420, color: "#617680" }]}>
+          <Text style={[s.muted, { maxWidth: 420, color: colors.muted }]}>
             {events.length
               ? t("{count} things on your calendar", { count: events.length })
               : t("Your calendar has room")}
@@ -139,7 +140,7 @@ export function TodayScreen() {
                 width: 190,
                 height: 190,
                 borderRadius: 100,
-                backgroundColor: "#DAEAF2",
+                backgroundColor: colors.subtle,
               }}
             />
             <View
@@ -149,7 +150,7 @@ export function TodayScreen() {
                 height: 145,
                 borderRadius: 80,
                 borderWidth: 1,
-                borderColor: "#C8DBE6",
+                borderColor: colors.line,
               }}
             />
             <Mascot size={94} />
@@ -162,13 +163,13 @@ export function TodayScreen() {
                   left: -19,
                   padding: 11,
                   gap: 7,
-                  backgroundColor: "#FFF",
+                  backgroundColor: colors.card,
                   borderRadius: 13,
                   transform: [{ rotate: "-7deg" }],
                 },
               ]}
             >
-              <Check size={14} color="#739174" />
+              <Check size={14} color={colors.muted} />
               <Text style={s.small}>{t("A lighter day")}</Text>
             </View>
             <View
@@ -180,7 +181,7 @@ export function TodayScreen() {
                   right: -8,
                   padding: 12,
                   gap: 8,
-                  backgroundColor: "#FFF",
+                  backgroundColor: colors.card,
                   borderRadius: 13,
                   transform: [{ rotate: "5deg" }],
                 },
@@ -329,7 +330,7 @@ export function TodayScreen() {
         </Card>
       </View>
       <View style={{ flexDirection: wide ? "row" : "column", gap: 22 }}>
-        <Card style={{ flex: 1, backgroundColor: "#F0F0E7" }}>
+        <Card style={{ flex: 1, backgroundColor: colors.subtle }}>
           <SectionHeading title={t("A hand with the little things")} />
           <Text style={[s.muted, { marginBottom: 15 }]}>
             {t("Start with a thought. We’ll take it from there.")}
@@ -344,7 +345,7 @@ export function TodayScreen() {
               onPress={() => ask(t(prompt))}
               style={[
                 s.between,
-                { borderTopWidth: 1, borderTopColor: "#E1E2D9", paddingVertical: 13 },
+                { borderTopWidth: 1, borderTopColor: colors.line, paddingVertical: 13 },
               ]}
             >
               <Text style={[s.text, { fontSize: 12 }]}>{t(prompt)}</Text>
@@ -395,6 +396,8 @@ export function TodayScreen() {
   );
 }
 function Avatar({ name, index = 0 }: { name: string; index?: number }) {
+  const { colors } = useUI();
+
   return (
     <View
       style={{
@@ -425,6 +428,8 @@ export function AgendaRow({
   index?: number;
   neighbors?: CalendarEvent[];
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { open } = useWorkspace();
   return (
@@ -445,7 +450,7 @@ export function AgendaRow({
           width: 3,
           height: 42,
           borderRadius: 4,
-          backgroundColor: ["#BCDAEB", "#C7D6AB", "#D9CDEA"][index % 3],
+          backgroundColor: [colors.sky, colors.green, colors.subtle][index % 3],
         }}
       />
       <View style={{ flex: 1, gap: 3 }}>
@@ -469,6 +474,8 @@ export function AgendaRow({
   );
 }
 export function MailScreen() {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { workspace: w, api, open } = useWorkspace();
   const [query, setQuery] = useState("");
@@ -499,7 +506,7 @@ export function MailScreen() {
               gap: 9,
               flex: 1,
               minWidth: 200,
-              backgroundColor: "#FFF",
+              backgroundColor: colors.card,
               borderWidth: 1,
               borderColor: colors.line,
               borderRadius: 12,
@@ -618,6 +625,8 @@ function plusDays(date: string, days: number) {
   return value.toISOString().slice(0, 10);
 }
 export function CalendarScreen() {
+  const { colors, s } = useUI();
+
   const { t, locale } = useI18n();
   const { workspace: w, api, open } = useWorkspace();
   const [date, setDate] = useState(todayDate());
@@ -875,6 +884,8 @@ export function CalendarScreen() {
   );
 }
 export function BrowserScreen() {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const previewVisible = useInlinePreview();
   const { workspace: w, api, refresh, open } = useWorkspace();
@@ -1036,6 +1047,8 @@ export function FilesScreen() {
 }
 
 export function ActivityScreen() {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { workspace: w, open } = useWorkspace();
   const [filter, setFilter] = useState("all");
@@ -1089,7 +1102,7 @@ export function ActivityScreen() {
               <Chip
                 tint={
                   a.status === "failed"
-                    ? "#FBEFED"
+                    ? colors.dangerSurface
                     : a.status === "awaiting_review"
                       ? colors.lavender
                       : colors.canvas
@@ -1174,6 +1187,8 @@ function NativeConnections({
   query: string;
   selectToolkit: (toolkit: ConnectionToolkit) => void;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { workspace: w, api, refresh, notify, open } = useWorkspace();
   const [selected, setSelected] = useState<"gmail" | "googlecalendar">();
@@ -1259,12 +1274,12 @@ function NativeConnections({
     }
   }
   const rows = [
-    { id: "gmail", name: "Gmail", icon: Mail, color: "#EA5B4D", connected, group: "google" },
+    { id: "gmail", name: "Gmail", icon: Mail, color: colors.danger, connected, group: "google" },
     {
       id: "googlecalendar",
       name: "Google Calendar",
       icon: CalendarDays,
-      color: "#4285F4",
+      color: colors.blueDark,
       connected,
       group: "google",
     },
@@ -1272,7 +1287,7 @@ function NativeConnections({
       id: "browser",
       name: "Agent computer",
       icon: Globe2,
-      color: "#1987CF",
+      color: colors.blueDark,
       connected: w.connections.some((c) => c.id === "browser" && c.status === "connected"),
       group: "browser",
     },
@@ -1294,7 +1309,9 @@ function NativeConnections({
                   : t("Connected")
                 : t("Available")}
             </Text>
-            <View style={{ paddingHorizontal: 16, borderRadius: 16, backgroundColor: "#F0F0F1" }}>
+            <View
+              style={{ paddingHorizontal: 16, borderRadius: 16, backgroundColor: colors.subtle }}
+            >
               {group.map((row, index) => (
                 <Pressable
                   key={row.id}
@@ -1312,7 +1329,7 @@ function NativeConnections({
                       gap: 11,
                       minHeight: 49,
                       borderBottomWidth: index < group.length - 1 ? 1 : 0,
-                      borderBottomColor: "#E7E7E9",
+                      borderBottomColor: colors.line,
                     },
                   ]}
                 >
@@ -1321,7 +1338,7 @@ function NativeConnections({
                       width: 27,
                       height: 27,
                       borderRadius: 7,
-                      backgroundColor: "#FFF",
+                      backgroundColor: colors.card,
                       alignItems: "center",
                       justifyContent: "center",
                     }}
@@ -1333,7 +1350,7 @@ function NativeConnections({
                     <Text style={s.small}>{t("Local data")}</Text>
                   )}
                   {row.connected ? (
-                    <ChevronRight size={16} color="#A4A4A8" />
+                    <ChevronRight size={16} color={colors.muted} />
                   ) : (
                     <Text
                       style={{

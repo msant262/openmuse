@@ -5,7 +5,7 @@ import type { InteractionRequest } from "../../../packages/domain/src/runtime";
 import { useI18n } from "./i18n";
 import { InteractionCard } from "./interaction-card";
 import { partitionInteractions } from "./interaction-state";
-import { colors, s } from "./ui";
+import { useUI } from "./ui";
 
 export function InteractionList({
   requests,
@@ -14,6 +14,8 @@ export function InteractionList({
   requests: InteractionRequest[];
   onAnswered?: () => void;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const { pending, history } = partitionInteractions(requests);

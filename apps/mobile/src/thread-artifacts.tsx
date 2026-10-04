@@ -8,10 +8,12 @@ import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { BrowserThreadCard } from "./computer";
 import { useI18n } from "./i18n";
 import { ResultCardFooter, ResultCardFrame } from "./result-card-frame";
-import { Button, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function FileThreadCard({ file }: { file: Artifact }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { open, api } = useWorkspace();
   const { width } = useWindowDimensions();
@@ -41,7 +43,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
             style={{
               width: "100%",
               height: Math.min(300, Math.max(96, Math.min(558, width - 56) / state.ratio)),
-              backgroundColor: "#F5F6F7",
+              backgroundColor: colors.subtle,
             }}
             resizeMode="contain"
             onLoad={(event) => {
@@ -57,7 +59,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
           />
         </Pressable>
       ) : fields.length ? (
-        <View style={{ padding: 22, gap: 15, backgroundColor: "#F8F6F1" }}>
+        <View style={{ padding: 22, gap: 15, backgroundColor: colors.subtle }}>
           {fields.map((field) => (
             <View key={field.name} style={{ gap: 4 }}>
               <Text style={s.small}>{field.name.replace(/_/g, " ")}</Text>

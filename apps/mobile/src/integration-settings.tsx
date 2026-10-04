@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { CodexConnection } from "./codex-connection";
 import { useI18n } from "./i18n";
-import { Button, colors, ErrorNotice, s } from "./ui";
+import { Button, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type SavedConnection = {
@@ -16,6 +16,8 @@ type SavedConnection = {
 };
 
 export function IntegrationSettings({ query = "" }: { query?: string }) {
+  const { colors, s } = useUI();
+
   const { api, ask } = useWorkspace();
   const { t } = useI18n();
   const [items, setItems] = useState<SavedConnection[]>();
@@ -90,7 +92,7 @@ export function IntegrationSettings({ query = "" }: { query?: string }) {
       {matching?.map((item) => (
         <View
           key={`${item.kind}:${item.id}`}
-          style={{ padding: 16, gap: 12, borderRadius: 18, backgroundColor: "#F3F3F4" }}
+          style={{ padding: 16, gap: 12, borderRadius: 18, backgroundColor: colors.subtle }}
         >
           <View style={[s.row, { gap: 11 }]}>
             <KeyRound size={20} color={colors.text} />

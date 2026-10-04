@@ -5,7 +5,7 @@ import type { Artifact } from "../../../packages/domain/src";
 import { fileResultPresentation } from "./file-result-presentation";
 import { useI18n } from "./i18n";
 import { FileThreadCard } from "./thread-artifacts";
-import { Button, Card, colors, ErrorNotice, s } from "./ui";
+import { Button, Card, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function mediaResult(result: unknown): Record<string, unknown> | undefined {
@@ -38,6 +38,8 @@ export function resultFileIds(value: Record<string, unknown> | undefined): strin
 }
 /** Replay resolves by owner-bound ID; expiring signed URLs are never trusted from history. */
 export function FileToolCard({ result, loading }: { result: unknown; loading: boolean }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { api } = useWorkspace();
   const value = mediaResult(result);
@@ -124,7 +126,7 @@ export function FileToolCard({ result, loading }: { result: unknown; loading: bo
               contentContainerStyle={{
                 gap: 12,
                 padding: 12,
-                backgroundColor: "#F5F6F7",
+                backgroundColor: colors.subtle,
                 borderRadius: 12,
               }}
             >

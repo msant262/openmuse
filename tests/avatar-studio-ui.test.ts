@@ -145,6 +145,48 @@ function errors(view: ReturnType<typeof fixture>["view"]) {
     .join(" ");
 }
 
+test("opening a blank avatar draft does not revive an old unselected generation", async () => {
+  const calls: string[] = [];
+  const saved = { ...asset("saved"), status: "ready" };
+  const f = fixture(async (path) => {
+    calls.push(path);
+    return studio({ generations: [job()], assets: [...candidates, saved], activeAssetId: "saved" });
+  });
+  try {
+    f.view.render();
+    await f.view.flush();
+    assert.equal(f.view.field("Describe your companion"), "");
+    assert.equal(
+      f.view.nodes().filter((item) => item.props.accessibilityRole === "radio").length,
+      0,
+    );
+    const preview = f.view.nodes().find((item) => item.type === "AvatarRenderer");
+    assert.ok(preview);
+    assert.equal((preview.props.asset as { id: string }).id, "saved");
+    assert.deepEqual(calls, ["/api/agent/avatars"]);
+    f.view.button("Previous generations").onPress();
+    f.view.render();
+    choose(f.view, "Resume generation: A small teal dragon");
+    assert.equal(f.view.field("Describe your companion"), "A small teal dragon");
+    assert.equal(
+      f.view.nodes().filter((item) => item.props.accessibilityRole === "radio").length,
+      4,
+    );
+    describe(f.view, "");
+    assert.equal(
+      f.view.nodes().filter((item) => item.props.accessibilityRole === "radio").length,
+      0,
+    );
+    assert.deepEqual(
+      calls,
+      ["/api/agent/avatars"],
+      "resuming and clearing do not regenerate or delete saved assets",
+    );
+  } finally {
+    f.view.close();
+  }
+});
+
 test("avatar creation polls real job candidates and applies selected poster while videos generate", async () => {
   const calls: { path: string; body?: unknown }[] = [];
   const f = fixture(async (path, body) => {
@@ -267,6 +309,9 @@ test("unmounted selection response cannot refresh identity or announce success",
   );
   f.view.render();
   await f.view.flush();
+  f.view.button("Previous generations").onPress();
+  f.view.render();
+  choose(f.view, "Resume generation: A small teal dragon");
   choose(f.view, "Choose option 1");
   f.view.button("Select companion").onPress();
   f.view.close();
@@ -327,6 +372,9 @@ test("uncertain jobs retry only after explicit acknowledgement with a new action
   try {
     f.view.render();
     await f.view.flush();
+    f.view.button("Previous generations").onPress();
+    f.view.render();
+    choose(f.view, "Resume generation: A small teal dragon");
     f.view.button("Retry generation").onPress();
     f.view.render();
     assert.equal(posts.length, 0);

@@ -90,7 +90,7 @@ import { suggestionsFromRequests } from "./proactivity-state";
 
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
 import { type Selection, useMuseThread } from "./threads";
-import { Button, Card, CheckRow, colors, ErrorNotice, Sheet, s } from "./ui";
+import { Button, Card, CheckRow, ErrorNotice, Sheet, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 const displayParameters = z.record(z.string(), z.unknown());
@@ -266,6 +266,8 @@ function ServerToolCard({
   result: unknown;
   loading: boolean;
 }) {
+  const { s } = useUI();
+
   const { t } = useI18n();
   const { data } = useAgentWorkspace();
   const { navigate, open } = useWorkspace();
@@ -336,6 +338,8 @@ export function ChatScreen({
   active?: boolean;
   wide?: boolean;
 }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { api, workspace: w, refresh, open } = useWorkspace();
   const { reportActivity } = useAvatarPresentation();
@@ -1037,14 +1041,14 @@ export function ChatScreen({
                   text: t("Plan my day"),
                   detail: t("Find a little breathing room"),
                   icon: CalendarDays,
-                  tint: "#EFF3EC",
+                  tint: colors.green,
                   action: () => enqueue(t("Help me plan my day. Ask what you need to know.")),
                 },
                 {
                   text: t("Create a document"),
                   detail: t("Turn an idea into something real"),
                   icon: FileText,
-                  tint: "#F3EEF8",
+                  tint: colors.lavender,
                   action: () =>
                     enqueue(t("Help me create a document. Let's choose its topic and format.")),
                 },
@@ -1052,7 +1056,7 @@ export function ChatScreen({
                   text: t("Open my computer"),
                   detail: t("Pick up where we left off"),
                   icon: Monitor,
-                  tint: "#EDF4F8",
+                  tint: colors.sky,
                   action: () => open({ type: "computer" }),
                 },
               ].map((item) => (
@@ -1082,7 +1086,7 @@ export function ChatScreen({
                       justifyContent: "center",
                     }}
                   >
-                    <item.icon size={20} strokeWidth={1.6} color="#59646A" />
+                    <item.icon size={20} strokeWidth={1.6} color={colors.muted} />
                   </View>
                   <View style={{ gap: 4, flexShrink: 1 }}>
                     <Text style={[s.text, { fontWeight: "600", fontSize: 14 }]}>{item.text}</Text>
@@ -1255,7 +1259,7 @@ export function ChatScreen({
                 gap: 7,
                 paddingHorizontal: 19,
                 paddingVertical: 18,
-                backgroundColor: "#EEEEF0",
+                backgroundColor: colors.subtle,
                 borderRadius: 28,
               },
             ]}
@@ -1454,7 +1458,7 @@ export function ChatScreen({
             borderRadius: 24,
             borderWidth: 1,
             borderColor: colors.line,
-            shadowColor: "#000",
+            shadowColor: colors.shadow,
             shadowOpacity: 0.06,
             shadowRadius: 20,
             shadowOffset: { width: 0, height: 4 },
@@ -1602,12 +1606,12 @@ export function ChatScreen({
         </Card>
         <View
           style={{
-            backgroundColor: "#FFF",
+            backgroundColor: colors.card,
             borderRadius: 30,
             borderWidth: 1,
-            borderColor: focused ? "#D4DCE4" : "#F3F3F4",
+            borderColor: focused ? colors.line : colors.line,
             padding: 4,
-            shadowColor: "#18384B",
+            shadowColor: colors.shadow,
             shadowOpacity: focused ? 0.07 : 0.045,
             shadowRadius: 20,
             shadowOffset: { width: 0, height: 4 },
@@ -1749,7 +1753,7 @@ export function ChatScreen({
                       : t("Loading conversation…")
                     : t("Message…")
               }
-              placeholderTextColor="#949B9F"
+              placeholderTextColor={colors.muted}
               selectionColor={colors.blueDark}
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
@@ -1803,7 +1807,7 @@ export function ChatScreen({
                   borderRadius: 24,
                   alignItems: "center",
                   justifyContent: "center",
-                  backgroundColor: pressed ? "#F1F1F3" : "transparent",
+                  backgroundColor: pressed ? colors.subtle : "transparent",
                 })}
               >
                 <Mic size={21} strokeWidth={1.65} color={colors.muted} />
@@ -1833,7 +1837,7 @@ export function ChatScreen({
                   <ArrowUp
                     size={25}
                     strokeWidth={1.8}
-                    color={draft.trim() ? colors.text : "#BFC0C3"}
+                    color={draft.trim() ? colors.text : colors.muted}
                   />
                 }
               </Pressable>

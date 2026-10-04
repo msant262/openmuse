@@ -3,10 +3,12 @@ import { useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
-import { colors, IconButton, ModalSurface, s } from "./ui";
+import { IconButton, ModalSurface, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
+  const { colors, s } = useUI();
+
   const { t } = useI18n();
   const { workspace, open } = useWorkspace();
   const { data } = useAgentWorkspace();
@@ -84,11 +86,11 @@ export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
                 gap: 14,
                 padding: 12,
                 borderRadius: 14,
-                backgroundColor: pressed ? "#EEEFF0" : "transparent",
+                backgroundColor: pressed ? colors.subtle : "transparent",
               },
             ]}
           >
-            <View style={[s.iconBox, { width: 36, height: 36, backgroundColor: "#EEEEF0" }]}>
+            <View style={[s.iconBox, { width: 36, height: 36, backgroundColor: colors.subtle }]}>
               <Icon size={19} color={colors.muted} />
             </View>
             <View style={{ flex: 1, gap: 3 }}>

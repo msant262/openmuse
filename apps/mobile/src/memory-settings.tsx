@@ -3,11 +3,13 @@ import { Text, View } from "react-native";
 import type { AgentMemory, RevisionEntry } from "../../../packages/domain/src/agent";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
-import { Button, Card, ErrorNotice, Field, s } from "./ui";
+import { Button, Card, ErrorNotice, Field, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 type Page<T> = { entries: T[]; nextCursor?: string };
-export function MemorySettings() {
+export function MemorySettings({ document = false }: { document?: boolean } = {}) {
+  const { s } = useUI();
+
   const { t } = useI18n();
   const { api } = useWorkspace();
   const { refresh } = useAgentWorkspace();
@@ -48,7 +50,7 @@ export function MemorySettings() {
   }
   return (
     <Card style={{ gap: 12 }}>
-      <Text style={s.heading}>{t("Memory")}</Text>
+      <Text style={s.heading}>{t(document ? "Saved memories" : "Memory")}</Text>
       <Text style={s.muted}>
         {t("Inspect facts, corrections and forgotten entries. Restoring creates a new revision.")}
       </Text>
@@ -90,6 +92,8 @@ export function MemorySettings() {
   );
 }
 function MemoryRow({ memory, changed }: { memory: AgentMemory; changed: () => Promise<void> }) {
+  const { s } = useUI();
+
   const { t, locale } = useI18n();
   const { api } = useWorkspace();
   const [text, setText] = useState(memory.text);
