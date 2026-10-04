@@ -47,6 +47,7 @@ import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { ConnectedSearchBackend, type IntegrationService } from "../integrations.ts";
 import { InteractionRequests } from "../interaction-requests.ts";
+import { ProcedureMaintenance } from "../learning/procedure-maintenance.ts";
 import { PersonalLearning } from "../learning/service.ts";
 import { backgroundFailure } from "../log.ts";
 import { McpService } from "../mcp.ts";
@@ -139,6 +140,7 @@ export class AgentService {
     this.desktop = desktop;
   }
   readonly playbooks: Playbooks;
+  readonly procedureMaintenance: ProcedureMaintenance;
   readonly profiles: AgentProfile;
   readonly avatars: AvatarService;
   readonly interactions: InteractionRequests;
@@ -273,6 +275,7 @@ export class AgentService {
     this.verification = new TaskVerification(db, files, this.journal);
     this.profiles = new AgentProfile(db);
     this.playbooks = new Playbooks(this);
+    this.procedureMaintenance = new ProcedureMaintenance(this);
     this.interactions = new InteractionRequests(db);
     this.runtimePause = new RuntimePause(db);
     this.resourceLeases = new ResourceLeases(db);
@@ -454,6 +457,7 @@ export class AgentService {
           if (value.id !== "identity") continue;
           if (this.config.mode === "live") {
             await this.learning.scheduleDue(owner);
+            await this.procedureMaintenance.scheduleDue(owner);
             await this.proactivity.pollSources(owner);
             await this.proactivity.scheduleDue(owner);
             continue;
@@ -1430,6 +1434,8 @@ export class AgentService {
   ): Promise<Partial<AgentTask>> {
     task = await this.actor.apply(owner, task, context);
     if (task.input.memoryReview === true) return this.learning.review(owner, task, context);
+    if (task.input.procedureMaintenance === true)
+      return this.procedureMaintenance.run(owner, task, context);
     if (typeof task.input.proactivityCycleId === "string") {
       try {
         return await this.proactivity.review(owner, task.input.proactivityCycleId, task, context);
@@ -1846,6 +1852,7 @@ export class AgentService {
     const task = await this.getTask(owner, saved.id);
     if (typeof task.input.proactivityCycleId === "string" || task.input.internalActivity === true)
       return;
+    await this.playbooks.recordOutcome(owner, task.id);
     await this.proactivity.events.task(owner, task);
     if (terminal.has(task.status) && typeof task.state.parentTaskId === "string") {
       const parent = await this.db.get<AgentTask>(owner, "tasks", task.state.parentTaskId);

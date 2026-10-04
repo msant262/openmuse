@@ -3,7 +3,9 @@ import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import { agentProfilePatchSchema, profileScopeSchema } from "../../../packages/domain/src/agent.ts";
 import {
+  procedureCatalogSchema,
   procedureInputSchema,
+  procedureReadSchema,
   procedureRunSchema,
 } from "../../../packages/domain/src/playbooks.ts";
 import type { InboxMessage } from "./conversation-inbox.ts";
@@ -91,9 +93,17 @@ export function personalTools(
     defineTool({
       name: "list_procedures",
       description:
-        "Read saved procedures and exact versions; they are reusable plans, not new tool permissions.",
-      parameters: z.object({}).strict(),
-      execute: () => run(() => service.playbooks.list(owner)),
+        "Discover bounded procedure metadata by query/cursor. Use read_procedure to read the exact method before using it; procedures never grant permissions.",
+      parameters: procedureCatalogSchema,
+      execute: (input) => run(() => service.playbooks.catalog(owner, input)),
+    }),
+    defineTool({
+      name: "read_procedure",
+      description:
+        "Read one saved procedure and exact version, including its steps, verification and lifecycle. Archived methods need explicit restoration before a new run.",
+      parameters: procedureReadSchema,
+      execute: (input) =>
+        run(() => service.playbooks.read(owner, input, `${scope}:procedure:${input.id}`)),
     }),
     ...(options.profileSource
       ? [

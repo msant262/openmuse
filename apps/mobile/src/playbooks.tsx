@@ -18,6 +18,8 @@ export function PlaybooksPanel() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<ProcedureVersion[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string>();
   useEffect(() => {
     let live = true;
     void api
@@ -32,6 +34,58 @@ export function PlaybooksPanel() {
       live = false;
     };
   }, [api]);
+  async function manage(
+    action: "archive" | "restore" | "pin" | "unpin" | "rollback",
+    version?: number,
+  ) {
+    if (!selected || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const value = await api.request<ProcedureVersion>(
+        `/api/agent/playbooks/${selected.id}/manage`,
+        {
+          action,
+          version,
+          expectedVersion: selected.version,
+          requestId: Crypto.randomUUID(),
+          reason: "Changed in procedure settings",
+        },
+      );
+      setSelected(value);
+      setValues((items) => items.map((item) => (item.id === value.id ? value : item)));
+      setHistory([]);
+      setHistoryCursor(undefined);
+      setStatus(t("Saved"));
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function loadHistory(cursor?: string) {
+    if (!selected || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const page = await api.request<{
+        entries: { value: ProcedureVersion }[];
+        nextCursor?: string;
+      }>(
+        `/api/agent/playbooks/${selected.id}/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+      );
+      setHistory((old) =>
+        cursor
+          ? [...old, ...page.entries.map((entry) => entry.value)]
+          : page.entries.map((entry) => entry.value),
+      );
+      setHistoryCursor(page.nextCursor);
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function run() {
     if (!selected || busy) return;
     setBusy(true);
@@ -78,9 +132,13 @@ export function PlaybooksPanel() {
             setSelected(value);
             setInputs({});
             setStatus("");
+            setHistory([]);
+            setHistoryCursor(undefined);
           }}
         >
           {value.title} · v{value.version}
+          {value.lifecycle === "archived" ? ` · ${t("Archived")}` : ""}
+          {value.pinned ? ` · ${t("Pinned")}` : ""}
         </Button>
       ))}
       {selected && (
@@ -101,9 +159,42 @@ export function PlaybooksPanel() {
               onChangeText={(value) => setInputs((old) => ({ ...old, [input.name]: value }))}
             />
           ))}
-          <Button busy={busy} onPress={() => void run()}>
-            {t("Run or check pending request")}
+          {selected.lifecycle !== "archived" && (
+            <Button busy={busy} onPress={() => void run()}>
+              {t("Run or check pending request")}
+            </Button>
+          )}
+          <Button
+            small
+            busy={busy}
+            onPress={() => void manage(selected.lifecycle === "archived" ? "restore" : "archive")}
+          >
+            {t(selected.lifecycle === "archived" ? "Restore" : "Archive")}
           </Button>
+          <Button small busy={busy} onPress={() => void manage(selected.pinned ? "unpin" : "pin")}>
+            {t(selected.pinned ? "Unpin procedure" : "Pin procedure")}
+          </Button>
+          <Button small busy={busy} onPress={() => void loadHistory()}>
+            {t("Version history")}
+          </Button>
+          {history
+            .filter((version) => version.version !== selected.version)
+            .map((version) => (
+              <View key={version.version} style={{ gap: 4 }}>
+                <Text style={s.small}>
+                  v{version.version} · {version.savedAt}
+                </Text>
+                <Text style={s.small}>{version.steps.join("\n")}</Text>
+                <Button small busy={busy} onPress={() => void manage("rollback", version.version)}>
+                  {t("Restore this version")}
+                </Button>
+              </View>
+            ))}
+          {historyCursor && (
+            <Button small busy={busy} onPress={() => void loadHistory(historyCursor)}>
+              {t("Load more versions")}
+            </Button>
+          )}
         </View>
       )}
       {!!status && <Text style={s.small}>{status}</Text>}

@@ -96,6 +96,71 @@ export class Store {
       (row) => row.data as unknown as { source: "memory" | "deadline"; value: T },
     );
   }
+  async procedureCatalog(
+    owner: string,
+    options: { query: string; cursor?: string; limit: number; includeArchived: boolean },
+  ) {
+    const result = await this.db.query(
+      `WITH candidates AS (
+      SELECT id,data->'versions'->-1 AS value FROM records WHERE owner=$1 AND kind='playbooks'
+    ), ranked AS (SELECT *,row_number() OVER (ORDER BY id) AS position FROM candidates
+      WHERE ($3::boolean OR COALESCE(value->>'lifecycle','active')<>'archived')
+      AND ($2='' OR id=$2 OR openmuse_search_vector(value->>'title' || ' ' || (value->'steps')::text) @@ openmuse_search_query($2)))
+    SELECT jsonb_build_object('id',id,'title',value->>'title','version',value->'version','learned',COALESCE(value->'learned','false'::jsonb),
+      'pinned',COALESCE(value->'pinned','false'::jsonb),'lifecycle',COALESCE(value->>'lifecycle','active'),'requiredTools',value->'requiredTools','savedAt',value->>'savedAt') AS data
+    FROM ranked WHERE ($4::text IS NULL OR position>COALESCE((SELECT position FROM ranked WHERE id=$4),0)) ORDER BY position LIMIT $5`,
+      [owner, options.query, options.includeArchived, options.cursor ?? null, options.limit + 1],
+    );
+    const entries = result.rows
+      .slice(0, options.limit)
+      .map(
+        (row) =>
+          row.data as unknown as import("../../../packages/domain/src/playbooks.ts").ProcedureCatalogEntry,
+      );
+    return {
+      entries,
+      ...(result.rows.length > options.limit ? { nextCursor: entries.at(-1)?.id } : {}),
+    };
+  }
+  async procedureUsage(owner: string, id: string, version?: number) {
+    const result = await this.db.query(
+      `WITH runs AS (SELECT data FROM records WHERE owner=$1 AND kind='playbook-runs' AND data->>'procedureId'=$2 AND ($3::text IS NULL OR data->>'procedureVersion'=$3)),
+      outcomes AS (SELECT data FROM records WHERE owner=$1 AND kind='procedure-outcomes' AND data->>'procedureId'=$2 AND ($3::text IS NULL OR data->>'procedureVersion'=$3)),
+      views AS (SELECT data FROM records WHERE owner=$1 AND kind='procedure-views' AND data->>'procedureId'=$2 AND ($3::text IS NULL OR data->>'procedureVersion'=$3))
+      SELECT jsonb_build_object('runs',(SELECT count(*) FROM runs),'views',(SELECT count(*) FROM views),
+       'verified',(SELECT count(*) FROM outcomes WHERE data->>'outcome'='verified'),'failed',(SELECT count(*) FROM outcomes WHERE data->>'outcome'='failed'),
+       'partial',(SELECT count(*) FROM outcomes WHERE data->>'outcome'='partial'),'cancelled',(SELECT count(*) FROM outcomes WHERE data->>'outcome'='cancelled'),
+       'lastUsedAt',(SELECT max(at) FROM (SELECT data->>'createdAt' AS at FROM runs UNION ALL SELECT data->>'finishedAt' FROM outcomes) activity),
+       'lastViewedAt',(SELECT max(data->>'viewedAt') FROM views)) AS data`,
+      [owner, id, version === undefined ? null : String(version)],
+    );
+    return result.rows[0].data as unknown as {
+      runs: number;
+      views: number;
+      verified: number;
+      failed: number;
+      partial: number;
+      cancelled: number;
+      lastUsedAt: string | null;
+      lastViewedAt: string | null;
+    };
+  }
+  async procedureRunForTask<T>(owner: string, taskId: string): Promise<T | null> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='playbook-runs' AND data->>'taskId'=$2 LIMIT 1",
+      [owner, taskId],
+    );
+    return (result.rows[0]?.data as T) ?? null;
+  }
+  async procedureInUse(owner: string, id: string, title: string): Promise<boolean> {
+    const result = await this.db.query(
+      `SELECT 1 FROM records WHERE owner=$1 AND (
+      (kind='tasks' AND data->'input'->'procedure'->>'id'=$2 AND data->>'status' NOT IN ('succeeded','failed','cancelled'))
+      OR (kind='routines' AND data->>'deleted' IS DISTINCT FROM 'true' AND data->>'enabled'='true' AND (strpos(data->>'prompt',$2)>0 OR strpos(lower(data->>'prompt'),lower($3))>0))) LIMIT 1`,
+      [owner, id, title],
+    );
+    return result.rows.length > 0;
+  }
   async proactivityBindings<T>(owner: string, taskId: string): Promise<T[]> {
     const result = await this.db.query(
       "SELECT data FROM records WHERE owner=$1 AND kind='proactivity-suggestions' AND data->>'taskId'=$2 AND data->>'status'='accepted' ORDER BY id LIMIT 100",
@@ -1282,6 +1347,9 @@ export async function createStore(
   await initializeDurableConversations((sql) => database.query(sql));
   await initializeThreadCompaction((sql) => database.query(sql));
   await initializeHistoryRetrieval((sql) => database.query(sql));
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS procedure_telemetry_identity ON records(owner,kind,(data->>'procedureId'),(data->>'procedureVersion')) WHERE kind IN ('playbook-runs','procedure-outcomes','procedure-views')",
+  );
   await database.query(
     "CREATE INDEX IF NOT EXISTS proactivity_event_due ON records(owner,(data->>'status'),(data->>'dueAt')) WHERE kind='proactivity-events'",
   );

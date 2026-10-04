@@ -41,3 +41,16 @@ Semantic compaction also adapts generation ownership/cancellation rollback from
 `agent/context_compressor_summary.py` at `1298c8e74baa73e1a2b90124228d017261ac6bc4`.
 A superseded writer cannot commit, and cancellation preserves the preceding
 checkpoint. Summary failure is explicit and does not erase canonical history.
+
+Procedure maintenance adapts `tools/skill_usage.py`, `agent/curator.py` and
+`tools/skill_ledger.py` at `1298c8e74baa73e1a2b90124228d017261ac6bc4`: explicitly
+agent-owned methods, separate views/runs and version-specific verified outcomes,
+pinned/user-owned protection, weekly maintenance after two hours idle, and the
+14-day stale / 30-day recoverable archive defaults. Active task and routine
+references protect methods. Source code is Python; these contracts are ported to
+our typed store and existing worker, with immutable database revision snapshots
+and atomic mutation receipts instead of filesystem JSONL/blob backups. The head
+record retains at most 30 versions; exact older versions remain readable and
+rollback creates a new version without deleting history. Consolidation is an
+explicit operation limited to identical eligible learned methods; the curator
+does not rewrite methods using a model. SOUL is outside every maintenance path.

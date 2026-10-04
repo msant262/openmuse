@@ -1,7 +1,11 @@
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
-import { procedureInputSchema } from "../../../../packages/domain/src/playbooks.ts";
+import {
+  procedureCatalogSchema,
+  procedureInputSchema,
+  procedureReadSchema,
+} from "../../../../packages/domain/src/playbooks.ts";
 import { bindingHash, type InboxMessage } from "../conversation-inbox.ts";
 import type { AgentService } from "../engine/service.ts";
 import { tanstackAgent } from "../engine/tanstack-agent.ts";
@@ -270,13 +274,27 @@ export class PersonalLearning {
       defineTool({
         name: "list_procedures",
         description:
-          "Read existing reusable procedures and their current versions before updating or duplicating a method.",
-        parameters: z.object({}),
-        execute: async () => {
+          "Discover existing reusable procedures with bounded metadata. Read the matching exact method before updating or creating a duplicate.",
+        parameters: procedureCatalogSchema,
+        execute: async (input) => {
           await guard();
-          const procedures = await this.service.playbooks.list(owner);
-          for (const p of procedures) viewedProcedures.add(`${p.id}:${p.version}`);
-          return procedures;
+          return this.service.playbooks.catalog(owner, input);
+        },
+      }),
+      defineTool({
+        name: "read_procedure",
+        description:
+          "Read one exact reusable method before changing it. Pinned and user-owned methods are protected from automatic learning.",
+        parameters: procedureReadSchema,
+        execute: async (input) => {
+          await guard();
+          const procedure = await this.service.playbooks.read(
+            owner,
+            input,
+            `learning:${task.id}:${input.id}`,
+          );
+          viewedProcedures.add(`${procedure.id}:${procedure.version}`);
+          return procedure;
         },
       }),
       defineTool({

@@ -502,6 +502,12 @@ export const ptBR: Record<string, string> = {
   Enable: "Ativar",
   Disable: "Desativar",
   "Saved procedures": "Procedimentos salvos",
+  Pinned: "Fixado",
+  "Pin procedure": "Fixar procedimento",
+  "Unpin procedure": "Desfixar procedimento",
+  "Version history": "Histórico de versões",
+  "Restore this version": "Restaurar esta versão",
+  "Load more versions": "Carregar mais versões",
   'After a task is done, ask in chat: "save this way of doing it as a procedure."':
     'Quando uma tarefa terminar, peça no chat: "salve este jeito de fazer como um procedimento".',
   "Show my saved procedures and help me choose one.":
