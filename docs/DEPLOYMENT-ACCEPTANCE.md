@@ -1,6 +1,21 @@
 # OkamiBot: instalação e aceite em 4 de outubro de 2026
 
-**Revisão atual publicada: API `7f81a03`; web e Android `3e1f3ac`.** A interface
+**Revisão atual publicada: API `0b0122c`; web e Android `94b47bc`.** A skill
+`humanizer` entra automaticamente na conversa e nas tarefas junto ao SOUL.
+O handoff evita confirmações duplicadas; pesquisas em texto passam por revisão
+do pedido e dos dados observados. Os modais têm switches e seleções visíveis,
+com salvamento acessível durante a rolagem.
+
+A validação incluiu 1.334 testes completos antes do último ajuste de streaming,
+37 testes focados na versão final, TypeScript, ensaios com o modelo conectado
+e aceite da web pública. SOUL, modelo e avatar foram preservados. O APK ARM64
+assinado está [disponível para atualização](https://app.okamibot.cloud/downloads/okamibot.apk?v=94b47bc).
+Não houve novo aceite de execução nativa nesta retomada.
+[Evidências e limites](superpowers/research/2026-10-04-companion-humanizer.md).
+
+## Histórico: interface e personalização (`3e1f3ac`)
+
+**Revisão anterior publicada: API `7f81a03`; web e Android `3e1f3ac`.** A interface
 oferece temas Claro, Escuro e Automático persistidos por dispositivo, cartões
 SOUL/MEMORY com edição e histórico, e navegação que destaca a conversa principal
 e a criação de novas conversas. O criador de companheiro abre com campo vazio;
