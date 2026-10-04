@@ -61,19 +61,30 @@ async function chatFixture(t: TestContext, failure?: string) {
 
 test("chat browse_web emits real SDK tool events and returns observed source content immediately", async (t) => {
   const { requests } = await modelFixture(t, (index) =>
-    index % 2 === 0 ? { name: "browse_web", arguments: { url: requestedUrl } } : undefined,
+    index % 3 === 0
+      ? { name: "describe_tools", arguments: { names: ["browse_web"] } }
+      : index % 3 === 1
+        ? { name: "browse_web", arguments: { url: requestedUrl } }
+        : undefined,
   );
   const fixture = await chatFixture(t);
   const events = (await lastValueFrom(fixture.conversation.run(runInput()).pipe(toArray()))).map(
     (event) => EventSchemas.parse(event),
   );
-  const toolEvents = events.filter((event) =>
-    [
-      EventType.TOOL_CALL_START,
-      EventType.TOOL_CALL_ARGS,
-      EventType.TOOL_CALL_END,
-      EventType.TOOL_CALL_RESULT,
-    ].some((type) => type === event.type),
+  const browseStart = events.find(
+    (event) => event.type === EventType.TOOL_CALL_START && event.toolCallName === "browse_web",
+  );
+  assert.ok(browseStart?.type === EventType.TOOL_CALL_START);
+  const toolEvents = events.filter(
+    (event) =>
+      "toolCallId" in event &&
+      event.toolCallId === browseStart.toolCallId &&
+      [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+        EventType.TOOL_CALL_RESULT,
+      ].some((type) => type === event.type),
   );
   assert.deepEqual(
     toolEvents.map((event) => event.type),
@@ -100,11 +111,12 @@ test("chat browse_web emits real SDK tool events and returns observed source con
   assert.deepEqual(fixture.browserCalls, ["/sessions", `/sessions/${page.sessionId}/read`]);
   assert.equal(events.at(-1)?.type, EventType.RUN_FINISHED);
   assert.equal((await fixture.db.list("local-user", "tasks")).length, 0);
-  assert.equal(requests.length, 2);
-  assert.ok(requests[0].body.includes('"name":"browse_web"'));
-  assert.match(requests[0].body, /For public-page summaries.*web_fetch/);
+  assert.equal(requests.length, 3);
+  assert.ok(requests[0].body.includes('"name":"describe_tools"'));
+  assert.ok(requests[1].body.includes('"name":"browse_web"'));
+  assert.match(requests[1].body, /For public-page summaries.*web_fetch/);
   assert.match(requests[0].body, /untrusted/);
-  assert.ok(requests[1].body.includes(observed.text));
+  assert.ok(requests[2].body.includes(observed.text));
 
   const { token } = await fixture.auth.session();
   const response = await fixture.app.request(`/api/browsers/${page.sessionId}`, {

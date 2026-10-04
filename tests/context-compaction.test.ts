@@ -286,3 +286,100 @@ test("a well-formed summary that drops the original user request is rejected", a
   );
   assert.equal(await db.get("owner", "context-summaries", "missing-goal"), null);
 });
+
+test("every summary window and cache extension must retain earlier user requests", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  const messages = history()
+    .filter((m) => m.id !== "change")
+    .map((m) =>
+      m.id === "original" ? { ...m, content: "Plan Lisbon travel without booking hotels." } : m,
+    );
+  const complete = (i: SummaryRequest) =>
+    `## Decisions\nPlan Lisbon travel without booking hotels.\n## Open TODOs\nNone.\n## Constraints/Rules\nNone.\n## Pending user asks\nLatest user request context: ${JSON.stringify(i.latestUserRequest)}\n## Exact identifiers\nNone.`;
+  const incomplete = (i: SummaryRequest) =>
+    complete(i).replace("Plan Lisbon travel without booking hotels.", "None.");
+  let calls = 0;
+  const compact = new ContextCompaction(db, "owner", "later-window", async (i) =>
+    ++calls === 1 ? complete(i) : incomplete(i),
+  );
+  await assert.rejects(
+    compact.project(messages, { model }, new AbortController().signal),
+    /quality|request|ask/i,
+  );
+  assert.equal(calls, 2, "the first valid window cannot authorize dropping its constraints later");
+  const first = new ContextCompaction(db, "owner", "extension", async (i) => complete(i));
+  await first.project(messages, { model }, new AbortController().signal);
+  const checkpoint = await db.get("owner", "context-summaries", "extension");
+  const extended = [
+    ...messages,
+    ...history()
+      .filter((m) => m.role === "assistant")
+      .map((m) => ({ ...m, id: `extra-${m.id}` })),
+    { id: "latest", role: "user" as const, content: "Continue." },
+  ];
+  const restarted = new ContextCompaction(db, "owner", "extension", async (i) => incomplete(i));
+  await assert.rejects(
+    restarted.project(extended, { model }, new AbortController().signal),
+    /quality|request|ask/i,
+  );
+  assert.deepEqual(await db.get("owner", "context-summaries", "extension"), checkpoint);
+});
+
+test("overlapping cancelled commits cannot resurrect a cancelled predecessor", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  const gate = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  };
+  const committedA = gate(),
+    committedB = gate(),
+    releaseA = gate(),
+    releaseB = gate();
+  const write = db.durableMutation.bind(db);
+  let commits = 0;
+  t.mock.method(db, "durableMutation", async (...args: Parameters<typeof write>) => {
+    const result = await write(...args);
+    if (++commits === 1) {
+      committedA.resolve();
+      await releaseA.promise;
+    } else {
+      committedB.resolve();
+      await releaseB.promise;
+    }
+    return result;
+  });
+  const abortA = new AbortController(),
+    abortB = new AbortController();
+  const a = new ContextCompaction(db, "owner", "overlap", async (i) => summary(i));
+  const pendingA = assert.rejects(a.project(history(), { model }, abortA.signal), /abort/i);
+  await committedA.promise;
+  const extended = [
+    ...history(),
+    ...history()
+      .filter((m) => m.role === "assistant")
+      .map((m) => ({ ...m, id: `extra-${m.id}` })),
+    { id: "latest", role: "user" as const, content: "Continue." },
+  ];
+  const b = new ContextCompaction(db, "owner", "overlap", async (i) => summary(i));
+  const pendingB = assert.rejects(b.project(extended, { model }, abortB.signal), /abort/i);
+  await committedB.promise;
+  abortA.abort();
+  releaseA.resolve();
+  await pendingA;
+  abortB.abort();
+  releaseB.resolve();
+  await pendingB;
+  assert.equal(await db.get("owner", "context-summaries", "overlap"), null);
+  const restarted = new ContextCompaction(db, "owner", "overlap", async () => {
+    throw new Error("must regenerate cancelled summary");
+  });
+  await assert.rejects(
+    restarted.project(extended, { model }, new AbortController().signal),
+    /must regenerate/,
+  );
+});

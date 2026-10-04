@@ -45,7 +45,13 @@ type Heartbeat = {
   activeCycleId: string | null;
   lastReviewedAt?: string;
   watermark?: string;
-  cursors?: { goals?: string; tasks?: string; memories?: string; mail?: number };
+  cursors?: {
+    goals?: string;
+    tasks?: string;
+    memories?: string;
+    mail?: number;
+    calendar?: { version: string; reviewedIds: string[] };
+  };
 };
 export type ProactivityDecision = {
   suggestion: ProactivitySuggestion;
@@ -517,6 +523,7 @@ export class ProactivityService {
     const reasoningCandidates: HeartbeatCandidate[] = [];
     let mailCursor = 0;
     let calendarContext: unknown;
+    let calendarCursor: NonNullable<Heartbeat["cursors"]>["calendar"];
     try {
       const candidates = await read("mail-candidates", {}, () =>
         this.service.workspace.proactivityMailCandidates(owner, ctx.signal),
@@ -682,9 +689,47 @@ export class ProactivityService {
       };
       calendarContext = calendar;
       if (semantic && calendar.metadata.complete && "connectionId" in calendar.metadata) {
-        for (const event of calendar.events.slice(0, 12)) {
-          if (Date.parse(event.start) <= now) continue;
-          const connectionId = String(calendar.metadata.connectionId);
+        const connectionId = String(calendar.metadata.connectionId);
+        const version = bindingHash({ connectionId, events: calendar.events });
+        const reviewed = new Set(
+          state.cursors?.calendar?.version === version ? state.cursors.calendar.reviewedIds : [],
+        );
+        const dueIds = new Set(
+          wakes.filter((wake) => wake.source === "calendar").map((wake) => wake.key),
+        );
+        const upcoming = calendar.events.filter((event) => Date.parse(event.start) > now);
+        const selected = upcoming
+          .filter(
+            (event) => dueIds.has(`event:${connectionId}:${event.id}`) || !reviewed.has(event.id),
+          )
+          .sort(
+            (a, b) =>
+              Number(dueIds.has(`event:${connectionId}:${b.id}`)) -
+              Number(dueIds.has(`event:${connectionId}:${a.id}`)),
+          )
+          .slice(0, 12);
+        for (const event of selected) reviewed.add(event.id);
+        const complete = upcoming.every((event) => reviewed.has(event.id));
+        coverage.calendar = this.coverage(
+          complete,
+          calendar.metadata.observedAt,
+          complete
+            ? "Primary calendar reviewed, including any completed continuation pages"
+            : "Primary calendar fetched; omitted targets remain pending for the next review",
+        );
+        if (!complete) calendarCursor = { version, reviewedIds: [...reviewed] };
+        for (const wake of wakes) {
+          if (wake.source !== "calendar") continue;
+          const event = calendar.events.find(
+            (item) => wake.key === `event:${connectionId}:${item.id}`,
+          );
+          if (
+            wake.key.startsWith(`event:${connectionId}:`) &&
+            (!event || Date.parse(event.start) <= now || reviewed.has(event.id))
+          )
+            reviewedWakeEvents.add(wake.id);
+        }
+        for (const event of selected) {
           reasoningCandidates.push({
             semanticKey: `calendar:${connectionId}:${event.id}`,
             target: {
@@ -1044,6 +1089,10 @@ export class ProactivityService {
               tasks: tasks.cursor ?? null,
               memories: memoryCursor ?? null,
               mail: mailCursor,
+              calendar:
+                coverage.reasoning?.complete === false
+                  ? (state.cursors?.calendar ?? null)
+                  : (calendarCursor ?? null),
             },
           },
         },

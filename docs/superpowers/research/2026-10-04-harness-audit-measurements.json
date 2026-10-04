@@ -51,11 +51,7 @@
   ],
   "contextProjection": {
     "originalMessages": 14,
-    "kept": [
-      "intermediate-10",
-      "intermediate-11",
-      "continue"
-    ],
+    "kept": ["intermediate-10", "intermediate-11", "continue"],
     "originalConstraintRetained": false,
     "hasSummary": false
   },

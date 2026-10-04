@@ -182,7 +182,7 @@ test("an oversized HTTP/legacy fact cannot blank later short preferences in boun
     assert.match(context, /"truncated":true/);
     assert.ok(context.length < 8200, "context budget includes fact IDs, source and timestamps");
     assert.equal(
-      (await memory.recall("wife", "x"))[0].text.length,
+      (await memory.recall("wife", large.id))[0].text.length,
       12000,
       "stored memory remains complete",
     );

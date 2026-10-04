@@ -17,6 +17,12 @@ test("CopilotKit model worker executes server tools and persists the confirmed o
   const db = await createStore();
   const calls: { name: string; arguments: object }[] = [
     {
+      name: "describe_tools",
+      arguments: {
+        names: ["prepare_email", "run_computer_command", "read_workspace", "save_artifact"],
+      },
+    },
+    {
       name: "set_plan",
       arguments: { steps: ["Inspect available sources", "Save a practical plan"] },
     },
@@ -68,10 +74,11 @@ test("CopilotKit model worker executes server tools and persists the confirmed o
     assert.ok(
       result.events.some((event) => event.title === "Read the authorized workspace sources"),
     );
-    assert.ok(requests.length >= 4 && requests.length <= 6);
+    assert.ok(requests.length >= 5 && requests.length <= 7);
     assert.ok(requests.every((request) => request.path === "/v1/responses"));
-    assert.ok(requests[0].body.includes('"name":"prepare_email"'));
-    assert.ok(requests[0].body.includes('"name":"run_computer_command"'));
+    assert.ok(requests[0].body.includes('"name":"describe_tools"'));
+    assert.ok(requests[1].body.includes('"name":"prepare_email"'));
+    assert.ok(requests[1].body.includes('"name":"run_computer_command"'));
     assert.ok(
       requests.some(
         (request) => request.body.includes("succeeded") && request.body.includes("hello"),

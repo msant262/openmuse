@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { WakeEvent } from "../apps/server/src/proactivity/events.ts";
 import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 import { fixture, message } from "./proactivity-fixture.ts";
 
@@ -34,6 +35,34 @@ test("a sourced plan deadline wakes the heartbeat before its four-hour cadence",
     await f.server.agent.proactivity.scheduleDue("local-user", f.now),
     "a due plan cannot wait another four hours",
   );
+});
+
+test("plan deadlines and expiry compare instants across timezone offsets", async (t) => {
+  const f = await fixture(t);
+  f.now = Date.parse("2026-10-04T12:00:00Z");
+  await reviewed(f);
+  const plan = await f.server.agent.memory.save("local-user", "Conferir a viagem", "User", {
+    category: "plan",
+    evidence: [
+      {
+        messageId: "offset-trip",
+        threadId: "chat",
+        quote: "Conferir a viagem",
+        observedAt: "2026-10-03T12:00:00Z",
+      },
+    ],
+    followUp: { state: "open", after: "2026-10-04T17:00:00+10:00" },
+    validUntil: "2026-10-04T09:00:00-04:00",
+  });
+  assert.ok(
+    await f.server.agent.proactivity.scheduleDue("local-user", f.now),
+    "07:00Z is due and 13:00Z has not expired",
+  );
+  const events = await f.db.list<WakeEvent>("local-user", "proactivity-events");
+  const event = events.find((value) => value.key === plan.id);
+  assert.equal(event?.status, "claimed");
+  assert.equal(event?.dueAt, "2026-10-04T07:00:00.000Z");
+  assert.equal(event?.expiresAt, "2026-10-04T13:00:00.000Z");
 });
 test("duplicate events coalesce and survive pause and disk restart", async (t) => {
   const f = await fixture(t);
@@ -241,6 +270,51 @@ test("a due plan outside the normal memory page reaches reasoning and publishes 
     ).entries.length,
     0,
     "a reviewed target must not keep retrying because the unrelated memory catalog is paginated",
+  );
+  assert.equal(f.source.writes, 0);
+});
+
+test("calendar wakes beyond the review limit remain pending and reach the next review", async (t) => {
+  const candidates: string[][] = [];
+  const model = await modelFixture(t, (index) => {
+    const serialized = model.requests[index].body;
+    candidates.push(
+      [...serialized.matchAll(/calendar:fixture-google:event-\d+/g)].map((m) => m[0]),
+    );
+    return { name: "heartbeat_respond", arguments: { suggestions: [] } };
+  });
+  const f = await fixture(t, {
+    semanticProactivityEnabled: true,
+    modelProviders: richChatFixtureProviders("/tmp/calendar-event-limit"),
+  });
+  await reviewed(f);
+  f.source.events = Array.from({ length: 13 }, (_, i) => ({
+    id: `event-${i}`,
+    summary: `Commitment ${i}`,
+    start: { dateTime: new Date(f.now + 45 * 60000).toISOString() },
+    end: { dateTime: new Date(f.now + 60 * 60000).toISOString() },
+  }));
+  await f.server.agent.proactivity.pollSources("local-user", f.now);
+  f.now += 1000;
+  assert.ok(await f.server.agent.proactivity.scheduleDue("local-user", f.now));
+  await f.server.agent.worker.tick();
+  const pending = (await f.db.list<WakeEvent>("local-user", "proactivity-events")).filter(
+    (event) =>
+      event.source === "calendar" && event.status === "pending" && event.key.startsWith("event:"),
+  );
+  assert.equal(pending.length, 1, "the thirteenth target was fetched but not reviewed");
+  const omitted = pending[0].key.replace(/^event:/, "calendar:");
+  assert.ok(!candidates.flat().includes(omitted));
+  f.now += 6 * 60000;
+  assert.ok(await f.server.agent.proactivity.scheduleDue("local-user", f.now));
+  await f.server.agent.worker.tick();
+  assert.ok(
+    candidates.at(-1)?.includes(omitted),
+    "the pending target must take priority over the normal first twelve",
+  );
+  assert.equal(
+    (await f.db.get<WakeEvent>("local-user", "proactivity-events", pending[0].id))?.status,
+    "settled",
   );
   assert.equal(f.source.writes, 0);
 });

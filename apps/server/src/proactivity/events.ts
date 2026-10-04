@@ -5,14 +5,17 @@ import type { ProactivityCycle } from "../../../../packages/domain/src/proactivi
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 
+const instant = z.iso
+  .datetime({ offset: true })
+  .transform((value) => new Date(value).toISOString());
 const eventInput = z
   .object({
     source: z.enum(["memory", "task", "goal", "mail", "calendar", "deadline"]),
     key: z.string().min(1).max(500),
     revision: z.string().min(1).max(256),
-    dueAt: z.iso.datetime({ offset: true }).optional(),
-    expiresAt: z.iso.datetime({ offset: true }).optional(),
-    observedAt: z.iso.datetime({ offset: true }).optional(),
+    dueAt: instant.optional(),
+    expiresAt: instant.optional(),
+    observedAt: instant.optional(),
     intent: z.enum(["immediate", "event", "scheduled"]).default("event"),
   })
   .strict();
@@ -157,7 +160,8 @@ export class ProactivityEvents {
                 : event.source;
       const reviewed =
         (cycle.reviewedWakeEvents?.includes(event.id) ||
-          cycle.coverage[source]?.complete === true) &&
+          (!(event.source === "calendar" && event.key.startsWith("event:")) &&
+            cycle.coverage[source]?.complete === true)) &&
         cycle.coverage.reasoning?.complete !== false;
       const expired = event.expiresAt && Date.parse(event.expiresAt) <= now;
       await this.db.compareAndSwap(

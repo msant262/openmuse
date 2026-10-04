@@ -227,10 +227,10 @@ test("natural-language tools save memory and a routine; real worker posts once a
       (await db.get<AgentNotification>("local-user", "notifications", originalNotice.id))?.read,
       true,
     );
+    const historyMatches = await db.searchThreads("local-user", '"agenda is ready"', 20, false);
     assert.ok(
-      (await db.searchThreads("local-user", "agenda", 20, false)).some((match) =>
-        String(match.excerpt).includes("agenda is ready"),
-      ),
+      historyMatches.some((match) => String(match.excerpt).includes("agenda is ready")),
+      `the background publication remains discoverable by its content: ${JSON.stringify(historyMatches)}`,
     );
     assert.deepEqual(await db.searchThreads("other", "agenda", 20, false), []);
     const fact = (await server.agent.memory.recall("local-user", "Portuguese"))[0];

@@ -43,10 +43,11 @@ export class Store {
   }
   async nextProactivityWakeAt(owner: string): Promise<string | null> {
     const result = await this.db.query(
-      "SELECT jsonb_build_object('at',min(data->>'readyAt')) AS data FROM records WHERE owner=$1 AND kind='proactivity-events' AND data->>'status'='pending'",
+      "SELECT jsonb_build_object('at',min((data->>'readyAt')::timestamptz)) AS data FROM records WHERE owner=$1 AND kind='proactivity-events' AND data->>'status'='pending'",
       [owner],
     );
-    return (result.rows[0]?.data.at as string | null) ?? null;
+    const at = result.rows[0]?.data.at as string | null;
+    return at ? new Date(at).toISOString() : null;
   }
   async dueProactivityEvents<T>(
     owner: string,
@@ -55,9 +56,9 @@ export class Store {
   ): Promise<T[]> {
     const result = await this.db.query(
       `SELECT data FROM records WHERE owner=$1 AND kind='proactivity-events'
-      AND data->>'status'='pending' AND data->>'dueAt'<=$2 AND ($3::boolean OR data->>'readyAt'<=$2)
-      AND (data->>'expiresAt' IS NULL OR data->>'expiresAt'>$2)
-      ORDER BY CASE data->>'intent' WHEN 'immediate' THEN 0 WHEN 'event' THEN 1 ELSE 2 END,data->>'readyAt',id LIMIT 50`,
+      AND data->>'status'='pending' AND (data->>'dueAt')::timestamptz<=$2::timestamptz AND ($3::boolean OR (data->>'readyAt')::timestamptz<=$2::timestamptz)
+      AND (data->>'expiresAt' IS NULL OR (data->>'expiresAt')::timestamptz>$2::timestamptz)
+      ORDER BY CASE data->>'intent' WHEN 'immediate' THEN 0 WHEN 'event' THEN 1 ELSE 2 END,(data->>'readyAt')::timestamptz,id LIMIT 50`,
       [owner, now, includeCoalescing],
     );
     return result.rows.map((row) => row.data as T);
@@ -66,10 +67,10 @@ export class Store {
     await this.write(
       `UPDATE records event SET data=data || '{"status":"settled","reason":"Source expired or changed"}'::jsonb,updated_at=now()
       WHERE owner=$1 AND kind='proactivity-events' AND data->>'status'='pending' AND (
-        data->>'expiresAt'<=$2 OR (data->>'source'='memory' AND NOT EXISTS(SELECT 1 FROM records memory
+        (data->>'expiresAt')::timestamptz<=$2::timestamptz OR (data->>'source'='memory' AND NOT EXISTS(SELECT 1 FROM records memory
           WHERE memory.owner=$1 AND memory.kind='memories' AND memory.id=event.data->>'key' AND memory.data->>'status'='active'
           AND memory.data->>'category'='plan' AND memory.data->'followUp'->>'state'='open' AND COALESCE(memory.data->>'revision','0')=event.data->>'revision'
-          AND (memory.data->>'validUntil' IS NULL OR memory.data->>'validUntil'>$2)))
+          AND (memory.data->>'validUntil' IS NULL OR (memory.data->>'validUntil')::timestamptz>$2::timestamptz)))
         OR (data->>'source'='deadline' AND NOT EXISTS(SELECT 1 FROM records task WHERE task.owner=$1 AND task.kind='tasks'
           AND task.id=event.data->>'key' AND task.data->>'status' NOT IN ('succeeded','failed','cancelled','paused')
           AND task.data->'timing'->>'dueAt' IS NOT NULL AND COALESCE(task.data->'state'->>'timingRevision','0')=event.data->>'revision'))
@@ -84,12 +85,12 @@ export class Store {
     const result = await this.db.query(
       `SELECT jsonb_build_object('source',CASE WHEN source.kind='memories' THEN 'memory' ELSE 'deadline' END,'value',source.data) AS data
       FROM records source WHERE source.owner=$1 AND (
-        (kind='memories' AND data->>'status'='active' AND data->>'category'='plan' AND data->'followUp'->>'state'='open' AND data->'followUp'->>'after'<=$2 AND (data->>'validUntil' IS NULL OR (data->>'validUntil')::timestamptz>$3::timestamptz))
-        OR (kind='tasks' AND data->>'status' NOT IN ('succeeded','failed','cancelled','paused') AND data->'timing'->>'dueAt'<=$2 AND data->'input'->>'internalActivity' IS DISTINCT FROM 'true' AND NOT (data->'input' ? 'proactivityCycleId') AND (data->'timing'->>'validUntil' IS NULL OR (data->'timing'->>'validUntil')::timestamptz>$3::timestamptz)))
+        (kind='memories' AND data->>'status'='active' AND data->>'category'='plan' AND data->'followUp'->>'state'='open' AND (data->'followUp'->>'after')::timestamptz<=$2::timestamptz AND (data->>'validUntil' IS NULL OR (data->>'validUntil')::timestamptz>$3::timestamptz))
+        OR (kind='tasks' AND data->>'status' NOT IN ('succeeded','failed','cancelled','paused') AND (data->'timing'->>'dueAt')::timestamptz<=$2::timestamptz AND data->'input'->>'internalActivity' IS DISTINCT FROM 'true' AND NOT (data->'input' ? 'proactivityCycleId') AND (data->'timing'->>'validUntil' IS NULL OR (data->'timing'->>'validUntil')::timestamptz>$3::timestamptz)))
       AND NOT EXISTS(SELECT 1 FROM records event WHERE event.owner=$1 AND event.kind='proactivity-events'
         AND event.data->>'source'=CASE WHEN source.kind='memories' THEN 'memory' ELSE 'deadline' END
         AND event.data->>'key'=source.id AND event.data->>'revision'=CASE WHEN source.kind='memories' THEN COALESCE(source.data->>'revision','0') ELSE COALESCE(source.data->'state'->>'timingRevision','0') END)
-      ORDER BY COALESCE(data->'followUp'->>'after',data->'timing'->>'dueAt'),id LIMIT 100`,
+      ORDER BY COALESCE(data->'followUp'->>'after',data->'timing'->>'dueAt')::timestamptz,id LIMIT 100`,
       [owner, before, new Date(Date.parse(before) - 4 * 3600000).toISOString()],
     );
     return result.rows.map(
@@ -1197,7 +1198,7 @@ export class Store {
           AND ($5::text IS NULL OR date<$5) AND ($6::text IS NULL OR date>$6)
       ), ranked AS (SELECT *, row_number() OVER (PARTITION BY thread_id ORDER BY source_priority,score DESC,date DESC,message->>'id') AS per_thread FROM hits)
       SELECT jsonb_build_object('threadId',thread_id,'name',name,'messageId',message->>'id','role',message->>'role',
-        'excerpt',ts_headline('simple',message->>'content',openmuse_search_query($2),'StartSel=, StopSel=, MaxWords=70, MinWords=20'),
+        'excerpt',ts_headline('simple',message->>'content',openmuse_search_query($2),'StartSel="", StopSel="", MaxWords=70, MinWords=20'),
         'date',date,'source',CASE WHEN source_priority=2 THEN 'automation' ELSE 'conversation' END,'score',score) AS data
       FROM ranked WHERE per_thread<=3 ORDER BY source_priority,score DESC,date DESC,message->>'id' LIMIT $3`,
       [

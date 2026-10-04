@@ -39,8 +39,9 @@ cross-language embedding similarity.
 
 Semantic compaction also adapts generation ownership/cancellation rollback from
 `agent/context_compressor_summary.py` at `1298c8e74baa73e1a2b90124228d017261ac6bc4`.
-A superseded writer cannot commit, and cancellation preserves the preceding
-checkpoint. Summary failure is explicit and does not erase canonical history.
+A superseded writer cannot commit. Cancellation invalidates its own checkpoint
+without restoring a potentially cancelled predecessor; canonical history can
+regenerate the cache. Summary failure is explicit and does not erase that history.
 
 Procedure maintenance adapts `tools/skill_usage.py`, `agent/curator.py` and
 `tools/skill_ledger.py` at `1298c8e74baa73e1a2b90124228d017261ac6bc4`: explicitly
