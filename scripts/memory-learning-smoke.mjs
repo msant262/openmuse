@@ -164,15 +164,29 @@ try {
   const taste = first.find((m) => /hot[eé](?:is|l)/i.test(m.text) && m.category === "preference");
   assert.ok(taste, "explicit hotel preference learned");
   assert.ok(
-    first.some((m) => m.category === "habit" && /parque|caminh/i.test(m.text)),
+    first.some(
+      (m) =>
+        m.category === "habit" &&
+        /parque|caminh|park|walk/i.test(m.text) &&
+        m.evidence?.some((e) => e.messageId === "evidence-2"),
+    ),
     "explicit recurring habit learned",
   );
-  const trip = first.find((m) => m.category === "plan" && /Lisboa/i.test(m.text));
+  const trip = first.find((m) => m.category === "plan" && /Lisbo[an]/i.test(m.text));
   assert.ok(trip?.followUp?.state === "open", "unfinished trip learned");
   assert.ok(
-    first.every((m) => !/T[oó]quio|sushi|batom|irm[aã]|agradec/i.test(m.text)),
+    trip.validUntil && Date.parse(trip.validUntil) > Date.parse(trip.followUp.after),
+    "dated travel follow-up has a future expiry after its advance reminder",
+  );
+  assert.ok(
+    first.every(
+      (m) =>
+        !/T[oó]quio|Tokyo|sushi|batom|lipstick|irm[aã]|sister|agradec/i.test(m.text) &&
+        m.evidence?.every((e) => ["evidence-1", "evidence-2", "evidence-3"].includes(e.messageId)),
+    ),
     "one-off requests, fiction and acknowledgements are not personal facts",
   );
+  assert.equal(first.length, 3, "only the three durable, evidenced items are saved");
   report.checks.push("automatic preference/habit/plan capture", "one-off and fiction exclusion");
   const conversation = new ConversationAgent(config, server.agent, owner);
   conversation.threadId = "fresh-chat";

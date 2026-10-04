@@ -35,6 +35,7 @@ export const learningMemoryInput = z
     memoryId: z.string().optional(),
     expectedRevision: z.number().int().nonnegative().optional(),
     followUpAfter: z.iso.datetime({ offset: true }).optional(),
+    validUntil: z.iso.datetime({ offset: true }).optional(),
     planState: z.enum(["open", "resolved", "cancelled"]).optional(),
   })
   .strict()
@@ -242,6 +243,7 @@ export class PersonalLearning {
             text: input.text,
             expectedRevision: input.expectedRevision!,
             requestId: `learn:${reviewTaskId}:${bindingHash(input)}`,
+            ...(input.validUntil ? { validUntil: input.validUntil } : {}),
           },
           origin,
           fields,
@@ -249,6 +251,7 @@ export class PersonalLearning {
       : this.service.memory.save(owner, input.text, "Learned from your conversation", {
           ...fields,
           origin,
+          validUntil: input.validUntil,
         }));
     await this.service.proactivity.reconcileMemorySuggestions(owner);
     return saved;
@@ -489,6 +492,7 @@ export class PersonalLearning {
             status: m.status,
             category: m.category,
             followUp: m.followUp,
+            validUntil: m.validUntil,
           })),
           verifiedTasks: await Promise.all(
             completed.map(async (t) => ({

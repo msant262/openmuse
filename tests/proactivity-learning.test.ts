@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { ProactivityService } from "../apps/server/src/proactivity/service.ts";
 import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 import { fixture, message, review } from "./proactivity-fixture.ts";
@@ -66,6 +67,51 @@ test("heartbeat revisits a conversational trip and closing it prevents reminders
   assert.ok(await server.agent.proactivity.scheduleDue("owner", Date.now() + 86400000));
   await server.agent.worker.tick();
   assert.equal((await server.agent.proactivity.list("owner")).length, 1);
+});
+
+test("a learned plan's dated reminder retires after expiry without a cancellation message", async (t) => {
+  let candidateId = "";
+  await modelFixture(t, () => ({
+    name: "heartbeat_respond",
+    arguments: {
+      suggestions: [
+        { candidateId, title: "Preparar a viagem", reason: "Quer conferir a passagem?" },
+      ],
+    },
+  }));
+  const server = await taskRuntime(t, {
+    mode: "live",
+    agentBackend: "model",
+    model: "openai/fixture",
+    semanticProactivityEnabled: true,
+  });
+  const until = Date.now() + 3600000;
+  const source = {
+    messageId: "dated-trip",
+    threadId: "chat",
+    text: "Minha viagem começa em uma hora.",
+    createdAt: new Date().toISOString(),
+  } as import("../apps/server/src/conversation-inbox.ts").InboxMessage;
+  const memory = await server.agent.learning.learn(
+    "owner",
+    {
+      text: "A viagem começa em uma hora.",
+      category: "plan",
+      validUntil: new Date(until).toISOString(),
+      followUpAfter: new Date(Date.now() - 1000).toISOString(),
+      evidence: [{ messageId: source.messageId, quote: source.text }],
+    },
+    [source],
+    "dated-review",
+  );
+  candidateId = `memory:${memory.id}`;
+  await server.agent.proactivity.scheduleDue("owner");
+  await server.agent.worker.tick();
+  const [card] = await server.agent.proactivity.list("owner");
+  assert.equal(card.status, "pending");
+  const afterExpiry = new ProactivityService(server.agent, () => until + 1);
+  await afterExpiry.reconcileMemorySuggestions("owner");
+  assert.equal((await server.agent.proactivity.list("owner"))[0].status, "obsolete");
 });
 
 test("upcoming calendar preparation uses current event evidence and cancellation retires the card", async (t) => {

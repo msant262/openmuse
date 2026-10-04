@@ -216,6 +216,35 @@ test("a newer correction closes the existing travel plan instead of creating ano
   assert.equal((await server.agent.memory.history("owner", plan.id)).entries.length, 2);
 });
 
+test("learned dated plans retain expiry and disappear from active memory after that date", async (t) => {
+  const server = await taskRuntime(t);
+  const sourceMessage = {
+    messageId: "dated-plan",
+    threadId: "chat",
+    text: "A viagem terminou ontem.",
+    createdAt: new Date().toISOString(),
+  } as import("../apps/server/src/conversation-inbox.ts").InboxMessage;
+  const validUntil = new Date(Date.now() - 86400000).toISOString();
+  const saved = await server.agent.learning.learn(
+    "owner",
+    {
+      text: "A viagem terminou ontem.",
+      category: "plan",
+      planState: "resolved",
+      validUntil,
+      evidence: [{ messageId: "dated-plan", quote: sourceMessage.text }],
+    },
+    [sourceMessage],
+    "review-expiry",
+  );
+  assert.equal(saved.validUntil, validUntil);
+  assert.equal((await server.agent.memory.recall("owner")).length, 0);
+  assert.equal(
+    (await server.agent.memory.page("owner", { includeInactive: true })).entries.length,
+    1,
+  );
+});
+
 test("automatic learning is paused with the runtime and resumes with the same unreviewed source", async (t) => {
   const server = await taskRuntime(t, {
     agentBackend: "model",
