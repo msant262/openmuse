@@ -68,6 +68,7 @@ export interface Artifact {
   createdAt: string;
   source: string;
   parentId?: string;
+  internal?: boolean;
   fields?: { name: string; value: string; type: "text" | "checkbox" | "unsupported" }[];
 }
 export interface BrowserSession {

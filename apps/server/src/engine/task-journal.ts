@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Message } from "@ag-ui/core";
 import { z } from "zod";
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
@@ -168,7 +168,7 @@ export class TaskJournal {
     const ids: string[] = [];
     for (const op of await this.operations(owner, taskId)) {
       if (
-        !/^(create_document|import_pdf|fill_pdf|export_computer_(pdf|file)|manual_native\.export)$/.test(
+        !/^(create_document|inspect_document|import_pdf|fill_pdf|export_computer_(pdf|file)|manual_native\.export)$/.test(
           op.toolName,
         ) ||
         !["dispatching", "outcome_unknown"].includes(op.status)
@@ -226,6 +226,23 @@ export class TaskJournal {
         )
       )
         continue;
+      if (op.toolName === "create_document" && recovered.length === 1) {
+        const id = createHash("sha256").update(op.id).digest("hex");
+        const generation = await this.db.get<{
+          id: string;
+          binding: string;
+          fileId?: string;
+          [key: string]: unknown;
+        }>(owner, "document-generations", id);
+        if (generation)
+          await this.db.put(owner, "document-generations", {
+            ...generation,
+            fileId: recovered[0].id,
+            sha256: createHash("sha256")
+              .update(await files.bytes(owner, recovered[0].id))
+              .digest("hex"),
+          });
+      }
       const receipt =
         recovered.length === 1
           ? { id: recovered[0].id, name: recovered[0].name, reconciled: true }
@@ -234,7 +251,7 @@ export class TaskJournal {
               reconciled: true,
             };
       await this.recordReceipt(owner, op.id, receipt, "succeeded", (op.sequence ?? 0) + 1);
-      ids.push(...recovered.map((file) => file.id));
+      ids.push(...recovered.filter((file) => !file.internal).map((file) => file.id));
     }
     return ids;
   }

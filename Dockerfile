@@ -16,6 +16,7 @@ RUN pnpm build:server
 
 FROM node:24.21.0-bookworm-slim
 WORKDIR /app
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libreoffice-writer libreoffice-impress fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json LICENSE ./

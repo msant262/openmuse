@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { defineTool } from "@copilotkit/runtime/v2";
+import { loadImage } from "@napi-rs/canvas";
 import { z } from "zod";
 import { rasterMime } from "../../../packages/domain/src/attachments.ts";
 import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
@@ -8,6 +9,17 @@ import {
   createDocumentPdf,
   documentCharacterLimit,
 } from "../../../packages/integrations/src/document.ts";
+import { createDocumentDocx } from "../../../packages/integrations/src/document-docx.ts";
+import { documentImageSize } from "../../../packages/integrations/src/document-image.ts";
+import {
+  composeDocument,
+  type DocumentImage,
+} from "../../../packages/integrations/src/document-model.ts";
+import { createDocumentPptx } from "../../../packages/integrations/src/document-pptx.ts";
+import {
+  documentRendererVersion,
+  renderDocument,
+} from "../../../packages/integrations/src/document-render.ts";
 import { ActionLog } from "./action-log.ts";
 import { base64Limit, decodeBase64 } from "./base64.ts";
 import {
@@ -17,6 +29,8 @@ import {
 } from "./computer-contract.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
+import { getDesignProfile } from "./design-catalog.ts";
+import { DocumentReview } from "./document-review.ts";
 import { ResourceBusyError } from "./engine/resource-leases.ts";
 import { RuntimePausedError } from "./engine/runtime-pause.ts";
 import { authorizeTaskEffect, taskOperationId } from "./engine/task-journal.ts";
@@ -54,34 +68,93 @@ const documentArgs = z
           ),
         "Use nonempty document text without control characters",
       ),
-    format: z.enum(["pdf", "text", "markdown"]).default("pdf"),
+    format: z.enum(["pdf", "docx", "pptx", "text", "markdown"]).default("pdf"),
+    design: z
+      .object({
+        reference: z.string().trim().min(1).max(80).optional(),
+        subtitle: z.string().trim().max(400).optional(),
+        eyebrow: z.string().trim().max(120).optional(),
+        footer: z.string().trim().max(200).optional(),
+        cover: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    replaceFileId: z.string().min(1).max(128).optional(),
     operationId: z.string().min(1).max(120),
   })
   .strict();
 export class MediaService {
+  readonly documentReview: DocumentReview;
   constructor(
     readonly db: Store,
     readonly files: Files,
     readonly config: Config,
     readonly upstream: typeof fetch = fetch,
-  ) {}
+  ) {
+    this.documentReview = new DocumentReview(db, files);
+  }
   async createDocument(owner: string, raw: unknown, scope: string) {
     const args = documentArgs.parse(raw);
     const operationId = taskOperationId() ?? `${scope}:${args.operationId}`;
     const id = hash(operationId);
     const binding = hash(JSON.stringify(args));
-    type Receipt = { id: string; binding: string; fileId?: string; sha256?: string };
+    const designed = ["pdf", "docx", "pptx"].includes(args.format);
+    type Receipt = {
+      id: string;
+      binding: string;
+      fileId?: string;
+      sha256?: string;
+      scope?: string;
+      designVersion?: number;
+      replacesFileId?: string;
+    };
+    if (args.replaceFileId) {
+      const task = scope.startsWith("task:")
+        ? await this.db.get<{ id: string; artifactIds: string[] }>(owner, "tasks", scope.slice(5))
+        : undefined;
+      const old = (await this.db.list<Receipt>(owner, "document-generations")).find(
+        (entry) => entry.fileId === args.replaceFileId && entry.scope === scope,
+      );
+      if (!task?.artifactIds.includes(args.replaceFileId) || !old) {
+        // Idempotent retries may occur after the replacement was attached already.
+        const completed = await this.db.get<Receipt>(owner, "document-generations", id);
+        if (
+          !completed?.fileId ||
+          completed.binding !== binding ||
+          completed.replacesFileId !== args.replaceFileId ||
+          !task?.artifactIds.includes(completed.fileId)
+        )
+          throw new AppError("Only a document draft belonging to this task can be replaced", 409);
+      }
+    }
+    const reference = async (fileId: string) => ({
+      ...(await this.files.reference(owner, fileId)),
+      ...(args.replaceFileId && { replacesFileId: args.replaceFileId }),
+      ...(designed && {
+        designReview: {
+          required: true,
+          next: "inspect_document, inspect the returned page images, then confirm_document_review for every page before finish_task",
+        },
+      }),
+    });
     const previous =
-      (await this.db.insertIfAbsent<Receipt>(owner, "document-generations", { id, binding })) ??
-      (await this.db.get<Receipt>(owner, "document-generations", id));
+      (await this.db.insertIfAbsent<Receipt>(owner, "document-generations", {
+        id,
+        binding,
+        scope,
+        ...(designed && { designVersion: 2 }),
+        ...(args.replaceFileId && { replacesFileId: args.replaceFileId }),
+      })) ?? (await this.db.get<Receipt>(owner, "document-generations", id));
     if (!previous || previous.binding !== binding)
       throw new AppError("Operation ID already belongs to a different document request", 409);
     if (previous.fileId) {
       if (hashBytes(await this.files.bytes(owner, previous.fileId)) !== previous.sha256)
         throw new AppError("Published document content no longer matches its receipt", 409);
-      return this.files.reference(owner, previous.fileId);
+      return reference(previous.fileId);
     }
-    const extension = { pdf: "pdf", text: "txt", markdown: "md" }[args.format];
+    const extension = { pdf: "pdf", docx: "docx", pptx: "pptx", text: "txt", markdown: "md" }[
+      args.format
+    ];
     const baseName =
       args.name
         .split(/[\\/]/)
@@ -92,10 +165,51 @@ export class MediaService {
         .filter((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127)
         .join("") || "document"
     }.${extension}`;
-    const bytes =
-      args.format === "pdf"
-        ? await createDocumentPdf(args.content, args.title)
-        : Buffer.from(args.content, "utf8");
+    let bytes: Uint8Array;
+    if (designed) {
+      const profile = await getDesignProfile(args.design?.reference ?? "claude");
+      if (!profile)
+        throw new AppError(
+          "Unknown document profile; use design_references to list available profiles",
+          422,
+        );
+      const images = new Map<string, DocumentImage>();
+      const model = composeDocument(
+        args.content,
+        args.title,
+        args.design,
+        { id: profile.id, label: profile.label, display: profile.display, ...profile.tokens },
+        images,
+      );
+      const ids = [
+        ...new Set(model.blocks.flatMap((block) => (block.type === "image" ? [block.fileId] : []))),
+      ];
+      if (ids.length > 12)
+        throw new AppError("A document supports at most 12 image attachments", 422);
+      for (const imageId of ids) {
+        const image = await this.files.get(owner, imageId);
+        if (!["image/png", "image/jpeg"].includes(image.mimeType) || image.size > 8 * 1024 * 1024)
+          throw new AppError("Document images must be owned PNG/JPEG attachments up to 8 MB", 422);
+        const imageBytes = await this.files.bytes(owner, imageId);
+        const dimensions = documentImageSize(imageBytes);
+        const decoded = await loadImage(imageBytes);
+        if (decoded.width !== dimensions.width || decoded.height !== dimensions.height)
+          throw new AppError("Document image dimensions do not match its header", 422);
+        images.set(imageId, {
+          id: imageId,
+          bytes: imageBytes,
+          mimeType: image.mimeType as "image/png" | "image/jpeg",
+          width: decoded.width,
+          height: decoded.height,
+        });
+      }
+      bytes =
+        args.format === "pdf"
+          ? await createDocumentPdf(model)
+          : args.format === "docx"
+            ? await createDocumentDocx(model)
+            : await createDocumentPptx(model);
+    } else bytes = Buffer.from(args.content, "utf8");
     const file = await this.files.importAttachment(
       owner,
       name,
@@ -107,8 +221,74 @@ export class MediaService {
     const sha256 = hashBytes(bytes);
     if (hashBytes(await this.files.bytes(owner, file.id)) !== sha256)
       throw new AppError("Document persistence verification failed", 409);
-    await this.db.put(owner, "document-generations", { id, binding, fileId: file.id, sha256 });
-    return this.files.reference(owner, file.id);
+    await this.db.put(owner, "document-generations", { ...previous, fileId: file.id, sha256 });
+    return reference(file.id);
+  }
+  async inspectDocument(
+    owner: string,
+    args: { fileId: string; startPage: number; pageCount: number },
+    scope: string,
+    revision: number,
+    signal?: AbortSignal,
+  ) {
+    const generation = (
+      await this.db.list<{ id: string; fileId?: string; sha256?: string; designVersion?: number }>(
+        owner,
+        "document-generations",
+      )
+    ).find((item) => item.fileId === args.fileId && item.designVersion === 2);
+    if (!generation)
+      throw new AppError(
+        "Inspect a document authored by create_document; arbitrary imported files are not passed to the Office renderer",
+        422,
+      );
+    const file = await this.files.get(owner, args.fileId),
+      bytes = await this.files.bytes(owner, args.fileId);
+    if (hashBytes(bytes) !== generation.sha256)
+      throw new AppError("Document bytes differ from their authoring receipt", 409);
+    const format =
+      file.mimeType === "application/pdf"
+        ? "pdf"
+        : file.mimeType.includes("wordprocessingml")
+          ? "docx"
+          : file.mimeType.includes("presentationml")
+            ? "pptx"
+            : undefined;
+    if (!format) throw new AppError("Document format cannot be rendered", 422);
+    const rendered = await renderDocument(bytes, format, args.startPage, args.pageCount, signal);
+    signal?.throwIfAborted();
+    const preview = await this.files.importAttachment(
+      owner,
+      `document-review-${args.startPage}-${args.startPage + rendered.pages.length - 1}.png`,
+      rendered.bytes,
+      "Document visual inspection",
+      "image/png",
+      taskOperationId() ??
+        `${scope}:document-preview:${hash(JSON.stringify({ fileId: file.id, sha256: generation.sha256, pages: rendered.pages, renderer: documentRendererVersion }))}`,
+      true,
+    );
+    const inspection = await this.documentReview.recordInspection(owner, {
+      scope,
+      revision,
+      fileId: file.id,
+      sha256: generation.sha256,
+      pageCount: rendered.pageCount,
+      pages: rendered.pages,
+      previewFileId: preview.id,
+      rendererVersion: documentRendererVersion,
+    });
+    return {
+      ...(await this.files.reference(owner, preview.id)),
+      attachment: false,
+      receiptId: inspection.receiptId,
+      documentFileId: file.id,
+      documentSha256: generation.sha256,
+      pageCount: rendered.pageCount,
+      pages: rendered.pages,
+      nextPage: rendered.pages.at(-1)! < rendered.pageCount ? rendered.pages.at(-1)! + 1 : null,
+      instruction:
+        "Examine the actual page image for clipping, overlap, readability, hierarchy and data accuracy. Use confirm_document_review in the next turn. Correct a failed draft with create_document.replaceFileId and a fresh operationId, then inspect its new bytes.",
+    };
   }
   async imageCapabilities(model: string | undefined) {
     const config = this.config.modelProviders ?? modelProviderConfig(this.config.dataDir);
@@ -344,7 +524,7 @@ export class MediaService {
 }
 
 export const mediaInstructions =
-  "Use create_document to author a new downloadable PDF, UTF-8 text or Markdown file from complete content. A new PDF needs no source email, existing form, browser, computer or external connection. Compose the actual requested content first, then call create_document with a descriptive name, optional title and format. PDF paragraphs paginate automatically; title is optional and content is plain text. Use fill_pdf only for an existing form. For an image, illustration, poster or infographic, use generate_image to create the actual downloadable image. For an infographic about current facts, first research and verify sources, then include the exact verified facts, dates, labels and source names in a detailed visual prompt in the user's language; do not stop at a text outline. The image generator is independent of the chat model: image_generation_status lists connected image capabilities, including subscriptions. Auto selection prefers separately connected GPT Image through ChatGPT/Codex authorization, then Grok Imagine, independently of the chat model. For an explicit ChatGPT/GPT Image request use provider chatgpt; for Grok use provider grok. If the requested provider is not connected, show its Settings connection rather than substitute a different provider. Never add a billed API implicitly. No email or PDF attachment is needed to create an image. Give the image a descriptive name. Generated attachments are delivered automatically; refer to them naturally without exposing internal IDs. Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before a completed file receipt or repeat a pending/uncertain generation automatically.";
+  "For PDF, DOCX and PPTX, read the document-design skill and the format skill before composing. Use design_references to select a direction appropriate to the subject. create_document accepts complete Markdown with headings, emphasis, lists, tables, quotes, owned file: images and chart/metrics/steps JSON blocks; it creates designed PDF or native editable DOCX/PPTX without a computer or source form. Choose design.reference, subtitle, eyebrow, footer and cover when useful. Do not substitute unformatted prose for an authored document. After creating a draft, call inspect_document in batches, examine the returned page pixels, then confirm_document_review in the next model turn. Review every page before finish_task. Correct problems by creating a fresh operation with replaceFileId for the current task draft and inspecting the new bytes. Internal previews are not deliverables. Text and Markdown formats preserve exact UTF-8. Use fill_pdf only for existing forms. For an image, illustration, poster or infographic, use generate_image to create the actual downloadable image. For an infographic about current facts, first research and verify sources, then include the exact verified facts, dates, labels and source names in a detailed visual prompt in the user's language; do not stop at a text outline. The image generator is independent of the chat model: image_generation_status lists connected image capabilities, including subscriptions. Auto selection prefers separately connected GPT Image through ChatGPT/Codex authorization, then Grok Imagine, independently of the chat model. For an explicit ChatGPT/GPT Image request use provider chatgpt; for Grok use provider grok. If the requested provider is not connected, show its Settings connection rather than substitute a different provider. Never add a billed API implicitly. No email or PDF attachment is needed to create an image. Give the image a descriptive name. Generated attachments are delivered automatically; refer to them naturally without exposing internal IDs. Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before a completed file receipt or repeat a pending/uncertain generation automatically.";
 
 export function mediaTools(
   media: MediaService,
@@ -356,7 +536,8 @@ export function mediaTools(
     signal?: AbortSignal;
     before?: () => Promise<void>;
     effectBefore?: () => Promise<void>;
-    artifact?: (id: string) => Promise<void>;
+    artifact?: (id: string, replacesFileId?: string) => Promise<void>;
+    revision?: () => number;
     onComputerDispatch?: (receiptId: string) => Promise<void>;
     onComputerReceipt?: (receipt: z.infer<typeof commandReceiptSchema>) => Promise<void>;
     onWaitingJob?: (receipt: { id: string; uncertain?: boolean }) => Promise<void>;
@@ -395,16 +576,19 @@ export function mediaTools(
             }
             const refs = z
               .object({
+                attachment: z.boolean().optional(),
                 fileId: z.string().optional(),
+                replacesFileId: z.string().optional(),
                 attachments: z.array(z.object({ fileId: z.string() })).optional(),
               })
               .safeParse(result);
-            if (refs.success)
+            if (refs.success && refs.data.attachment !== false && name !== "inspect_document")
               for (const id of [
                 refs.data.fileId,
                 ...(refs.data.attachments ?? []).map((a) => a.fileId),
               ].filter((id): id is string => Boolean(id)))
-                await options.artifact?.(id);
+                if (!(await media.files.get(owner, id)).internal)
+                  await options.artifact?.(id, refs.data.replacesFileId);
             return result;
           } catch (error) {
             if (
@@ -485,9 +669,21 @@ export function mediaTools(
   return [
     tool(
       "create_document",
-      "Author and attach a new PDF, UTF-8 text or Markdown document locally, without a computer or source form. Supply complete content (not instructions to write it), name, optional title and format. PDF supports Portuguese/Unicode font characters and automatic multipage layout; text/markdown preserve exact UTF-8 content. Maximum 120000 characters and 100 PDF pages. Returns an owned downloadable attachment.",
+      "Compose a designed PDF or editable DOCX/PPTX from complete Markdown content, locally. Read document-design and format skill first. Supports headings, emphasis, lists, tables, quotes, owned file: images and chart/metrics/steps JSON fences. Choose design.reference from design_references; optional subtitle, eyebrow, footer and cover. Text/markdown preserve exact UTF-8. Maximum120000 characters/100 PDF pages. Returns a draft attachment requiring inspect_document and visual review before completion. For a correction use replaceFileId of this task's draft plus a fresh operationId; other deliverables stay attached.",
       documentArgs,
       (args) => media.createDocument(owner, args, scope),
+      true,
+    ),
+    tool(
+      "inspect_document",
+      "Render 1–4 pages of an owned server-authored PDF/DOCX/PPTX into a visual contact sheet. Actual page pixels are supplied to the next model turn. Inspect hierarchy, overlap, clipping, spacing and data; then confirm_document_review. Repeat until all pages are reviewed. Previews are internal and are not delivered as attachments.",
+      z.object({
+        fileId: z.string().min(1).max(128),
+        startPage: z.number().int().min(1).max(100).default(1),
+        pageCount: z.number().int().min(1).max(4).default(2),
+      }),
+      (args) =>
+        media.inspectDocument(owner, args, scope, options.revision?.() ?? 0, options.signal),
       true,
     ),
     tool(

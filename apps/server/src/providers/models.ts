@@ -8,7 +8,11 @@ import { type OpenAIChatModel, openaiText } from "@tanstack/ai-openai";
 import { openaiCompatibleText } from "@tanstack/ai-openai/compatible";
 import { z } from "zod";
 import type { ModelRequirements, WorkClass } from "../../../../packages/domain/src/runtime.ts";
-import { type BrowserImageLoader, browserImageMessages } from "./browser-images.ts";
+import {
+  type BrowserImageLoader,
+  browserImageMessages,
+  browserImageReference,
+} from "./browser-images.ts";
 import {
   defaultModelRouting,
   type ModelProviderConfig,
@@ -100,6 +104,8 @@ export const providerContinuationCheckpointSchema = z
   .strict();
 export type ProviderContinuationCheckpoint = z.infer<typeof providerContinuationCheckpointSchema>;
 export interface ModelAdapterRuntime {
+  /** A successful model turn received these owner-verified image pixels. */
+  onFileImageObserved?: (fileId: string) => Promise<void>;
   workClass?: WorkClass;
   requirements?: Partial<ModelRequirements>;
   router?: ModelRouter;
@@ -338,6 +344,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
             request: this.request(options.chatOptions.request, dispatchSignal),
           },
         });
+        await this.fileImageObserved(options.chatOptions.messages);
         this.report(lease, current);
         this.router.release(lease, { status: "succeeded" });
         return result;
@@ -383,6 +390,11 @@ class OrderedModelAdapter implements AnyTextAdapter {
     const signals = [AbortSignal.timeout(deadlineMs)];
     if (options.request?.signal) signals.push(options.request.signal);
     return AbortSignal.any(signals);
+  }
+  private async fileImageObserved(messages: ModelMessage[]) {
+    const reference = browserImageReference(messages);
+    if (reference?.file && this.loadFileImage)
+      await this.runtime.onFileImageObserved?.(reference.id);
   }
   private attemptSignal(signal: AbortSignal, deadline: number) {
     const timeout = Math.max(
@@ -591,6 +603,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
           for (const start of pending) yield start;
         }
         this.router.release(lease, { status: "succeeded" });
+        await this.fileImageObserved(originalMessages);
         for (const tool of tools) yield tool;
         yield terminal;
         return;

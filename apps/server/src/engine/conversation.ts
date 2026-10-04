@@ -1,4 +1,5 @@
 import { browserInstructions, browserTools } from "../browser-tools.ts";
+import { designReferenceInstructions, designReferenceTools } from "../design-catalog.ts";
 import { desktopInstructions, desktopTools } from "../desktop-tools.ts";
 import { searchInstructions, searchTools } from "../search-tools.ts";
 import "../config.ts";
@@ -420,6 +421,7 @@ export class ConversationAgent extends AbstractAgent {
       "list_computer_versions",
       "inspect_computer_artifact",
       "view_file",
+      "inspect_document",
       "image_generation_status",
       "computer_command_status",
     ]);
@@ -769,6 +771,9 @@ export class ConversationAgent extends AbstractAgent {
       ...delegateTools(remoteTools),
     ];
     tools.push(
+      ...designReferenceTools(undefined, {
+        before: async () => browserAbort.signal.throwIfAborted(),
+      }),
       ...skillTools(new SkillCatalog(this.service.config), this.owner, {
         tools: () => tools,
         before: async () => browserAbort.signal.throwIfAborted(),

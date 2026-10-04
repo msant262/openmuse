@@ -1,0 +1,154 @@
+[
+  {
+    "id": "claude",
+    "label": "Editorial terracotta",
+    "source": {
+      "referenceId": "claude",
+      "repository": "https://github.com/VoltAgent/awesome-design-md",
+      "revision": "f6961238d5cddcf8042a74a70fc400ec67181abb",
+      "path": "design-md/claude/DESIGN.md",
+      "sha256": "3d972f34f8d4f33b442fa28220cf3b7ca2f13c0a97c468e3988148f82521f9df"
+    },
+    "tokens": {
+      "paper": "#faf9f5",
+      "ink": "#141413",
+      "accent": "#cc785c",
+      "muted": "#6c6a64",
+      "surface": "#f5f0e8"
+    },
+    "display": "serif"
+  },
+  {
+    "id": "notion",
+    "label": "Quiet notebook",
+    "source": {
+      "referenceId": "notion",
+      "repository": "https://github.com/VoltAgent/awesome-design-md",
+      "revision": "f6961238d5cddcf8042a74a70fc400ec67181abb",
+      "path": "design-md/notion/DESIGN.md",
+      "sha256": "fa9d6e78216d8f3e5d3990709ca2de6bc2e268e945bb94f255fd1bfb15455266"
+    },
+    "tokens": {
+      "paper": "#ffffff",
+      "ink": "#1a1a1a",
+      "accent": "#5645d4",
+      "muted": "#5d5b54",
+      "surface": "#f6f5f4"
+    },
+    "display": "sans"
+  },
+  {
+    "id": "stripe",
+    "label": "Indigo analytical",
+    "source": {
+      "referenceId": "stripe",
+      "repository": "https://github.com/VoltAgent/awesome-design-md",
+      "revision": "f6961238d5cddcf8042a74a70fc400ec67181abb",
+      "path": "design-md/stripe/DESIGN.md",
+      "sha256": "5c8806b7dd3e0c2554ccba9d1e2a7c78e7c6e50e44fcf6ff5daea6026f8a9ed9"
+    },
+    "tokens": {
+      "paper": "#ffffff",
+      "ink": "#0d253d",
+      "accent": "#533afd",
+      "muted": "#64748d",
+      "surface": "#f6f9fc"
+    },
+    "display": "sans"
+  },
+  {
+    "id": "linear",
+    "label": "Precise violet",
+    "source": {
+      "referenceId": "linear.app",
+      "repository": "https://github.com/VoltAgent/awesome-design-md",
+      "revision": "f6961238d5cddcf8042a74a70fc400ec67181abb",
+      "path": "design-md/linear.app/DESIGN.md",
+      "sha256": "30bd30e72c48a16e4bdbd010f2d1c85fab657c6fae3cc85389399aab10f9cb5f"
+    },
+    "tokens": {
+      "paper": "#ffffff",
+      "ink": "#000000",
+      "accent": "#5e6ad2",
+      "muted": "#62666d",
+      "surface": "#f5f6f6"
+    },
+    "display": "sans"
+  },
+  {
+    "id": "vercel",
+    "label": "Monochrome technical",
+    "source": {
+      "referenceId": "vercel",
+      "repository": "https://github.com/VoltAgent/awesome-design-md",
+      "revision": "f6961238d5cddcf8042a74a70fc400ec67181abb",
+      "path": "design-md/vercel/DESIGN.md",
+      "sha256": "d0951b93c2b4ce9840c715c9f9b3e58a386c6c58ae5cc0f804dec3b116b95bd8"
+    },
+    "tokens": {
+      "paper": "#ffffff",
+      "ink": "#171717",
+      "accent": "#171717",
+      "muted": "#4d4d4d",
+      "surface": "#fafafa"
+    },
+    "display": "sans"
+  },
+  {
+    "id": "ibm",
+    "label": "Structured blue",
+    "source": {
+      "referenceId": "ibm",
+      "repository": "https://github.com/VoltAgent/awesome-design-md",
+      "revision": "f6961238d5cddcf8042a74a70fc400ec67181abb",
+      "path": "design-md/ibm/DESIGN.md",
+      "sha256": "46f6fd65b5e7524fed1133b9b3c0dd619f9a0f145fbb2b87f3675c701a88f3bd"
+    },
+    "tokens": {
+      "paper": "#ffffff",
+      "ink": "#161616",
+      "accent": "#0f62fe",
+      "muted": "#525252",
+      "surface": "#f4f4f4"
+    },
+    "display": "sans"
+  },
+  {
+    "id": "spotify",
+    "label": "Rhythmic green",
+    "source": {
+      "referenceId": "spotify",
+      "repository": "https://github.com/VoltAgent/awesome-design-md",
+      "revision": "f6961238d5cddcf8042a74a70fc400ec67181abb",
+      "path": "design-md/spotify/DESIGN.md",
+      "sha256": "72e964a6cf551d0603f9854f2f42ee08e97ad4d9e17e037f50f6233508288295"
+    },
+    "tokens": {
+      "paper": "#ffffff",
+      "ink": "#121212",
+      "accent": "#1db954",
+      "muted": "#4d4d4d",
+      "surface": "#eeeeee"
+    },
+    "display": "sans"
+  },
+  {
+    "id": "airbnb",
+    "label": "Generous coral",
+    "source": {
+      "referenceId": "airbnb",
+      "repository": "https://github.com/VoltAgent/awesome-design-md",
+      "revision": "f6961238d5cddcf8042a74a70fc400ec67181abb",
+      "path": "design-md/airbnb/DESIGN.md",
+      "sha256": "add34130d67209ad105346d60fe2b290728b9711683969db4b7760e29477a5fe"
+    },
+    "tokens": {
+      "paper": "#ffffff",
+      "ink": "#222222",
+      "accent": "#ff385c",
+      "muted": "#6a6a6a",
+      "surface": "#f7f7f7"
+    },
+    "display": "sans"
+  }
+]

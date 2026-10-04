@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AgentArtifact, AgentTask } from "../../../../packages/domain/src/agent.ts";
 import { rasterMime } from "../../../../packages/domain/src/attachments.ts";
 import type { ActionProposal, Artifact } from "../../../../packages/domain/src/index.ts";
@@ -11,6 +12,7 @@ import { inspectPdf } from "../../../../packages/integrations/src/pdf.ts";
 import { readPdfText } from "../../../../packages/integrations/src/pdf-text.ts";
 import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
+import { DocumentReview } from "../document-review.ts";
 import type { Files } from "../files.ts";
 import { readablePage } from "../public-web.ts";
 import type { JournalOperation, TaskJournal } from "./task-journal.ts";
@@ -732,6 +734,49 @@ export class TaskVerification {
     const remaining = criteria
       .filter((_, index) => !checks[index].passed)
       .map((criterion) => criterion.description);
+    // Only server-authored designed documents opt into this newer delivery contract.
+    // Existing forms, imports and text files retain their established verification.
+    const designed = (
+      await this.db.list<{ id: string; fileId?: string; sha256?: string; designVersion?: number }>(
+        owner,
+        "document-generations",
+      )
+    ).filter(
+      (entry) =>
+        entry.designVersion === 2 && entry.fileId && task.artifactIds.includes(entry.fileId),
+    );
+    const documentReview = new DocumentReview(this.db, this.files);
+    for (const generated of designed) {
+      const fileId = generated.fileId as string;
+      let reviewed = false,
+        evidenceIds: string[] = [];
+      try {
+        const sha256 = createHash("sha256")
+          .update(await this.files.bytes(owner, fileId))
+          .digest("hex");
+        if (current && !uncertain && sha256 === generated.sha256) {
+          const result = await documentReview.check(
+            owner,
+            { scope: `task:${taskId}`, revision },
+            fileId,
+            sha256,
+          );
+          reviewed = result.passed;
+          evidenceIds = reviewed ? result.receiptIds : [];
+        }
+      } catch {
+        /* Unavailable or changed bytes cannot be visually verified. */
+      }
+      checks.push({
+        criterionId: `document-design-review:${fileId}`,
+        passed: reviewed,
+        evidenceIds,
+      });
+      if (!reviewed)
+        remaining.push(
+          `Render and visually review every page of document ${fileId} with inspect_document and confirm_document_review before delivery`,
+        );
+    }
     if (!current) remaining.push("Apply the latest direction and verify its result");
     if (uncertain) remaining.push("Reconcile the dispatched operation's uncertain result");
     return completionAssessmentSchema.parse({

@@ -93,6 +93,7 @@ export function tanstackAgent(options: {
   onStepLimit?: () => void;
   loadBrowserImage?: BrowserImageLoader;
   loadFileImage?: BrowserImageLoader;
+  onFileImageObserved?: (fileId: string) => Promise<void>;
   onModelSelected?: (model: ModelSelection) => void;
   /** Said when the step limit, not the model, ends a run; otherwise the reply just stops. */
   stepLimitNote?: string;
@@ -157,6 +158,7 @@ export function tanstackAgent(options: {
             requirements: options.requirements,
             router: options.modelRouter,
             onInterrupted: options.onProviderInterrupted,
+            onFileImageObserved: options.onFileImageObserved,
           },
         ),
         messages: converted.messages,

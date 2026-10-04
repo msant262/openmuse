@@ -33,6 +33,10 @@
 !third_party/
 !third_party/openclaw/
 !third_party/openclaw/**
+!third_party/awesome-design-md/
+!third_party/awesome-design-md/**
+!third_party/document-skills/
+!third_party/document-skills/**
 **/node_modules
 **/.env*
 **/.openmuse

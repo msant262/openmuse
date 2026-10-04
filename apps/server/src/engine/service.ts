@@ -578,8 +578,8 @@ export class AgentService {
       "task-budgets",
       typeof task.state.rootTaskId === "string" ? task.state.rootTaskId : task.id,
     );
-    const files = (await this.db.list<Artifact>(owner, "files")).filter((file) =>
-      task.artifactIds.includes(file.id),
+    const files = (await this.db.list<Artifact>(owner, "files")).filter(
+      (file) => !file.internal && task.artifactIds.includes(file.id),
     );
     const browsers = (await this.db.list<BrowserSession>(owner, "browsers")).filter((browser) =>
       [task.state.browserId, task.state.sessionId].includes(browser.id),
@@ -1448,9 +1448,27 @@ export class AgentService {
       task = await context.checkpoint({ state: { ...task.state, nativeCleanupPending: false } });
     }
     const recovered = await this.journal.reconcileFiles(owner, task.id, this.files);
-    if (recovered.length)
+    const documents = await this.db.list<{
+      id: string;
+      fileId?: string;
+      scope?: string;
+      replacesFileId?: string;
+    }>(owner, "document-generations");
+    const candidates = new Set([...task.artifactIds, ...recovered]);
+    const replaced = new Set(
+      documents
+        .filter(
+          (entry) =>
+            entry.scope === `task:${task.id}` &&
+            entry.fileId &&
+            candidates.has(entry.fileId) &&
+            entry.replacesFileId,
+        )
+        .map((entry) => entry.replacesFileId),
+    );
+    if (recovered.length || task.artifactIds.some((id) => replaced.has(id)))
       task = await context.checkpoint({
-        artifactIds: [...new Set([...task.artifactIds, ...recovered])],
+        artifactIds: [...candidates].filter((id) => !replaced.has(id)),
       });
     await context.event(
       "status",

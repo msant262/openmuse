@@ -63,6 +63,12 @@ test("deployed skills expose bounded metadata and exact complete instructions, n
   assert.match(read.sha256, /^[a-f0-9]{64}$/);
   assert.equal(read.sha256, createHash("sha256").update(read.content).digest("hex"));
   assert.equal(read.truncated, false);
+  for (const id of ["builtin:document-design", "builtin:pdf-docs", "builtin:slides"]) {
+    const workflow = await f.call("skills_read", { id });
+    assert.equal(workflow.id, id);
+    assert.match(workflow.content, /inspect_document/);
+    assert.match(workflow.content, /confirm_document_review/);
+  }
   assert.ok(!JSON.stringify(listed).includes(f.directory));
   assert.equal((await f.db.list("owner", "tasks")).length, 0);
 });

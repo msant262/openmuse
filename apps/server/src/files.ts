@@ -27,6 +27,7 @@ export class Files {
     source: string,
     mimeType?: string,
     operationId: string | undefined = taskOperationId(),
+    internal = false,
   ): Promise<Artifact> {
     if (bytes.length > attachmentLimit)
       throw new AppError("Attachments must be 25 MB or smaller", 413);
@@ -48,6 +49,7 @@ export class Files {
       url: "",
       createdAt: new Date().toISOString(),
       source,
+      ...(internal && { internal: true }),
     };
     const directory = join(this.config.dataDir, "files");
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -78,6 +80,7 @@ export class Files {
           sha256,
           source: artifact.source,
           parentId: artifact.parentId,
+          internal: artifact.internal,
         }),
       )
       .digest("hex");
@@ -125,7 +128,7 @@ export class Files {
   async reference(owner: string, id: string) {
     const file = await this.get(owner, id);
     return {
-      attachment: true as const,
+      attachment: !file.internal,
       fileId: file.id,
       name: file.name,
       mimeType: file.mimeType,
@@ -225,7 +228,9 @@ export class Files {
     return { ...file, url: this.auth.sign(owner, `/api/files/${file.id}/content`) };
   }
   async list(owner: string) {
-    return (await this.db.list<Artifact>(owner, "files")).map((file) => this.signed(owner, file));
+    return (await this.db.list<Artifact>(owner, "files"))
+      .filter((file) => !file.internal)
+      .map((file) => this.signed(owner, file));
   }
   async get(owner: string, id: string) {
     const file = await this.db.get<Artifact>(owner, "files", id);
