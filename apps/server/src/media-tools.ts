@@ -4,6 +4,10 @@ import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import { rasterMime } from "../../../packages/domain/src/attachments.ts";
 import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
+import {
+  createDocumentPdf,
+  documentCharacterLimit,
+} from "../../../packages/integrations/src/document.ts";
 import { ActionLog } from "./action-log.ts";
 import { base64Limit, decodeBase64 } from "./base64.ts";
 import {
@@ -23,6 +27,7 @@ import { ImageNotDispatchedError } from "./providers/image-errors.ts";
 import { availableImageModels, imageProvider } from "./providers/images.ts";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+const hashBytes = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const imageArgs = z.object({
   prompt: z.string().trim().min(1).max(8000),
   operationId: z.string().min(1).max(120),
@@ -30,6 +35,29 @@ const imageArgs = z.object({
   provider: z.enum(["auto", "chatgpt", "grok", "selected"]).default("auto"),
   aspectRatio: z.enum(["1:1", "3:4", "4:3", "9:16", "16:9"]).optional(),
 });
+const documentArgs = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    title: z.string().trim().min(1).max(200).optional(),
+    content: z
+      .string()
+      .min(1)
+      .max(documentCharacterLimit)
+      .refine(
+        (value) =>
+          value.trim().length > 0 &&
+          Buffer.from(value, "utf8").toString("utf8") === value &&
+          Array.from(value).every(
+            (character) =>
+              [9, 10, 13].includes(character.charCodeAt(0)) ||
+              (character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127),
+          ),
+        "Use nonempty document text without control characters",
+      ),
+    format: z.enum(["pdf", "text", "markdown"]).default("pdf"),
+    operationId: z.string().min(1).max(120),
+  })
+  .strict();
 export class MediaService {
   constructor(
     readonly db: Store,
@@ -37,6 +65,51 @@ export class MediaService {
     readonly config: Config,
     readonly upstream: typeof fetch = fetch,
   ) {}
+  async createDocument(owner: string, raw: unknown, scope: string) {
+    const args = documentArgs.parse(raw);
+    const operationId = taskOperationId() ?? `${scope}:${args.operationId}`;
+    const id = hash(operationId);
+    const binding = hash(JSON.stringify(args));
+    type Receipt = { id: string; binding: string; fileId?: string; sha256?: string };
+    const previous =
+      (await this.db.insertIfAbsent<Receipt>(owner, "document-generations", { id, binding })) ??
+      (await this.db.get<Receipt>(owner, "document-generations", id));
+    if (!previous || previous.binding !== binding)
+      throw new AppError("Operation ID already belongs to a different document request", 409);
+    if (previous.fileId) {
+      if (hashBytes(await this.files.bytes(owner, previous.fileId)) !== previous.sha256)
+        throw new AppError("Published document content no longer matches its receipt", 409);
+      return this.files.reference(owner, previous.fileId);
+    }
+    const extension = { pdf: "pdf", text: "txt", markdown: "md" }[args.format];
+    const baseName =
+      args.name
+        .split(/[\\/]/)
+        .at(-1)
+        ?.replace(/\.[^.]+$/, "") ?? "document";
+    const name = `${
+      Array.from(baseName)
+        .filter((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127)
+        .join("") || "document"
+    }.${extension}`;
+    const bytes =
+      args.format === "pdf"
+        ? await createDocumentPdf(args.content, args.title)
+        : Buffer.from(args.content, "utf8");
+    const file = await this.files.importAttachment(
+      owner,
+      name,
+      bytes,
+      "Created document",
+      undefined,
+      operationId,
+    );
+    const sha256 = hashBytes(bytes);
+    if (hashBytes(await this.files.bytes(owner, file.id)) !== sha256)
+      throw new AppError("Document persistence verification failed", 409);
+    await this.db.put(owner, "document-generations", { id, binding, fileId: file.id, sha256 });
+    return this.files.reference(owner, file.id);
+  }
   async imageCapabilities(model: string | undefined) {
     const config = this.config.modelProviders ?? modelProviderConfig(this.config.dataDir);
     const models = await availableImageModels(model, config);
@@ -271,7 +344,7 @@ export class MediaService {
 }
 
 export const mediaInstructions =
-  "For an image, illustration, poster or infographic, use generate_image to create the actual downloadable image. For an infographic about current facts, first research and verify sources, then include the exact verified facts, dates, labels and source names in a detailed visual prompt in the user's language; do not stop at a text outline. The image generator is independent of the chat model: image_generation_status lists connected image capabilities, including subscriptions. Auto selection prefers separately connected GPT Image through ChatGPT/Codex authorization, then Grok Imagine, independently of the chat model. For an explicit ChatGPT/GPT Image request use provider chatgpt; for Grok use provider grok. If the requested provider is not connected, show its Settings connection rather than substitute a different provider. Never add a billed API implicitly. No email or PDF attachment is needed to create an image. Give the image a descriptive name. The generated attachment is delivered automatically; refer to it naturally without exposing internal IDs. Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before completion or repeat a pending/uncertain generation automatically.";
+  "Use create_document to author a new downloadable PDF, UTF-8 text or Markdown file from complete content. A new PDF needs no source email, existing form, browser, computer or external connection. Compose the actual requested content first, then call create_document with a descriptive name, optional title and format. PDF paragraphs paginate automatically; title is optional and content is plain text. Use fill_pdf only for an existing form. For an image, illustration, poster or infographic, use generate_image to create the actual downloadable image. For an infographic about current facts, first research and verify sources, then include the exact verified facts, dates, labels and source names in a detailed visual prompt in the user's language; do not stop at a text outline. The image generator is independent of the chat model: image_generation_status lists connected image capabilities, including subscriptions. Auto selection prefers separately connected GPT Image through ChatGPT/Codex authorization, then Grok Imagine, independently of the chat model. For an explicit ChatGPT/GPT Image request use provider chatgpt; for Grok use provider grok. If the requested provider is not connected, show its Settings connection rather than substitute a different provider. Never add a billed API implicitly. No email or PDF attachment is needed to create an image. Give the image a descriptive name. Generated attachments are delivered automatically; refer to them naturally without exposing internal IDs. Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before a completed file receipt or repeat a pending/uncertain generation automatically.";
 
 export function mediaTools(
   media: MediaService,
@@ -355,7 +428,15 @@ export function mediaTools(
               await options.onWaitingJob({ id: commandId, uncertain: true });
               return { id: commandId, status: "running", outcomeUnknown: true };
             }
-            return { error: error instanceof Error ? error.message : "Media processing failed" };
+            return {
+              error: error instanceof Error ? error.message : "Media processing failed",
+              ...(error &&
+              typeof error === "object" &&
+              "outcomeUnknown" in error &&
+              error.outcomeUnknown === true
+                ? { outcomeUnknown: true }
+                : {}),
+            };
           }
         };
         return options.queue ? options.queue(operation) : operation();
@@ -402,6 +483,13 @@ export function mediaTools(
     return media.completed(owner, computer, receipt);
   };
   return [
+    tool(
+      "create_document",
+      "Author and attach a new PDF, UTF-8 text or Markdown document locally, without a computer or source form. Supply complete content (not instructions to write it), name, optional title and format. PDF supports Portuguese/Unicode font characters and automatic multipage layout; text/markdown preserve exact UTF-8 content. Maximum 120000 characters and 100 PDF pages. Returns an owned downloadable attachment.",
+      documentArgs,
+      (args) => media.createDocument(owner, args, scope),
+      true,
+    ),
     tool(
       "image_generation_status",
       "List connected image generators independently of the chat model; returns capability and subscription status without credentials",

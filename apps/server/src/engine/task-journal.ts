@@ -168,7 +168,7 @@ export class TaskJournal {
     const ids: string[] = [];
     for (const op of await this.operations(owner, taskId)) {
       if (
-        !/^(import_pdf|fill_pdf|export_computer_(pdf|file)|manual_native\.export)$/.test(
+        !/^(create_document|import_pdf|fill_pdf|export_computer_(pdf|file)|manual_native\.export)$/.test(
           op.toolName,
         ) ||
         !["dispatching", "outcome_unknown"].includes(op.status)

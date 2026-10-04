@@ -1,0 +1,32 @@
+# OpenClaw comparison and delivery incident review
+
+Reference: [OpenClaw at da979df](https://github.com/openclaw/openclaw/tree/da979df299e88c3711f6ee2cd3c7443dd045584b). The checkout is read-only research input. Reused code and adaptations are itemized in `third_party/openclaw/README.md`; the complete MIT notice ships with the server.
+
+This review covers the execution path from a user message through tool dispatch, background work, verification and conversation delivery. It does not claim that adopting several modules makes this app equivalent to the full OpenClaw product.
+
+| Layer | Finding and decision | Implementation/evidence |
+| --- | --- | --- |
+| Chat execution | A forced no-tools final turn could replace a requested image with prose after research. Keep a bounded handoff before the final response, then let durable work finish. | Released in `7529b63`; `conversation-handoff.test.ts` and real chat-to-worker PNG receipt. |
+| Completion ownership | OpenClaw explicitly distinguishes a progress promise from a finished answer and requires a completion path for promised background work. Copy this portable policy into both model surfaces. | `promised-work-prompt.ts`; original policy at upstream `src/agents/promised-work-prompt.ts`. |
+| Self-description and skills | Our model did not receive an authoritative runtime inventory and researched unrelated agent products for an explanation of itself. Add runtime metadata and actual bounded skill discovery/read. | Detailed [runtime audit](2026-10-04-openclaw-harness-audit-runtime.md); runtime/procedure metadata is owner scoped and does not expose secret config. |
+| Context admission | Projected schema cost differed from the provider request. Evidence and later provider checkpoints inflated mandatory instructions on resume. Normalize exact schemas; retain bounded references and separate canonical history. | `context-budget.ts`, `task-context-resume.test.ts`, `memory-context.test.ts`; detailed execution audit. |
+| Large tool output | A single command/status/web result could dominate the next request. Reuse OpenClaw's portable live-result caps and adapt to the existing conservative byte admission. | `tool-output.ts`; full canonical receipts preserved; `read_tool_output` pages omitted content; required operation receipts remain complete. |
+| Repeated calls | Previously only step/time budgets stopped loops. Reuse OpenClaw no-progress and argument-churn classifiers. Warn at 10 unchanged outcomes; veto at 20 before dispatch. | `tool-progress.ts`; tests exercise actual model transport, same-argument concurrent admission, new arguments/outcomes and fresh user-turn recovery. |
+| Durable effects | Existing journal distinguishes confirmed, uncertain and replayable work. Preserve this instead of replacing it with OpenClaw's runtime-specific terminal observer. | `task-journal.ts`, `task-actor.ts`, `task-executor-authority.ts`; compare upstream `tool-terminal-outcome.ts` and `tool-effect-receipt.ts`. Vetoed calls explicitly say they did not execute. |
+| File creation | Images have a provider path, but ordinary authored PDFs had no server creation tool. Add general PDF/text/Markdown production through the existing file receipt mechanism. | `create_document`; bounded content, embedded font, page-text verification, idempotent file binding, originating-thread publication. |
+| Delivery | Existing service publishes verified task results and file references to the origin thread. Keep it and test through the real conversation wrapper, rather than testing a direct file generator alone. | `AgentService.publishOutcome`, `thread-publications`, `scripts/harness-delivery-smoke.mjs`. |
+| Provider selection | Preserve capability gates, connected-provider selection, quota limits and explicit interruption checkpoints. The observed error was a context construction failure, not proof that the selected model lacks tools. | Production selected `chatgpt/gpt-6-luna` and first fallback both declare 131072 context; no artificial capacity increase. |
+| Native execution | Computer/browser execution retains resource leases, cancellation and uncertain-outcome reconciliation. Simple documents no longer depend on its availability. | Native restart/quarantine findings belong to the execution audit; no blind clearing of quarantine. |
+| Google and connectors | Missing native OAuth configuration leaked deployment variables. Route supported apps through the configured connection catalog/private setup and distinguish unconfigured from connected. | Public desktop/mobile and Android upgrade checks pass at `7529b63`; real Google account authorization still requires the operator's connection-service setup. |
+
+## Adaptation boundaries
+
+OpenClaw's agent-core hooks, plugin registry, provider-specific output normalization, workspace/session model and terminal receipts depend on its own runtime. Importing those files without their contracts would introduce false guarantees. Portable modules are reused directly; product-specific adapters remain local and tested. The local loop guard currently classifies exact stable outcomes and repeated argument variants; it does not claim semantic understanding of every changed search query or normalize arbitrary volatile terminal output.
+
+Large output projection applies only to provider input. Canonical messages and journal receipts are unchanged. The paging tool is scoped to the current conversation/task history. Effect receipts pinned for reconciliation are not truncated. If mandatory authorized context still exceeds every configured model, the task must preserve state and report that concrete limit rather than silently discard an effect.
+
+Remaining large-scale opportunities include demand loading of native tool schemas/aliases, a richer skill installation lifecycle and semantic research-progress evaluation. The baseline release must first demonstrate reliable PDF/image delivery, continuation and truthful completion with the existing connected models.
+
+## Acceptance evidence
+
+Unit and transport regressions are recorded under `artifacts/openclaw-harness/`. Live acceptance uses an isolated database with the configured provider accounts and goes through `ConversationAgent`, the normal durable worker and normal origin publication. The original production PDF task is recovered separately, retaining its identity/history. Final evidence must distinguish synthetic transport tests, actual connected-provider runs, and production delivery; one does not substitute for another.

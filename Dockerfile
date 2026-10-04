@@ -11,6 +11,7 @@ COPY apps/server ./apps/server
 # Share the existing public-address validator and its error type with the HTTP reader.
 COPY apps/worker/src/network.ts apps/worker/src/errors.ts ./apps/worker/src/
 COPY packages ./packages
+COPY scripts/copy-server-assets.mjs ./scripts/
 RUN pnpm build:server
 
 FROM node:24.21.0-bookworm-slim
@@ -19,6 +20,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json LICENSE ./
 COPY docs/licenses ./docs/licenses
+COPY third_party ./third_party
 RUN mkdir -p /data/openmuse && chown node:node /data/openmuse
 ENV NODE_ENV=production DATA_DIR=/data/openmuse HOST=0.0.0.0 PORT=8787
 USER node

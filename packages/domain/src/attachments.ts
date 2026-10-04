@@ -12,6 +12,7 @@ const types: Record<string, string> = {
   jpeg: "image/jpeg",
   webp: "image/webp",
   txt: "text/plain",
+  md: "text/markdown",
   csv: "text/csv",
   srt: "application/x-subrip",
   json: "application/json",

@@ -26,6 +26,9 @@ import type { ModelRouter } from "../providers/model-router.ts";
 import type { ModelSelection, ProviderContinuationCheckpoint } from "../providers/models.ts";
 import { continuationMessages, modelAdapter } from "../providers/models.ts";
 import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
+import { harnessToolCatalog } from "./harness-tool-catalog.ts";
+import { ToolOutputStore } from "./tool-output.ts";
+import { ToolProgress } from "./tool-progress.ts";
 
 export { unknownProvider } from "../providers/models.ts";
 
@@ -33,14 +36,12 @@ export { unknownProvider } from "../providers/models.ts";
 // results into STATE_SNAPSHOT / STATE_DELTA events.
 const stateTools = [
   defineTool({
-    name: "AGUISendStateSnapshot",
-    description: "Replace the entire application state with a new snapshot",
+    ...harnessToolCatalog[1],
     parameters: z.object({ snapshot: z.any().describe("The complete new state object") }),
     execute: async ({ snapshot }) => ({ success: true, snapshot }),
   }),
   defineTool({
-    name: "AGUISendStateDelta",
-    description: "Apply incremental updates to application state using JSON Patch operations",
+    ...harnessToolCatalog[2],
     parameters: z.object({
       delta: z
         .array(
@@ -106,6 +107,18 @@ export function tanstackAgent(options: {
     type: "tanstack",
     factory: ({ input, abortController }) => {
       const converted = convertInputToTanStackAI(input);
+      const outputStore = new ToolOutputStore();
+      const progress = new ToolProgress();
+      const progressWarnings = new Set<string>();
+      const outputTool = defineTool({
+        ...harnessToolCatalog[0],
+        parameters: z.object({
+          toolCallId: z.string().min(1).max(500),
+          offset: z.number().int().nonnegative().default(0),
+          limit: z.number().int().min(2).max(8000).default(4000),
+        }),
+        execute: async (args) => outputStore.read(args),
+      });
       // Build the system prompt like the classic mode. It does not forward system messages.
       let system = `Current UTC date and time: ${new Date().toISOString()}\n${options.prompt}`;
       if (input.context.length) {
@@ -148,96 +161,107 @@ export function tanstackAgent(options: {
         ),
         messages: converted.messages,
         systemPrompts: system ? [system] : [],
-        middleware:
-          options.promptContext ||
-          options.contextModel ||
-          options.onMessages ||
-          options.finalResponseOnStepLimit
-            ? ([
-                {
-                  name: "openmuse-context",
-                  onConfig: async (ctx: ChatMiddlewareContext, config: ChatMiddlewareConfig) => {
-                    await options.onMessages?.(config.messages, ctx.phase);
-                    const systemPrompts = [((await options.promptContext?.()) ?? "") + system];
-                    const finalResponse =
-                      options.finalResponseOnStepLimit && ctx.iteration >= options.maxSteps - 1;
-                    const handoff =
-                      options.finalResponseOnStepLimit &&
-                      !finalResponse &&
-                      ctx.iteration >= options.maxSteps - 2
-                        ? options.handoffBeforeFinalResponse
-                        : undefined;
-                    const handoffTools = handoff?.tools();
-                    const tools = finalResponse
-                      ? []
-                      : handoffTools
-                        ? config.tools.filter((tool) => handoffTools.includes(tool.name))
-                        : config.tools;
-                    if (handoff) systemPrompts.push(handoff.prompt);
-                    if (finalResponse)
-                      systemPrompts.push(
-                        "This is the final response for this chat run. Tools are unavailable. Answer the user's request now using the observations already returned. Cite source URLs for verified details and prices. If research is incomplete, give the useful verified results and briefly explain what could not be verified. Do not invent findings or claim that pending delegated work has finished. Do not ask more questions or ask the user to say continue, restart, or repeat the request.",
-                      );
-                    const requiredOperationIds = (await options.requiredOperationIds?.()) ?? [];
-                    const observations = ContextBudget.observations(config.messages);
-                    const imageContextTokens =
-                      options.providers?.routing?.imageContextTokens ?? 8192;
-                    let model: ReturnType<ContextModelResolver>;
-                    try {
-                      model = options.contextModel?.({
-                        tools: Boolean(tools.length),
-                        vision: ContextBudget.currentVision(config.messages, observations),
-                        structuredOutput: false,
-                        contextTokens: ContextBudget.minimumTokens(config.messages, {
-                          systemPrompts,
-                          tools,
-                          requiredOperationIds,
-                          observations,
-                          imageContextTokens,
-                        }),
-                      });
-                    } catch (error) {
-                      if (error instanceof ModelUnavailableError)
-                        await options.onProviderInterrupted?.({
-                          version: 1,
-                          messages: continuationMessages(config.messages),
-                          partialText: "",
-                          rejectedModel: options.model,
-                          accepted: false,
-                          code: error.code,
-                        });
-                      throw error;
-                    }
-                    return {
+        middleware: [
+          {
+            name: "openmuse-context",
+            onConfig: async (ctx: ChatMiddlewareContext, config: ChatMiddlewareConfig) => {
+              await options.onMessages?.(config.messages, ctx.phase);
+              outputStore.observe(config.messages);
+              progress.observe(config.messages);
+              const systemPrompts = [((await options.promptContext?.()) ?? "") + system];
+              if (progressWarnings.size) {
+                systemPrompts.push([...progressWarnings].join("\n"));
+                progressWarnings.clear();
+              }
+              const finalResponse =
+                options.finalResponseOnStepLimit && ctx.iteration >= options.maxSteps - 1;
+              const handoff =
+                options.finalResponseOnStepLimit &&
+                !finalResponse &&
+                ctx.iteration >= options.maxSteps - 2
+                  ? options.handoffBeforeFinalResponse
+                  : undefined;
+              const handoffTools = handoff?.tools();
+              const tools = finalResponse
+                ? []
+                : handoffTools
+                  ? config.tools.filter((tool) => handoffTools.includes(tool.name))
+                  : config.tools;
+              if (handoff) systemPrompts.push(handoff.prompt);
+              if (finalResponse)
+                systemPrompts.push(
+                  "This is the final response for this chat run. Tools are unavailable. Answer the user's request now using the observations already returned. Cite source URLs for verified details and prices. If research is incomplete, give the useful verified results and briefly explain what could not be verified. Do not invent findings or claim that pending delegated work has finished. Do not ask more questions or ask the user to say continue, restart, or repeat the request.",
+                );
+              const requiredOperationIds = (await options.requiredOperationIds?.()) ?? [];
+              const projected = outputStore.project(config.messages, requiredOperationIds);
+              const observations = ContextBudget.observations(projected);
+              const imageContextTokens = options.providers?.routing?.imageContextTokens ?? 8192;
+              let model: ReturnType<ContextModelResolver>;
+              try {
+                model = options.contextModel?.({
+                  tools: Boolean(tools.length),
+                  vision: ContextBudget.currentVision(projected, observations),
+                  structuredOutput: false,
+                  contextTokens: ContextBudget.minimumTokens(projected, {
+                    systemPrompts,
+                    tools,
+                    requiredOperationIds,
+                    observations,
+                    imageContextTokens,
+                  }),
+                });
+              } catch (error) {
+                if (error instanceof ModelUnavailableError)
+                  await options.onProviderInterrupted?.({
+                    version: 1,
+                    messages: continuationMessages(config.messages),
+                    partialText: "",
+                    rejectedModel: options.model,
+                    accepted: false,
+                    code: error.code,
+                  });
+                throw error;
+              }
+              return {
+                systemPrompts,
+                tools,
+                providerMessages: model
+                  ? ContextBudget.limit(projected, {
+                      model,
                       systemPrompts,
                       tools,
-                      ...(model
-                        ? {
-                            providerMessages: ContextBudget.limit(config.messages, {
-                              model,
-                              systemPrompts,
-                              tools,
-                              requiredOperationIds,
-                              observations,
-                            }),
-                          }
-                        : {}),
-                    };
-                  },
-                },
-              ] as ChatMiddleware[])
-            : [],
+                      requiredOperationIds,
+                      observations,
+                    })
+                  : projected,
+              };
+            },
+          },
+        ] as ChatMiddleware[],
         tools: [
           ...converted.tools,
-          ...[...options.tools, ...stateTools].map((tool) =>
+          ...[...options.tools, outputTool, ...stateTools].map((tool) =>
             toolDefinition({
               name: tool.name,
               description: tool.description,
               inputSchema: tool.parameters as SchemaInput,
             }).server((args, context) => {
               const execute = () => (tool.execute as (args: unknown) => Promise<unknown>)(args);
-              const dispatch = () =>
-                options.executeTool
+              const dispatch = async () => {
+                abortController.signal.throwIfAborted();
+                const observation = progress.check(tool.name, args);
+                if (observation?.blocked) {
+                  const veto = {
+                    skipped: true,
+                    dispatched: false,
+                    code: "TOOL_NO_PROGRESS",
+                    message: observation.message,
+                  };
+                  progress.record(tool.name, args, veto);
+                  return veto;
+                }
+                if (observation) progressWarnings.add(observation.message);
+                const result = await (options.executeTool
                   ? options.executeTool(
                       {
                         id: `${input.runId}:${context?.toolCallId ?? randomUUID()}`,
@@ -247,8 +271,12 @@ export function tanstackAgent(options: {
                       },
                       execute,
                     )
-                  : execute();
-              return options.trackTool ? options.trackTool(dispatch) : dispatch();
+                  : execute());
+                progress.record(tool.name, args, result);
+                return result;
+              };
+              const admitted = () => progress.exclusive(tool.name, args, dispatch);
+              return options.trackTool ? options.trackTool(admitted) : admitted();
             }),
           ),
         ],

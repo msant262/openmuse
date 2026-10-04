@@ -1,14 +1,76 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Message } from "@ag-ui/core";
-import type { ModelMessage } from "@tanstack/ai";
+import { defineTool } from "@copilotkit/runtime/v2";
+import { convertSchemaToJsonSchema, type ModelMessage } from "@tanstack/ai";
+import { resolveDebugOption } from "@tanstack/ai/adapter-internals";
+import { z } from "zod";
 import { createStore } from "../apps/server/src/db.ts";
 import { ContextBudget } from "../apps/server/src/engine/context-budget.ts";
 import { tanstackAgent } from "../apps/server/src/engine/tanstack-agent.ts";
 import { MemoryService } from "../apps/server/src/memory.ts";
 import { browserImageMessages } from "../apps/server/src/providers/browser-images.ts";
 import { modelProviderConfig } from "../apps/server/src/providers/config.ts";
+import { requestRequirements } from "../apps/server/src/providers/model-capabilities.ts";
 import { modelFixture } from "./helpers/model.ts";
+
+test("context admission counts the JSON tool schemas actually sent to the model", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, { text: () => "Resposta final." });
+  const schema = z.object({
+    topic: z.string().describe("Verified topic description. ".repeat(400)),
+  });
+  const tool = { name: "describe_topic", description: "Describe a topic", inputSchema: schema };
+  const messages: ModelMessage[] = [{ role: "user", content: "current" }];
+  const model = { id: "openai/fixture", contextTokens: 20000, outputReserveTokens: 4096 };
+  const estimate = ContextBudget.cost(messages, { model, tools: [tool], systemPrompts: [] });
+  const actual = requestRequirements({
+    logger: resolveDebugOption(false),
+    model: "fixture",
+    messages,
+    tools: [{ ...tool, inputSchema: convertSchemaToJsonSchema(schema) }],
+    systemPrompts: [],
+  });
+  assert.equal(estimate, actual.contextTokens);
+  const providers = modelProviderConfig("/tmp/schema-budget", {
+    MODEL_CAPABILITIES: JSON.stringify({
+      "openai/fixture": {
+        tools: true,
+        vision: false,
+        structuredOutput: true,
+        contextTokens: model.contextTokens,
+      },
+    }),
+  });
+  const agent = tanstackAgent({
+    model: "openai/fixture",
+    providers,
+    maxSteps: 1,
+    prompt: "Answer the current request.",
+    contextModel: () => model,
+    tools: [
+      defineTool({
+        name: tool.name,
+        description: tool.description,
+        parameters: schema,
+        execute: async () => ({}),
+      }),
+    ],
+  });
+  agent.setMessages([
+    { id: "old", role: "assistant", content: "old-source ".repeat(1100) },
+    { id: "current", role: "user", content: "Answer this current request" },
+  ]);
+  agent.threadId = "schema-budget";
+  await agent.runAgent({ runId: "schema-budget-run" });
+  assert.equal(fixture.requests.length, 1, "projected context must pass actual adapter admission");
+  assert.doesNotMatch(fixture.requests[0].body, /old-source/);
+  assert.match(fixture.requests[0].body, /current request/);
+  assert.match(fixture.requests[0].body, /Verified topic description/);
+  assert.ok(
+    agent.messages.some((message) => message.id === "old"),
+    "canonical history is retained",
+  );
+});
 
 test("vision budget counts the actual repeated browser/file receipt wrapper and serialized image/output reserves", async () => {
   for (const file of [false, true]) {

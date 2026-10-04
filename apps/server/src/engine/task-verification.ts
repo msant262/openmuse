@@ -8,6 +8,7 @@ import {
   completionCriterionSchema,
 } from "../../../../packages/domain/src/runtime.ts";
 import { inspectPdf } from "../../../../packages/integrations/src/pdf.ts";
+import { readPdfText } from "../../../../packages/integrations/src/pdf-text.ts";
 import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import type { Files } from "../files.ts";
@@ -581,10 +582,16 @@ export class TaskVerification {
                 if (file.mimeType === "application/pdf") {
                   const pdf = await inspectPdf(bytes);
                   if (!pdf.pageCount) continue;
-                  content = JSON.stringify(pdf.fields);
-                  structuredContent = Object.fromEntries(
-                    pdf.fields.map((field) => [field.name, field.value]),
-                  );
+                  // Form values remain valid evidence; normal authored PDFs carry
+                  // their content in page drawing streams, not AcroForm fields.
+                  structuredContent = {
+                    fields: Object.fromEntries(
+                      pdf.fields.map((field) => [field.name, field.value]),
+                    ),
+                    ...(criterion.requiredItems.length
+                      ? { pageText: await readPdfText(bytes) }
+                      : {}),
+                  };
                 } else if (/wordprocessingml|presentationml|spreadsheetml/.test(file.mimeType)) {
                   content = officeContent(bytes, file.mimeType);
                 } else if (
@@ -666,7 +673,7 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(execute_app_tool$|web_fetch$|read_|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
+                    !/^(execute_app_tool$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
                       op.toolName,
                     ) ||
                     !useful(op.receipt) ||

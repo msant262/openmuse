@@ -1,6 +1,38 @@
-# OkamiBot: instalação e aceite em 3 de outubro de 2026
+# OkamiBot: instalação e aceite em 4 de outubro de 2026
 
-**Revisão atual publicada: API, web e Android `249443b`.** A área de Conexões
+**Revisão atual publicada: API, web e Android `7529b63`.** A publicação corrigiu
+o esgotamento do loop de pesquisa no chat: existe uma rodada reservada para
+delegar a entrega antes da resposta final. Google sem configuração OAuth nativa
+abre o serviço correspondente no catálogo, com ativação privada; não expõe
+nomes de variáveis do servidor. O login real ainda depende da chave Composio do
+titular, que não foi fornecida.
+
+Passaram **1.105 testes**, TypeScript servidor/mobile e Biome sem erros. Um
+ensaio real pelo chat gerou e publicou um PNG de 1.079.162 bytes usando a conexão
+Codex, sem Grok. O ensaio de pesquisa eleitoral não concluiu a verificação das
+fontes e foi preservado como falha; não conta como entrega bem-sucedida.
+
+Desktop e viewport móvel públicos passaram: Gmail/Calendar abriram o setup do
+serviço correto, sem chamadas OAuth nativas, alterações bloqueadas ou erros de
+página. Upgrade Android x86 preservou pareamento, GUMC/avatar e Codex; os mesmos
+fluxos passaram no emulador. Não havia rascunho antes do upgrade e não houve
+teste em aparelho físico. Pareamento temporário revogado e emulador encerrado.
+
+Bundle web público: SHA-256
+`d9baeec18871ce6b697f89b80f1a06376ab28923aec78ea9f3307f451a26f3d9`.
+APK ARM64 público: 58.963.289 bytes, SHA-256
+`0d1546469055abb68823236f3234f55a50a7b000b50501e7fa6e4ab89b00bd3f`.
+Builds limpos e assinatura existente conferidos. Evidências:
+`artifacts/chat-handoff/` e `artifacts/android/chat-handoff-release/`.
+
+A revisão ampla posterior do harness está documentada no
+[comparativo OpenClaw](superpowers/research/2026-10-04-openclaw-harness-audit.md).
+Seu aceite de publicação e recuperação do PDF será registrado após os ensaios
+completos; testes locais não representam uma publicação.
+
+## Histórico: catálogo Composio (`249443b`)
+
+**Revisão anterior publicada: API, web e Android `249443b`.** A área de Conexões
 consulta o catálogo Composio com busca, categorias e paginação. O mesmo fluxo
 oferece autorização oficial, contas conectadas, reconexão e desconexão. O agente
 descobre schemas sob demanda e executa operações individuais com bindings por

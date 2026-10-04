@@ -1,5 +1,5 @@
 import type { Message } from "@ag-ui/core";
-import type { ModelMessage } from "@tanstack/ai";
+import { convertSchemaToJsonSchema, type ModelMessage, type SchemaInput } from "@tanstack/ai";
 import { z } from "zod";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
@@ -144,7 +144,21 @@ export class ContextBudget {
       {
         messages: projected,
         prompts: options.systemPrompts ?? [],
-        tools: options.tools ?? [],
+        // TanStack converts Standard Schema tools before adapter admission. Raw
+        // Runtime schema objects can both overcount and omit provider-visible fields.
+        tools: (options.tools ?? []).map((tool) => {
+          if (!tool || typeof tool !== "object") return tool;
+          const value = tool as Record<string, unknown>;
+          return {
+            ...value,
+            ...(value.inputSchema
+              ? { inputSchema: convertSchemaToJsonSchema(value.inputSchema as SchemaInput) }
+              : {}),
+            ...(value.outputSchema
+              ? { outputSchema: convertSchemaToJsonSchema(value.outputSchema as SchemaInput) }
+              : {}),
+          };
+        }),
         schema: options.outputSchema,
       },
       (_key, value) => {
