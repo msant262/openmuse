@@ -1,6 +1,6 @@
 # Harness Learning and Runtime Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Implement consistent memory, deferred tools, semantic context compaction, useful history retrieval, event-driven heartbeat and maintainable learned procedures.
 
@@ -33,10 +33,10 @@
 
 **Interfaces:** Export `sourcedMemoryInput` and `writeSourcedMemory(service, owner, raw, messages, origin, requestKey)`. `PersonalLearning.learn` and foreground/task memory tools consume the same input and writer. Tool sources are loaded from owner-scoped accepted inbox messages; callers cannot invent origin metadata.
 
-- [ ] Write/run failing tests: direct writes without authentic evidence fail; valid preferences persist with evidence; worker sources cannot spoof current chat; later cancellation updates one plan and retires its alert; profile remains unchanged.
-- [ ] Extract and strengthen shared evidence/revision/expiry validation; route remember/correct through it, bind forget to an explicit current user request. Preserve settings APIs and existing forgotten-fingerprint protection.
-- [ ] Run `pnpm exec tsx --test tests/sourced-memory.test.ts tests/personal-learning.test.ts tests/memory-history.test.ts tests/routines-integration.test.ts tests/proactivity-learning.test.ts`. Expected: all pass.
-- [ ] Commit Task 1 with tests and source attribution.
+- [x] Write/run failing tests: direct writes without authentic evidence fail; valid preferences persist with evidence; worker sources cannot spoof current chat; later cancellation updates one plan and retires its alert; profile remains unchanged.
+- [x] Extract and strengthen shared evidence/revision/expiry validation; route remember/correct through it, bind forget to an explicit current user request. Preserve settings APIs and existing forgotten-fingerprint protection.
+- [x] Run `pnpm exec tsx --test tests/sourced-memory.test.ts tests/personal-learning.test.ts tests/memory-history.test.ts tests/routines-integration.test.ts tests/proactivity-learning.test.ts`. Expected: all pass.
+- [x] Commit Task 1 with tests and source attribution.
 
 ## Task 2: Deferred native tools
 
@@ -44,10 +44,10 @@
 
 **Interfaces:** A per-run `ToolDiscovery` owns an immutable available tool catalog and a set of loaded schemas. Search returns bounded metadata, describe exposes validated schemas; runtime dispatch still uses the original registered executable and journal identity. Restore loaded identities from canonical history on continuation.
 
-- [ ] Write/run failing tests: simple chat excludes heavy schemas; exact names/discovery find a capability; describe then actual execution works; unavailable names fail; effect receipts survive restart and handoff/final-turn restrictions.
-- [ ] Port/adapt lexical ranking and progressive disclosure, retaining a small eager control set and all underlying authorization checks.
-- [ ] Run `tests/tool-discovery.test.ts`, `tests/memory-context.test.ts`, task context/resume and chat handoff tests. Expected: lower measured schema bytes with preserved behavior.
-- [ ] Commit Task 2.
+- [x] Write/run failing tests: simple chat excludes heavy schemas; exact names/discovery find a capability; describe then actual execution works; unavailable names fail; effect receipts survive restart and handoff/final-turn restrictions.
+- [x] Port/adapt lexical ranking and progressive disclosure, retaining a small eager control set and all underlying authorization checks.
+- [x] Run `tests/tool-discovery.test.ts`, `tests/memory-context.test.ts`, task context/resume and chat handoff tests. Expected: lower measured schema bytes with preserved behavior.
+- [x] Commit Task 2.
 
 ## Task 3: History retrieval
 
@@ -55,10 +55,10 @@
 
 **Interfaces:** `HistoryRetrieval.search(owner, {query, limit, before?, after?})` yields source/message IDs and bounded snippets; `read(owner, {threadId, messageId, before?, after?})` yields a bounded canonical message neighborhood. Memory recall uses ranked retrieval with active-state filters before ranking.
 
-- [ ] Write/run failing tests: reordered words/accent variants retrieve sources; follow-up reads reveal cancellation after original plan; stale/forgotten memories never rank; automation is demoted; pagination and owner isolation hold.
-- [ ] Adapt Hermes discover/read/scroll and OpenClaw lexical/diversity ranking to the existing store; expose recovery tools without injecting whole histories. Preserve literal-ID lookup and canonical fallback.
-- [ ] Run `tests/history-retrieval.test.ts`, memory history/context and personal learning tests. Expected: all pass.
-- [ ] Commit Task 3.
+- [x] Write/run failing tests: reordered words/accent variants retrieve sources; follow-up reads reveal cancellation after original plan; stale/forgotten memories never rank; automation is demoted; pagination and owner isolation hold.
+- [x] Adapt Hermes discover/read/scroll and OpenClaw lexical/diversity ranking to the existing store; expose recovery tools without injecting whole histories. Preserve literal-ID lookup and canonical fallback.
+- [x] Run `tests/history-retrieval.test.ts`, memory history/context and personal learning tests. Expected: all pass.
+- [x] Commit Task 3.
 
 ## Task 4: Validated semantic compaction
 
@@ -66,10 +66,10 @@
 
 **Interfaces:** A scoped compactor receives canonical messages, required operation IDs, the effective context budget and an abort signal; returns a validated summary plus retained message tail. Summaries carry source boundary/fingerprint and persist separately from canonical transcripts. Provider-backed summarization uses existing routing/admission.
 
-- [ ] Write/run failing tests: long chat plus “continue” retains original constraints/corrections; invalid summary cannot replace history; cancellation/stale writers cannot persist; restart restores summary and never repeats effects.
-- [ ] Port OpenClaw structured summary/quality checks with Hermes cancellation ownership. Compact before history loss, accounting for schemas/output reserve; preserve complete required call/result groups and exact IDs.
-- [ ] Run compaction/context/resume/provider restart tests. Expected: meaningful original requests survive bounded model context without altering canonical evidence.
-- [ ] Commit Task 4.
+- [x] Write/run failing tests: long chat plus “continue” retains original constraints/corrections; invalid summary cannot replace history; cancellation/stale writers cannot persist; restart restores summary and never repeats effects.
+- [x] Port OpenClaw structured summary/quality checks with Hermes cancellation ownership. Compact before history loss, accounting for schemas/output reserve; preserve complete required call/result groups and exact IDs.
+- [x] Run compaction/context/resume/provider restart tests. Expected: meaningful original requests survive bounded model context without altering canonical evidence.
+- [x] Commit Task 4.
 
 ## Task 5: Event-driven heartbeat
 
@@ -77,10 +77,10 @@
 
 **Interfaces:** `ProactivityEvents.enqueue(owner, {source, key, revision, dueAt?, ...})` durably coalesces authenticated source/task/plan events; the existing scheduler consumes eligible events and time deadlines. Source adapters report explicit connection/coverage/version and reread before publication.
 
-- [ ] Write/run failing tests: a near deadline/event bypasses the normal four-hour cadence; duplicate events yield one review; pending events survive restart/pause; cancellation retires an alert; disconnected/partial sources are not empty-success.
-- [ ] Adapt OpenClaw wake priority/coalescing/active-hours into the durable scheduler; wire actual task/plan/source producers, source polling/watch ingestion and deadline wakeups. Retain periodic reconciliation and native notification delivery.
-- [ ] Run proactivity event/learning/persistence/race/pause/authority tests. Expected: timely single alerts and no stale publication.
-- [ ] Commit Task 5.
+- [x] Write/run failing tests: a near deadline/event bypasses the normal four-hour cadence; duplicate events yield one review; pending events survive restart/pause; cancellation retires an alert; disconnected/partial sources are not empty-success.
+- [x] Adapt OpenClaw wake priority/coalescing/active-hours into the durable scheduler; wire actual task/plan/source producers, source polling/watch ingestion and deadline wakeups. Retain periodic reconciliation and native notification delivery.
+- [x] Run proactivity event/learning/persistence/race/pause/authority tests. Expected: timely single alerts and no stale publication.
+- [x] Commit Task 5.
 
 ## Task 6: Learned procedure maintenance
 
@@ -88,17 +88,17 @@
 
 **Interfaces:** Paginated procedure catalog/read; durable usage/outcome records reference exact procedure/version/task. Maintenance applies versioned archive/restore/consolidation operations only to eligible learned records and preserves history.
 
-- [ ] Write/run failing tests: bounded discovery plus exact read; successful reuse/failure attributed once; correction updates an existing method; archive/rollback recover an earlier usable version; user-owned/pinned methods cannot be automatically edited.
-- [ ] Adapt Hermes usage/provenance/curator/ledger contracts to existing versions and verified task outcomes; connect scheduled maintenance to the existing worker, never SOUL.
-- [ ] Run procedure maintenance/playbooks/personal learning and task completion tests. Expected: all pass.
-- [ ] Commit Task 6.
+- [x] Write/run failing tests: bounded discovery plus exact read; successful reuse/failure attributed once; correction updates an existing method; archive/rollback recover an earlier usable version; user-owned/pinned methods cannot be automatically edited.
+- [x] Adapt Hermes usage/provenance/curator/ledger contracts to existing versions and verified task outcomes; connect scheduled maintenance to the existing worker, never SOUL.
+- [x] Run procedure maintenance/playbooks/personal learning and task completion tests. Expected: all pass.
+- [x] Commit Task 6.
 
 ## Task 7: Integrated acceptance
 
-- [ ] Run full `pnpm test` with bounded concurrency/CPU, `pnpm typecheck`, `pnpm lint`; investigate every new failure and report pre-existing failures explicitly.
-- [ ] Exercise realistic integrated conversations: preferences across sessions, a cancelled dated trip, long-task continuation, deferred document/email capabilities, urgent-source event and procedure correction/reuse.
-- [ ] Obtain a fresh whole-change review per the executing-plans skill, fix material findings with regression tests, record attribution and limitations.
-- [ ] Audit every six-part requirement against runtime paths and tests; preserve evidence in an acceptance document before marking the goal complete. Publication follows the already-authorized deployment scope only after concrete verification.
+- [x] Run full `pnpm test` with bounded concurrency/CPU, `pnpm typecheck`, `pnpm lint`; investigate every new failure and report pre-existing failures explicitly.
+- [x] Exercise realistic integrated conversations: preferences across sessions, a cancelled dated trip, long-task continuation, deferred document/email capabilities, urgent-source event and procedure correction/reuse.
+- [x] Obtain a fresh whole-change review per the executing-plans skill, fix material findings with regression tests, record attribution and limitations.
+- [x] Audit every six-part requirement against runtime paths and tests; preserve evidence in an acceptance document before marking the goal complete. Publication follows the already-authorized deployment scope only after concrete verification.
 
 ## Execution rulings
 

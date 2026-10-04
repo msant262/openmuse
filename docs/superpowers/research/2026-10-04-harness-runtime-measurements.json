@@ -1,0 +1,44 @@
+{
+  "source": "9953ca8c33fb8b2e8d973a11e039ff60261c22d1",
+  "mode": "isolated synthetic provider; no production reads or writes",
+  "chat": {
+    "registeredTools": 11,
+    "toolSchemaBytes": 9515,
+    "requestBytes": 27811,
+    "toolNames": [
+      "search_app_tools",
+      "execute_app_tool",
+      "delegate_task",
+      "skills_search",
+      "skills_read",
+      "read_runtime",
+      "search_tools",
+      "describe_tools",
+      "read_tool_output",
+      "AGUISendStateSnapshot",
+      "AGUISendStateDelta"
+    ]
+  },
+  "worker": {
+    "registeredTools": 15,
+    "toolSchemaBytes": 10494,
+    "requestBytes": 29740,
+    "toolNames": [
+      "read_task_evidence",
+      "search_app_tools",
+      "execute_app_tool",
+      "delegate_task",
+      "wait_for_children",
+      "ask_user",
+      "finish_task",
+      "skills_search",
+      "skills_read",
+      "read_runtime",
+      "search_tools",
+      "describe_tools",
+      "read_tool_output",
+      "AGUISendStateSnapshot",
+      "AGUISendStateDelta"
+    ]
+  }
+}
