@@ -1,6 +1,32 @@
 # OkamiBot: instalação e aceite em 4 de outubro de 2026
 
-**Revisão atual publicada: API `7f81a03`; web e Android `7529b63`.** A publicação
+**Revisão atual publicada: API `7f81a03`; web e Android `3e1f3ac`.** A interface
+oferece temas Claro, Escuro e Automático persistidos por dispositivo, cartões
+SOUL/MEMORY com edição e histórico, e navegação que destaca a conversa principal
+e a criação de novas conversas. O criador de companheiro abre com campo vazio;
+opções antigas aguardando seleção aparecem somente ao abrir o histórico.
+
+Passaram **1.211/1.211 testes** na fonte exata dos builds, TypeScript de
+servidor/mobile e Biome sem erros (245 avisos e quatro informações). O aceite
+local da web verificou 13 fluxos; o Android API 34 confirmou atualização assinada
+sem limpar dados, preservação do pareamento e rascunho, edição de SOUL/memória,
+histórico, alternância entre conversas e tema automático nos dois sentidos.
+Não houve teste em telefone físico.
+
+O domínio público passou em nove verificações de interface, incluindo desktop,
+viewport de 390 px, português, persistência do tema e histórico do avatar.
+Personalidade, memórias e companheiro salvo mantiveram o mesmo digest antes e
+depois; sem escritas de produto ou erros JavaScript. O pareamento temporário foi
+revogado. A API permaneceu saudável durante a troca dos arquivos estáticos.
+
+Web e APK ARM64 foram construídos com árvore limpa em `3e1f3ac`; o download
+público confirmou HTTP 200, tamanho e SHA-256 idênticos aos artefatos locais.
+O APK mantém o certificado existente. [Baixar a atualização assinada](https://app.okamibot.cloud/downloads/okamibot.apk?v=3e1f3ac).
+Critérios, hashes, limites e evidências: [aceite da interface](INTERFACE-REFRESH-ACCEPTANCE.md).
+
+## Histórico: documentos com design (`7f81a03`)
+
+**Revisão anterior publicada: API `7f81a03`; web e Android `7529b63`.** A publicação
 de documentos com design foi concluída após o ensaio conectado de PPTX. O guia
 redesenhado de produção concluiu com revisão verificada das três páginas.
 
