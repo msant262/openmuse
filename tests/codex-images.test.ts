@@ -224,6 +224,9 @@ test("GPT Image dispatch uses only Codex subscription credentials and produces a
     assert.equal(body.store, false);
     assert.equal(body.stream, true);
     assert.equal(body.model, "gpt-6-astra");
+    const currentTime = /Current UTC date and time: ([^\s]+)/.exec(body.instructions)?.[1];
+    assert.ok(currentTime, "The hosted image agent needs the same current-time grounding as chat");
+    assert.ok(Math.abs(Date.parse(currentTime) - Date.now()) < 60000);
     assert.deepEqual(body.tools, [
       { type: "image_generation", model: "gpt-image-2", size: "1024x1536", output_format: "png" },
     ]);
