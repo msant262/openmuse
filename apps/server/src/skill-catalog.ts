@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import type { Config } from "./config.ts";
-import { harnessToolCatalog } from "./engine/harness-tool-catalog.ts";
+import { copiedHarnessToolCatalog } from "./engine/harness-tool-catalog.ts";
 import { parseFrontmatterBlockResult } from "./skill-frontmatter.ts";
 
 const builtinDirectory = fileURLToPath(new URL("../skills/", import.meta.url));
@@ -228,7 +228,8 @@ export function skillTools(
         return options.queue ? options.queue(operation) : operation();
       },
     });
-  const toolNames = () => [...options.tools(), ...harnessToolCatalog].map((tool) => tool.name);
+  const toolNames = () =>
+    [...options.tools(), ...copiedHarnessToolCatalog].map((tool) => tool.name);
   const inventory = () => catalog.inventory(owner, toolNames());
   return [
     tool(

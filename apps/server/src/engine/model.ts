@@ -45,15 +45,14 @@ import type { ProviderContinuationCheckpoint } from "../providers/models.ts";
 import { modelSelection, selectionContextModel } from "../providers/preferences.ts";
 import { runtimeInstructions, runtimeTool } from "../runtime-tools.ts";
 import { SkillCatalog, skillInstructions, skillTools } from "../skill-catalog.ts";
+import { openclawAgent } from "./openclaw-agent.ts";
 import { buildPromisedWorkPromptSection } from "./promised-work-prompt.ts";
 import {
   needsResearchReview,
   researchObservations,
-  researchRecoverySources,
   reviewResearchDelivery,
 } from "./research-delivery-review.ts";
 import type { AgentService } from "./service.ts";
-import { tanstackAgent } from "./tanstack-agent.ts";
 import { TaskBudgetExhaustedError } from "./task-actor.ts";
 import { taskEvidenceContext } from "./task-evidence-context.ts";
 import { modelHistory, providerContinuationCheckpointSchema } from "./task-history.ts";
@@ -112,14 +111,9 @@ export async function executeModelTask(
     return uncertainBrowser;
   const controller = new AbortController();
   const signal = AbortSignal.any([ctx.signal, controller.signal]);
-  let inferenceTimer: ReturnType<typeof setTimeout> | undefined;
-  let armInferenceDeadline = () => {};
   const activeTools = new Set<Promise<unknown>>();
   let task = initial;
   let selectedModel = config.model;
-  const artifactDelivery = () =>
-    task.artifactIds.length > 0 ||
-    task.criteria?.some((criterion) => ["file", "artifact"].includes(criterion.kind));
   const reviewDelivery = async (summary: string) => {
     const operations = await service.journal.operations(owner, task.id);
     if (!needsResearchReview(task, operations)) return undefined;
@@ -188,7 +182,6 @@ export async function executeModelTask(
     return { ...review, attempts, repairAttempts, stalledAttempts };
   };
   let outcome: Partial<AgentTask> | undefined;
-  let reachedStepLimit = false;
   let providerCheckpoint: ProviderContinuationCheckpoint | undefined;
   let budgetAccountedAt = Date.now();
   // Providers can request parallel tools; durable task checkpoints must stay ordered.
@@ -362,29 +355,6 @@ export async function executeModelTask(
       instruction:
         "These are actual source reads, not search snippets. Use the relevant observed facts, retaining source URL and time. A readable page may still lack the requested data.",
     };
-  };
-  const recoverResearch = async (attempts: number) => {
-    if (attempts < 2 || Number(task.state.researchRecoveryCount ?? 0) >= 3) return undefined;
-    const urls = researchRecoverySources(
-      await service.journal.operations(owner, task.id),
-      task.state.conversationContext as
-        | ReturnType<typeof import("./delegated-context.ts").delegatedContext>
-        | undefined,
-    );
-    if (!urls.length) return undefined;
-    const count = Number(task.state.researchRecoveryCount ?? 0) + 1;
-    task = await ctx.checkpoint({ state: { ...task.state, researchRecoveryCount: count } });
-    const id = `recovery_${createHash("sha256")
-      .update(`${task.id}:${task.state.appliedRevision ?? 0}:${count}`)
-      .digest("hex")
-      .slice(0, 48)}`;
-    return service.journal.run(
-      owner,
-      task,
-      { id, toolCallId: id, name: "web_extract", args: { urls } },
-      () => extractSources(urls),
-      false,
-    );
   };
   const pauseForCredential = async (
     request: import("../../../../packages/domain/src/runtime.ts").CredentialInteractionRequest,
@@ -1401,32 +1371,15 @@ export async function executeModelTask(
       async ({ summary, outcome: deliveryOutcome }) => {
         summary = await voiceReply(summary);
         const review = await reviewDelivery(summary);
-        if (review && !review.complete) {
-          const recovery = review.needsMoreResearch
-            ? await recoverResearch(review.attempts)
-            : undefined;
-          if (recovery)
-            return {
-              complete: false,
-              repairable: true,
-              missing: review.missing,
-              nextSteps: review.nextSteps,
-              recovery,
-              instruction:
-                "The requested facts were missing. The harness read previously untried sources for you. Inspect their actual results and continue from useful links/data. Answer the original question using these observations; do not repeat the failed disclaimer.",
-            };
-          if (review.stalledAttempts < 3)
-            return {
-              complete: false,
-              repairable: true,
-              missing: review.missing,
-              nextSteps: review.nextSteps,
-              instruction: review.needsMoreResearch
-                ? "Continue the original request using these concrete repair steps. Follow relevant returned source/data links and explicitly use headless if needed. Do not repeat a disclaimer or send the user to finish your research. Once the requested facts are observed, return a clear answer with source and time. If no viable path remains, explain the specific limitation and use outcome=partial."
-                : "The requested facts are already observed. Correct the listed delivery issues, including creating or revising the requested artifact when needed. Remove unsupported extras, preserve source timestamps, inspect the corrected result, and call finish_task. Do not research more or expand the scope.",
-            };
-          deliveryOutcome = "partial";
-        }
+        if (review && !review.complete && deliveryOutcome !== "partial")
+          return {
+            complete: false,
+            repairable: true,
+            missing: review.missing,
+            nextSteps: review.nextSteps,
+            instruction:
+              "The proposed result still has these gaps. Continue using any available tools and sources to fulfill the original request. A failed source is not a failure of the whole request. If further work is impossible, explain the actual blocker and explicitly use outcome=partial.",
+          };
         const finished = await service.finish(task, ctx, summary, owner, deliveryOutcome);
         if (finished.status === "queued") {
           task = await ctx.checkpoint({ completion: finished.completion, state: finished.state });
@@ -1556,7 +1509,9 @@ export async function executeModelTask(
     conversationContext: undefined,
     delegatedBrief: task.state.conversationContext ? undefined : task.state.delegatedBrief,
   };
-  const agent = tanstackAgent({
+  const agent = openclawAgent({
+    dataDir: config.dataDir,
+    compaction: { db: service.db, owner, scope: `task:${task.id}` },
     contextModel: selectionContextModel(config, selection) ?? service.contextModel,
     requiredOperationIds: () => service.journal.requiredHistoryIds(owner, task.id),
     workClass: "background",
@@ -1565,45 +1520,12 @@ export async function executeModelTask(
       task = await ctx.checkpoint({ state: { ...task.state, providerCheckpoint: saved } });
       providerCheckpoint = saved;
     },
-    onStepLimit: () => {
-      reachedStepLimit = true;
+    onProviderRecovered: async () => {
+      if (!providerCheckpoint) return;
+      providerCheckpoint = undefined;
+      task = await ctx.checkpoint({ state: { ...task.state, providerCheckpoint: null } });
     },
     shouldContinue: () => !outcome,
-    finalResponseWhen: () => {
-      const review = task.state.researchDeliveryReview as
-        | { revision?: number; complete?: boolean; needsMoreResearch?: boolean }
-        | undefined;
-      return (
-        review?.revision === Number(task.state.appliedRevision ?? 0) &&
-        review?.complete === false &&
-        review.needsMoreResearch === false
-      );
-    },
-    finalResponseTools: () =>
-      artifactDelivery()
-        ? [
-            "finish_task",
-            "generate_image",
-            "image_generation_status",
-            "create_document",
-            "inspect_document",
-            "confirm_document_review",
-            "view_file",
-            "read_file",
-            "read_task_evidence",
-            "read_tool_output",
-            "save_artifact",
-            "todo_list",
-            "set_plan",
-            "search_tools",
-            "describe_tools",
-            "skills_search",
-            "skills_read",
-            "design_references",
-          ]
-        : ["finish_task", "read_tool_output", "read_task_evidence", "todo_list", "set_plan"],
-    finalResponsePrompt: () =>
-      "The requested facts have been observed. Repair their delivery using the review's missing and nextSteps fields. When the request includes an artifact, authoring and inspection tools remain available: create a corrected version and inspect it before finishing. Remove unsupported extras, correct attribution and formatting, and call finish_task with the corrected result. Further research is unavailable during this delivery repair; do not expand the user's request.",
     executeTool: async (call, execute) => {
       try {
         const title = taskActivity(call.name);
@@ -1640,7 +1562,6 @@ export async function executeModelTask(
     },
 
     trackTool: (execute) => {
-      clearTimeout(inferenceTimer);
       const pending = service.toolOperations.run(async () => {
         signal.throwIfAborted();
         return execute();
@@ -1649,7 +1570,6 @@ export async function executeModelTask(
       void pending
         .finally(() => {
           activeTools.delete(pending);
-          if (!activeTools.size && !signal.aborted) armInferenceDeadline();
         })
         .catch(() => {});
       return pending;
@@ -1671,7 +1591,6 @@ export async function executeModelTask(
     model: config.model,
     fallbacks: config.modelFallbacks,
     providers: config.modelProviders ?? modelProviderConfig(config.dataDir),
-    maxSteps: 16,
     promptContext: async () =>
       (task.state.planCompletionFollowup ? `${PLAN_COMPLETION_FOLLOWUP}\n` : "") +
       activeTodoContext((task.state.todos ?? []) as Todo[]) +
@@ -1762,18 +1681,9 @@ export async function executeModelTask(
   try {
     await new Promise<void>((resolve, reject) => {
       const stop = (error: Error) => {
-        clearTimeout(inferenceTimer);
         reject(error);
         controller.abort(error);
         agent.abortRun();
-      };
-      armInferenceDeadline = () => {
-        clearTimeout(inferenceTimer);
-        inferenceTimer = setTimeout(() => {
-          // A cleared callback can already be queued. Foreground tools own their
-          // bounded deadlines (up to 30 minutes); only inference/idle uses five.
-          if (!activeTools.size) stop(new Error("Model inference timed out after five minutes"));
-        }, 300000);
       };
       const abort = () => stop(new Error("Task interrupted"));
       ctx.signal.addEventListener("abort", abort, { once: true });
@@ -1782,7 +1692,6 @@ export async function executeModelTask(
         abort();
         return;
       }
-      armInferenceDeadline();
       agent.run(input).subscribe({
         next: (event) => {
           if (
@@ -1839,8 +1748,6 @@ export async function executeModelTask(
     else throw error;
   } finally {
     detachAbort();
-    clearTimeout(inferenceTimer);
-    armInferenceDeadline = () => {};
     // Observable cancellation does not join executing tools. Keep the lease/run
     // alive until their durable completed/interrupted/uncertain receipts settle.
     await Promise.allSettled([...activeTools]);
@@ -1856,7 +1763,7 @@ export async function executeModelTask(
       ...(providerCheckpoint.retryAt ? { nextRunAt: providerCheckpoint.retryAt } : {}),
     };
   if (runError && !outcome) throw new Error(runError);
-  if (!outcome && !reachedStepLimit) {
+  if (!outcome) {
     const revision = Number(task.state.appliedRevision ?? 0);
     const check = {
       unfinishedPlan:
@@ -1879,53 +1786,42 @@ export async function executeModelTask(
         },
       };
   }
-  if (!outcome && !reachedStepLimit && text.trim()) text = await voiceReply(text);
+  if (!outcome && text.trim()) text = await voiceReply(text);
   // A complete text response can itself be the requested plan delivery. Use
   // the same owned artifact and evidence checks as an explicit finish call.
-  if (!outcome && !reachedStepLimit && textPlanDelivery(task, text))
+  if (!outcome && textPlanDelivery(task, text))
     outcome = await service.finish(task, ctx, text, owner);
   if (outcome)
     return { ...outcome, state: { ...task.state, ...outcome.state, providerCheckpoint: null } };
-  if (!reachedStepLimit) {
-    if (text.trim()) {
-      const review = await reviewDelivery(text);
-      if (
-        review &&
-        !review.complete &&
-        (review.stalledAttempts < 3 ||
-          (review.needsMoreResearch && (await recoverResearch(review.attempts))))
-      )
-        return {
-          status: "queued",
-          state: { ...task.state, lastUpdate: text, continuation: true, providerCheckpoint: null },
-        };
-      const finished = await service.finish(
-        task,
-        ctx,
-        text,
-        owner,
-        review && !review.complete ? "partial" : "completed",
-      );
+  if (text.trim()) {
+    const review = await reviewDelivery(text);
+    if (review && !review.complete)
       return {
-        ...finished,
-        state: {
-          ...task.state,
-          ...finished.state,
-          lastUpdate: finished.status === "queued" ? finished.state.lastUpdate : text,
-          continuation: finished.status === "queued",
-          providerCheckpoint: null,
-        },
+        status: "queued",
+        state: { ...task.state, lastUpdate: text, continuation: true, providerCheckpoint: null },
       };
-    }
+    const finished = await service.finish(
+      task,
+      ctx,
+      text,
+      owner,
+      review && !review.complete ? "partial" : "completed",
+    );
     return {
-      status: "failed",
-      question: "",
-      error: "The agent ended without a result. Saved progress is available for a manual retry.",
-      state: { ...task.state, continuation: false, providerCheckpoint: null },
+      ...finished,
+      state: {
+        ...task.state,
+        ...finished.state,
+        lastUpdate: finished.status === "queued" ? finished.state.lastUpdate : text,
+        continuation: finished.status === "queued",
+        providerCheckpoint: null,
+      },
     };
   }
   return {
-    status: "queued",
-    state: { ...task.state, lastUpdate: text, continuation: true, providerCheckpoint: null },
+    status: "failed",
+    question: "",
+    error: "The agent ended without a result. Saved progress is available for a manual retry.",
+    state: { ...task.state, continuation: false, providerCheckpoint: null },
   };
 }

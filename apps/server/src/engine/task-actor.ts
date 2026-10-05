@@ -141,7 +141,7 @@ export class TaskActor {
     }
     const budget = await this.db.get<TaskBudget>(owner, "task-budgets", rootId);
     if (!budget) throw new AppError("Task has no accumulated budget", 409);
-    const maxSteps = budget.maxSteps + input.additionalSteps;
+    const maxSteps = (budget.maxSteps ?? budget.usedSteps) + input.additionalSteps;
     if (maxSteps > 10000)
       throw new AppError("The total task budget cannot exceed 10000 steps", 422);
     if (
@@ -154,7 +154,10 @@ export class TaskActor {
     const next = {
       revision: input.expectedRevision + 1,
       maxSteps,
-      maxMilliseconds: budget.maxMilliseconds + (input.additionalMilliseconds ?? 0),
+      maxMilliseconds:
+        input.additionalMilliseconds !== undefined
+          ? (budget.maxMilliseconds ?? budget.usedMilliseconds) + input.additionalMilliseconds
+          : budget.maxMilliseconds,
     };
     const saved = await this.db.durableMutation<TaskBudget>(owner, requestKey, bindingHash(input), [
       {

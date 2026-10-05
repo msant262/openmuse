@@ -106,6 +106,10 @@ export const providerContinuationCheckpointSchema = z
   .strict();
 export type ProviderContinuationCheckpoint = z.infer<typeof providerContinuationCheckpointSchema>;
 export interface ModelAdapterRuntime {
+  /** A host harness may supply its own token accounting for model admission. */
+  contextEstimate?: (options: TextOptions) => number;
+  /** The native harness owns total and streaming idle deadlines. */
+  harnessDeadlineMs?: number;
   /** Model-visible schemas; the owner retains the complete authorized execution registry. */
   projectTools?: (tools: NonNullable<TextOptions["tools"]>) => NonNullable<TextOptions["tools"]>;
   /** Reply composition prefers a final answer over a provider's progress preamble. */
@@ -319,7 +323,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
   }
   async structuredOutput(options: Parameters<AnyTextAdapter["structuredOutput"]>[0]) {
     const routing = this.config.routing ?? defaultModelRouting;
-    const deadline = Date.now() + routing.deadlineMs;
+    const deadline = Date.now() + (this.runtime.harnessDeadlineMs ?? routing.deadlineMs);
     const signal = this.signal(options.chatOptions, routing.deadlineMs);
     const messages = await browserImageMessages(
       options.chatOptions.messages,
@@ -399,7 +403,9 @@ class OrderedModelAdapter implements AnyTextAdapter {
   }
 
   private signal(options: TextOptions, deadlineMs: number) {
-    const signals = [AbortSignal.timeout(deadlineMs)];
+    const signals: AbortSignal[] = this.runtime.harnessDeadlineMs
+      ? []
+      : [AbortSignal.timeout(deadlineMs)];
     if (options.request?.signal) signals.push(options.request.signal);
     return AbortSignal.any(signals);
   }
@@ -409,6 +415,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
       await this.runtime.onFileImageObserved?.(reference.id);
   }
   private attemptSignal(signal: AbortSignal, deadline: number) {
+    if (this.runtime.harnessDeadlineMs) return signal;
     const timeout = Math.max(
       1,
       Math.min(this.config.routing?.attemptTimeoutMs ?? 60000, deadline - Date.now()),
@@ -419,11 +426,17 @@ class OrderedModelAdapter implements AnyTextAdapter {
     return request instanceof Request ? new Request(request, { signal }) : { ...request, signal };
   }
   private requirements(options: TextOptions) {
-    return requestRequirements(
+    const requirements = requestRequirements(
       options,
       this.runtime.requirements,
       this.config.routing?.imageContextTokens,
     );
+    if (this.runtime.contextEstimate)
+      requirements.contextTokens = Math.max(
+        this.runtime.contextEstimate(options),
+        this.runtime.requirements?.contextTokens ?? 0,
+      );
+    return requirements;
   }
   private candidates(requirements: ModelRequirements) {
     // Keep an accepted fallback sticky while it still fits the next request.
@@ -540,7 +553,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
     };
     const routing = this.config.routing ?? defaultModelRouting;
     const requirements = this.requirements(options);
-    const deadline = Date.now() + routing.deadlineMs,
+    const deadline = Date.now() + (this.runtime.harnessDeadlineMs ?? routing.deadlineMs),
       signal = this.signal(options, routing.deadlineMs);
     let excluded: string[] = [],
       partialText = "";

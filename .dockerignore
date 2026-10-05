@@ -30,6 +30,7 @@
 !docs/licenses/**
 !scripts/
 !scripts/copy-server-assets.mjs
+!scripts/build-openclaw-harness.mjs
 !third_party/
 !third_party/openclaw/
 !third_party/openclaw/**

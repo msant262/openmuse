@@ -2,6 +2,45 @@
 
 Upstream: https://github.com/openclaw/openclaw
 
+## Active embedded harness (5 October 2026)
+
+Chat and model-backed task workers now call the upstream `runEmbeddedAgent`
+executor compiled from [harness/](harness/), pinned to
+`b56ae70a5e7e302dc2165c96b60214e84e19c7b1` (2026.9.8). This replaces the
+application's TanStack agent loop on those execution paths. The earlier portable
+helpers described below are historical reuse; they are not the new executor.
+
+The copied tree contains the executor's dependency closure, workspace packages,
+runtime worker entrypoints and SQL schemas. [UPSTREAM.json](harness/UPSTREAM.json)
+records SHA-256 hashes for 10,664 unchanged upstream files. `pnpm build:harness`
+checks every hash before compiling the copied source. The two host-owned files
+listed in the manifest expose the embedded entrypoint and package metadata.
+The original MIT notice is preserved in [harness/LICENSE](harness/LICENSE).
+
+The original executor owns tool discovery (`tool_search`, `tool_describe`,
+`tool_call`), model/tool iteration, retry and terminal recovery, context guards,
+compaction, session trees, command lanes and runtime worker scheduling. The
+application does not impose the former 10/16-turn or automatic 96-step task cap.
+Accumulated usage is still recorded, and explicitly configured task budgets are
+still honored. Streaming idle checks and attempt cancellation run through the
+upstream harness; the host allows a six-hour attempt instead of its former
+one-minute provider and five-minute inference deadlines.
+
+`apps/server/src/engine/openclaw-agent.ts` is the integration boundary. An
+upstream provider plugin uses the application's authenticated model transport,
+model selection and credential storage. An upstream tool plugin exposes the
+application's owner-scoped tools through the native discovery protocol. Actual
+tool receipts, approvals, durable task ownership, image references and UI events
+remain application records. Native session/compaction trees are saved separately
+and restored only when they match the authoritative transcript. The host does
+not replace the upstream agent loop or enable a second owner for external effects.
+
+Only the embedded source is compiled into this service. No OpenClaw application
+package, CLI, gateway service or onboarding command is installed or started.
+Bundled product plugins are disabled; our existing tools and skills are supplied
+at the host boundary. This is source reuse of the embedded harness, not a claim
+that OpenClaw's separate channels, OAuth flows or product UI have been reproduced.
+
 Reviewed source revision: `da979df299e88c3711f6ee2cd3c7443dd045584b`.
 The upstream MIT notice is preserved in [LICENSE](LICENSE).
 
