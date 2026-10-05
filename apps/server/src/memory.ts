@@ -153,7 +153,13 @@ export class MemoryService {
   }
   async page(
     owner: string,
-    options: { query?: string; cursor?: string; limit?: number; includeInactive?: boolean } = {},
+    options: {
+      query?: string;
+      cursor?: string;
+      limit?: number;
+      includeInactive?: boolean;
+      status?: "active" | "forgotten" | "expired";
+    } = {},
   ) {
     const limit = z
       .number()
@@ -171,6 +177,7 @@ export class MemoryService {
       new Date(this.now()).toISOString(),
       options.cursor,
       options.includeInactive,
+      options.status,
     );
     return {
       entries: facts.slice(0, limit),

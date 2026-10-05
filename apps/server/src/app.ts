@@ -69,6 +69,7 @@ import { executorRoutes } from "./executors/routes.ts";
 import { fileVersionRoutes } from "./file-versions.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
+import { googleCallbackPage } from "./google-callback-page.ts";
 import { IntegrationService, integrationRoutes } from "./integrations.ts";
 import { backgroundFailure } from "./log.ts";
 import { McpAuth } from "./mcp-auth.ts";
@@ -611,15 +612,21 @@ export async function createApp(
     return c.json({ ...session, mode: config.mode });
   });
   app.get("/api/google/callback", async (c) => {
-    if (c.req.query("error"))
-      return c.html("<h1>Google connection cancelled</h1><p>You can return to OpenMuse.</p>", 400);
+    c.header("Cache-Control", "no-store");
+    c.header("Referrer-Policy", "no-referrer");
     const state = c.req.query("state"),
       code = c.req.query("code");
-    if (!state || !code) throw new AppError("Google callback is incomplete");
-    await google.callback(state, code);
-    return c.html(
-      "<h1>Google is connected</h1><p>Return to OpenMuse and refresh your workspace.</p>",
-    );
+    if (c.req.query("error")) {
+      if (state) await google.cancel(state);
+      return c.html(googleCallbackPage("cancelled"), 400);
+    }
+    if (!state || !code) return c.html(googleCallbackPage("failed"), 400);
+    try {
+      await google.callback(state, code);
+      return c.html(googleCallbackPage("connected"));
+    } catch (error) {
+      return c.html(googleCallbackPage("failed"), error instanceof AppError ? error.status : 502);
+    }
   });
   app.get("/api/mcp/oauth/callback", async (c) => {
     await mcpAuth.callbackCode(c.req.query("state") ?? "", c.req.query("code") ?? "");
@@ -1002,6 +1009,27 @@ export async function createApp(
   app.get("/api/google/status", (c) =>
     c.json({ configured: config.mode === "sample" || google.configured() }),
   );
+  app.get("/api/google/account", async (c) => {
+    c.header("Cache-Control", "no-store");
+    if (config.mode === "sample") {
+      const saved = await db.get<{ enabled: boolean; connectionId?: string }>(
+        c.get("owner"),
+        "settings",
+        "google",
+      );
+      return c.json(
+        saved?.enabled
+          ? { connected: true, connectionId: saved.connectionId }
+          : { connected: false },
+      );
+    }
+    const tokens = await google.tokens(c.get("owner"));
+    return c.json(
+      tokens
+        ? { connected: true, account: tokens.account, connectionId: tokens.connectionId }
+        : { connected: false },
+    );
+  });
   app.post("/api/google/connect", async (c) => {
     const body = z.object({ capability: z.enum(["read", "write"]) }).parse(await c.req.json());
     if (config.mode === "sample") {

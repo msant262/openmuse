@@ -16,6 +16,7 @@ import {
 import { useState } from "react";
 import { Pressable, ScrollView, Text, useWindowDimensions, View } from "react-native";
 import { useAgentWorkspace } from "./agent-workspace";
+import { AppInstall } from "./app-install";
 import { AvatarStudio } from "./avatar-studio";
 import { AppLanguagePicker, AssistantChatPreferences } from "./desktop-shell";
 import { useI18n } from "./i18n";
@@ -113,6 +114,9 @@ export function SettingsDialog({
                   {compact && <ChevronRight size={16} color={colors.muted} />}
                 </Pressable>
               ))}
+              <View style={{ padding: 10 }}>
+                <AppInstall compact />
+              </View>
             </ScrollView>
           </View>
         )}
