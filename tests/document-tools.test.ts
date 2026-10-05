@@ -14,7 +14,7 @@ import { LocalThreads } from "../apps/server/src/threads.ts";
 import { createDocumentPdf } from "../packages/integrations/src/document.ts";
 import { inspectPdf } from "../packages/integrations/src/pdf.ts";
 import { readPdfText } from "../packages/integrations/src/pdf-text.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const documentArgs = {
@@ -267,9 +267,7 @@ test("chat document authoring delegates durably and publishes only after the wor
   let phase = 0;
   let server: Awaited<ReturnType<typeof taskRuntime>>;
   const fixture = await modelFixture(t, async (index) => {
-    const names = (JSON.parse(fixture.requests[index].body).tools ?? []).map(
-      (tool: { name: string }) => tool.name,
-    );
+    const names = offeredHostTools(fixture.requests[index].body);
     if (index === 0)
       return {
         name: "delegate_task",

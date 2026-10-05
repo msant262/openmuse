@@ -6,7 +6,7 @@ import { lastValueFrom, toArray } from "rxjs";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
 import { modelProviderConfig } from "../apps/server/src/providers/config.ts";
 import { writeProtected } from "../apps/server/src/providers/credential-store.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const url = "https://example.org/article";
@@ -42,7 +42,9 @@ test("a spoken handoff ends after its durable receipt without a second status pa
     "admission plus an existing reply needs no extra model turn",
   );
   const text = events
-    .filter((event) => event.type === EventType.TEXT_MESSAGE_CHUNK)
+    .filter((event) =>
+      [EventType.TEXT_MESSAGE_CHUNK, EventType.TEXT_MESSAGE_CONTENT].includes(event.type),
+    )
     .map((event) => event.delta)
     .join("");
   assert.match(text, /Vou conferir/);
@@ -142,13 +144,18 @@ test("research runs in the worker while another chat message gets its own reply"
   const first = await run(agent);
   assert.equal(reads, 0, "no remote research in the foreground");
   assert.equal(fixture.requests.length, 2);
-  assert.deepEqual(
-    (JSON.parse(fixture.requests[1].body).tools ?? []).map((tool: { name: string }) => tool.name),
-    ["react_to_message", "send_sticker", "search_gifs", "send_gif", "reply_to_message"],
-  );
+  assert.deepEqual(offeredHostTools(fixture.requests[1].body), [
+    "react_to_message",
+    "send_sticker",
+    "search_gifs",
+    "send_gif",
+    "reply_to_message",
+  ]);
   assert.ok(
     first.some(
-      (e) => e.type === EventType.TEXT_MESSAGE_CHUNK && String(e.delta).includes("keep chatting"),
+      (e) =>
+        [EventType.TEXT_MESSAGE_CHUNK, EventType.TEXT_MESSAGE_CONTENT].includes(e.type) &&
+        String(e.delta).includes("keep chatting"),
     ),
     JSON.stringify(first),
   );
@@ -161,7 +168,11 @@ test("research runs in the worker while another chat message gets its own reply"
     "synthetic fast provider must not wait for the worker gate",
   );
   assert.ok(
-    reply.some((e) => e.type === EventType.TEXT_MESSAGE_CHUNK && e.delta === "Yes, I am here."),
+    reply.some(
+      (e) =>
+        [EventType.TEXT_MESSAGE_CHUNK, EventType.TEXT_MESSAGE_CONTENT].includes(e.type) &&
+        e.delta === "Yes, I am here.",
+    ),
   );
   const tasks = await server.agent.snapshot("owner");
   assert.equal(tasks.tasks.length, 1);
@@ -194,9 +205,8 @@ test("external tools cannot accidentally block the foreground or trigger connect
     fixture.requests[0].body,
     /"name":"(?:browse_web|web_fetch|create_document|search_mail)"/,
   );
-  const receipt = events.find((e) => e.type === EventType.TOOL_CALL_RESULT);
-  assert.ok(receipt && receipt.type === EventType.TOOL_CALL_RESULT);
-  assert.match(String(receipt.content), /Unknown tool/);
+  assert.ok(events.some((e) => e.type === EventType.CUSTOM && e.name === "okami.harness.tool"));
+  assert.match(fixture.requests[1].body, /Unknown tool/);
 });
 
 test("delegated mail reads preserve owner isolation and never send mail", async (t) => {
@@ -297,8 +307,11 @@ test("the admitted handoff writes with the current SOUL and receipt without repl
   assert.match(fixture.requests[1].body, /Afetuosa, divertida, com energia de diva/);
   assert.match(fixture.requests[1].body, /Read the article/);
   assert.ok(JSON.stringify(confirmation.input).includes(url));
-  assert.deepEqual(
-    (confirmation.tools ?? []).map((tool: { name: string }) => tool.name),
-    ["react_to_message", "send_sticker", "search_gifs", "send_gif", "reply_to_message"],
-  );
+  assert.deepEqual(offeredHostTools(fixture.requests[1].body), [
+    "react_to_message",
+    "send_sticker",
+    "search_gifs",
+    "send_gif",
+    "reply_to_message",
+  ]);
 });

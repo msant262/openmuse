@@ -409,9 +409,9 @@ export const taskBudgetSchema = z
   .object({
     id: runtimeId,
     revision: z.number().int().nonnegative(),
-    maxSteps: z.number().int().min(1).max(10000),
+    maxSteps: z.number().int().min(1).max(10000).nullable(),
     usedSteps: z.number().int().nonnegative(),
-    maxMilliseconds: z.number().int().positive(),
+    maxMilliseconds: z.number().int().positive().nullable(),
     usedMilliseconds: z.number().int().nonnegative(),
   })
   .strict();

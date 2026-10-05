@@ -11,7 +11,8 @@ COPY apps/server ./apps/server
 # Share the existing public-address validator and its error type with the HTTP reader.
 COPY apps/worker/src/network.ts apps/worker/src/errors.ts ./apps/worker/src/
 COPY packages ./packages
-COPY scripts/copy-server-assets.mjs ./scripts/
+COPY scripts/copy-server-assets.mjs scripts/build-openclaw-harness.mjs ./scripts/
+COPY third_party/openclaw/harness ./third_party/openclaw/harness
 RUN pnpm build:server
 
 FROM node:24.21.0-bookworm-slim

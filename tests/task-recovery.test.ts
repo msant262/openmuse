@@ -23,7 +23,7 @@ import { RoutinesService } from "../apps/server/src/routines.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
-test("step limits continue automatically using a finite accumulated budget", async (t) => {
+test("the copied executor completes work beyond the former step cap without a forced handoff", async (t) => {
   const { requests } = await modelFixture(t, (index) =>
     index < 16
       ? { name: "set_plan", arguments: { steps: ["Collect facts", "Save report"] } }
@@ -42,9 +42,7 @@ test("step limits continue automatically using a finite accumulated budget", asy
   const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
   const task = await server.agent.createTask("owner", { prompt: "Prepare a report" });
   await server.agent.worker.tick();
-  const limited = await server.agent.getTask("owner", task.id);
-  assert.equal(limited.status, "queued");
-  await server.agent.worker.tick();
+
   const completed = await server.agent.getTask("owner", task.id);
   assert.equal(completed.status, "succeeded", completed.error ?? completed.question);
   const budget = await server.db.get<{ usedSteps: number }>("owner", "task-budgets", task.id);

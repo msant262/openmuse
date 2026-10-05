@@ -102,7 +102,7 @@ test("a completed HTTP file effect resumes after provider interruption and disk 
   );
   assert.ok(
     checkpoint.messages.some(
-      (message) => message.role === "tool" && message.toolCallId === "call-0",
+      (message) => message.role === "tool" && message.toolCallId.includes("call-0"),
     ),
   );
   assert.equal(writes, 1);
@@ -121,7 +121,7 @@ test("a completed HTTP file effect resumes after provider interruption and disk 
   assert.equal(saved.state.providerCheckpoint, null);
   assert.equal(writes, 1, "the completed external effect is not repeated after restart");
   assert.match(fixture.requests[2].body, /write_computer_file/);
-  assert.match(fixture.requests[2].body, /call-0/);
+  assert.match(fixture.requests[2].body, /Concrete saved note/);
   assert.equal(
     (await app.agent.journal.operations("owner", task.id)).filter(
       (operation) => operation.toolName === "write_computer_file",

@@ -13,7 +13,7 @@ test("chat can inspect its actual runtime and owned procedures without external 
     index === 0
       ? { name: "read_runtime", arguments: {} }
       : index === 1
-        ? { name: "describe_tools", arguments: { names: ["delegate_task"] } }
+        ? { name: "read_runtime", arguments: { tool: "delegate_task" } }
         : undefined,
   );
   const server = await taskRuntime(t, {
@@ -80,7 +80,9 @@ test("chat can inspect its actual runtime and owned procedures without external 
   ]);
   assert.ok(runtime.tools.registered.includes("delegate_task"));
   assert.ok(runtime.tools.registered.includes("read_runtime"));
-  assert.ok(runtime.tools.registered.includes("read_tool_output"));
+  assert.ok(runtime.tools.registered.includes("tool_call"));
+  assert.ok(runtime.tools.registered.includes("tool_search"));
+  assert.equal(runtime.execution.harness.runtime, "openclaw");
   assert.ok(!runtime.tools.registered.includes("finish_task"));
   const serialized = JSON.stringify(runtime);
   for (const marker of [
@@ -95,9 +97,8 @@ test("chat can inspect its actual runtime and owned procedures without external 
   assert.equal((await server.db.list("owner", "tasks")).length, 0);
   assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR));
   assert.match(fixture.requests[0].body, /read_runtime/);
-  const imageTool = JSON.parse(fixture.requests[2].body).tools.find(
-    (tool: { name: string }) => tool.name === "delegate_task",
-  );
+  const descriptions = events.filter((event) => event.type === EventType.TOOL_CALL_RESULT);
+  const imageTool = JSON.parse(String(descriptions[1]?.content));
   assert.match(imageTool.description, /durable server worker/);
   assert.match(imageTool.description, /worker researches/);
   assert.ok(

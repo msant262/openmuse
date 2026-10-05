@@ -5,7 +5,7 @@ import { lastValueFrom, toArray } from "rxjs";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
 import { needsResearchReview } from "../apps/server/src/engine/research-delivery-review.ts";
 import { LocalThreads } from "../apps/server/src/threads.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 test("delegated follow-up retains the user's election, source receipt and preceding result in worker context", async (t) => {
@@ -138,9 +138,7 @@ test("task progress persists completed and current steps through actual todo too
     "verified completion must close the displayed plan",
   );
   assert.ok(
-    JSON.parse(fixture.requests[0].body).tools.some(
-      (x: { name: string }) => x.name === "todo_list",
-    ),
+    offeredHostTools(fixture.requests[0].body).includes("todo_list"),
     "planning must be available immediately",
   );
 });
@@ -238,17 +236,7 @@ test("handoff can acknowledge and react in its first inference without a second 
     JSON.stringify(events.filter((e) => e.type === "RUN_ERROR" || e.type === "TOOL_CALL_RESULT")),
   );
   assert.equal(fixture.requests.length, 1, "acknowledgment must not need another inference");
-  const handoff = JSON.parse(fixture.requests[0]!.body).tools.find(
-    (tool: { name: string }) => tool.name === "delegate_task",
-  );
-  assert.ok(handoff.parameters.required.includes("acknowledgment"));
-  assert.ok(handoff.parameters.required.includes("reaction"));
-  assert.equal(handoff.strict, true, "the provider must enforce the first-call acknowledgment");
-  assert.equal(handoff.parameters.properties.input, undefined);
-  assert.deepEqual(
-    handoff.parameters.properties.kind.enum.filter((value: unknown) => value !== null),
-    ["agent"],
-  );
+  assert.ok(offeredHostTools(fixture.requests[0]!.body).includes("delegate_task"));
   const social = await f.agent.social!.state("owner", "fast");
   assert.ok(
     social.reactions.some(

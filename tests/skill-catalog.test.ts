@@ -20,7 +20,7 @@ const skill = (
 
 async function fixture(t: TestContext) {
   let nextCall = { name: "skills_list", arguments: {} as object };
-  await modelFixture(t, (index) => (index % 2 === 0 ? nextCall : undefined));
+  const provider = await modelFixture(t, (index) => (index % 2 === 0 ? nextCall : undefined));
   const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
   const call = async (name: string, args: object = {}) => {
     nextCall = { name, arguments: args };
@@ -37,8 +37,13 @@ async function fixture(t: TestContext) {
         .pipe(toArray()),
     );
     const result = events.find((event) => event.type === EventType.TOOL_CALL_RESULT);
-    assert.ok(result && "content" in result);
-    return JSON.parse(String(result.content));
+    if (result && "content" in result) return JSON.parse(String(result.content));
+    const last = JSON.parse(provider.requests.at(-1)!.body);
+    const native = last.input.findLast(
+      (item: { type: string }) => item.type === "function_call_output",
+    );
+    assert.ok(native, "the native harness must return rejected arguments to the model");
+    return { error: native.output };
   };
   const install = async (name: string, content: string, owner = "owner") => {
     const directory = join(ownerDirectory(server.directory, owner), name);

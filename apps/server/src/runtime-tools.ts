@@ -2,7 +2,7 @@ import { defineTool, type ToolDefinition } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import { PRODUCT_NAME } from "../../../packages/domain/src/brand.ts";
 import { approvalPolicy } from "./action-policy.ts";
-import { harnessToolCatalog } from "./engine/harness-tool-catalog.ts";
+import { copiedHarnessToolCatalog } from "./engine/harness-tool-catalog.ts";
 import type { AgentService } from "./engine/service.ts";
 import { SkillCatalog } from "./skill-catalog.ts";
 
@@ -44,7 +44,7 @@ export function runtimeTool(
       const operation = async () => {
         await options.before?.();
         const args = runtimeArgs.parse(raw);
-        const tools = [...options.tools(), ...harnessToolCatalog];
+        const tools = [...options.tools(), ...copiedHarnessToolCatalog];
         if (args.tool) {
           const selected = tools.find((tool) => tool.name === args.tool);
           return selected
@@ -73,6 +73,14 @@ export function runtimeTool(
           model: options.model() ?? null,
           execution: {
             surface: options.surface,
+            harness:
+              service.config.agentBackend === "model"
+                ? {
+                    runtime: "openclaw",
+                    revision: "b56ae70a5e7e302dc2165c96b60214e84e19c7b1",
+                    source: "Copied upstream runEmbeddedAgent",
+                  }
+                : { runtime: "sample" },
             toolCalling:
               "The model selects named tools and supplies structured arguments. The server validates and executes them, then returns observations for the next model step.",
             durableTasks:

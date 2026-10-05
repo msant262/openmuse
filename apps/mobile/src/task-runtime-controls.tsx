@@ -261,7 +261,8 @@ function BudgetControls({ task }: { task: AgentTask }) {
   if (!parsed.success) return null;
   const budget =
     latestBudget && latestBudget.revision > parsed.data.revision ? latestBudget : parsed.data;
-  const extraSteps = Math.min(24, 10000 - budget.maxSteps);
+  if (budget.maxSteps === null && budget.maxMilliseconds === null) return null;
+  const extraSteps = Math.min(24, 10000 - (budget.maxSteps ?? budget.usedSteps));
   async function reloadBudget() {
     setBusy(true);
     setError("");
@@ -307,9 +308,10 @@ function BudgetControls({ task }: { task: AgentTask }) {
       <Text style={s.muted}>
         {t("{used} of {max} steps · {usedMinutes} of {maxMinutes} minutes used", {
           used: budget.usedSteps,
-          max: budget.maxSteps,
+          max: budget.maxSteps ?? "∞",
           usedMinutes: Math.ceil(budget.usedMilliseconds / 60_000),
-          maxMinutes: Math.ceil(budget.maxMilliseconds / 60_000),
+          maxMinutes:
+            budget.maxMilliseconds === null ? "∞" : Math.ceil(budget.maxMilliseconds / 60_000),
         })}
       </Text>
       <Text style={s.small}>

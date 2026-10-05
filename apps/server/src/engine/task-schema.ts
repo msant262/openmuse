@@ -118,13 +118,17 @@ export async function initializeTaskRuntime(query: (sql: string) => Promise<unkn
       END IF;
       RETURN 'authorized';
     END $$`);
+  // Retire the old automatic cap; explicitly extended budgets retain their revision.
+  await query(`UPDATE records SET data=data || jsonb_build_object('maxSteps',NULL,'maxMilliseconds',NULL)
+    WHERE kind='task-budgets' AND (data->>'revision')::bigint=0
+      AND (data->>'maxSteps')::bigint=96 AND (data->>'maxMilliseconds')::bigint=21600000`);
   await query(`CREATE OR REPLACE FUNCTION openmuse_consume_task_budget(budget_owner text, root_id text, elapsed_ms bigint)
     RETURNS jsonb LANGUAGE plpgsql AS $$
     DECLARE budget jsonb;
     BEGIN
       PERFORM pg_advisory_xact_lock(hashtextextended('openmuse-budget:' || budget_owner || ':' || root_id,0));
       INSERT INTO records(owner,kind,id,data) VALUES(budget_owner,'task-budgets',root_id,
-        jsonb_build_object('id',root_id,'revision',0,'maxSteps',96,'usedSteps',0,'maxMilliseconds',21600000,'usedMilliseconds',0)) ON CONFLICT DO NOTHING;
+        jsonb_build_object('id',root_id,'revision',0,'maxSteps',NULL,'usedSteps',0,'maxMilliseconds',NULL,'usedMilliseconds',0)) ON CONFLICT DO NOTHING;
       SELECT data INTO budget FROM records WHERE owner=budget_owner AND kind='task-budgets' AND id=root_id FOR UPDATE;
       UPDATE records SET data=data || jsonb_build_object('usedMilliseconds',(data->>'usedMilliseconds')::bigint+GREATEST(0,elapsed_ms)),updated_at=now()
         WHERE owner=budget_owner AND kind='task-budgets' AND id=root_id RETURNING data INTO budget;

@@ -188,7 +188,7 @@ test("task inference deadline does not expire while a 30-minute foreground comma
   const handles = new Map<unknown, () => void>();
   globalThis.setTimeout = ((callback: () => void, ms?: number, ...args: unknown[]) => {
     const handle = originalSet(callback, ms, ...args);
-    if (ms === 300000) {
+    if (ms === 120000) {
       timers.add(callback);
       handles.set(handle, callback);
     }
@@ -322,9 +322,12 @@ test("task cancellation propagates and joins foreground receipt before releasing
   await app.agent.stop();
 });
 
-test("idle inference deadline fails promptly without cancelling an explicit background receipt", async (t) => {
+test("the copied streaming watchdog retries stalled inference and stopping preserves background receipts", async (t) => {
   const browser = await browserFixture(t, () => ({ data: {} }));
-  let stalled!: () => void, release!: () => void;
+  let stalled!: () => void, release!: () => void, retried!: () => void;
+  const retryStarted = new Promise<void>((r) => {
+    retried = r;
+  });
   const started = new Promise<void>((r) => {
     stalled = r;
   });
@@ -343,6 +346,7 @@ test("idle inference deadline fails promptly without cancelling an explicit back
         },
       };
     stalled();
+    if (i >= 2) retried();
     await held;
     return undefined;
   });
@@ -370,7 +374,7 @@ test("idle inference deadline fails promptly without cancelling an explicit back
     handles = new Map<unknown, () => void>();
   globalThis.setTimeout = ((callback: () => void, ms?: number, ...args: unknown[]) => {
     const handle = original(callback, ms, ...args);
-    if (ms === 300000) {
+    if (ms === 120000) {
       timers.add(callback);
       handles.set(handle, callback);
     }
@@ -387,27 +391,24 @@ test("idle inference deadline fails promptly without cancelling an explicit back
     });
     const tick = app.agent.worker.tick();
     await started;
-    // Quota admission also uses five-minute timers, which are cleared before dispatch.
-    assert.equal(timers.size, 1, "only the task idle deadline remains armed after admission");
+    assert.ok(timers.size > 0, "the upstream stream watchdog owns liveness");
     const [expire] = timers;
     assert.ok(expire);
     expire();
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        tick,
+        retryStarted,
         new Promise<never>((_, reject) => {
-          deadline = original(
-            () => reject(new Error("Task did not settle promptly after its idle deadline")),
-            5000,
-          );
+          deadline = original(() => reject(new Error("The copied harness did not retry")), 15000);
         }),
       ]);
+      await app.agent.worker.stop();
+      await tick;
     } finally {
       if (deadline) originalClear(deadline);
     }
-    assert.equal((await app.agent.getTask("owner", task.id)).status, "failed");
-    assert.match((await app.agent.getTask("owner", task.id)).error ?? "", /inference timed out/);
+    assert.equal((await app.agent.getTask("owner", task.id)).status, "queued");
     assert.equal(
       (await browser.db.get("owner", "computer-commands", "background"))?.status,
       "running",

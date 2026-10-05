@@ -12,7 +12,7 @@ import { browserFixture } from "./helpers/browser.ts";
 import { fixture as computerFixture } from "./helpers/computer.ts";
 import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
-test("CopilotKit model worker executes server tools and persists the confirmed outcome", async (t) => {
+test("OpenClaw model worker executes server tools and persists the confirmed outcome", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "openmuse-model-"));
   const db = await createStore();
   const calls: { name: string; arguments: object }[] = [
@@ -78,9 +78,9 @@ test("CopilotKit model worker executes server tools and persists the confirmed o
     );
     assert.ok(requests.length >= 5 && requests.length <= 7);
     assert.ok(requests.every((request) => request.path === "/v1/responses"));
-    assert.ok(requests[0].body.includes('"name":"describe_tools"'));
-    assert.ok(requests[1].body.includes('"name":"prepare_email"'));
-    assert.ok(requests[1].body.includes('"name":"run_computer_command"'));
+    assert.ok(requests[0].body.includes('"name":"tool_describe"'));
+    assert.ok(requests[1].body.includes("okami_prepare_email"));
+    assert.ok(requests[1].body.includes("okami_run_computer_command"));
     assert.ok(
       requests.some(
         (request) => request.body.includes("succeeded") && request.body.includes("hello"),

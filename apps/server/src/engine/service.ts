@@ -75,6 +75,7 @@ import { delegatedContext } from "./delegated-context.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
 import { MonitorObservations, type MonitorPage } from "./monitor-observations.ts";
+import { stopOpenclawHarness } from "./openclaw-agent.ts";
 import { ResourceLeases } from "./resource-leases.ts";
 import { RuntimePause } from "./runtime-pause.ts";
 import { TaskActor, TaskBudgetExhaustedError } from "./task-actor.ts";
@@ -383,6 +384,7 @@ export class AgentService {
     ]);
     // Observe both failure paths immediately; either may already carry a failed write.
     await Promise.all([this.worker.stop(), adaptersClosed]);
+    await stopOpenclawHarness(this.config.dataDir);
     while (this.refreshing || this.routineRefreshing)
       await new Promise((resolve) => setTimeout(resolve, 10));
   }

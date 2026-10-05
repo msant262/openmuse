@@ -586,7 +586,14 @@ test("a worker parks provider interruption with completed tool receipts and save
   assert.equal(saved.status, "waiting_provider", saved.error ?? saved.question);
   assert.equal(saved.plan[0]?.title, "Save the work");
   const checkpoint = saved.state.providerCheckpoint as { messages: RunAgentInput["messages"] };
-  assert.ok(checkpoint.messages.some((m) => m.role === "tool" && m.toolCallId === "call-0"));
+  const operation = (await app.agent.journal.operations("owner", task.id)).find(
+    (op) => op.toolName === "set_plan",
+  );
+  assert.ok(operation);
+  assert.ok(
+    checkpoint.messages.some((m) => m.role === "tool" && m.toolCallId === operation.toolCallId),
+    JSON.stringify({ messages: checkpoint.messages, operation }),
+  );
   assert.equal(fixture.requests.length, 2);
 });
 

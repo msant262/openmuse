@@ -22,3 +22,11 @@ export const harnessToolCatalog = [
     description: "Load schemas for exact tool names, then call their original native tools.",
   },
 ] as const;
+
+/** Active copied executor controls plus the owner's preserved-output reader. */
+export const copiedHarnessToolCatalog = [
+  harnessToolCatalog[0],
+  { name: "tool_search", description: "Discover tools in the copied OpenClaw tool catalog." },
+  { name: "tool_describe", description: "Read the exact schema of a discovered tool." },
+  { name: "tool_call", description: "Execute a discovered tool with structured arguments." },
+] as const;

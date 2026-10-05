@@ -496,6 +496,14 @@ test("budget extension preserves concurrently accumulated step and elapsed usage
     undefined,
     true,
   );
+  await server.db.put("owner", "task-budgets", {
+    id: task.id,
+    revision: 0,
+    maxSteps: 96,
+    usedSteps: 0,
+    maxMilliseconds: 60000,
+    usedMilliseconds: 0,
+  });
   await server.db.consumeTaskBudget("owner", task.id, 0);
   let extensionPrepared!: () => void;
   let extensionRelease!: () => void;

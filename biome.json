@@ -11,18 +11,37 @@
       "!**/ios",
       "!**/android",
       "!**/.openmuse",
-      "!**/artifacts"
+      "!**/artifacts",
+      "!third_party/openclaw/harness"
     ]
   },
-  "formatter": { "enabled": true, "indentStyle": "space", "lineWidth": 100 },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "lineWidth": 100
+  },
   "linter": {
     "enabled": true,
     "rules": {
       "preset": "recommended",
-      "correctness": { "useExhaustiveDependencies": "off" },
-      "a11y": { "noSvgWithoutTitle": "off" }
+      "correctness": {
+        "useExhaustiveDependencies": "off"
+      },
+      "a11y": {
+        "noSvgWithoutTitle": "off"
+      }
     }
   },
-  "javascript": { "formatter": { "quoteStyle": "double" } },
-  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double"
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
 }

@@ -755,7 +755,7 @@ async function assertRetired(
 
 test("an ordinary turn that fails still retires the earlier choice, as the transcript does", async (t) => {
   const f = await fixture(t, [clarify], {
-    errorStatus: (index) => (index === 2 ? 400 : undefined),
+    errorStatus: (index) => (index >= 2 ? 400 : undefined),
   });
   const panel = await presentPanel(f);
   // The mobile transcript treats any later user message as making the panel stale.

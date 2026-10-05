@@ -5,7 +5,7 @@ import { EventType } from "@ag-ui/core";
 import { lastValueFrom, toArray } from "rxjs";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
 import { LocalThreads } from "../apps/server/src/threads.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const source = "https://garden.example/research";
@@ -23,18 +23,11 @@ const input = (content: string) => ({
   context: [],
   state: {},
 });
-const offeredTools = (body: string) =>
-  (JSON.parse(body).tools ?? []).map((tool: { name: string }) => tool.name);
+const offeredTools = offeredHostTools;
 
 // This fixture already knows these native argument shapes. A deferred schema is
 // still an available capability; only the reserved handoff removes that capability.
-const capabilityAvailable = (body: string, name: string) => {
-  const tools = JSON.parse(body).tools ?? [];
-  return tools.some(
-    (tool: { name: string; description?: string }) =>
-      tool.name === name || (tool.name === "search_tools" && tool.description?.includes(name)),
-  );
-};
+const capabilityAvailable = (body: string, name: string) => offeredHostTools(body).includes(name);
 
 test("research is handed off immediately and the worker delivers the requested image", async (t) => {
   const fixture = await modelFixture(
@@ -60,9 +53,7 @@ test("research is handed off immediately and the worker delivers the requested i
     },
     {
       text: (index) =>
-        offeredTools(fixture.requests[index].body).length
-          ? undefined
-          : "O trabalho Criar infográfico do jardim está em andamento.",
+        index === 1 ? "O trabalho Criar infográfico do jardim está em andamento." : undefined,
     },
   );
   const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
@@ -172,9 +163,9 @@ test("the handoff slot does not queue a second job after image generation was al
   assert.equal(fixture.requests.length, 2);
 });
 
-test("research that only needs a written answer ends without a background job", async (t) => {
+test("a local status lookup answers without a background job or a forced handoff", async (t) => {
   const fixture = await modelFixture(t, (index) =>
-    capabilityAvailable(fixture.requests[index].body, "agent_status")
+    index === 0 && capabilityAvailable(fixture.requests[index].body, "agent_status")
       ? { name: "agent_status", arguments: {} }
       : undefined,
   );
@@ -185,8 +176,7 @@ test("research that only needs a written answer ends without a background job", 
       .pipe(toArray()),
   );
   assert.equal((await server.db.list("owner", "tasks")).length, 0);
-  assert.deepEqual(offeredTools(fixture.requests[8].body), ["delegate_task"]);
-  assert.equal(fixture.requests.length, 9);
+  assert.equal(fixture.requests.length, 2);
 });
 
 test("a failed delegation does not suppress the reserved handoff", async (t) => {

@@ -11,7 +11,7 @@ import {
 import { companionSocialTools } from "../apps/server/src/engine/companion-social-tools.ts";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
 import { LocalThreads } from "../apps/server/src/threads.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 function invoke(tools: ReturnType<typeof companionSocialTools>, name: string, input: unknown) {
@@ -308,9 +308,7 @@ test("Hermes-style reactions default to the current user message after task hand
     3,
     "quoted reply completes the acknowledgment without repeating it",
   );
-  const offered = (JSON.parse(fixture.requests[1].body).tools ?? []).map(
-    (t: { name: string }) => t.name,
-  );
+  const offered = offeredHostTools(fixture.requests[1].body);
   assert.ok(offered.includes("react_to_message"));
   assert.ok(!offered.includes("delegate_task"));
   assert.ok(!offered.includes("search_tools"));

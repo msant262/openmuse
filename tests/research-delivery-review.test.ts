@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 test("new research observations keep the worker moving beyond three delivery reviews", async (t) => {
@@ -104,7 +104,7 @@ test("research cannot finish with instructions to consult an unread results link
   assert.equal(reviews, 2);
 });
 
-test("unresolved research is bounded and can never be verified by repeatedly claiming completion", async (t) => {
+test("an actual unresolved blocker remains partial after the model uses more than three repair attempts", async (t) => {
   await modelFixture(
     t,
     (i) =>
@@ -114,7 +114,7 @@ test("unresolved research is bounded and can never be verified by repeatedly cla
             name: "finish_task",
             arguments: {
               summary: "The result is unavailable. See the website.",
-              outcome: "completed",
+              outcome: i >= 5 ? "partial" : "completed",
             },
           },
     {
@@ -138,7 +138,7 @@ test("unresolved research is bounded and can never be verified by repeatedly cla
   assert.notEqual(saved.completion?.status, "verified");
   assert.ok(
     (await f.agent.journal.operations("owner", task.id)).filter((o) => o.toolName === "finish_task")
-      .length <= 3,
+      .length >= 5,
   );
 });
 
@@ -165,11 +165,15 @@ test("ending with plain text cannot bypass the research delivery review", async 
   const task = await f.agent.createTask("owner", { prompt: "What are the results?" });
   for (let i = 0; i < 3; i++) await f.agent.worker.tick();
   const saved = await f.agent.getTask("owner", task.id);
-  assert.equal(saved.status, "failed");
+  assert.equal(
+    saved.status,
+    "queued",
+    "incomplete prose stays repairable without a three-review cutoff",
+  );
   assert.notEqual(saved.completion?.status, "verified");
 });
 
-test("failed research reads discovered alternative sources before giving up at the third review", async (t) => {
+test("the model reads discovered alternative sources after incomplete delivery reviews", async (t) => {
   let count = 0;
   await modelFixture(
     t,
@@ -178,15 +182,17 @@ test("failed research reads discovered alternative sources before giving up at t
         ? { name: "search_web", arguments: { query: "current count" } }
         : i === 1
           ? { name: "web_fetch", arguments: { url: "https://official.example/selector" } }
-          : {
-              name: "finish_task",
-              arguments: {
-                summary:
-                  i < 4
-                    ? "The selector does not show totals."
-                    : "Candidate A has 52%, 12345 votes. https://news.example/live",
+          : i === 3
+            ? { name: "web_fetch", arguments: { url: "https://news.example/live" } }
+            : {
+                name: "finish_task",
+                arguments: {
+                  summary:
+                    i < 4
+                      ? "The selector does not show totals."
+                      : "Candidate A has 52%, 12345 votes. https://news.example/live",
+                },
               },
-            },
     {
       researchReview: (body) => {
         count++;
@@ -234,10 +240,10 @@ test("failed research reads discovered alternative sources before giving up at t
   assert.equal(saved.status, "succeeded", saved.error ?? saved.result);
   assert.ok(read.mock.calls.some((call) => call.arguments[0] === "https://news.example/live"));
   assert.match(saved.result ?? "", /12345/);
-  assert.equal(count, 3);
+  assert.equal(count, 2);
   assert.ok(
     (await f.agent.journal.operations("owner", task.id)).some(
-      (op) => op.toolName === "web_extract" && op.status === "succeeded" && !op.effect,
+      (op) => op.toolName === "web_fetch" && op.status === "succeeded" && !op.effect,
     ),
   );
 });
@@ -275,13 +281,15 @@ test("a follow-up recovers from sources observed in the parent conversation when
     (i) =>
       i === 0
         ? { name: "web_fetch", arguments: { url: "https://official.example/selector" } }
-        : {
-            name: "finish_task",
-            arguments: {
-              summary:
-                i < 3 ? "No results." : "A: 52%, 12345 votes. Source: https://news.example/live",
+        : i === 2
+          ? { name: "web_fetch", arguments: { url: "https://news.example/live" } }
+          : {
+              name: "finish_task",
+              arguments: {
+                summary:
+                  i < 3 ? "No results." : "A: 52%, 12345 votes. Source: https://news.example/live",
+              },
             },
-          },
     {
       researchReview: (body) =>
         body.includes("12345")
@@ -342,7 +350,7 @@ test("a follow-up recovers from sources observed in the parent conversation when
   }
 });
 
-test("facts obtained after two failed searches still get a bounded delivery repair without more browsing", async (t) => {
+test("verified facts stay available through repeated delivery repair with the full tool catalog", async (t) => {
   const fixture = await modelFixture(
     t,
     (i) =>
@@ -392,14 +400,14 @@ test("facts obtained after two failed searches still get a bounded delivery repa
   assert.equal((saved.state.researchDeliveryReview as { attempts: number }).attempts, 4);
   const lastRequest = fixture.requests.at(-1);
   assert.ok(lastRequest);
-  const repair = JSON.parse(lastRequest.body);
-  const repairTools = repair.tools.map(
-    (tool: { name?: string; function?: { name: string } }) => tool.name ?? tool.function?.name,
-  );
+  const repairTools = offeredHostTools(lastRequest.body);
   assert.ok(repairTools.includes("finish_task"));
   assert.ok(repairTools.includes("read_tool_output"), "previous source results remain retrievable");
   assert.ok(repairTools.includes("todo_list"), "the agent can finish updating its actual plan");
-  assert.ok(!repairTools.includes("web_fetch"), "formatting repair does not trigger more browsing");
+  assert.ok(
+    repairTools.includes("web_fetch"),
+    "repair retains the ability to acquire additional evidence",
+  );
   assert.match(
     lastRequest.body,
     /Remove extra claim and present the observed count in bullets/,
@@ -415,11 +423,9 @@ test("artifact delivery repair keeps authoring tools available after the facts a
       if (i === 0) return { name: "web_fetch", arguments: { url: "https://news.example/live" } };
       if (i === 1 || i === 3) {
         if (i === 3) {
-          const tools = JSON.parse(fixture.requests[i].body).tools.map(
-            (tool: { name: string }) => tool.name,
-          );
+          const tools = offeredHostTools(fixture.requests[i].body);
           repairOffered = tools.includes("create_document") || tools.includes("search_tools");
-          assert.ok(!tools.includes("web_fetch"), "a visual repair must not restart research");
+          assert.ok(tools.includes("web_fetch"), "repair does not restrict additional research");
         }
         return {
           name: "create_document",
@@ -496,8 +502,6 @@ test("a revised request restores research tools after an older delivery-only rev
   await f.agent.worker.tick();
   const firstRequest = fixture.requests.at(0);
   assert.ok(firstRequest);
-  const tools = JSON.parse(firstRequest.body).tools.map(
-    (tool: { name?: string; function?: { name: string } }) => tool.name ?? tool.function?.name,
-  );
+  const tools = offeredHostTools(firstRequest.body);
   assert.ok(tools.includes("web_fetch"), "A new revision must be allowed to acquire new facts");
 });

@@ -1,0 +1,10 @@
+{
+  "name": "openclaw",
+  "version": "2026.9.8",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openclaw/openclaw.git"
+  },
+  "private": true
+}

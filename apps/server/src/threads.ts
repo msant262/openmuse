@@ -231,6 +231,35 @@ export class LocalThreads extends AgentRunner {
     const { runToken, leaseUntil, stopRunToken, ...record } = thread;
     return record;
   }
+  private async title(owner: string, thread: Thread, messages?: Message[]): Promise<Thread> {
+    if (thread.name?.trim()) return thread;
+    const history = messages ?? (await this.runs(owner, thread.id)).at(-1)?.messages ?? [];
+    const first = history.find((message) => message.role === "user" && message.content);
+    const text =
+      typeof first?.content === "string"
+        ? first.content
+        : Array.isArray(first?.content)
+          ? first.content
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join(" ")
+          : "";
+    const subject = text
+      .split(/\n\n(?:Attached artifact IDs:|User annotations|Reply to message)/)[0]
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!subject) return thread;
+    const name = subject.length > 80 ? `${subject.slice(0, 77).replace(/\s+\S*$/, "")}…` : subject;
+    return (
+      (await this.db.compareAndSwap<Thread>(
+        owner,
+        "threads",
+        thread.id,
+        { name: thread.name },
+        { name },
+      )) ?? this.get(owner, thread.id)
+    );
+  }
   async ensure(owner: string, threadId: string): Promise<Thread> {
     identifier.parse(threadId);
     const now = new Date().toISOString();
@@ -478,6 +507,7 @@ export class LocalThreads extends AgentRunner {
       }
     }
     const authoritative = { ...input, messages, state: previousSnapshot?.state ?? input.state };
+    await this.title(owner, thread, messages);
     agent.setMessages(messages);
     agent.setState(authoritative.state);
     agent.threadId = threadId;
@@ -779,7 +809,9 @@ export class LocalThreads extends AgentRunner {
       if (cursor && start === 0) throw new AppError("Conversation cursor is invalid", 422);
       const page = all.slice(start, start + limit);
       return Response.json({
-        threads: page.map((thread) => this.summary(thread)),
+        threads: await Promise.all(
+          page.map(async (thread) => this.summary(await this.title(owner, thread))),
+        ),
         nextCursor: start + limit < all.length ? page.at(-1)?.id : null,
       });
     }

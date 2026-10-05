@@ -207,11 +207,16 @@ test("read_workspace exposes unavailable and revoked source evidence with cached
     await agent.worker.tick();
     assert.equal((await agent.getTask("owner", task.id)).status, "waiting_input");
     const body = JSON.parse(requests[1].body);
+    const call = body.input.find(
+      (item: { type: string; name: string }) =>
+        item.type === "function_call" && item.name === "read_workspace",
+    );
+    assert.ok(call, JSON.stringify(body.input));
     const result = body.input.find(
       (item: { type: string; call_id?: string }) =>
-        item.type === "function_call_output" && item.call_id === "call-0",
+        item.type === "function_call_output" && item.call_id === call.call_id,
     );
-    assert.ok(result, "the real model provider receives the tool result");
+    assert.ok(result, "the actual call and result must remain paired through the copied harness");
     return JSON.parse(result.output);
   };
   for (const section of ["mail", "calendar"] as const) {

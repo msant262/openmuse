@@ -1,5 +1,10 @@
 # Harness continuity and task progress
 
+The active model executor now uses the complete copied OpenClaw embedded harness.
+See [source provenance and host integration](openclaw/README.md#active-embedded-harness-5-october-2026).
+The portable adapters below describe the existing app transcript and task storage
+around that executor.
+
 OpenClaw source: `b56ae70a5e7e302dc2165c96b60214e84e19c7b1`, MIT, [license](openclaw/LICENSE).
 `apps/server/src/engine/openclaw/history-turns.ts` copies `limitHistoryTurns`
 from `src/agents/embedded-agent-runner/history.ts`; only the host message type

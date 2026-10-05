@@ -1,8 +1,18 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { modelProviderConfig } from "../../apps/server/src/providers/config.ts";
+
+// OpenClaw owns one process runtime; individual app fixtures own separate stores.
+// Its shared runtime survives sequential app fixture teardown, then closes with
+// the test process rather than pointing at the first fixture's deleted directory.
+const harnessState = mkdtempSync(join(tmpdir(), "okami-native-test-runtime-"));
+process.env.OPENCLAW_STATE_DIR = harnessState;
+process.once("exit", () => rmSync(harnessState, { recursive: true, force: true }));
 
 /** The synthetic endpoint accepts the complete rich chat/tool history. Its
  * declared capacity is fixture metadata, not a production model assumption. */
@@ -165,11 +175,27 @@ export async function modelFixture(
       response.end("data: [DONE]\n\n");
       return;
     }
-    const call = isReview ? undefined : await reply(index);
+    let call = isReview ? undefined : await reply(index);
     // The handoff schema requires an explicit choice for its two conversation
     // fields. Older scenarios exercise task admission, so choose no social reply.
     const offered: OfferedTool[] = JSON.parse(body).tools ?? [];
     const flattened = offered.flatMap((tool) => tool.tools ?? [tool]);
+    // The copied harness exposes the upstream discovery/dispatcher protocol.
+    // Existing domain scenarios name host capabilities; translate at the mocked
+    // provider boundary, never inside the production executor.
+    const offeredNames = flattened.map((tool) => (tool.function ?? tool).name);
+    if (
+      call?.name === "delegate_task" &&
+      offeredNames.includes("tool_call") &&
+      !offeredHostTools(body).includes("finish_task")
+    )
+      call.arguments = { acknowledgment: null, reaction: null, ...call.arguments };
+    if (call && offeredNames.includes("tool_call") && !offeredNames.includes(call.name)) {
+      call =
+        call.name === "describe_tools" || call.name === "search_tools"
+          ? { name: "tool_search", arguments: { query: JSON.stringify(call.arguments) } }
+          : { name: "tool_call", arguments: { id: `okami_${call.name}`, args: call.arguments } };
+    }
     const delegate = flattened
       .map((tool) => tool.function ?? tool)
       .find((tool) => tool.name === "delegate_task");
@@ -185,7 +211,11 @@ export async function modelFixture(
             nextSteps: [],
           },
         )
-      : options.text?.(index);
+      : options.text
+        ? options.text(index)
+        : call
+          ? undefined
+          : "Done.";
     if (request.url?.endsWith("/chat/completions")) {
       response.writeHead(200, streamHeaders);
       const emit = (delta: object, finishReason: string | null = null) =>
@@ -354,4 +384,19 @@ export async function modelFixture(
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
   return { requests };
+}
+
+/** Capabilities advertised by the current native harness surface, including
+ * deferred tools. This is distinct from the three callable control schemas. */
+export function offeredHostTools(body: string): string[] {
+  const request = JSON.parse(body);
+  const prompt = String(request.instructions ?? "") + JSON.stringify(request.messages ?? []);
+  const remaining = /Available host capabilities for this completed handoff: (\[[^\n]*?\])/.exec(
+    prompt,
+  );
+  if (remaining) return JSON.parse(remaining[1]);
+  const deferred = [...prompt.matchAll(/- okami_(\w+) \(okami-host\):/g)].map((match) => match[1]);
+  return deferred.length
+    ? deferred
+    : (request.tools ?? []).map((tool: OfferedTool) => (tool.function ?? tool).name);
 }
