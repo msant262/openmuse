@@ -106,8 +106,11 @@ test("research is handed off immediately and the worker delivers the requested i
   assert.ok(offeredTools(fixture.requests[0].body).includes("delegate_task"));
   assert.deepEqual(offeredTools(fixture.requests[1].body), []);
   assert.match(fixture.requests[0].body, /SOUL/);
-  assert.ok(fixture.requests[1].body.includes(fact));
-  assert.ok(fixture.requests[1].body.includes(source));
+  assert.ok(fixture.requests[1].body.includes("Criar infográfico do jardim"));
+  assert.ok(
+    !fixture.requests[1].body.includes(fact),
+    "the acknowledgment must not reuse an unverified delegated brief as findings",
+  );
   const task = await server.agent.getTask("owner", tasks.tasks[0].id);
   assert.equal(task.kind, "agent");
   assert.equal(task.originThreadId, "research-image-chat");

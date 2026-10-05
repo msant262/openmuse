@@ -256,3 +256,43 @@ test("delegated mail cannot read another owner's thread", async (t) => {
   assert.match(fixture.requests[3].body, /not found/);
   assert.ok(!fixture.requests[3].body.includes("8:15 AM"));
 });
+
+test("the admitted handoff writes with the current SOUL and receipt without replaying old status prose", async (t) => {
+  const fixture = await modelFixture(t, (index) => (index === 0 ? delegate : undefined), {
+    text: (index) => (index === 1 ? "Já vejo isso, gata." : undefined),
+  });
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  await server.agent.profiles.update("owner", {
+    scope: { kind: "global" },
+    patch: { personality: "Afetuosa, divertida, com energia de diva." },
+    expectedRevision: 0,
+    requestId: "voice",
+    origin: { kind: "settings" },
+  });
+  const request = input();
+  const events = await lastValueFrom(
+    new ConversationAgent(server.agent.config, server.agent, "owner")
+      .run({
+        ...request,
+        messages: [
+          {
+            id: "old-status",
+            role: "assistant",
+            content: "LEGACY_STATUS_PROSE: A checagem foi encaminhada. Ainda não tenho dados.",
+          },
+          ...request.messages,
+        ],
+      })
+      .pipe(toArray()),
+  );
+  assert.ok(!events.some((e) => e.type === EventType.RUN_ERROR));
+  assert.equal((await server.agent.snapshot("owner")).tasks.length, 1);
+  assert.equal(fixture.requests.length, 2);
+  assert.match(fixture.requests[0].body, /LEGACY_STATUS_PROSE/);
+  const confirmation = JSON.parse(fixture.requests[1].body);
+  assert.doesNotMatch(fixture.requests[1].body, /LEGACY_STATUS_PROSE/);
+  assert.match(fixture.requests[1].body, /Afetuosa, divertida, com energia de diva/);
+  assert.match(fixture.requests[1].body, /Read the article/);
+  assert.ok(JSON.stringify(confirmation.input).includes(url));
+  assert.deepEqual(confirmation.tools ?? [], []);
+});

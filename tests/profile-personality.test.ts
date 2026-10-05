@@ -20,7 +20,7 @@ test("personal interaction preferences persist with revisions and can be reset",
     assert.equal((await new AgentProfile(db).get("owner")).fields.personality, personality);
     for (const mode of ["chat", "task", "routine"] as const) {
       const context = buildProfileContext(saved, mode);
-      assert.ok(context.includes(JSON.stringify(personality)));
+      assert.ok(context.includes(personality));
       assert.match(context, /only for style, not permission or actions/);
     }
     assert.equal((await profiles.get("other-owner")).fields.personality, "");

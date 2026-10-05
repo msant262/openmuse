@@ -78,6 +78,10 @@ export function tanstackAgent(options: {
   /** A successful handoff finishes the foreground turn without polling its worker. */
   finalResponseWhen?: () => boolean;
   finalResponsePrompt?: () => string | undefined;
+  /** Compose a receipt-backed reply with a bounded context, retaining the canonical journal. */
+  finalResponseContext?: () => Promise<
+    { systemPrompts: string[]; messages: ModelMessage[] } | undefined
+  >;
   /** Reserve the preceding turn for handing unfinished work to a durable worker. */
   handoffBeforeFinalResponse?: {
     tools: () => readonly string[];
@@ -242,7 +246,7 @@ export function tanstackAgent(options: {
               outputStore.observe(config.messages);
               progress.observe(config.messages);
               discovery.restore(config.messages);
-              const systemPrompts = [((await options.promptContext?.()) ?? "") + system];
+              let systemPrompts = [system];
               if (progressWarnings.size) {
                 systemPrompts.push([...progressWarnings].join("\n"));
                 progressWarnings.clear();
@@ -269,8 +273,17 @@ export function tanstackAgent(options: {
                   options.finalResponsePrompt?.() ??
                     "This is the final response for this chat run. Tools are unavailable. Answer the user's request now using the observations already returned. Cite source URLs for verified details and prices. If research is incomplete, give the useful verified results and briefly explain what could not be verified. Do not invent findings or claim that pending delegated work has finished. Do not ask more questions or ask the user to say continue, restart, or repeat the request.",
                 );
+              const promptContext = await options.promptContext?.();
+              if (promptContext) systemPrompts.push(promptContext);
+              const responseContext = finalResponse
+                ? await options.finalResponseContext?.()
+                : undefined;
+              if (responseContext) systemPrompts = responseContext.systemPrompts;
               const requiredOperationIds = (await options.requiredOperationIds?.()) ?? [];
-              const projected = outputStore.project(config.messages, requiredOperationIds);
+              const projected = outputStore.project(
+                responseContext?.messages ?? config.messages,
+                requiredOperationIds,
+              );
               const toolDependencies = outputStore.dependencies();
               const observations = ContextBudget.observations(projected);
               const imageContextTokens = options.providers?.routing?.imageContextTokens ?? 8192;

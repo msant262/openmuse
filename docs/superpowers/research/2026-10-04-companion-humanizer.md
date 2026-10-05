@@ -1,5 +1,9 @@
 # Humanização da conversa e preferências visíveis
 
+> A conversa real voltou a apresentar voz genérica e texto duplicado após esta
+> publicação. A validação abaixo não cobria esse caso. O diagnóstico e a correção
+> posterior estão em [SOUL no runtime](2026-10-05-soul-runtime.md).
+
 A retomada concluiu a validação e a publicação iniciadas na sessão anterior.
 Fonte: `94b47bc`, com ajuste de tipagem de teste em `acd7093`. API publicada:
 `0b0122c`, aplicada sobre a base em produção `87719d9`. Web e APK: `94b47bc`.
