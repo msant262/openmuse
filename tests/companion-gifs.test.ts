@@ -58,3 +58,30 @@ test("GIF lookup broadens an over-specified mood before returning no media", asy
   assert.equal(result.gifs.length, 1);
   assert.equal(queries[1], "celebration confetti gif site:tenor.com/view");
 });
+
+test("GIF discovery reads the public catalog when general search has no relevant results", async () => {
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: '<a href="/view/party-gif-42"><img src="https://media.tenor.com/party.gif" alt="Confetti celebration"></a><img src="https://ads.example/tracker.gif" alt="ad">',
+    }),
+  });
+  let searches = 0;
+  const search = {
+    search: async () => {
+      searches++;
+      return { sources: [] };
+    },
+  } as unknown as SearchBackend;
+  const result = await findConversationGifs(search, web, "owner", "celebration fabulous queen");
+  assert.equal(searches, 0);
+  assert.deepEqual(result.gifs, [
+    {
+      url: "https://media.tenor.com/party.gif",
+      alt: "Confetti celebration",
+      sourceUrl: "https://tenor.com/view/party-gif-42",
+    },
+  ]);
+});

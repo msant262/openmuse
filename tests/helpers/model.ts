@@ -51,7 +51,7 @@ export async function modelFixture(
     researchReview?: (
       body: string,
       index: number,
-    ) => { complete: boolean; missing: string[]; nextSteps: string[] };
+    ) => { complete: boolean; needsMoreResearch?: boolean; missing: string[]; nextSteps: string[] };
   } = {},
 ) {
   const {

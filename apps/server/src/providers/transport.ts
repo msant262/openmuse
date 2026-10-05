@@ -8,6 +8,7 @@ export interface DispatchState {
   expectedStreaming?: boolean;
   requiresCompletion?: boolean;
   completed?: boolean;
+  preferFinalText?: boolean;
   failure?: ModelProviderError;
 }
 
@@ -25,6 +26,9 @@ function verifiedCompletion(
   const encoder = new TextEncoder();
   let buffer = "";
   let lastTextItem: string | undefined;
+  const commentaryItems = new Set<string>();
+  let commentary: Record<string, unknown> | undefined;
+  let hasFinalText = false;
   const inspect = (frame: string) => {
     const data = frame
       .split(/\r?\n/)
@@ -58,6 +62,25 @@ function verifiedCompletion(
       }
       return frame;
     }
+    const item = event.item as { id?: string; phase?: string } | undefined;
+    if (state.preferFinalText && item?.id && item.phase === "commentary")
+      commentaryItems.add(item.id);
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+      if (state.preferFinalText && commentaryItems.has(String(event.item_id))) {
+        if (!hasFinalText && event.delta) {
+          const separator = commentary && commentary.item_id !== event.item_id ? "\n\n" : "";
+          commentary = {
+            ...event,
+            delta: `${commentary?.delta ?? ""}${separator}${event.delta}`,
+          };
+        }
+        return "";
+      }
+      if (event.delta.trim()) {
+        hasFinalText = true;
+        commentary = undefined;
+      }
+    }
     // The Responses SDK flattens all output messages into one AG-UI message.
     // Keep their paragraph boundary, including commentary followed by an answer.
     // Ordinary token chunks within the same message must remain untouched.
@@ -84,8 +107,15 @@ function verifiedCompletion(
       result?.error && typeof result.error === "object"
         ? (result.error as Record<string, unknown>)
         : undefined;
-    if (event.type === "response.completed" && result?.status === "completed")
+    if (event.type === "response.completed" && result?.status === "completed") {
       state.completed = true;
+      // Some providers use only commentary. Keep that answer after verified
+      // completion; never fabricate text or change tool-call receipts.
+      if (!hasFinalText && commentary) {
+        frame = `data: ${JSON.stringify(commentary)}\n\n${frame}`;
+        commentary = undefined;
+      }
+    }
     if (event.type === "response.failed" || event.type === "response.incomplete") {
       const code =
         error?.code === "subscription_sharing_usage_limit_exceeded"
@@ -106,7 +136,9 @@ function verifiedCompletion(
     const frames = buffer.split(/\r?\n\r?\n/);
     buffer = final ? "" : (frames.pop() ?? "");
     for (const frame of frames) {
-      if (frame.trim()) controller.enqueue(encoder.encode(`${inspect(frame)}\n\n`));
+      if (!frame.trim()) continue;
+      const output = inspect(frame);
+      if (output) controller.enqueue(encoder.encode(`${output}\n\n`));
     }
   };
   const stream = response.body.pipeThrough(

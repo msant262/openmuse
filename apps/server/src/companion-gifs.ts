@@ -14,7 +14,41 @@ export async function findConversationGifs(
   const gifs: { url: string; alt: string; sourceUrl: string }[] = [];
   const words = [...new Set(query.split(/\s+/).filter((word) => !/^gifs?$/i.test(word)))];
   const queries = [...new Set([words.slice(0, 4).join(" "), words.slice(0, 2).join(" ")])];
+  // The provider's public catalog is independent of general-search rate limits.
+  // Extract only media inside actual result links, never ads or invented paths.
   for (const terms of queries) {
+    signal?.throwIfAborted();
+    try {
+      const catalog = await web.document(
+        `https://tenor.com/search/${encodeURIComponent(terms.replace(/\s+/g, "-"))}-gifs`,
+        signal,
+      );
+      for (const link of htmlNodes(parse(catalog.body), (node) => node.nodeName === "a")) {
+        const href = htmlAttribute(link, "href");
+        if (!href?.startsWith("/view/")) continue;
+        for (const img of htmlNodes(link, (node) => node.nodeName === "img")) {
+          const raw = htmlAttribute(img, "src"),
+            alt = htmlAttribute(img, "alt");
+          if (!raw || !alt || !/\.gif(?:$|\?)/i.test(raw)) continue;
+          const url = new URL(raw, catalog.url);
+          if (url.protocol !== "https:" || gifs.some((g) => g.url === url.href)) continue;
+          await web.validate(url.href, signal);
+          gifs.push({
+            url: url.href,
+            alt: alt.slice(0, 300),
+            sourceUrl: new URL(href, catalog.url).href,
+          });
+          if (gifs.length === 3) break;
+        }
+        if (gifs.length === 3) break;
+      }
+    } catch {
+      signal?.throwIfAborted();
+    }
+    if (gifs.length) break;
+  }
+  for (const terms of queries) {
+    if (gifs.length) break;
     const results = await search.search(
       { query: `${terms} gif site:tenor.com/view`, limit: 3 },
       { owner, signal },

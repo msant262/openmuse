@@ -124,13 +124,21 @@ export async function executeModelTask(
     await ctx.guard();
     const revision = Number(task.state.appliedRevision ?? 0);
     const previous = task.state.researchDeliveryReview as
-      | { revision?: number; attempts?: number }
+      | { revision?: number; attempts?: number; repairAttempts?: number }
       | undefined;
     const attempts = (previous?.revision === revision ? (previous.attempts ?? 0) : 0) + 1;
+    // Finding the facts must not exhaust the separate opportunity to correct
+    // their delivery. A wording-only rejection cannot restart source gathering.
+    const repairAttempts = review.needsMoreResearch
+      ? 0
+      : (previous?.revision === revision ? (previous.repairAttempts ?? 0) : 0) + 1;
     task = await ctx.checkpoint({
-      state: { ...task.state, researchDeliveryReview: { revision, attempts, ...review } },
+      state: {
+        ...task.state,
+        researchDeliveryReview: { revision, attempts, repairAttempts, ...review },
+      },
     });
-    return { ...review, attempts };
+    return { ...review, attempts, repairAttempts };
   };
   let outcome: Partial<AgentTask> | undefined;
   let reachedStepLimit = false;
@@ -1288,14 +1296,15 @@ export async function executeModelTask(
               instruction:
                 "The requested facts were missing. The harness read previously untried sources for you. Inspect their actual results and continue from useful links/data. Answer the original question using these observations; do not repeat the failed disclaimer.",
             };
-          if (review.attempts < 3)
+          if ((review.needsMoreResearch ? review.attempts : review.repairAttempts) < 3)
             return {
               complete: false,
               repairable: true,
               missing: review.missing,
               nextSteps: review.nextSteps,
-              instruction:
-                "Continue the original request using these concrete repair steps. Follow relevant returned source/data links and explicitly use headless if needed. Do not repeat a disclaimer or send the user to finish your research. Once the requested facts are observed, return a clear answer with source and time. If no viable path remains, explain the specific limitation and use outcome=partial.",
+              instruction: review.needsMoreResearch
+                ? "Continue the original request using these concrete repair steps. Follow relevant returned source/data links and explicitly use headless if needed. Do not repeat a disclaimer or send the user to finish your research. Once the requested facts are observed, return a clear answer with source and time. If no viable path remains, explain the specific limitation and use outcome=partial."
+                : "The requested facts are already observed. Correct only the listed delivery issues, remove unsupported extras, preserve source timestamps, and call finish_task. Do not research more or expand the scope.",
             };
           deliveryOutcome = "partial";
         }
@@ -1437,6 +1446,19 @@ export async function executeModelTask(
       reachedStepLimit = true;
     },
     shouldContinue: () => !outcome,
+    finalResponseWhen: () => {
+      const review = task.state.researchDeliveryReview as
+        | { revision?: number; complete?: boolean; needsMoreResearch?: boolean }
+        | undefined;
+      return (
+        review?.revision === Number(task.state.appliedRevision ?? 0) &&
+        review?.complete === false &&
+        review.needsMoreResearch === false
+      );
+    },
+    finalResponseTools: () => ["finish_task"],
+    finalResponsePrompt: () =>
+      "The requested facts have been observed. This turn repairs their delivery using the review's missing and nextSteps fields. Remove unsupported extras, correct attribution and formatting, and call finish_task with the corrected answer. Further research is unavailable during this delivery repair; do not expand the user's request.",
     executeTool: async (call, execute) => {
       try {
         return await service.journal.run(
@@ -1689,7 +1711,7 @@ export async function executeModelTask(
       if (
         review &&
         !review.complete &&
-        (review.attempts < 3 ||
+        ((review.needsMoreResearch ? review.attempts : review.repairAttempts) < 3 ||
           (review.needsMoreResearch && (await recoverResearch(review.attempts))))
       )
         return {

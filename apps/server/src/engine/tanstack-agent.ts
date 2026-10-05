@@ -221,6 +221,8 @@ export function tanstackAgent(options: {
           options.loadFileImage,
           {
             projectTools: (tools) => discovery.select(tools),
+            preferFinalText: () =>
+              Boolean(options.finalResponseContext && options.finalResponseWhen?.()),
             workClass: options.workClass,
             requirements: options.requirements,
             router: options.modelRouter,

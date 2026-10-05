@@ -217,3 +217,92 @@ test("automatic recovery uses ranked sources, not analytics JSON observed on a p
   ] as never;
   assert.deepEqual(researchRecoverySources(operations), ["https://alternative.example/live"]);
 });
+
+test("facts obtained after two failed searches still get a bounded delivery repair without more browsing", async (t) => {
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      i === 0
+        ? { name: "web_fetch", arguments: { url: "https://news.example/live" } }
+        : {
+            name: "finish_task",
+            arguments: {
+              summary:
+                i < 3
+                  ? "No results."
+                  : i === 3
+                    ? "A 52%; B 48%; extra unsupported claim."
+                    : "Count:\n- A: 52%\n- B: 48%\nSource: https://news.example/live",
+            },
+          },
+    {
+      researchReview: (_body, i) =>
+        i < 2
+          ? {
+              complete: false,
+              needsMoreResearch: true,
+              missing: ["The count"],
+              nextSteps: ["Use observed results"],
+            }
+          : i === 2
+            ? {
+                complete: false,
+                needsMoreResearch: false,
+                missing: ["Unsupported extra claim and readable formatting"],
+                nextSteps: ["Remove extra claim and present the observed count in bullets"],
+              }
+            : { complete: true, needsMoreResearch: false, missing: [], nextSteps: [] },
+    },
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "<main>A 52%, B 48%</main>",
+  }));
+  const task = await f.agent.createTask("owner", { prompt: "What is the count?" });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.result);
+  assert.equal(read.mock.callCount(), 1);
+  assert.equal((saved.state.researchDeliveryReview as { attempts: number }).attempts, 4);
+  const lastRequest = fixture.requests.at(-1);
+  assert.ok(lastRequest);
+  const repair = JSON.parse(lastRequest.body);
+  assert.deepEqual(
+    repair.tools.map(
+      (tool: { name?: string; function?: { name: string } }) => tool.name ?? tool.function?.name,
+    ),
+    ["finish_task"],
+  );
+});
+
+test("a revised request restores research tools after an older delivery-only review", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, { text: () => "Updated answer." });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "What is the current count?" });
+  await f.db.put("owner", "tasks", {
+    ...task,
+    state: {
+      ...task.state,
+      desiredRevision: 1,
+      appliedRevision: 1,
+      researchDeliveryReview: {
+        revision: 0,
+        complete: false,
+        needsMoreResearch: false,
+        attempts: 3,
+        repairAttempts: 1,
+        missing: ["Formatting"],
+        nextSteps: ["Use bullets"],
+      },
+    },
+  });
+  await f.agent.worker.tick();
+  const firstRequest = fixture.requests.at(0);
+  assert.ok(firstRequest);
+  const tools = JSON.parse(firstRequest.body).tools.map(
+    (tool: { name?: string; function?: { name: string } }) => tool.name ?? tool.function?.name,
+  );
+  assert.ok(tools.includes("web_fetch"), "A new revision must be allowed to acquire new facts");
+});

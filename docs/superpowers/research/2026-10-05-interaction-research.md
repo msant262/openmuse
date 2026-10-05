@@ -30,7 +30,9 @@ absent handler for ordinary text.
 - Reply/react controls are visible within message bounds. Long press and the
   copy/share menu remain available. Stickers use the existing animated renderer,
   including visibility/reduced-motion handling.
-- GIF discovery reads actual media metadata from returned Tenor pages. `send_gif`
+- GIF discovery reads linked images in the public Tenor catalog first, then actual
+  media metadata from search-discovered Tenor pages. This avoids general-search
+  outages and overconstrained mood queries. `send_gif`
   validates a public HTTPS target. Failed discovery can use an animated sticker;
   it never fabricates a media URL. Android's existing animated-GIF support is on.
 - Search, fetch and batch extraction schemas are immediately visible. Extraction
@@ -68,4 +70,61 @@ playing sticker video. No browser exceptions were observed. This uses the actual
 exported application and a separate seeded server, not component mocks.
 
 Detailed private receipts are under ignored `artifacts/interaction-research/`.
-Release and final verification receipts will be recorded after acceptance. A long GIF mood query could overconstrain discovery; lookup now broadens to the first two distinct mood keywords before returning no media, with a regression test.
+A canonical isolated run (`cc6cccb`, one admission, no inbox double dispatch)
+found the actual count but still failed. Its first two rejected deliveries spent
+the research retry allowance; its third delivery had the count and needed only
+wording, attribution and removal of unsupported extras. That was incorrectly
+terminal. Delivery repairs now have their own bounded allowance, and the tool
+schema exposes only `finish_task` while those repairs run. The regression failed
+before this change and passes afterwards. Voice composition preserves literal
+number spellings and source URLs so that added guessed links cannot force a
+fallback to the worker draft.
+
+## Resumed validation
+
+The interrupted final suite had no completion receipt. A new run passed 1,350
+tests, including a regression added during the continuation: a delivery-only
+review from a previous task revision must not hide research tools after the
+request changes. TypeScript passed for server and mobile.
+
+The first resumed live script incorrectly required a text reply alongside a
+successful GIF receipt. The actual GIF was delivered; the script now accepts a
+successful quoted reply, sticker or GIF as a visible answer and explicitly checks
+requested media delivery.
+
+Candidate `d7ebecc` exposed two further failures. Responses returned commentary
+and a final acknowledgment in the same inference, creating two confirmations.
+Reply composition now prefers final text, retaining commentary only when a
+verified response contains no final text. Other turns preserve their existing
+message boundaries, and tool receipts are unchanged. Tests exercise both phases,
+commentary-only output, and the normal streaming behavior through the real SDK.
+
+The research also treated an HTTP dashboard template as readable evidence:
+BBC's initial HTML included a default 0% and unresolved `{day}`/`{time}` fields.
+The task stopped without reading the populated widget. Script-backed content
+with multiple unresolved bindings is now partial, triggering the existing batch
+HTTP-to-headless recovery. Code/pre examples are excluded from detection. A test
+reproduced the missed render before the change, and the captured BBC HTML now
+returns partial. This does not change the source's data or assert a current count.
+
+Candidate `595b764` completed the original question with the real subscription
+model and saved history. It read G1's observed JSON endpoint, delivered candidate
+vote totals and percentages in bullets, and attributed the source and consultation
+time. The third review accepted the result. Reaction, quoted reply, requested
+sticker and requested GIF all have successful receipts; handoff produced one
+acknowledgment. The formal profile answered without emoji or visible reactions.
+
+The live script's final assertion rejected even a reaction-removal call
+(`emoji: null`). That call left no reaction, so the check was corrected to inspect
+the actual persisted result. `live-verification.json` records this original exit
+and the successful independent validation of all saved receipts; it is not
+presented as a clean exit of the original script. The selected Tenor media was
+also downloaded and verified as an animated GIF.
+
+The final local suite passed **1,354 tests** with no failures. Server/mobile
+TypeScript and the candidate image build passed. Biome on the changed code had
+zero errors, six existing non-null warnings and one existing string-style notice.
+The server candidate retains the deployed base's scope; unrelated local memory
+and context-compaction work remains outside this release.
+
+Release and final public verification receipts will be recorded after deployment.

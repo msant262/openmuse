@@ -197,14 +197,15 @@ export function htmlNodes(node: Node, predicate: (node: Node) => boolean): Node[
   }
   return found;
 }
-export function htmlText(node: Node): string {
+export function htmlText(node: Node, excludedTags: readonly string[] = []): string {
   const text: string[] = [],
     pending = [node];
   while (pending.length) {
     const current = pending.pop()!;
     if (
       "tagName" in current &&
-      /^(script|style|noscript|template|svg|canvas|iframe)$/.test(current.tagName)
+      (/^(script|style|noscript|template|svg|canvas|iframe)$/.test(current.tagName) ||
+        excludedTags.includes(current.tagName))
     )
       continue;
     if (
@@ -492,6 +493,16 @@ export class PublicWeb {
             htmlText(node).length > 0)
         );
       }).length > 0;
+    const hasScripts = htmlNodes(root, (node) => node.nodeName === "script").length > 0;
+    // Live widgets can contain substantial article text while their data is
+    // still a template. Default zero counts beside unresolved fields are not
+    // observed results. Code examples remain ordinary readable content.
+    const unresolvedBindings =
+      html &&
+      hasScripts &&
+      new Set(
+        htmlText(main ?? root, ["code", "pre"]).match(/\{\{?\s*[A-Za-z_$][\w.$-]*\s*\}?\}/g) ?? [],
+      ).size >= 2;
     const shell =
       html &&
       !products.length &&
@@ -499,7 +510,7 @@ export class PublicWeb {
       htmlNodes(root, (node) => node.nodeName === "script" && Boolean(htmlAttribute(node, "src")))
         .length > 0;
     const extraction =
-      pending || (shell && !data.embedded && !products.length)
+      pending || unresolvedBindings || (shell && !data.embedded && !products.length)
         ? {
             status: "partial" as const,
             reason:
