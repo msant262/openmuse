@@ -921,6 +921,27 @@ function FileDetail({ file: initial, embedded = false }: { file: Artifact; embed
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  useEffect(() => {
+    if (!/\.(pptx|docx)$/i.test(f.name)) return;
+    let active = true;
+    setPreview(undefined);
+    setPreviewLoading(true);
+    void api
+      .request<Artifact>(`/api/files/${f.id}/preview`, {})
+      .then((file) => {
+        if (active) setPreview(file);
+      })
+      .catch(() => {
+        // Imported Office files retain the existing native conversion option.
+      })
+      .finally(() => {
+        if (active) setPreviewLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, f.id, f.name]);
   const url = api.url(f.url || `/api/files/${f.id}/content`);
   async function fill() {
     setBusy(true);
@@ -1085,6 +1106,18 @@ function FileDetail({ file: initial, embedded = false }: { file: Artifact; embed
               />
             ) : hasFileContentPreview(f) ? (
               <FileContentPreview file={f} url={url} height={previewHeight + 46} />
+            ) : previewLoading ? (
+              <View
+                style={{
+                  minHeight: previewHeight,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <ActivityIndicator color={colors.blueDark} />
+                <Text style={s.muted}>{t("Preparing document preview…")}</Text>
+              </View>
             ) : preview ? (
               <PdfReader
                 url={api.url(preview.url)}

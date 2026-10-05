@@ -54,3 +54,14 @@ before publication. This adapter does not install Google Pub/Sub, `gog`, or
 assume background support from an arbitrary MCP connector. Gmail change polling
 uses [`users.getProfile.historyId`](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users/getProfile)
 without downloading message bodies. Disconnected and partial coverage is explicit.
+
+## Conversation continuity (5 October)
+
+`engine/openclaw/history-turns.ts` copies `limitHistoryTurns` from
+`src/agents/embedded-agent-runner/history.ts` at `b56ae70a5e7e302dc2165c96b60214e84e19c7b1`.
+The message type is generalized; user-turn boundaries, prelude retention and
+batched eviction are unchanged. `engine/delegated-context.ts` adapts the
+parent-transcript fork contract in `subagents/spawn/subagent-spawn-context.ts`
+to this application's authenticated canonical transcript and task store. Prior
+source receipts and exact user messages accompany the new task, while effect
+authority and operation journals stay in the existing worker.

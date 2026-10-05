@@ -985,6 +985,9 @@ export async function createApp(
   app.get("/api/files/:id", async (c) =>
     c.json(files.signed(c.get("owner"), await files.get(c.get("owner"), c.req.param("id")))),
   );
+  app.post("/api/files/:id/preview", async (c) =>
+    c.json(await agent.media.previewDocument(c.get("owner"), c.req.param("id"), c.req.raw.signal)),
+  );
   app.post("/api/files/:id/fill", async (c) => {
     const body = z
       .object({ fields: z.record(z.string(), z.union([z.string(), z.boolean()])) })

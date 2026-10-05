@@ -1,7 +1,9 @@
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { type DefaultTreeAdapterMap, parse } from "parse5";
 import { type Resolver, validatePublicUrl } from "../../worker/src/network.ts";
+import { type PublicDataQuery, selectPublicData } from "./public-data.ts";
 
 const maxBytes = 2 * 1024 * 1024;
 const maxText = 30000;
@@ -30,7 +32,7 @@ export const publicReadDescription =
   "Read public HTML/JSON over HTTP, including embedded application JSON and published data/API URLs. Default auto never launches a browser. Inspect dataSources and prefer relevant API/MCP tools before requesting mode=headless for JavaScript-only data. Headless uses the VPS, never the personal graphical browser. mode=browser is a legacy alias for headless. Partial content is not verified evidence.";
 
 export const publicResearchInstructions =
-  " For ordinary public research, start with search_web; its schema is already available. Read relevant result URLs with web_extract, which handles multiple sources and HTTP-to-headless recovery in one call. Prefer a configured structured API when it directly provides the requested data; use search_app_tools for connected-app data when relevant. Tool discovery searches capabilities, not news or factual answers. Do not invent endpoints, install connectors, or ask for new credentials for a public lookup. Next use search_web and web_fetch HTTP, inspecting embedded JSON and dataSources for published public data endpoints. Fetch relevant data URLs directly with web_fetch before rendering. If those paths are unavailable or insufficient, explicitly call web_fetch mode=headless for JavaScript/network data; this never opens the personal graphical browser. Only use personal/graphical navigation as a last resort for a task that actually requires interactive/session access. WebMCP is a site/browser capability, not a universal HTTP API: use it only when actually exposed by an available supported tool. Never claim a MCP/WebMCP/API was tried without a tool receipt. Stop when the requested facts are obtained, retain successful evidence after later failures, and declare outcome=partial when the requested data remains missing. Headless navigation and pending application data each get up to 60 seconds, returning sooner when ready. A deadline limits resource use; waiting a fixed number of seconds does not verify data.";
+  " For ordinary public research, start with search_web; its schema is already available. Read relevant result URLs with web_extract, which handles multiple sources and HTTP-to-headless recovery in one call. Prefer a configured structured API when it directly provides the requested data; use search_app_tools for connected-app data when relevant. Tool discovery searches capabilities, not news or factual answers. Use discovered endpoints and published URL templates with parameters grounded in the observed site configuration. A successful source read establishes the values. Do not invent endpoints, install connectors, or ask for new credentials for a public lookup. Next use search_web and web_fetch HTTP, inspecting embedded JSON and dataSources for published public data endpoints. Fetch relevant data URLs directly before rendering. For large JSON datasets use read_web_data: inspect the root structure, select an exact JSON pointer and the needed fields, then page through all requested rows. A read limit or omitted middle is not absence of data; retrieve the missing rows. Never launch a browser to read a large JSON file. If those paths are unavailable or insufficient, explicitly call web_fetch mode=headless for JavaScript/network data; this never opens the personal graphical browser. Only use personal/graphical navigation as a last resort for a task that actually requires interactive/session access. WebMCP is a site/browser capability, not a universal HTTP API: use it only when actually exposed by an available supported tool. Never claim a MCP/WebMCP/API was tried without a tool receipt. Stop when the requested facts are obtained, retain successful evidence after later failures, and declare outcome=partial when the requested data remains missing. Headless navigation and pending application data each get up to 60 seconds, returning sooner when ready. A deadline limits resource use; waiting a fixed number of seconds does not verify data.";
 
 function pageData(root: Node, base: string) {
   const dataSources: { url: string; kind: string }[] = [];
@@ -97,7 +99,11 @@ function pageData(root: Node, base: string) {
 
 /** Every request connects to the validated address, preserving Host/TLS hostname.
  * No cookies, ambient authentication, proxy credentials or browser session are used. */
-export function requestPublicPage(target: Target, signal: AbortSignal): Promise<Response> {
+export function requestPublicPage(
+  target: Target,
+  signal: AbortSignal,
+  byteLimit = maxBytes,
+): Promise<Response> {
   return new Promise((resolve, reject) => {
     const request = target.url.protocol === "https:" ? httpsRequest : httpRequest;
     const outgoing = request(
@@ -123,17 +129,28 @@ export function requestPublicPage(target: Target, signal: AbortSignal): Promise<
           resolve({ status, headers: incoming.headers, body: "" });
           return;
         }
-        if (Number(incoming.headers["content-length"]) > maxBytes) {
+        if (Number(incoming.headers["content-length"]) > byteLimit) {
           incoming.destroy();
           reject(
-            new WebReadError("PAGE_TOO_LARGE", "The public page exceeds the 2 MiB read limit."),
+            new WebReadError(
+              "PAGE_TOO_LARGE",
+              `The public page exceeds the ${byteLimit / 1024 / 1024} MiB read limit. Use read_web_data for a large published JSON dataset.`,
+            ),
           );
           return;
         }
-        if (
-          incoming.headers["content-encoding"] &&
-          incoming.headers["content-encoding"] !== "identity"
-        ) {
+        const encoding = String(incoming.headers["content-encoding"] ?? "identity")
+          .trim()
+          .toLowerCase();
+        const decoder =
+          encoding === "gzip"
+            ? createGunzip()
+            : encoding === "deflate"
+              ? createInflate()
+              : encoding === "br"
+                ? createBrotliDecompress()
+                : undefined;
+        if (encoding !== "identity" && !decoder) {
           incoming.destroy();
           reject(
             new WebReadError(
@@ -143,19 +160,36 @@ export function requestPublicPage(target: Target, signal: AbortSignal): Promise<
           );
           return;
         }
+        const content = decoder ?? incoming;
+        if (decoder) {
+          const abort = () => {
+            decoder.destroy();
+            incoming.destroy();
+            reject(signal.reason ?? new Error("Read aborted"));
+          };
+          signal.addEventListener("abort", abort, { once: true });
+          decoder.once("close", () => signal.removeEventListener("abort", abort));
+          incoming.on("error", (error) => decoder.destroy(error));
+          incoming.on("aborted", () => decoder.destroy(new Error("Public response interrupted")));
+          incoming.pipe(decoder);
+        }
         const chunks: Buffer[] = [];
         let bytes = 0;
-        incoming.on("data", (chunk: Buffer) => {
+        content.on("data", (chunk: Buffer) => {
           bytes += chunk.length;
-          if (bytes > maxBytes) {
+          if (bytes > byteLimit) {
+            content.destroy();
             incoming.destroy();
             reject(
-              new WebReadError("PAGE_TOO_LARGE", "The public page exceeds the 2 MiB read limit."),
+              new WebReadError(
+                "PAGE_TOO_LARGE",
+                `The public page exceeds the ${byteLimit / 1024 / 1024} MiB read limit. Use read_web_data for a large published JSON dataset.`,
+              ),
             );
           } else chunks.push(chunk);
         });
-        incoming.on("error", reject);
-        incoming.on("end", () => {
+        content.on("error", reject);
+        content.on("end", () => {
           try {
             const charset =
               String(incoming.headers["content-type"] ?? "").match(
@@ -322,11 +356,30 @@ export class PublicWeb {
   constructor(
     private readonly dependencies: { resolve?: Resolver; request?: typeof requestPublicPage } = {},
   ) {}
+  async readData(url: string, query: PublicDataQuery = {}, signal?: AbortSignal) {
+    const document = await this.document(url, signal, 16 * 1024 * 1024);
+    let data: unknown;
+    try {
+      data = JSON.parse(document.body);
+    } catch {
+      throw new WebReadError(
+        "INVALID_JSON",
+        "This source is not valid JSON; use web_fetch for an HTML page.",
+      );
+    }
+    const result = selectPublicData(data, query);
+    return {
+      ...result,
+      url: document.url,
+      observedAt: new Date().toISOString(),
+      bytes: Buffer.byteLength(document.body),
+    };
+  }
   async validate(url: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
     return abortable(validatePublicUrl(url, this.dependencies.resolve), signal);
   }
-  async document(rawUrl: string, externalSignal?: AbortSignal) {
+  async document(rawUrl: string, externalSignal?: AbortSignal, byteLimit = maxBytes) {
     const signal = AbortSignal.any([
       ...(externalSignal ? [externalSignal] : []),
       AbortSignal.timeout(20000),
@@ -339,7 +392,7 @@ export class PublicWeb {
       const request = this.dependencies.request ?? requestPublicPage;
       let response: Response;
       try {
-        response = await request(target, signal);
+        response = await request(target, signal, byteLimit);
       } catch (error) {
         signal.throwIfAborted();
         if (
@@ -349,7 +402,7 @@ export class PublicWeb {
           !["ECONNRESET", "EPIPE"].includes(String(error.code))
         )
           throw error;
-        response = await request(await this.validate(url, signal), signal);
+        response = await request(await this.validate(url, signal), signal, byteLimit);
       }
       signal.throwIfAborted();
       if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -364,8 +417,11 @@ export class PublicWeb {
           `HTTP_${response.status}`,
           `The public page returned HTTP ${response.status}; its content was not verified.`,
         );
-      if (Buffer.byteLength(response.body) > maxBytes)
-        throw new WebReadError("PAGE_TOO_LARGE", "The public page exceeds the 2 MiB read limit.");
+      if (Buffer.byteLength(response.body) > byteLimit)
+        throw new WebReadError(
+          "PAGE_TOO_LARGE",
+          `The public page exceeds the ${byteLimit / 1024 / 1024} MiB limit. Use read_web_data for a large published JSON dataset.`,
+        );
       const contentType = String(response.headers["content-type"] ?? "")
         .split(";")[0]
         .trim()
@@ -455,6 +511,30 @@ export class PublicWeb {
   }
   private async readHttp(url: string, signal?: AbortSignal) {
     const document = await this.document(url, signal);
+    if (/json/.test(document.contentType) && document.body.length > maxText) {
+      let data: unknown;
+      try {
+        data = JSON.parse(document.body);
+      } catch {
+        throw new WebReadError("INVALID_JSON", "This source is not valid JSON.");
+      }
+      const projection = selectPublicData(data);
+      return {
+        url: document.url,
+        title: new URL(document.url).hostname,
+        text: JSON.stringify(projection).slice(0, maxText),
+        links: [],
+        dataSources: [{ url: document.url, kind: "published-data-link" }],
+        extraction: {
+          status: "partial" as const,
+          reason:
+            "This JSON dataset exceeds the text preview. Use read_web_data with this URL, a pointer and selected fields from the structure below. Page using nextOffset until all requested rows are read; do not infer missing values from this preview or render the JSON in a browser.",
+        },
+        truncated: true,
+        observedAt: new Date().toISOString(),
+        provenance: { backend: "http" as const, authenticated: false as const },
+      };
+    }
     const root = parse(document.body);
     const html = /html/.test(document.contentType);
     const title = html

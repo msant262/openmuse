@@ -2,7 +2,10 @@ import datetime
 import threading
 import unittest
 import uuid
-from desktop.broker import DesktopBroker, DesktopOperationError
+import tempfile
+from pathlib import Path
+from unittest.mock import Mock, patch
+from desktop.broker import DesktopBroker, DesktopOperationError, NativeBrowser
 from desktop.driver import DesktopDriver
 
 
@@ -85,5 +88,24 @@ class BrokerTests(unittest.TestCase):
         self.assertTrue(failure.exception.dispatched)
         self.assertFalse(failure.exception.cleanup_confirmed)
 
+
+class BrowserRestartTests(unittest.TestCase):
+    def test_control_changes_survive_a_browser_worker_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            browser=NativeBrowser({"browserSessionId":"session","sessionGeneration":"generation","profileId":"personal","width":640,"height":360},Path(directory),Path(directory),{"DISPLAY":":71","XAUTHORITY":"authority"},"worker.js")
+            browser.reset("human",10)
+            browser.reset("agent",11)
+            process=Mock();process.poll.return_value=None
+            def launched(*args,**kwargs):
+                browser.socket.touch()
+                return process
+            with patch("desktop.broker.subprocess.Popen",side_effect=launched), patch("desktop.broker.exchange") as exchange:
+                browser.start()
+                self.assertEqual(exchange.call_args.args[1]["controlRevision"],11)
+                self.assertEqual(exchange.call_args.args[1]["control"],"agent")
+                self.assertEqual(exchange.call_count,1)
+                browser.reset("human",12)
+                self.assertEqual(exchange.call_args.args[1]["controlRevision"],12)
+                self.assertEqual(exchange.call_count,2)
 
 if __name__ == "__main__":unittest.main()

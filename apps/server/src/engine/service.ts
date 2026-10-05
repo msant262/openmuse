@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { Message } from "@ag-ui/core";
 import { z } from "zod";
 import {
   type AgentArtifact,
@@ -70,6 +71,7 @@ import type { LocalThreads } from "../threads.ts";
 import type { WorkspaceService } from "../workspace.ts";
 import { readComputerCommand, reconcileWaitingComputerTasks } from "./computer-jobs.ts";
 import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
+import { delegatedContext } from "./delegated-context.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
 import { MonitorObservations, type MonitorPage } from "./monitor-observations.ts";
@@ -625,6 +627,7 @@ export class AgentService {
     held = false,
     parent?: { id: string; rootTaskId: string },
     originalUserPrompt?: string,
+    conversationMessages?: Message[],
   ) {
     const input = taskInput(raw);
     const goal = input.goalId ? await this.getGoal(owner, input.goalId) : undefined;
@@ -648,7 +651,15 @@ export class AgentService {
         .length >= 100
     )
       throw new AppError("Finish or cancel some tasks before adding more", 409);
-    const task = await this.taskRecord(owner, input, id, held, parent, originalUserPrompt);
+    const task = await this.taskRecord(
+      owner,
+      input,
+      id,
+      held,
+      parent,
+      originalUserPrompt,
+      conversationMessages,
+    );
     await this.ensure(owner);
     if (goal && (milestone || this.config.mode === "live")) {
       const milestones = milestone
@@ -695,6 +706,7 @@ export class AgentService {
     held = false,
     parent?: { id: string; rootTaskId: string },
     originalUserPrompt?: string,
+    conversationMessages?: Message[],
   ): Promise<AgentTask> {
     const input = taskInput(raw);
     const titles =
@@ -732,6 +744,17 @@ export class AgentService {
         appliedRevision: 0,
         mailboxSeq: 0,
         appliedMailboxSeq: 0,
+        ...(conversationMessages
+          ? {
+              conversationContext: delegatedContext(
+                conversationMessages,
+                (await this.db.list<AgentTask>(owner, "tasks"))
+                  .filter((t) => t.originThreadId === input.originThreadId)
+                  .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+                input.originMessageId,
+              ),
+            }
+          : {}),
         ...(originalUserPrompt && originalUserPrompt !== input.prompt
           ? { delegatedBrief: input.prompt }
           : {}),
@@ -1846,6 +1869,16 @@ export class AgentService {
     );
     return {
       status: completion.status === "verified" ? ("succeeded" as const) : ("failed" as const),
+      plan:
+        completion.status === "verified"
+          ? task.plan.map((step) => ({
+              ...step,
+              status:
+                step.status === "cancelled" || step.status === "failed"
+                  ? step.status
+                  : ("succeeded" as const),
+            }))
+          : task.plan,
       result,
       completion,
       question: "",

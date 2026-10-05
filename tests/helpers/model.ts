@@ -26,6 +26,12 @@ export function richChatFixtureProviders(dataDir: string, models = ["openai/fixt
 }
 
 type ModelCall = { name: string; arguments: object };
+type OfferedTool = {
+  name?: string;
+  tools?: OfferedTool[];
+  function?: OfferedTool;
+  parameters?: { properties?: Record<string, unknown> };
+};
 
 // Serve the provider protocol, leaving tool execution and AG-UI event emission to the real SDK.
 export async function modelFixture(
@@ -160,6 +166,15 @@ export async function modelFixture(
       return;
     }
     const call = isReview ? undefined : await reply(index);
+    // The handoff schema requires an explicit choice for its two conversation
+    // fields. Older scenarios exercise task admission, so choose no social reply.
+    const offered: OfferedTool[] = JSON.parse(body).tools ?? [];
+    const flattened = offered.flatMap((tool) => tool.tools ?? [tool]);
+    const delegate = flattened
+      .map((tool) => tool.function ?? tool)
+      .find((tool) => tool.name === "delegate_task");
+    if (call?.name === "delegate_task" && delegate?.parameters?.properties?.acknowledgment)
+      call.arguments = { acknowledgment: null, reaction: null, ...call.arguments };
     // Existing tests isolate the execution loop. Dedicated review tests supply
     // rejection/repair decisions at this external model boundary.
     const text = isReview

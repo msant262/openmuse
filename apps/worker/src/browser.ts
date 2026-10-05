@@ -60,6 +60,22 @@ export function validateSessionId(id: unknown): string {
   return id.toLowerCase();
 }
 
+/** A closed tab has no browser input to release. Physical desktop input is
+ * reset separately by the desktop broker before it confirms a control change. */
+export async function resetBrowserInput(page: Pick<Page, "isClosed" | "keyboard" | "mouse">) {
+  if (page.isClosed()) return;
+  try {
+    await Promise.all([
+      ...["Shift", "Control", "Alt", "Meta"].map((key) => page.keyboard.up(key)),
+      page.mouse.up(),
+    ]);
+  } catch (error) {
+    // The user can close the window while a control change releases input.
+    // A still-open page with a failed release remains an unconfirmed operation.
+    if (!page.isClosed()) throw error;
+  }
+}
+
 export async function createBrowserManager(options: {
   token?: string;
   dataDir: string;
@@ -277,6 +293,13 @@ export async function createBrowserManager(options: {
   async function createSession(id: string, url: string, agent = true) {
     if (agent) guardAgent(id);
     await validatePublicUrl(url);
+    const closed = running.get(id);
+    if (closed?.page.isClosed()) {
+      await closed.agent.invalidate();
+      await closed.context.close();
+      await Promise.allSettled(closed.pending);
+      running.delete(id);
+    }
     if (running.has(id)) return navigate(id, url, agent);
     if (running.size >= maxSessions)
       throw new WorkerError(
@@ -354,8 +377,11 @@ export async function createBrowserManager(options: {
         }
       });
       await context.routeWebSocket("**/*", (socket) => socket.close());
-      for (const old of context.pages()) await old.close();
+      // Headed Chromium exits when its last window closes. Keep the new tab
+      // alive before retiring the startup/restored tabs.
+      const oldPages = context.pages();
       const page = await context.newPage();
+      for (const old of oldPages) await old.close();
       page.setDefaultTimeout(10_000);
       const instance: Running = {
         publicData: observePublicDataRequests(page),
@@ -453,10 +479,7 @@ export async function createBrowserManager(options: {
       const instance = running.get(id);
       if (!instance) return;
       await instance.agent.invalidate();
-      await Promise.all([
-        ...["Shift", "Control", "Alt", "Meta"].map((key) => instance.page.keyboard.up(key)),
-        instance.page.mouse.up(),
-      ]);
+      await resetBrowserInput(instance.page);
     },
     create: (id: string, url: string, agent = true) => {
       const session = sessions.get(id);

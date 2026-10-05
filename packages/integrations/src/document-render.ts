@@ -131,6 +131,7 @@ export async function renderDocument(
   signal?: AbortSignal,
 ): Promise<{
   bytes: Uint8Array;
+  pdfBytes: Uint8Array;
   pageCount: number;
   pages: number[];
   width: number;
@@ -257,6 +258,7 @@ export async function renderDocument(
       signal.throwIfAborted();
       return {
         bytes: png,
+        pdfBytes,
         pageCount: pdf.numPages,
         pages,
         width: sheet.width,

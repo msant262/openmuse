@@ -136,6 +136,10 @@ export function taskPreview(task: AgentTask) {
     task.question ||
     task.result ||
     task.error ||
+    (task.status === "running" &&
+    typeof (task.state.currentActivity as { title?: string } | undefined)?.title === "string"
+      ? (task.state.currentActivity as { title: string }).title
+      : "") ||
     task.plan.find((step) => step.status === "running" || step.status === "waiting")?.title ||
     "";
   const credential = credentialStatusSummary(text);

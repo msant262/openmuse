@@ -30,6 +30,7 @@ import {
 } from "lucide-react-native";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Linking,
   Modal,
   Platform,
@@ -990,7 +991,15 @@ export function AgentInspector({
                   style={({ pressed }) => [d.activityRow, pressed && d.activeItem]}
                 >
                   <View style={[d.activityIcon, compact && { width: 42, height: 42 }]}>
-                    <RowIcon size={17} strokeWidth={1.6} color={colors.muted} />
+                    {task.status === "running" ? (
+                      <ActivityIndicator
+                        accessibilityLabel={t("Working on your request")}
+                        size="small"
+                        color={colors.blueDark}
+                      />
+                    ) : (
+                      <RowIcon size={17} strokeWidth={1.6} color={colors.muted} />
+                    )}
                   </View>
                   <View style={{ flex: 1, gap: 4 }}>
                     <Text

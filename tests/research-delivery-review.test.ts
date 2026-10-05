@@ -218,6 +218,79 @@ test("automatic recovery uses ranked sources, not analytics JSON observed on a p
   assert.deepEqual(researchRecoverySources(operations), ["https://alternative.example/live"]);
 });
 
+test("a follow-up recovers from sources observed in the parent conversation when its new searches fail", async (t) => {
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      i === 0
+        ? { name: "web_fetch", arguments: { url: "https://official.example/selector" } }
+        : {
+            name: "finish_task",
+            arguments: {
+              summary:
+                i < 3 ? "No results." : "A: 52%, 12345 votes. Source: https://news.example/live",
+            },
+          },
+    {
+      researchReview: (body) =>
+        body.includes("12345")
+          ? { complete: true, missing: [], nextSteps: [] }
+          : {
+              complete: false,
+              missing: ["Actual count"],
+              nextSteps: ["Read a previously observed source"],
+            },
+    },
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: url.includes("news.example")
+      ? "<main>Candidate A: 52%, 12345 votes.</main>"
+      : "<main>Select an election to see results.</main>",
+  }));
+  const task = await f.agent.createTask(
+    "owner",
+    {
+      prompt: "Show the count from that conversation",
+    },
+    "durable-conversation-admission",
+  );
+  await f.db.put("owner", "tasks", {
+    ...task,
+    state: {
+      ...task.state,
+      conversationContext: {
+        messages: [],
+        priorResults: [
+          {
+            taskId: "previous",
+            evidence: [
+              { kind: "web", url: "https://news.example/live", acquiredAt: "2026-10-04T00:00:00Z" },
+              { kind: "file", url: "https://unrelated.example/private-document" },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  await f.agent.worker.tick();
+  assert.equal((await f.agent.getTask("owner", task.id)).status, "succeeded");
+  assert.ok(read.mock.calls.some((call) => call.arguments[0] === "https://news.example/live"));
+  assert.ok(!read.mock.calls.some((call) => call.arguments[0].includes("unrelated.example")));
+  assert.equal(task.id.length, 64);
+  for (const request of fixture.requests) {
+    const input = JSON.parse(request.body).input ?? [];
+    for (const message of input)
+      if (message.call_id)
+        assert.ok(
+          message.call_id.length <= 64,
+          "provider call IDs must fit even with deterministic task IDs",
+        );
+  }
+});
+
 test("facts obtained after two failed searches still get a bounded delivery repair without more browsing", async (t) => {
   const fixture = await modelFixture(
     t,
@@ -274,6 +347,71 @@ test("facts obtained after two failed searches still get a bounded delivery repa
       (tool: { name?: string; function?: { name: string } }) => tool.name ?? tool.function?.name,
     ),
     ["finish_task"],
+  );
+});
+
+test("artifact delivery repair keeps authoring tools available after the facts are verified", async (t) => {
+  let repairOffered = false;
+  const fixture = await modelFixture(
+    t,
+    (i) => {
+      if (i === 0) return { name: "web_fetch", arguments: { url: "https://news.example/live" } };
+      if (i === 1 || i === 3) {
+        if (i === 3) {
+          const tools = JSON.parse(fixture.requests[i].body).tools.map(
+            (tool: { name: string }) => tool.name,
+          );
+          repairOffered = tools.includes("create_document") || tools.includes("search_tools");
+          assert.ok(!tools.includes("web_fetch"), "a visual repair must not restart research");
+        }
+        return {
+          name: "create_document",
+          arguments: {
+            name: "Count",
+            format: "text",
+            operationId: `draft-${i}`,
+            content:
+              i === 1
+                ? "A: 52%; B: 48%. Source: user."
+                : "A: 52%; B: 48%. Source: https://news.example/live",
+          },
+        };
+      }
+      return { name: "finish_task", arguments: { summary: "Created the requested count file." } };
+    },
+    {
+      researchReview: (_body, i) =>
+        i === 0
+          ? {
+              complete: false,
+              needsMoreResearch: false,
+              missing: ["The file incorrectly attributes the observed data to the user"],
+              nextSteps: ["Create a corrected file with the observed source attribution"],
+            }
+          : { complete: true, needsMoreResearch: false, missing: [], nextSteps: [] },
+    },
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "<main>A: 52%; B: 48%.</main>",
+  }));
+  const task = await f.agent.createTask("owner", {
+    prompt: "Research the count and create a TXT file with the results and source.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.result);
+  assert.ok(repairOffered);
+  assert.equal(read.mock.callCount(), 1);
+  const creates = (await f.agent.journal.operations("owner", task.id)).filter(
+    (op) => op.toolName === "create_document" && op.status === "succeeded",
+  );
+  assert.equal(
+    creates.length,
+    2,
+    "the rejected artifact must actually be revised before finishing",
   );
 });
 

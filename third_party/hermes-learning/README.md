@@ -58,3 +58,12 @@ does not rewrite methods using a model. SOUL is outside every maintenance path.
 
 
 [Conversation actions and extraction recovery](CONVERSATION-EXTRACTION.md) documents additional Hermes code adapted on 5 October.
+
+## Task progress (5 October)
+
+`engine/hermes/todo-store.ts` ports the executable `TodoStore` write/merge,
+last-ID deduplication, active-step ordering, cycle/dangling-parent cleanup and
+bounded snapshots from `tools/todo_tool.py` at `1298c8e74baa73e1a2b90124228d017261ac6bc4`.
+The existing durable task checkpoints supply persistence and monotonic revisions.
+The `todo_list` tool is immediately available; its active list is re-injected
+on subsequent inference and the UI reads the same persisted step statuses.

@@ -168,7 +168,12 @@ export function TaskCard({
       })}
     >
       <View style={{ width: 30, paddingTop: 2 }}>
-        {task.status === "succeeded" ? (
+        {task.status === "running" ? (
+          <ActivityIndicator
+            accessibilityLabel={t("Working on your request")}
+            color={colors.blueDark}
+          />
+        ) : task.status === "succeeded" ? (
           <CheckCircle2 size={20} color={colors.success} />
         ) : waiting ? (
           <Circle size={20} color={colors.danger} />
@@ -608,11 +613,17 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
     <Sheet
       title={task?.title || "Task"}
       headerAccessory={
-        <Text
-          style={[s.small, { color: task?.status === "succeeded" ? colors.success : colors.muted }]}
-        >
-          {task ? t(statusLabel(task.status)) : t("Loading saved progress…")}
-        </Text>
+        <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+          {task?.status === "running" && <ActivityIndicator size="small" color={colors.blueDark} />}
+          <Text
+            style={[
+              s.small,
+              { color: task?.status === "succeeded" ? colors.success : colors.muted },
+            ]}
+          >
+            {task ? t(statusLabel(task.status)) : t("Loading saved progress…")}
+          </Text>
+        </View>
       }
       onClose={close}
       wide
@@ -659,7 +670,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                 <Text style={s.small}>{stamp(task.createdAt)}</Text>
               </View>
             </Pressable>
-            {!!events.length && !!task.plan.length && (
+            {!!task.plan.length && (
               <Pressable
                 accessibilityRole="button"
                 aria-selected={selected === "plan"}
@@ -703,7 +714,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                       )}
                     </View>
                     <Text style={[s.text, { flex: 1, fontSize: 13, lineHeight: 20 }]}>
-                      {event.title}
+                      {t(event.title)}
                     </Text>
                   </Pressable>
                 ))
@@ -722,13 +733,19 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                         selected === `step:${step.id}` ? colors.subtle : "transparent",
                     }}
                   >
-                    {step.status === "succeeded" ? (
+                    {step.status === "running" ? (
+                      <ActivityIndicator
+                        accessibilityLabel={t("In progress")}
+                        size="small"
+                        color={colors.blueDark}
+                      />
+                    ) : step.status === "succeeded" ? (
                       <CheckCircle2 size={15} color={colors.success} style={{ marginTop: 3 }} />
                     ) : (
                       <Circle size={15} color={colors.muted} style={{ marginTop: 3 }} />
                     )}
                     <Text style={[s.text, { flex: 1, fontSize: 13, lineHeight: 20 }]}>
-                      {step.title}
+                      {t(step.title)}
                     </Text>
                   </Pressable>
                 ))}
@@ -757,15 +774,27 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
             {selected === "plan" ? (
               <View style={{ gap: 20 }}>
                 <Text style={s.heading}>{t("Plan")}</Text>
+                <Text style={s.small}>
+                  {t("{done} of {total} steps completed", {
+                    done: task.plan.filter((step) => step.status === "succeeded").length,
+                    total: task.plan.length,
+                  })}
+                </Text>
                 {task.plan.map((step) => (
                   <View key={step.id} style={{ flexDirection: "row", gap: 12 }}>
-                    {step.status === "succeeded" ? (
+                    {step.status === "running" ? (
+                      <ActivityIndicator
+                        accessibilityLabel={t("In progress")}
+                        size="small"
+                        color={colors.blueDark}
+                      />
+                    ) : step.status === "succeeded" ? (
                       <CheckCircle2 size={19} color={colors.success} />
                     ) : (
                       <Circle size={19} color={colors.muted} />
                     )}
                     <View style={{ flex: 1, gap: 4 }}>
-                      <Text style={s.text}>{step.title}</Text>
+                      <Text style={s.text}>{t(step.title)}</Text>
                       <Text style={s.small}>{t(statusLabel(step.status))}</Text>
                       {!!step.detail && <Text style={s.muted}>{step.detail}</Text>}
                     </View>
@@ -775,7 +804,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
             ) : selected !== "summary" ? (
               <View style={{ gap: 14 }}>
                 <Text style={s.heading}>
-                  {selectedEvent?.title || selectedStep?.title || t("Your request")}
+                  {t(selectedEvent?.title || selectedStep?.title || "Your request")}
                 </Text>
                 {selectedEvent && (
                   <Text style={s.small}>

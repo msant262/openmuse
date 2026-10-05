@@ -278,6 +278,39 @@ export class MediaService {
     await this.db.put(owner, "document-generations", { ...intention, fileId: file.id, sha256 });
     return reference(file.id, appliedDesign);
   }
+  /** Cached private reader preview; authored bytes are checked before Office conversion. */
+  async previewDocument(owner: string, fileId: string, signal?: AbortSignal) {
+    const file = await this.files.get(owner, fileId);
+    const generation = (await this.db.list<DocumentGeneration>(owner, "document-generations")).find(
+      (item) => item.fileId === fileId && item.designVersion === 2,
+    );
+    if (!generation) throw new AppError("Only server-authored documents use this preview", 422);
+    const bytes = await this.files.bytes(owner, fileId);
+    if (hashBytes(bytes) !== generation.sha256)
+      throw new AppError("Document bytes differ from their authoring receipt", 409);
+    const id = hash(`${fileId}:${generation.sha256}:${documentRendererVersion}`);
+    const cached = await this.db.get<{ fileId: string }>(owner, "document-reader-previews", id);
+    if (cached) return this.files.signed(owner, await this.files.get(owner, cached.fileId));
+    const format = file.mimeType.includes("presentationml")
+      ? "pptx"
+      : file.mimeType.includes("wordprocessingml")
+        ? "docx"
+        : undefined;
+    if (!format) throw new AppError("Document format cannot be previewed", 422);
+    const rendered = await renderDocument(bytes, format, 1, 1, signal);
+    signal?.throwIfAborted();
+    const preview = await this.files.importAttachment(
+      owner,
+      file.name.replace(/\.[^.]+$/, ".pdf"),
+      rendered.pdfBytes,
+      "Document reader preview",
+      "application/pdf",
+      `reader:${id}`,
+      true,
+    );
+    await this.db.put(owner, "document-reader-previews", { id, fileId: preview.id });
+    return this.files.signed(owner, preview);
+  }
   async inspectDocument(
     owner: string,
     args: { fileId: string; startPage: number; pageCount: number },

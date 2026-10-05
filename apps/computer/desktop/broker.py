@@ -229,6 +229,7 @@ class NativeBrowser:
         self.proxy_port=proxy_port
         self.socket=Path(runtime)/"browser.sock"
         self.last_gate=None
+        self.last_control=None
     def start(self):
         with self.lock:
             if self.process and self.process.poll() is None:return
@@ -248,6 +249,8 @@ class NativeBrowser:
                 if self.process.poll() is not None or time.monotonic()>deadline:raise ValueError("Native browser failed its sandbox/runtime preflight")
                 time.sleep(.05)
             if self.last_gate:self.gate(self.last_gate)
+            if self.last_control:
+                exchange(self.socket,{**self.last_control,"token":self.token},expected_uid=os.getuid())
     def call(self,payload):
         self.start()
         return exchange(self.socket,{**payload,"token":self.token},expected_uid=os.getuid())
@@ -259,8 +262,9 @@ class NativeBrowser:
         if self.process and self.process.poll() is None and self.socket.exists():
             exchange(self.socket,{"operation":"gate","gate":value,"token":self.token},expected_uid=os.getuid(),timeout=5)
     def reset(self,control,revision):
+        self.last_control={"operation":"reset","control":control,"controlRevision":revision}
         if self.process and self.process.poll() is None:
-            self.call({"operation":"reset","control":control,"controlRevision":revision})
+            exchange(self.socket,{**self.last_control,"token":self.token},expected_uid=os.getuid())
     def perform(self,operation):return self.call({"operation":"perform","envelope":operation})
     def refresh_protection(self):return self.call({"operation":"refresh-protection"})
     def close(self):
