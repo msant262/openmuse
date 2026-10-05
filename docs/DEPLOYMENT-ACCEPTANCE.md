@@ -1,8 +1,26 @@
-# OkamiBot: instalação e aceite em 4 de outubro de 2026
+# OkamiBot: instalação e aceite em 5 de outubro de 2026
 
-**Revisão atual publicada: API `0b0122c`; web e Android `94b47bc`.** A skill
+**Revisão atual publicada: API `4e2f858`; web e Android `94b47bc`.** O SOUL agora
+entra diretamente como instrução de fala e é relido na composição da resposta.
+A confirmação de uma tarefa aceita usa o pedido, o recibo e a voz atual, sem
+repetir o histórico de avisos operacionais. Entregas com SOUL personalizado
+passam por composição sem ferramentas antes das verificações existentes.
+O transporte preserva a separação entre mensagens distintas do provedor.
+
+Passaram **1.339 testes**, 50 testes focados, TypeScript e build. O ensaio com o
+modelo conectado repetiu a pergunta no histórico real, comparou a personalidade
+salva com um perfil formal e verificou a entrega de uma tarefa. A API está
+saudável; SOUL, modelo e avatar foram preservados. Não há atualização de APK
+necessária para esta correção. [Diagnóstico, evidências e limites](superpowers/research/2026-10-05-soul-runtime.md).
+
+## Histórico: primeira integração da humanizer (`0b0122c`)
+
+
+**Revisão anterior publicada: API `0b0122c`; web e Android `94b47bc`.** A skill
 `humanizer` entra automaticamente na conversa e nas tarefas junto ao SOUL.
-O handoff evita confirmações duplicadas; pesquisas em texto passam por revisão
+Uma captura posterior revelou que a confirmação ainda podia conter dois textos
+na mesma inferência e permanecer genérica; a correção acima trata esse caso.
+Pesquisas em texto passam por revisão
 do pedido e dos dados observados. Os modais têm switches e seleções visíveis,
 com salvamento acessível durante a rolagem.
 

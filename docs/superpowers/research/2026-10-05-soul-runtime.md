@@ -45,7 +45,7 @@ ou grau de entusiasmo fixo no código; o texto salvo pelo usuário define isso.
 
 ## Validação
 
-Candidata API: `4e2f858`, aplicada sobre a API anterior `0b0122c` sem incorporar
+API publicada: `4e2f858`, aplicada sobre a API anterior `0b0122c` sem incorporar
 as demais alterações de servidor existentes na branch principal.
 
 Os testes de regressão reproduziram a junção sem espaço e o uso do histórico
@@ -77,5 +77,19 @@ TypeScript de servidor/mobile e build da API. Biome nos arquivos alterados
 terminou sem erros, com quatro avisos de non-null assertion já existentes nos
 testes de provedores. O ensaio conectado final terminou com código 0.
 
-Imagem da candidata: `sha256:4cf07964b0dc0c0de38bef70614387f762a8003ae2e47cd3b7f222d3ffd61d9d`.
+Imagem publicada: `sha256:4cf07964b0dc0c0de38bef70614387f762a8003ae2e47cd3b7f222d3ffd61d9d`.
 Skill humanizer: `00e149befceecebfe361908892937e38656cabb8b26b06210cdef4eb2a4c0da6`.
+
+
+## Publicação
+
+Fonte principal: `9736ba3`; API publicada: `4e2f858`. A troca ocorreu com zero
+tarefas e conversas ativas. A manutenção foi encerrada, a pausa permaneceu
+inalterada na revisão 16 e os registros retidos foram preservados. A imagem
+publicada e o hash da skill correspondem aos artefatos testados. A API pública
+retornou HTTP 200 e o container ficou saudável.
+
+SOUL, revisões do perfil, modelo e avatar conservaram o mesmo digest antes e
+depois: `f0e9bfb1b824e2f020869fc086ebb7cc300c7d924e3b2eff3fd26864740029ff`.
+O pareamento temporário usado na verificação foi revogado. Web e APK permanecem
+em `94b47bc`: esta alteração é de servidor e não exige reinstalar o aplicativo.
