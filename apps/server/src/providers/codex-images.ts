@@ -154,7 +154,9 @@ export function codexImageProvider(config: ModelProviderConfig, upstream: typeof
           body: JSON.stringify({
             model: config.codexResponsesModel ?? "gpt-6-astra",
             instructions:
-              "You are an image generation assistant. Generate the image requested by the user with the image_generation tool.",
+              "You are an image generation assistant. Generate the image requested by the user with the image_generation tool. " +
+              `Current UTC date and time: ${new Date().toISOString()}\n` +
+              "The calling application handles research and verification. Treat its prompt as a rendering brief: preserve supplied text, numerical values, labels and source attribution. Do not invent different factual claims or attribution.",
             input: [{ role: "user", content: [{ type: "input_text", text: body.prompt }] }],
             tools: [{ type: "image_generation", model, size, output_format: "png" }],
             tool_choice: { type: "image_generation" },
