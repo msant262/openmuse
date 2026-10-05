@@ -104,7 +104,13 @@ test("research is handed off immediately and the worker delivers the requested i
   assert.equal(reads, 0, "foreground must not research before starting the worker");
   assert.equal(fixture.requests.length, 2);
   assert.ok(offeredTools(fixture.requests[0].body).includes("delegate_task"));
-  assert.deepEqual(offeredTools(fixture.requests[1].body), []);
+  assert.deepEqual(offeredTools(fixture.requests[1].body), [
+    "react_to_message",
+    "send_sticker",
+    "search_gifs",
+    "send_gif",
+    "reply_to_message",
+  ]);
   assert.match(fixture.requests[0].body, /SOUL/);
   assert.ok(fixture.requests[1].body.includes("Criar infográfico do jardim"));
   assert.ok(
@@ -156,7 +162,13 @@ test("the handoff slot does not queue a second job after image generation was al
       .pipe(toArray()),
   );
   assert.equal((await server.db.list("owner", "tasks")).length, 1);
-  assert.deepEqual(offeredTools(fixture.requests[1].body), []);
+  assert.deepEqual(offeredTools(fixture.requests[1].body), [
+    "react_to_message",
+    "send_sticker",
+    "search_gifs",
+    "send_gif",
+    "reply_to_message",
+  ]);
   assert.equal(fixture.requests.length, 2);
 });
 
@@ -210,7 +222,13 @@ test("a failed delegation does not suppress the reserved handoff", async (t) => 
   assert.equal((await server.db.list("owner", "tasks")).length, 1);
   assert.ok(offeredTools(fixture.requests[1].body).includes("delegate_task"));
   assert.ok(fixture.requests[1].body.includes("Temporary queue admission unavailable"));
-  assert.deepEqual(offeredTools(fixture.requests[2].body), []);
+  assert.deepEqual(offeredTools(fixture.requests[2].body), [
+    "react_to_message",
+    "send_sticker",
+    "search_gifs",
+    "send_gif",
+    "reply_to_message",
+  ]);
   assert.equal(fixture.requests.length, 3);
 });
 

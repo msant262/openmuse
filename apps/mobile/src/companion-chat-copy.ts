@@ -1,4 +1,5 @@
 export const companionChatPtBR: Record<string, string> = {
+  "React to message": "Reagir à mensagem",
   "Loading message…": "Carregando mensagem…",
   "Could not load message details. Reconnecting…":
     "Não foi possível carregar os detalhes das mensagens. Reconectando…",

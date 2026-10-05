@@ -142,7 +142,10 @@ test("research runs in the worker while another chat message gets its own reply"
   const first = await run(agent);
   assert.equal(reads, 0, "no remote research in the foreground");
   assert.equal(fixture.requests.length, 2);
-  assert.deepEqual(JSON.parse(fixture.requests[1].body).tools ?? [], []);
+  assert.deepEqual(
+    (JSON.parse(fixture.requests[1].body).tools ?? []).map((tool: { name: string }) => tool.name),
+    ["react_to_message", "send_sticker", "search_gifs", "send_gif", "reply_to_message"],
+  );
   assert.ok(
     first.some(
       (e) => e.type === EventType.TEXT_MESSAGE_CHUNK && String(e.delta).includes("keep chatting"),
@@ -294,5 +297,8 @@ test("the admitted handoff writes with the current SOUL and receipt without repl
   assert.match(fixture.requests[1].body, /Afetuosa, divertida, com energia de diva/);
   assert.match(fixture.requests[1].body, /Read the article/);
   assert.ok(JSON.stringify(confirmation.input).includes(url));
-  assert.deepEqual(confirmation.tools ?? [], []);
+  assert.deepEqual(
+    (confirmation.tools ?? []).map((tool: { name: string }) => tool.name),
+    ["react_to_message", "send_sticker", "search_gifs", "send_gif", "reply_to_message"],
+  );
 });

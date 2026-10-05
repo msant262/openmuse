@@ -49,6 +49,7 @@ import {
   companionStickers,
   type MessageQuote,
   type StickerId,
+  socialToolMessage,
 } from "../../../packages/domain/src/conversation-social";
 import type { ProactivitySuggestion } from "../../../packages/domain/src/proactivity";
 import type {
@@ -65,7 +66,12 @@ import { useAvatarPresentation } from "./avatar-presentation";
 import { BackgroundUpdates } from "./background-updates";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
 import { ChatAttachments } from "./chat-attachments";
-import { CompanionSticker, MessageQuoteView, useConversationSocial } from "./companion-chat";
+import {
+  CompanionGif,
+  CompanionSticker,
+  MessageQuoteView,
+  useConversationSocial,
+} from "./companion-chat";
 import { BrowserThreadCard } from "./computer";
 import {
   type AnnotationSource,
@@ -934,7 +940,7 @@ export function ChatScreen({
       setSaveError(String(cause));
     }
   }
-  function annotateMessage(message: Message, content: string) {
+  function annotateMessage(message: { id: string; role: string }, content: string) {
     if (!(queue instanceof MessageOutbox)) return;
     draftRevision.current++;
     setReplyTo({
@@ -1246,7 +1252,18 @@ export function ChatScreen({
                 style={{
                   alignSelf: user ? "flex-end" : "flex-start",
                   maxWidth: user ? "85%" : "90%",
-                  width: toolCalls.length ? "95%" : undefined,
+                  width: toolCalls.some(
+                    (call) =>
+                      ![
+                        "react_to_message",
+                        "send_sticker",
+                        "send_gif",
+                        "reply_to_message",
+                        "search_gifs",
+                      ].includes(call.function.name),
+                  )
+                    ? "95%"
+                    : undefined,
                   gap: 8,
                 }}
               >
@@ -1338,6 +1355,54 @@ export function ChatScreen({
                         (candidate): candidate is ToolMessage =>
                           candidate.role === "tool" && candidate.toolCallId === toolCall.id,
                       );
+                      const socialMessage = socialToolMessage(
+                        toolCall.function.name,
+                        toolMessage?.content,
+                      );
+                      if (socialMessage)
+                        return (
+                          <MessageBubble
+                            key={toolCall.id}
+                            text={socialMessage.text}
+                            user={false}
+                            contextual={wide}
+                            reactions={social.state.reactions.filter(
+                              (item) => item.messageId === toolCall.id,
+                            )}
+                            onReact={
+                              durableChat
+                                ? (emoji) => void social.react(toolCall.id, emoji)
+                                : undefined
+                            }
+                            onQuote={
+                              durableChat
+                                ? () =>
+                                    annotateMessage(
+                                      { id: toolCall.id, role: "assistant" },
+                                      socialMessage.text,
+                                    )
+                                : undefined
+                            }
+                          >
+                            {socialMessage.replyTo && (
+                              <MessageQuoteView
+                                quote={socialMessage.replyTo}
+                                name={agentWorkspace?.identity.name}
+                                onPress={() => jumpToMessage(socialMessage.replyTo!.messageId)}
+                              />
+                            )}
+                            {socialMessage.stickerId ? (
+                              <CompanionSticker
+                                id={socialMessage.stickerId}
+                                caption={socialMessage.text}
+                              />
+                            ) : socialMessage.gif ? (
+                              <CompanionGif gif={socialMessage.gif} />
+                            ) : (
+                              <AssistantResponse content={socialMessage.text} />
+                            )}
+                          </MessageBubble>
+                        );
                       return (
                         <View key={toolCall.id}>{renderToolCall({ toolCall, toolMessage })}</View>
                       );

@@ -158,6 +158,22 @@ test("agent social tools produce durable AG-UI results and survive a fresh threa
       .map((message) => JSON.parse(String(message.content))),
     values,
   );
+  for (const message of history.messages) {
+    if (message.role !== "tool") continue;
+    const value = JSON.parse(String(message.content));
+    if (!value.stickerId && !value.replyTo) continue;
+    const quote = await server.agent.social.quote("owner", input.threadId, message.toolCallId);
+    assert.equal(quote.role, "assistant");
+    assert.equal(quote.text, value.caption ?? value.text);
+    await server.agent.social.react("owner", input.threadId, "user", {
+      requestId: `react-${message.toolCallId}`,
+      messageId: message.toolCallId,
+      emoji: "✨",
+    });
+    await assert.rejects(server.agent.social.quote("other", input.threadId, message.toolCallId), {
+      status: 404,
+    });
+  }
   const replay = await server.agent.inbox.eventsAfter("owner", input.threadId);
   assert.equal(
     replay.events.filter(
@@ -168,7 +184,9 @@ test("agent social tools produce durable AG-UI results and survive a fresh threa
     3,
   );
   assert.equal(
-    (await server.agent.social.state("owner", input.threadId)).reactions[0]?.actor,
+    (await server.agent.social.state("owner", input.threadId)).reactions.find(
+      (r) => r.messageId === "news",
+    )?.actor,
     "assistant",
   );
   await assert.rejects(reopened.history("other", input.threadId), { status: 404 });
@@ -241,4 +259,96 @@ test("quoted context stays out of sample task prompts and explicit personality u
     "calm and thoughtful",
   );
   assert.equal((await server.db.list("owner", "tasks")).length, 1);
+});
+
+test("Hermes-style reactions default to the current user message after task handoff", async (t) => {
+  const fixture = await modelFixture(t, (index) =>
+    index === 0
+      ? { name: "delegate_task", arguments: { kind: "agent", prompt: "Pesquise o placar atual" } }
+      : index === 1
+        ? { name: "react_to_message", arguments: { emoji: "✨" } }
+        : index === 2
+          ? { name: "reply_to_message", arguments: { text: "Já vou conferir, gata!" } }
+          : undefined,
+  );
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  assert.ok(server.threads instanceof LocalThreads);
+  const threads = server.threads;
+  const events = await lastValueFrom(
+    threads
+      .withOwner("owner", () =>
+        threads.run({
+          threadId: "handoff-social",
+          agent: new ConversationAgent(server.agent.config, server.agent, "owner"),
+          input: {
+            threadId: "handoff-social",
+            runId: randomUUID(),
+            state: {},
+            tools: [],
+            context: [],
+            messages: [{ id: "question", role: "user", content: "Pesquise o placar atual" }],
+          },
+        }),
+      )
+      .pipe(toArray()),
+  );
+  const results = events
+    .filter((e) => e.type === EventType.TOOL_CALL_RESULT && "content" in e)
+    .map((e) => JSON.parse(String(e.content)));
+  assert.ok(
+    results.some((r) => r.actor === "assistant" && r.emoji === "✨"),
+    JSON.stringify(results),
+  );
+  assert.ok(
+    results.some((r) => r.replyTo?.messageId === "question" && r.text === "Já vou conferir, gata!"),
+  );
+  assert.equal((await server.db.list("owner", "tasks")).length, 1);
+  assert.equal(
+    fixture.requests.length,
+    3,
+    "quoted reply completes the acknowledgment without repeating it",
+  );
+  const offered = (JSON.parse(fixture.requests[1].body).tools ?? []).map(
+    (t: { name: string }) => t.name,
+  );
+  assert.ok(offered.includes("react_to_message"));
+  assert.ok(!offered.includes("delegate_task"));
+  assert.ok(!offered.includes("search_tools"));
+});
+
+test("a quoted acknowledgment cannot prevent the requested task from being admitted", async (t) => {
+  const fixture = await modelFixture(t, (i) =>
+    i === 0
+      ? { name: "reply_to_message", arguments: { text: "Vou conferir, gata!" } }
+      : i === 1
+        ? { name: "delegate_task", arguments: { kind: "agent", prompt: "Pesquise o placar atual" } }
+        : undefined,
+  );
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  assert.ok(server.threads instanceof LocalThreads);
+  const threads = server.threads;
+  await lastValueFrom(
+    threads
+      .withOwner("owner", () =>
+        threads.run({
+          threadId: "quote-before-task",
+          agent: new ConversationAgent(server.agent.config, server.agent, "owner"),
+          input: {
+            threadId: "quote-before-task",
+            runId: randomUUID(),
+            messages: [{ id: "question", role: "user", content: "Pesquise o placar atual" }],
+            state: {},
+            tools: [],
+            context: [],
+          },
+        }),
+      )
+      .pipe(toArray()),
+  );
+  assert.equal((await server.db.list("owner", "tasks")).length, 1);
+  assert.equal(
+    fixture.requests.length,
+    2,
+    "the existing quote is not followed by another acknowledgment",
+  );
 });

@@ -55,3 +55,6 @@ record retains at most 30 versions; exact older versions remain readable and
 rollback creates a new version without deleting history. Consolidation is an
 explicit operation limited to identical eligible learned methods; the curator
 does not rewrite methods using a model. SOUL is outside every maintenance path.
+
+
+[Conversation actions and extraction recovery](CONVERSATION-EXTRACTION.md) documents additional Hermes code adapted on 5 October.

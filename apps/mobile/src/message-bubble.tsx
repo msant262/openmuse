@@ -1,4 +1,4 @@
-import { Check, Copy, MoreHorizontal, Reply, Share2 } from "lucide-react-native";
+import { Check, Copy, MoreHorizontal, Reply, Share2, SmilePlus } from "lucide-react-native";
 import { type ReactNode, useRef, useState } from "react";
 import {
   Clipboard,
@@ -172,28 +172,63 @@ export function MessageBubble({
           ))}
         </View>
       )}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={t("Message actions")}
-        aria-expanded={!!menu}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        onPress={showMenu}
-        style={({ pressed }) => ({
-          position: "absolute",
-          ...(user ? { left: contextual ? -30 : -26 } : { right: contextual ? -30 : -26 }),
-          top: 3,
-          width: contextual ? 30 : 26,
-          height: 36,
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: 18,
-          opacity: hovered || focused || pressed ? 1 : contextual ? 0 : 0.45,
-          backgroundColor: pressed || focused ? colors.subtle : "transparent",
-        })}
+      <View
+        style={{
+          flexDirection: "row",
+          alignSelf: user ? "flex-end" : "flex-start",
+          gap: 2,
+          marginTop: 2,
+        }}
       >
-        <MoreHorizontal size={18} strokeWidth={1.7} color={colors.muted} />
-      </Pressable>
+        {onQuote && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("Reply")}
+            onPress={onQuote}
+            style={{
+              minWidth: 44,
+              minHeight: 36,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 5,
+              paddingHorizontal: 8,
+            }}
+          >
+            <Reply size={15} color={colors.muted} />
+            <Text style={{ color: colors.muted, fontSize: 12 }}>{t("Reply")}</Text>
+          </Pressable>
+        )}
+        {onReact && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("React to message")}
+            onPress={showMenu}
+            style={{ width: 44, height: 36, alignItems: "center", justifyContent: "center" }}
+          >
+            <SmilePlus size={17} color={colors.muted} />
+          </Pressable>
+        )}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("Message actions")}
+          aria-expanded={!!menu}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          onPress={showMenu}
+          style={({ pressed }) => ({
+            width: 44,
+            height: 36,
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 18,
+            opacity: hovered || focused || pressed ? 1 : 0.65,
+            backgroundColor: pressed || focused ? colors.subtle : "transparent",
+          })}
+        >
+          <MoreHorizontal size={18} strokeWidth={1.7} color={colors.muted} />
+        </Pressable>
+      </View>
       {!!menu && (
         <Modal transparent animationType="fade" visible onRequestClose={() => setMenu(undefined)}>
           <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.17)" }}>

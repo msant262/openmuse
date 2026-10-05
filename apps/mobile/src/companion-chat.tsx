@@ -4,10 +4,12 @@ import { Image, Pressable, Text, View } from "react-native";
 import {
   type ConversationSocialState,
   companionStickers,
+  type GifMessage,
   type MessageQuote,
   type MessageReaction,
   type StickerId,
 } from "../../../packages/domain/src/conversation-social";
+import { AvatarRenderer } from "./avatar-renderer";
 import { useI18n } from "./i18n";
 import type { MessageOutbox } from "./message-outbox";
 import { useUI } from "./ui";
@@ -32,17 +34,16 @@ export function CompanionSticker({
       style={{ alignItems: "center", gap: 4, width: small ? 100 : 156, paddingVertical: 6 }}
     >
       <View>
-        <Image
-          source={
+        <AvatarRenderer
+          state={
             sticker.motion === "working"
-              ? require("../assets/companions/okami-wolf-working-poster.png")
-              : require("../assets/companions/okami-wolf-idle-poster.png")
+              ? "thinking"
+              : sticker.motion === "responding"
+                ? "talking"
+                : "idle"
           }
-          style={{
-            width: small ? 76 : 128,
-            height: small ? 76 : 128,
-            borderRadius: small ? 38 : 64,
-          }}
+          size={small ? 76 : 128}
+          reducedMotion={small ? true : undefined}
         />
         <Text
           style={{
@@ -66,6 +67,27 @@ export function CompanionSticker({
       >
         {caption ?? t(sticker.label)}
       </Text>
+    </View>
+  );
+}
+
+export function CompanionGif({ gif }: { gif: GifMessage }) {
+  const { colors } = useUI();
+  const [failed, setFailed] = useState(false);
+  return (
+    <View style={{ gap: 6, maxWidth: 260 }}>
+      {!failed && (
+        <Image
+          source={{ uri: gif.url }}
+          accessibilityLabel={gif.alt}
+          style={{ width: 240, height: 180, borderRadius: 14 }}
+          resizeMode="contain"
+          onError={() => setFailed(true)}
+        />
+      )}
+      {(failed || gif.caption) && (
+        <Text style={{ color: colors.text }}>{gif.caption ?? gif.alt}</Text>
+      )}
     </View>
   );
 }

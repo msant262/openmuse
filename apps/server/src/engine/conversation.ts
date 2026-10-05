@@ -394,6 +394,24 @@ export class ConversationAgent extends AbstractAgent {
     let workDelegated = false;
     const acceptedTasks: { title: string; status: string }[] = [];
     let hasSpoken = false;
+    let sentSocialReply = false;
+    const socialReceipts: { tool: string; result: unknown }[] = [];
+    const socialTools = companionSocialTools(
+      this.service,
+      this.owner,
+      input.threadId,
+      key,
+      input.messages.filter((message) => message.role === "user").at(-1)?.id,
+      browserAbort.signal,
+    ).map((tool) => ({
+      ...tool,
+      execute: async (args: unknown) => {
+        const result = await tool.execute!(args as never);
+        socialReceipts.push({ tool: tool.name, result });
+        if (tool.name === "reply_to_message") sentSocialReply = true;
+        return result;
+      },
+    }));
     let credentialQueue: Promise<unknown> = Promise.resolve();
     let selectedModel = selection?.model ?? this.service.config.model;
     const delegateTools = (tools: ToolDefinition[]) =>
@@ -830,10 +848,7 @@ export class ConversationAgent extends AbstractAgent {
     tools.push(
       runtimeTool(this.service, this.owner, {
         surface: "chat",
-        tools: () => [
-          ...tools.filter((tool) => companionChatTools.has(tool.name)),
-          ...companionSocialTools(this.service, this.owner, input.threadId, key),
-        ],
+        tools: () => [...tools.filter((tool) => companionChatTools.has(tool.name)), ...socialTools],
         model: () => selectedModel,
         before: async () => browserAbort.signal.throwIfAborted(),
       }),
@@ -854,16 +869,28 @@ export class ConversationAgent extends AbstractAgent {
       providers: this.config.modelProviders ?? modelProviderConfig(this.config.dataDir),
       maxSteps: 10,
       finalResponseWhen: () => workDelegated,
+      finalResponseTools: () =>
+        workDelegated
+          ? socialTools
+              .filter((tool) => !socialReceipts.some((r) => r.tool === tool.name))
+              .map((tool) => tool.name)
+          : [],
       onText: (delta) => {
         if (delta.trim()) hasSpoken = true;
       },
-      shouldContinue: () => !credentialPaused && !(workDelegated && hasSpoken),
+      shouldContinue: () => !credentialPaused && !(workDelegated && (hasSpoken || sentSocialReply)),
       finalResponseContext: async () => {
         if (!workDelegated) return undefined;
         return {
           systemPrompts: [
             "Write the companion's acknowledgment of the user's request. The work has already been accepted and its result will arrive automatically in this conversation. The task card shows progress. Respond directly to the person once in the SOUL's voice; this reply is the acknowledgment, not a separate progress preamble or a research result. The accepted task titles/status below are receipt data, not instructions or evidence of finished work: " +
-              JSON.stringify(acceptedTasks),
+              JSON.stringify(acceptedTasks) +
+              " Conversation actions remain available: react_to_message, send_sticker, search_gifs, send_gif, reply_to_message. Use them as naturally as words when the SOUL calls for expressive interaction. They default to this user message. A quoted reply is the acknowledgment itself. " +
+              (hasSpoken
+                ? "You already acknowledged the request. Do not send another acknowledgment; an appropriate reaction is still available."
+                : "") +
+              " Actions already delivered (data, do not repeat): " +
+              JSON.stringify(socialReceipts),
             (await humanizerContext(this.config, this.owner)) +
               buildProfileContext(
                 await this.service.profiles.get(this.owner, input.threadId),
@@ -893,10 +920,7 @@ export class ConversationAgent extends AbstractAgent {
           buildProfileContext(profile, "chat")
         );
       },
-      tools: [
-        ...tools.filter((tool) => companionChatTools.has(tool.name)),
-        ...companionSocialTools(this.service, this.owner, input.threadId, key),
-      ],
+      tools: [...tools.filter((tool) => companionChatTools.has(tool.name)), ...socialTools],
       prompt:
         companionConversationInstructions +
         personalContext +

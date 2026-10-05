@@ -6,6 +6,7 @@ import { desktopInstructions, desktopTools } from "../desktop-tools.ts";
 import { DocumentReview, documentReviewArgs } from "../document-review.ts";
 import { humanizerContext } from "../humanizer-context.ts";
 import { personalInstructions, personalTools } from "../personal-tools.ts";
+import { extractPublicSources } from "../public-extract.ts";
 import { publicReadDescription, readablePage } from "../public-web.ts";
 import { searchInstructions, searchTools } from "../search-tools.ts";
 import { TaskBrowserHistory } from "./browser-history.ts";
@@ -36,7 +37,11 @@ import { modelSelection, selectionContextModel } from "../providers/preferences.
 import { runtimeInstructions, runtimeTool } from "../runtime-tools.ts";
 import { SkillCatalog, skillInstructions, skillTools } from "../skill-catalog.ts";
 import { buildPromisedWorkPromptSection } from "./promised-work-prompt.ts";
-import { needsResearchReview, reviewResearchDelivery } from "./research-delivery-review.ts";
+import {
+  needsResearchReview,
+  researchRecoverySources,
+  reviewResearchDelivery,
+} from "./research-delivery-review.ts";
 import type { AgentService } from "./service.ts";
 import { tanstackAgent } from "./tanstack-agent.ts";
 import { TaskBudgetExhaustedError } from "./task-actor.ts";
@@ -164,7 +169,11 @@ export async function executeModelTask(
               reason: "The task is waiting or finished; do not perform more actions.",
             };
           await ctx.guard();
-          if (!/^(import_pdf|fill_pdf|prepare_email|prepare_event|read_web|web_fetch)$/.test(name))
+          if (
+            !/^(import_pdf|fill_pdf|prepare_email|prepare_event|read_web|web_fetch|web_extract)$/.test(
+              name,
+            )
+          )
             await authorizeTaskEffect();
           await ctx.event("step", description);
           try {
@@ -288,6 +297,32 @@ export async function executeModelTask(
         },
       ],
     });
+  };
+  const extractSources = async (urls: string[]) => {
+    const pages = await extractPublicSources(service.web, urls, signal, (url, readSignal) =>
+      service.browser.observe(owner, url, undefined, task.id, ctx.trackResourceLeases, readSignal),
+    );
+    for (const page of pages) await recordPage(page);
+    return {
+      pages,
+      instruction:
+        "These are actual source reads, not search snippets. Use the relevant observed facts, retaining source URL and time. A readable page may still lack the requested data.",
+    };
+  };
+  const recoverResearch = async (attempts: number) => {
+    if (attempts < 2 || Number(task.state.researchRecoveryCount ?? 0) >= 3) return undefined;
+    const urls = researchRecoverySources(await service.journal.operations(owner, task.id));
+    if (!urls.length) return undefined;
+    const count = Number(task.state.researchRecoveryCount ?? 0) + 1;
+    task = await ctx.checkpoint({ state: { ...task.state, researchRecoveryCount: count } });
+    const id = `research-recovery:${task.id}:${task.state.appliedRevision ?? 0}:${count}`;
+    return service.journal.run(
+      owner,
+      task,
+      { id, toolCallId: id, name: "web_extract", args: { urls } },
+      () => extractSources(urls),
+      false,
+    );
   };
   const pauseForCredential = async (
     request: import("../../../../packages/domain/src/runtime.ts").CredentialInteractionRequest,
@@ -1030,6 +1065,12 @@ export async function executeModelTask(
       },
     ),
     tool(
+      "web_extract",
+      "Read up to four discovered public source URLs together. Preserves each source's text, URL and failure independently; automatically tries isolated headless rendering if HTTP is blocked or only a loading shell. Use this to compare results from alternative sources instead of repeatedly opening one empty page.",
+      z.object({ urls: z.array(z.url().max(4096)).min(1).max(4) }),
+      ({ urls }) => extractSources(urls),
+    ),
+    tool(
       "read_web",
       "Browser fallback for a public page only when web_fetch cannot read required interactive content",
       z.object({ url: z.url() }),
@@ -1235,6 +1276,18 @@ export async function executeModelTask(
         summary = await voiceReply(summary);
         const review = await reviewDelivery(summary);
         if (review && !review.complete) {
+          const recovery = review.needsMoreResearch
+            ? await recoverResearch(review.attempts)
+            : undefined;
+          if (recovery)
+            return {
+              complete: false,
+              repairable: true,
+              missing: review.missing,
+              recovery,
+              instruction:
+                "The requested facts were missing. The harness read previously untried sources for you. Inspect their actual results and continue from useful links/data. Answer the original question using these observations; do not repeat the failed disclaimer.",
+            };
           if (review.attempts < 3)
             return {
               complete: false,
@@ -1392,7 +1445,7 @@ export async function executeModelTask(
           call,
           execute,
           call.name === "inspect_document" ||
-            !/^(web_fetch$|search_web$|search_tools$|describe_tools$|search_app_tools$|design_references$|skills_(list|search|read)$|confirm_document_review$|image_generation_status$|view_file$|read_|inspect_|get_|list_|computer_status|desktop_observe|browser_(research|snapshot|screenshot)|set_plan|ask_user|finish_task|AGUI)/.test(
+            !/^(web_fetch$|web_extract$|search_web$|search_tools$|describe_tools$|search_app_tools$|design_references$|skills_(list|search|read)$|confirm_document_review$|image_generation_status$|view_file$|read_|inspect_|get_|list_|computer_status|desktop_observe|browser_(research|snapshot|screenshot)|set_plan|ask_user|finish_task|AGUI)/.test(
               call.name,
             ),
         );
@@ -1633,7 +1686,12 @@ export async function executeModelTask(
   if (!reachedStepLimit) {
     if (text.trim()) {
       const review = await reviewDelivery(text);
-      if (review && !review.complete && review.attempts < 3)
+      if (
+        review &&
+        !review.complete &&
+        (review.attempts < 3 ||
+          (review.needsMoreResearch && (await recoverResearch(review.attempts))))
+      )
         return {
           status: "queued",
           state: { ...task.state, lastUpdate: text, continuation: true, providerCheckpoint: null },

@@ -77,6 +77,8 @@ export function tanstackAgent(options: {
   finalResponseOnStepLimit?: boolean;
   /** A successful handoff finishes the foreground turn without polling its worker. */
   finalResponseWhen?: () => boolean;
+  /** Conversation-only actions may remain available after work has been handed off. */
+  finalResponseTools?: () => readonly string[];
   finalResponsePrompt?: () => string | undefined;
   /** Compose a receipt-backed reply with a bounded context, retaining the canonical journal. */
   finalResponseContext?: () => Promise<
@@ -262,7 +264,11 @@ export function tanstackAgent(options: {
                   : undefined;
               const handoffTools = handoff?.tools();
               const dispatchTools = finalResponse
-                ? []
+                ? config.tools.filter(
+                    (tool) =>
+                      ctx.iteration < options.maxSteps - 1 &&
+                      options.finalResponseTools?.().includes(tool.name),
+                  )
                 : handoffTools
                   ? config.tools.filter((tool) => handoffTools.includes(tool.name))
                   : config.tools;

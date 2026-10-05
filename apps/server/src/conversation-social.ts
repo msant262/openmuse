@@ -4,6 +4,7 @@ import {
   type MessageQuote,
   type MessageReaction,
   reactionEmojiSchema,
+  socialToolMessage,
 } from "../../../packages/domain/src/conversation-social.ts";
 import { runtimeId } from "../../../packages/domain/src/runtime.ts";
 import { bindingHash, type InboxMessage } from "./conversation-inbox.ts";
@@ -24,7 +25,15 @@ export class ConversationSocial {
     readonly history: (
       owner: string,
       threadId: string,
-    ) => Promise<{ id: string; role: string; content?: unknown }[]>,
+    ) => Promise<
+      {
+        id: string;
+        role: string;
+        content?: unknown;
+        toolCallId?: string;
+        toolCalls?: { id: string; function: { name: string } }[];
+      }[]
+    >,
   ) {}
 
   private async requireThread(owner: string, threadId: string) {
@@ -42,7 +51,16 @@ export class ConversationSocial {
     );
     if (original?.threadId === threadId && original.messageId === messageId)
       return { messageId, role: "user", text: original.text.slice(0, 1000) };
-    const source = (await this.history(owner, threadId)).find((item) => item.id === messageId);
+    const history = await this.history(owner, threadId);
+    const call = history
+      .flatMap((item) => (item.role === "assistant" ? (item.toolCalls ?? []) : []))
+      .find((item) => item.id === messageId);
+    if (call) {
+      const receipt = history.find((item) => item.role === "tool" && item.toolCallId === call.id);
+      const message = socialToolMessage(call.function.name, receipt?.content);
+      if (message) return { messageId, role: "assistant", text: message.text.slice(0, 1000) };
+    }
+    const source = history.find((item) => item.id === messageId);
     if (
       !source ||
       !["user", "assistant"].includes(source.role) ||

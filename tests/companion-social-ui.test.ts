@@ -27,6 +27,7 @@ export function SocialHarness(props) {
     pathToFileURL(source),
     "SocialHarness",
     {
+      "./avatar-renderer": { AvatarRenderer: "AvatarRenderer" },
       "expo-crypto": { randomUUID: () => "reaction-request" },
       "../../../packages/domain/src/conversation-social": socialDomain,
       "react-native": { Image: "Image", Pressable: "Pressable", Text: "Text", View: "View" },

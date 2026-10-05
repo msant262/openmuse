@@ -29,6 +29,7 @@ function fixture(
         MoreHorizontal: "MoreHorizontal",
         Reply: "Reply",
         Share2: "Share2",
+        SmilePlus: "SmilePlus",
       },
       "./i18n": { useI18n: () => ({ t: (key: string) => key }) },
       "./ui": { colors: { blue: "blue", muted: "gray" }, s: { small: {} } },
@@ -72,7 +73,7 @@ test("keyboard focus reveals message actions and Reply invokes the existing quot
   try {
     view.render();
     attachAnchor(view);
-    assert.equal(overflow(view).style({ pressed: false }).opacity, 0);
+    assert.equal(overflow(view).style({ pressed: false }).opacity, 0.65);
     overflow(view).onFocus();
     view.render();
     assert.equal(overflow(view).style({ pressed: false }).opacity, 1);
@@ -88,7 +89,7 @@ test("keyboard focus reveals message actions and Reply invokes the existing quot
     );
     overflow(view).onBlur();
     view.render();
-    assert.equal(overflow(view).style({ pressed: false }).opacity, 0);
+    assert.equal(overflow(view).style({ pressed: false }).opacity, 0.65);
   } finally {
     view.close();
   }

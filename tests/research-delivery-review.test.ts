@@ -117,3 +117,103 @@ test("ending with plain text cannot bypass the research delivery review", async 
   assert.equal(saved.status, "failed");
   assert.notEqual(saved.completion?.status, "verified");
 });
+
+test("failed research reads discovered alternative sources before giving up at the third review", async (t) => {
+  let count = 0;
+  await modelFixture(
+    t,
+    (i) =>
+      i === 0
+        ? { name: "search_web", arguments: { query: "current count" } }
+        : i === 1
+          ? { name: "web_fetch", arguments: { url: "https://official.example/selector" } }
+          : {
+              name: "finish_task",
+              arguments: {
+                summary:
+                  i < 4
+                    ? "The selector does not show totals."
+                    : "Candidate A has 52%, 12345 votes. https://news.example/live",
+              },
+            },
+    {
+      researchReview: (body) => {
+        count++;
+        return body.includes("12345")
+          ? { complete: true, missing: [], nextSteps: [] }
+          : {
+              complete: false,
+              missing: ["Actual count"],
+              nextSteps: ["Read alternative result sources"],
+            };
+      },
+    },
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.search, "search", async () => ({
+    query: "current count",
+    status: "ok",
+    sources: [
+      {
+        url: "https://official.example/selector",
+        title: "Official results",
+        snippet: "Select election",
+      },
+      { url: "https://news.example/live", title: "Current count", snippet: "Live results" },
+    ],
+    observedAt: new Date().toISOString(),
+    truncated: false,
+    provenance: {
+      backend: "http",
+      provider: "duckduckgo-html",
+      searchUrl: "https://example.com/search",
+      fullPagesRead: false,
+    },
+  }));
+  const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: url.includes("news.example")
+      ? "<title>Results</title><main>Candidate A has 52%, 12345 votes.</main>"
+      : "<title>Results</title><main>Select election to see results.</main>",
+  }));
+  const task = await f.agent.createTask("owner", { prompt: "What is the actual count?" });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.result);
+  assert.ok(read.mock.calls.some((call) => call.arguments[0] === "https://news.example/live"));
+  assert.match(saved.result ?? "", /12345/);
+  assert.equal(count, 3);
+  assert.ok(
+    (await f.agent.journal.operations("owner", task.id)).some(
+      (op) => op.toolName === "web_extract" && op.status === "succeeded" && !op.effect,
+    ),
+  );
+});
+
+test("automatic recovery uses ranked sources, not analytics JSON observed on a page", async () => {
+  const { researchRecoverySources } = await import(
+    "../apps/server/src/engine/research-delivery-review.ts"
+  );
+  const operations = [
+    {
+      toolName: "search_web",
+      args: { query: "count" },
+      receipt: {
+        sources: [
+          { url: "https://news.example/live" },
+          { url: "https://alternative.example/live" },
+        ],
+      },
+    },
+    {
+      toolName: "web_fetch",
+      args: { url: "https://news.example/live" },
+      receipt: {
+        url: "https://news.example/live",
+        dataSources: [{ url: "https://analytics.example/config.json" }],
+      },
+    },
+  ] as never;
+  assert.deepEqual(researchRecoverySources(operations), ["https://alternative.example/live"]);
+});

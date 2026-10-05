@@ -23,6 +23,8 @@ export const companionChatTools = new Set([
   "update_proactivity_settings",
   "react_to_message",
   "send_sticker",
+  "send_gif",
+  "search_gifs",
   "reply_to_message",
   "read_runtime",
   "list_procedures",
