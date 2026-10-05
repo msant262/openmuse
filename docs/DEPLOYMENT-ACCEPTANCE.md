@@ -1,6 +1,27 @@
 # OkamiBot: instalação e aceite em 5 de outubro de 2026
 
-**Revisão atual publicada: API `4e2f858`; web e Android `94b47bc`.** O SOUL agora
+**Revisão atual publicada: API `595b764`; web e Android `b82d434`.** O chat oferece
+responder e reagir também em respostas citadas, figurinhas animadas e GIFs.
+As ferramentas sociais permanecem disponíveis após iniciar uma tarefa. A
+confirmação respeita o SOUL e evita duplicar o preâmbulo e a resposta final.
+
+A pesquisa lê fontes em lote, renderiza painéis ainda incompletos e reserva
+tentativas próprias para corrigir a entrega depois de encontrar os fatos.
+Passaram **1.354 testes**, TypeScript de servidor/mobile e o build da API. No
+ensaio conectado com o histórico salvo, a pergunta original foi entregue com
+votos, percentuais, fontes e horário, em lista. Reação, citação, figurinha e GIF
+tiveram recibos reais; um perfil formal respondeu sem emojis visíveis.
+
+O aceite da web pública verificou responder e abrir as reações em 740 e 390 px,
+sem erros JavaScript nem escritas de produto. A API está saudável; SOUL, modelo
+e avatar conservaram o mesmo digest. O APK ARM64 mantém a assinatura existente;
+seu download público corresponde ao hash e tamanho do build. Não houve novo
+teste em aparelho físico. [Baixar APK atualizado](https://app.okamibot.cloud/downloads/okamibot.apk?v=b82d434).
+[Diagnóstico, evidências e limites](superpowers/research/2026-10-05-interaction-research.md).
+
+## Histórico: SOUL como instrução de fala (`4e2f858`)
+
+**Revisão anterior publicada: API `4e2f858`; web e Android `94b47bc`.** O SOUL agora
 entra diretamente como instrução de fala e é relido na composição da resposta.
 A confirmação de uma tarefa aceita usa o pedido, o recibo e a voz atual, sem
 repetir o histórico de avisos operacionais. Entregas com SOUL personalizado

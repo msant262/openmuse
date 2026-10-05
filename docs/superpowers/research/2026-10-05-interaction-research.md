@@ -127,4 +127,29 @@ zero errors, six existing non-null warnings and one existing string-style notice
 The server candidate retains the deployed base's scope; unrelated local memory
 and context-compaction work remains outside this release.
 
-Release and final public verification receipts will be recorded after deployment.
+## Publication
+
+Source commit: `d614930`. API: `595b764`, image
+`sha256:e5fa0fbddc8e8987bb0084e4cbc8a06fdd61932b5452ea5ead216ac686522501`.
+Web and Android: `b82d434`. The API was replaced with no active tasks,
+conversations or admissions. Maintenance ended, pause revision 16 stayed
+unchanged, and retained operations/resources were preserved. API and browser
+containers are healthy; the public health endpoint returned HTTP 200.
+
+Production browser acceptance at 740 and 390 px exercised the visible Reply
+control and reaction picker without submitting messages/reactions. No JavaScript
+errors or product writes were observed. Temporary verification pairings were
+revoked. Profile revisions, SOUL, selected model and avatar retained digest
+`f0e9bfb1b824e2f020869fc086ebb7cc300c7d924e3b2eff3fd26864740029ff`.
+
+Both public web bundles match their build hashes. The signed ARM64 APK is
+68,786,487 bytes, SHA-256
+`f834ec2b076331de1a5097d281747bd618a2327be0138e2a2350f04fe8f76cdb`.
+The public download matches the local artifact and preserves signer
+`e6d8e6aeb25f3c1603efd369b9898dbb865343f4148a1969cd85383331053f8a`.
+There was no new physical-device acceptance. Browser media/reply persistence
+and animated-sticker acceptance remain documented above.
+
+Receipts: `deployment-api.log`, `deployment-web.log`, `live-verification.json`,
+`public-acceptance-resumed.json`, `public-downloads.json`, and
+`production-after.json` under ignored `artifacts/interaction-research/`.
