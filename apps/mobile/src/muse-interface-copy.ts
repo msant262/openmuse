@@ -1,4 +1,36 @@
 export const museInterfacePTBR: Record<string, string> = {
+  Remove: "Remover",
+  "Clear finished": "Limpar encerradas",
+  "Clear finished tasks?": "Limpar tarefas encerradas?",
+  "Remove task?": "Remover tarefa?",
+  "Remove task: {title}": "Remover tarefa: {title}",
+  "Stop and remove task?": "Interromper e remover tarefa?",
+  "Stop and remove": "Interromper e remover",
+  "This task will stop and leave your activity list. Saved files remain available.":
+    "A tarefa será interrompida e removida da atividade. Os arquivos salvos continuam disponíveis.",
+  "This task will leave your activity list. Saved files remain available.":
+    "A tarefa será removida da atividade. Os arquivos salvos continuam disponíveis.",
+  "Completed, failed and cancelled tasks will leave your activity list. Active tasks and saved files remain available.":
+    "Tarefas concluídas, com falha e canceladas serão removidas da atividade. As tarefas ativas e os arquivos salvos continuam disponíveis.",
+  "The conversation and draft will be deleted. Any reply and unfinished tasks in this conversation will stop. Saved files and memories remain available. This cannot be undone.":
+    "A conversa e o rascunho serão excluídos. Respostas e tarefas em andamento nesta conversa serão interrompidas. Os arquivos e as memórias salvos continuam disponíveis. Esta ação não pode ser desfeita.",
+  "The conversation is still stopping. Try deleting it again in a moment.":
+    "A conversa ainda está sendo interrompida. Tente excluir novamente em instantes.",
+  "Stop the reply and finish or cancel this conversation's active tasks before deleting it.":
+    "Interrompa a resposta e as tarefas desta conversa antes de excluí-la.",
+  "Confirm stopping this task before removing it.":
+    "Confirme a interrupção da tarefa antes de removê-la.",
+  "Not completed": "Não concluída",
+  "Execution progress": "Progresso da execução",
+  "Preparing the requested work": "Preparando a execução",
+  "Deliver the result": "Entregar o resultado",
+  "Result not verified": "Resultado não verificado",
+  "Delivery verified": "Entrega verificada",
+  "Partial delivery": "Entrega parcial",
+  "Retry task": "Tentar novamente",
+  Sources: "Fontes",
+  "The available result is partial; some requested facts or actions could not be verified.":
+    "A entrega ficou incompleta. Alguns dados ou ações pedidos não puderam ser verificados.",
   "Image requests can use this connected ChatGPT account.":
     "Os pedidos de imagem podem usar esta conta conectada do ChatGPT.",
   "Sign in on OpenAI’s page using the code below.":

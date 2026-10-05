@@ -65,3 +65,18 @@ parent-transcript fork contract in `subagents/spawn/subagent-spawn-context.ts`
 to this application's authenticated canonical transcript and task store. Prior
 source receipts and exact user messages accompany the new task, while effect
 authority and operation journals stay in the existing worker.
+
+`engine/openclaw/plan-completion.ts` ports the unfinished-plan terminal check from
+`src/agents/embedded-agent-runner/run/attempt-stream-prepare.ts` and its
+`terminal-retry-state.ts` at the same revision. The follow-up text is unchanged.
+The adapter persists the one-shot check by task direction revision, requeues the
+existing task and reuses its journal. Explicit stop, lease loss, waiting for input,
+provider continuation and completed effects remain owned by the existing runtime.
+
+Research delivery retries also use the unchanged `getNoProgressStreak` algorithm
+from `tool-loop-no-progress.ts`. Its local result fingerprint contains source
+observations, outstanding delivery issues and artifact IDs, rather than stopping
+after a fixed number of reviews. The research review and provider context adapters
+remain application code. Provider projection keeps the largest compatible configured
+context; a smaller fallback is admitted only if it can carry the actual retained
+request, so it cannot discard a larger model's research history in advance.

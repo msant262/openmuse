@@ -1,6 +1,6 @@
 import { Archive, ArchiveRestore, MoreHorizontal, Pencil, Trash2 } from "lucide-react-native";
 import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useI18n } from "./i18n";
 import { useMuseThread } from "./threads";
 import { Button, ErrorNotice, Field, ModalSurface, useUI } from "./ui";
@@ -35,7 +35,7 @@ export function ThreadActions({
       if (action === "delete") {
         const result = existing
           ? await api.request<{ mainThreadId?: string }>(
-              `/api/copilotkit/threads/${encodeURIComponent(id)}`,
+              `/api/copilotkit/threads/${encodeURIComponent(id)}?stopActive=true`,
               undefined,
               "DELETE",
             )
@@ -56,7 +56,7 @@ export function ThreadActions({
       }
       setMode(undefined);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(t(cause instanceof Error ? cause.message : String(cause)));
     } finally {
       setBusy(false);
     }
@@ -87,10 +87,9 @@ export function ThreadActions({
           onClose={() => {
             if (!busy) setMode(undefined);
           }}
-          width={400}
-          height={mode === "menu" ? 310 : 350}
+          width={460}
         >
-          <View style={{ padding: 24, gap: 18, flex: 1 }}>
+          <ScrollView contentContainerStyle={{ padding: 24, gap: 18 }}>
             <Text style={s.heading}>
               {t(
                 mode === "delete"
@@ -137,12 +136,12 @@ export function ThreadActions({
             {mode === "delete" && (
               <Text style={s.text}>
                 {t(
-                  "The conversation and its draft will be deleted. Saved files, tasks and memories stay available. This cannot be undone.",
+                  "The conversation and draft will be deleted. Any reply and unfinished tasks in this conversation will stop. Saved files and memories remain available. This cannot be undone.",
                 )}
               </Text>
             )}
             <ErrorNotice error={error} />
-            <View style={[s.row, { justifyContent: "flex-end", gap: 8, marginTop: "auto" }]}>
+            <View style={[s.row, { justifyContent: "flex-end", flexWrap: "wrap", gap: 10 }]}>
               <Button small disabled={busy} onPress={() => setMode(undefined)}>
                 {t("Cancel")}
               </Button>
@@ -163,7 +162,7 @@ export function ThreadActions({
                 </Button>
               )}
             </View>
-          </View>
+          </ScrollView>
         </ModalSurface>
       )}
     </>

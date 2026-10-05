@@ -80,6 +80,7 @@ import { RuntimePause } from "./runtime-pause.ts";
 import { TaskActor, TaskBudgetExhaustedError } from "./task-actor.ts";
 import { TaskJournal, validateTaskEffect } from "./task-journal.ts";
 import { TaskMailbox } from "./task-mailbox.ts";
+import { executionSteps, liveTaskPlan } from "./task-progress.ts";
 import { taskInput } from "./task-routing.ts";
 import { TaskTiming as TaskTimingService } from "./task-timing.ts";
 import { mandatoryTaskCriteria, TaskVerification, textPlanDelivery } from "./task-verification.ts";
@@ -526,14 +527,15 @@ export class AgentService {
     ]);
     const heartbeat = await this.db.get<{ lastTickAt: string }>("system", "worker-status", "tasks");
     const profile = await this.profiles.get(owner);
+    const removed = new Set(tasks.filter((task) => task.deletedAt).map((task) => task.id));
     return {
-      tasks,
+      tasks: tasks.filter((task) => !task.deletedAt),
       goals,
       monitors,
       ideas,
       memories,
-      artifacts,
-      notifications,
+      artifacts: artifacts.filter((item) => !removed.has(item.taskId)),
+      notifications: notifications.filter((item) => !item.taskId || !removed.has(item.taskId)),
       identity: {
         ...(identity ?? { name: PRODUCT_NAME, tone: "warm" }),
         avatarAssetId: identity?.avatarAssetId ?? undefined,
@@ -581,11 +583,13 @@ export class AgentService {
   }
   async getTask(owner: string, id: string) {
     const task = await this.db.get<AgentTask>(owner, "tasks", id);
-    if (!task) throw new AppError("Task not found", 404);
+    if (!task || task.deletedAt) throw new AppError("Task not found", 404);
     return task;
   }
   async detail(owner: string, id: string) {
     const task = await this.getTask(owner, id);
+    const operations = await this.journal.operations(owner, id);
+    const projected = { ...task, plan: liveTaskPlan(task, operations) };
     const rootBudget = await this.db.get<TaskBudget>(
       owner,
       "task-budgets",
@@ -598,7 +602,8 @@ export class AgentService {
       [task.state.browserId, task.state.sessionId].includes(browser.id),
     );
     return {
-      task: rootBudget ? { ...task, state: { ...task.state, budget: rootBudget } } : task,
+      task: rootBudget ? { ...projected, state: { ...task.state, budget: rootBudget } } : projected,
+      executionSteps: executionSteps(task, operations),
       interactions: await Promise.all(
         (
           await this.db.list<
@@ -617,7 +622,7 @@ export class AgentService {
         (a) => a.taskId === id,
       ),
       directives: await this.mailbox.list(owner, id),
-      operations: await this.journal.operations(owner, id),
+      operations,
     };
   }
   async createTask(
@@ -802,6 +807,72 @@ export class AgentService {
       requestId: randomUUID(),
     });
   }
+  async cancelThreadTasks(owner: string, threadId: string) {
+    const tasks = await this.db.list<AgentTask>(owner, "tasks");
+    const ids = new Set(
+      tasks.filter((task) => task.originThreadId === threadId).map((task) => task.id),
+    );
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const task of tasks)
+        if (
+          typeof task.state.parentTaskId === "string" &&
+          ids.has(task.state.parentTaskId) &&
+          !ids.has(task.id)
+        ) {
+          ids.add(task.id);
+          changed = true;
+        }
+    }
+    for (const task of tasks)
+      if (ids.has(task.id) && !terminal.has(task.status) && !task.deletedAt) {
+        try {
+          await this.control(owner, task.id, "cancel");
+        } catch (error) {
+          if (!terminal.has((await this.getTask(owner, task.id)).status)) throw error;
+        }
+      }
+  }
+  async removeTask(owner: string, id: string, cancelActive = false) {
+    let task = await this.db.get<AgentTask>(owner, "tasks", id);
+    if (!task) throw new AppError("Task not found", 404);
+    if (task.deletedAt) return { removed: true, id };
+    if (!cancelActive && !terminal.has(task.status))
+      throw new AppError("Confirm stopping this task before removing it.", 409);
+    // Fence the parent's writer before enumerating children so it cannot launch
+    // another child while its existing children are being removed.
+    if (!terminal.has(task.status)) task = await this.control(owner, id, "cancel");
+    const children = (await this.db.list<AgentTask>(owner, "tasks")).filter(
+      (child) => child.state.parentTaskId === id && !child.deletedAt,
+    );
+    if (!cancelActive && children.some((child) => !terminal.has(child.status)))
+      throw new AppError("Confirm stopping this task before removing it.", 409);
+    for (const child of children) await this.removeTask(owner, child.id, cancelActive);
+    const saved = await this.db.compareAndSwap<AgentTask>(
+      owner,
+      "tasks",
+      id,
+      { status: task.status, leaseId: task.leaseId ?? null, updatedAt: task.updatedAt },
+      { deletedAt: date(), updatedAt: date() },
+    );
+    if (!saved) throw new AppError("Task changed; refresh and try again", 409);
+    return { removed: true, id };
+  }
+  async clearFinishedTasks(owner: string) {
+    const tasks = (await this.db.list<AgentTask>(owner, "tasks")).filter(
+      (task) => !task.deletedAt && terminal.has(task.status),
+    );
+    const removed: string[] = [];
+    for (const task of tasks) {
+      try {
+        await this.removeTask(owner, task.id);
+        removed.push(task.id);
+      } catch (error) {
+        if (!(error instanceof AppError && error.status === 409)) throw error;
+      }
+    }
+    return { removed };
+  }
   async control(owner: string, id: string, action: "pause" | "resume" | "cancel" | "retry") {
     const task = await this.getTask(owner, id);
     const controlledMonitor =
@@ -837,7 +908,7 @@ export class AgentService {
       owner,
       "tasks",
       id,
-      { status: task.status, leaseId: task.leaseId ?? null },
+      { status: task.status, leaseId: task.leaseId ?? null, updatedAt: task.updatedAt },
       {
         status,
         leaseId: null,

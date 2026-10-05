@@ -3,6 +3,57 @@ import test from "node:test";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("new research observations keep the worker moving beyond three delivery reviews", async (t) => {
+  const calls = Array.from({ length: 5 }, (_, i) => [
+    { name: "web_fetch", arguments: { url: `https://news.example/part-${i}` } },
+    {
+      name: "finish_task",
+      arguments: {
+        summary: `Observed section ${i}; source https://news.example/part-${i}`,
+        outcome: "completed",
+      },
+    },
+  ]).flat();
+  let reviews = 0;
+  await modelFixture(t, (i) => calls[i], {
+    researchReview: (_body, i) => {
+      reviews++;
+      return i < 4
+        ? {
+            complete: false,
+            needsMoreResearch: true,
+            missing: ["More requested sections"],
+            nextSteps: ["Read the next observed section"],
+          }
+        : { complete: true, needsMoreResearch: false, missing: [], nextSteps: [] };
+    },
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: `<article>New observed section: ${url}</article>`,
+  }));
+  const task = await f.agent.createTask("owner", {
+    prompt: "What are the latest findings from these pages?",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(
+    saved.status,
+    "succeeded",
+    JSON.stringify({
+      completion: saved.completion,
+      review: saved.state.researchDeliveryReview,
+      operations: (await f.agent.journal.operations("owner", task.id)).map((op) => ({
+        name: op.toolName,
+        receipt: op.receipt,
+      })),
+    }),
+  );
+  assert.equal(reviews, 5);
+});
+
 test("research cannot finish with instructions to consult an unread results link; review sends it back to work", async (t) => {
   const calls = [
     { name: "web_fetch", arguments: { url: "https://news.example/about" } },
@@ -342,11 +393,17 @@ test("facts obtained after two failed searches still get a bounded delivery repa
   const lastRequest = fixture.requests.at(-1);
   assert.ok(lastRequest);
   const repair = JSON.parse(lastRequest.body);
-  assert.deepEqual(
-    repair.tools.map(
-      (tool: { name?: string; function?: { name: string } }) => tool.name ?? tool.function?.name,
-    ),
-    ["finish_task"],
+  const repairTools = repair.tools.map(
+    (tool: { name?: string; function?: { name: string } }) => tool.name ?? tool.function?.name,
+  );
+  assert.ok(repairTools.includes("finish_task"));
+  assert.ok(repairTools.includes("read_tool_output"), "previous source results remain retrievable");
+  assert.ok(repairTools.includes("todo_list"), "the agent can finish updating its actual plan");
+  assert.ok(!repairTools.includes("web_fetch"), "formatting repair does not trigger more browsing");
+  assert.match(
+    lastRequest.body,
+    /Remove extra claim and present the observed count in bullets/,
+    "the current repair instruction survives context projection",
   );
 });
 

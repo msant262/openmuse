@@ -122,12 +122,13 @@ export class ModelRouter {
         ),
     );
   }
-  /** The smallest compatible fallback that can hold mandatory context. Selection
-   * and quota admission still happen only in select(), after context projection. */
+  /** Keep history up to the largest compatible configured context. A smaller
+   * fallback must not erase observations from a larger model's ongoing run.
+   * select() admits only models that can carry the actual projected request. */
   contextCapacity(requirements: ModelRequirements, models: readonly string[]) {
     const eligible = this.eligibleModels(requirements, models);
     if (!eligible.length) throw this.unavailable([], "capability");
-    return Math.min(
+    return Math.max(
       ...eligible.map(
         (model) =>
           (

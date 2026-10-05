@@ -20,7 +20,69 @@ import {
   type ProviderContinuationCheckpoint,
   providerContinuationCheckpointSchema,
 } from "../apps/server/src/providers/models.ts";
+import { selectionContextModel } from "../apps/server/src/providers/preferences.ts";
 import { modelFixture } from "./helpers/model.ts";
+
+test("a small fallback does not erase observed sources when a larger primary enters delivery repair", async (t) => {
+  const fixture = await modelFixture(t, (i) =>
+    i === 0 ? { name: "web_fetch", arguments: { url: "https://news.example/live" } } : undefined,
+  );
+  const providers = modelProviderConfig(await directory(t), {
+    MODEL_CAPABILITIES: JSON.stringify({
+      "openai/fixture": {
+        tools: true,
+        vision: false,
+        structuredOutput: true,
+        contextTokens: 131072,
+      },
+      "openai/small": { tools: true, vision: false, structuredOutput: true, contextTokens: 32768 },
+    }),
+  });
+  let repair = false;
+  const result = await run(
+    tanstackAgent({
+      model: "openai/fixture",
+      fallbacks: ["openai/small"],
+      providers,
+      maxSteps: 3,
+      prompt: "Keep the observed results. ".repeat(700),
+      contextModel: selectionContextModel({ modelProviders: providers } as never, {
+        model: "openai/fixture",
+        fallbacks: ["openai/small"],
+      }),
+      finalResponseWhen: () => repair,
+      finalResponseTools: () => ["finish_task"],
+      tools: [
+        defineTool({
+          name: "web_fetch",
+          description: "Read public source",
+          parameters: z.object({ url: z.string() }),
+          execute: async () => {
+            repair = true;
+            return {
+              url: "https://news.example/live",
+              text:
+                "RESEARCH_RECEIPT_CURRENT_COUNT: A 52%, B 48%. " +
+                "Observed source detail. ".repeat(550),
+            };
+          },
+        }),
+        defineTool({
+          name: "finish_task",
+          description: "Deliver",
+          parameters: z.object({ summary: z.string() }),
+          execute: async () => ({ complete: true }),
+        }),
+      ],
+    }),
+  );
+  assert.equal(result.finished, true, String(result.error));
+  assert.match(
+    fixture.requests[1]?.body ?? "",
+    /RESEARCH_RECEIPT_CURRENT_COUNT/,
+    "delivery repair must retain source observations, even when a smaller fallback is configured",
+  );
+});
 
 async function directory(t: TestContext) {
   const dir = await mkdtemp(join(tmpdir(), "okami-router-"));

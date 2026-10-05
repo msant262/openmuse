@@ -55,6 +55,7 @@ import type { FileRecoverySnapshot } from "../../../packages/domain/src/file-ver
 import type { InteractionRequest } from "../../../packages/domain/src/runtime";
 import { useAgentWorkspace } from "./agent-workspace";
 import { ArtifactResultCard } from "./artifact-result-card";
+import { AssistantResponse } from "./assistant-response";
 import { t as translate, useI18n } from "./i18n";
 import { InteractionCard } from "./interaction-card";
 import { MemorySettings } from "./memory-settings";
@@ -74,7 +75,9 @@ import { useInlinePreview } from "./preview";
 import { ProfileSettings } from "./profile-settings";
 import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
+import { ClearFinishedTasksButton, TaskRemoveButton } from "./task-removal";
 import { TaskBudgetControls, TaskCompletion, TaskTimingControls } from "./task-runtime-controls";
+import { TaskStatusBadge } from "./task-status";
 import { useMuseThread } from "./threads";
 import {
   Button,
@@ -149,49 +152,40 @@ export function TaskCard({
 
   const { open } = useWorkspace();
   const { t } = useI18n();
-  const waiting = ["waiting_input", "waiting_approval", "waiting_provider"].includes(task.status);
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${t("Open task")}: ${task.title}`}
-      onPress={() => {
-        onOpen?.();
-        open({ type: "task", taskId: task.id });
-      }}
-      style={({ pressed }) => ({
-        paddingVertical: compact ? 13 : 19,
-        flexDirection: "row",
-        gap: 13,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.line,
-        opacity: pressed ? 0.6 : 1,
-      })}
-    >
-      <View style={{ width: 30, paddingTop: 2 }}>
-        {task.status === "running" ? (
-          <ActivityIndicator
-            accessibilityLabel={t("Working on your request")}
-            color={colors.blueDark}
-          />
-        ) : task.status === "succeeded" ? (
-          <CheckCircle2 size={20} color={colors.success} />
-        ) : waiting ? (
-          <Circle size={20} color={colors.danger} />
-        ) : (
-          <ListChecks size={20} color={colors.muted} />
-        )}
-      </View>
-      <View style={{ flex: 1, gap: 5 }}>
-        <Text style={[s.text, { fontWeight: "500" }]}>{task.title}</Text>
-        <Text numberOfLines={compact ? 2 : 3} style={s.muted}>
-          {t(resultSummary(taskPreview(task)))}
-        </Text>
-        <Text style={s.small}>
-          {t(statusLabel(task.status))} · {stamp(task.updatedAt)}
-        </Text>
-      </View>
-      <ChevronRight size={16} color={colors.muted} style={{ marginTop: 5 }} />
-    </Pressable>
+    <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${t("Open task")}: ${task.title}`}
+        onPress={() => {
+          onOpen?.();
+          open({ type: "task", taskId: task.id });
+        }}
+        style={({ pressed }) => ({
+          paddingVertical: compact ? 13 : 19,
+          flexDirection: "row",
+          gap: 13,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.line,
+          opacity: pressed ? 0.6 : 1,
+          flex: 1,
+        })}
+      >
+        <View style={{ width: 30, paddingTop: 2 }}>
+          <TaskStatusBadge task={task} iconOnly />
+        </View>
+        <View style={{ flex: 1, gap: 5 }}>
+          <Text style={[s.text, { fontWeight: "500" }]}>{task.title}</Text>
+          <Text numberOfLines={compact ? 2 : 3} style={s.muted}>
+            {t(resultSummary(taskPreview(task)))}
+          </Text>
+          <TaskStatusBadge task={task} />
+          <Text style={s.small}>{stamp(task.updatedAt)}</Text>
+        </View>
+        <ChevronRight size={16} color={colors.muted} style={{ marginTop: 5 }} />
+      </Pressable>
+      <TaskRemoveButton task={task} />
+    </View>
   );
 }
 export function ChatWork() {
@@ -237,6 +231,7 @@ export function AgentActivityScreen() {
   return (
     <View style={{ gap: 12 }}>
       <AgentStatus />
+      <ClearFinishedTasksButton />
       <View style={s.between}>
         <Text style={[s.title, { fontSize: 23, flex: 1 }]}>{t("For you")}</Text>
         <IconButton
@@ -510,6 +505,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
     files: Artifact[];
     browsers: BrowserSession[];
     interactions?: InteractionRequest[];
+    executionSteps?: AgentTask["plan"];
   }>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -517,31 +513,37 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
   const [fieldJson, setFieldJson] = useState("");
   const [showFieldJson, setShowFieldJson] = useState(false);
   const [fields, setFields] = useState<Record<string, string | boolean>>({});
-  const task = data?.tasks.find((item) => item.id === taskId) || detail?.task;
+  const snapshotTask = data?.tasks.find((item) => item.id === taskId);
+  const task = detail?.task || snapshotTask;
   useEffect(() => {
     let active = true;
-    void api
-      .request<{
-        task: AgentTask;
-        events: RunEvent[];
-        artifacts: AgentArtifact[];
-        files: Artifact[];
-        browsers: BrowserSession[];
-        interactions?: InteractionRequest[];
-      }>(`/api/agent/tasks/${taskId}`)
-      .then((result) => {
-        if (active) {
-          setDetail(result);
-          setError("");
-        }
-      })
-      .catch((e) => {
-        if (active) setError(errorText(e));
-      });
+    const load = () =>
+      void api
+        .request<{
+          task: AgentTask;
+          events: RunEvent[];
+          artifacts: AgentArtifact[];
+          files: Artifact[];
+          browsers: BrowserSession[];
+          interactions?: InteractionRequest[];
+          executionSteps?: AgentTask["plan"];
+        }>(`/api/agent/tasks/${taskId}`)
+        .then((result) => {
+          if (active) {
+            setDetail(result);
+            setError("");
+          }
+        })
+        .catch((e) => {
+          if (active) setError(errorText(e));
+        });
+    load();
+    const timer = setInterval(load, 2000);
     return () => {
       active = false;
+      clearInterval(timer);
     };
-  }, [api, taskId, task?.updatedAt]);
+  }, [api, taskId, snapshotTask?.updatedAt]);
   async function act(path: string, body: unknown) {
     setBusy(true);
     setError("");
@@ -614,15 +616,12 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
       title={task?.title || "Task"}
       headerAccessory={
         <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-          {task?.status === "running" && <ActivityIndicator size="small" color={colors.blueDark} />}
-          <Text
-            style={[
-              s.small,
-              { color: task?.status === "succeeded" ? colors.success : colors.muted },
-            ]}
-          >
-            {task ? t(statusLabel(task.status)) : t("Loading saved progress…")}
-          </Text>
+          {task ? (
+            <TaskStatusBadge task={task} />
+          ) : (
+            <Text style={s.small}>{t("Loading saved progress…")}</Text>
+          )}
+          {task && <TaskRemoveButton task={task} onRemoved={close} />}
         </View>
       }
       onClose={close}
@@ -791,15 +790,67 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                     ) : step.status === "succeeded" ? (
                       <CheckCircle2 size={19} color={colors.success} />
                     ) : (
-                      <Circle size={19} color={colors.muted} />
+                      <Circle
+                        size={19}
+                        color={
+                          step.status === "failed"
+                            ? colors.danger
+                            : step.status === "waiting"
+                              ? colors.warning
+                              : colors.muted
+                        }
+                      />
                     )}
                     <View style={{ flex: 1, gap: 4 }}>
                       <Text style={s.text}>{t(step.title)}</Text>
-                      <Text style={s.small}>{t(statusLabel(step.status))}</Text>
+                      <Text
+                        style={[
+                          s.small,
+                          {
+                            color:
+                              step.status === "succeeded"
+                                ? colors.success
+                                : step.status === "failed"
+                                  ? colors.danger
+                                  : step.status === "running"
+                                    ? colors.blueDark
+                                    : colors.muted,
+                          },
+                        ]}
+                      >
+                        {t(statusLabel(step.status))}
+                      </Text>
                       {!!step.detail && <Text style={s.muted}>{step.detail}</Text>}
                     </View>
                   </View>
                 ))}
+                {!!detail?.executionSteps?.length &&
+                  !task.plan.some((step) => step.id.startsWith("execution:")) && (
+                    <>
+                      <Text style={s.heading}>{t("Execution progress")}</Text>
+                      {detail.executionSteps.map((step) => (
+                        <View key={step.id} style={{ flexDirection: "row", gap: 10 }}>
+                          {step.status === "running" ? (
+                            <ActivityIndicator size="small" color={colors.blueDark} />
+                          ) : step.status === "succeeded" ? (
+                            <CheckCircle2 size={18} color={colors.success} />
+                          ) : (
+                            <Circle
+                              size={18}
+                              color={step.status === "failed" ? colors.danger : colors.muted}
+                            />
+                          )}
+                          <View style={{ flex: 1, gap: 3 }}>
+                            <Text style={s.text}>{t(step.title)}</Text>
+                            <Text style={s.small}>
+                              {t(statusLabel(step.status))}
+                              {step.detail ? ` · ${step.detail}` : ""}
+                            </Text>
+                          </View>
+                        </View>
+                      ))}
+                    </>
+                  )}
               </View>
             ) : selected !== "summary" ? (
               <View style={{ gap: 14 }}>
@@ -827,9 +878,11 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
               <>
                 <View style={{ gap: 13 }}>
                   <Text style={s.heading}>{t("Summary")}</Text>
-                  <Text selectable style={s.text}>
-                    {resultSummary(task.result || task.question || task.error || task.prompt)}
-                  </Text>
+                  <AssistantResponse
+                    content={t(
+                      resultSummary(task.result || task.question || task.error || task.prompt),
+                    )}
+                  />
                   <Text style={s.small}>{stamp(task.updatedAt)}</Text>
                 </View>
                 <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>

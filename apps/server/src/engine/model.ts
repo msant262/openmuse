@@ -12,6 +12,12 @@ import { searchInstructions, searchTools } from "../search-tools.ts";
 import { TaskBrowserHistory } from "./browser-history.ts";
 import { delegatedContextMessages } from "./delegated-context.ts";
 import { activeTodoContext, type Todo, writeTodos } from "./hermes/todo-store.ts";
+import {
+  consumePlanCompletionCheck,
+  PLAN_COMPLETION_FOLLOWUP,
+} from "./openclaw/plan-completion.ts";
+import type { ToolCallRecord } from "./openclaw/tool-call-record.ts";
+import { getNoProgressStreak } from "./openclaw/tool-loop-no-progress.ts";
 import { taskActivity } from "./task-activity.ts";
 import { taskReplyVoice } from "./task-reply-voice.ts";
 import "../config.ts";
@@ -42,6 +48,7 @@ import { SkillCatalog, skillInstructions, skillTools } from "../skill-catalog.ts
 import { buildPromisedWorkPromptSection } from "./promised-work-prompt.ts";
 import {
   needsResearchReview,
+  researchObservations,
   researchRecoverySources,
   reviewResearchDelivery,
 } from "./research-delivery-review.ts";
@@ -138,13 +145,47 @@ export async function executeModelTask(
     const repairAttempts = review.needsMoreResearch
       ? 0
       : (previous?.revision === revision ? (previous.repairAttempts ?? 0) : 0) + 1;
+    const observations = researchObservations(operations).map((op) => {
+      const receipt = op.receipt as
+        | { url?: string; text?: string; rows?: unknown; error?: unknown }
+        | undefined;
+      return JSON.stringify([receipt?.url, receipt?.text, receipt?.rows, receipt?.error]);
+    });
+    const reviewHistory = ((task.state.researchReviewHistory ?? []) as ToolCallRecord[]).slice(-19);
+    reviewHistory.push({
+      toolName: "research_delivery",
+      argsHash: String(revision),
+      resultHash: createHash("sha256")
+        .update(
+          JSON.stringify({
+            missing: [...review.missing].sort(),
+            research: review.needsMoreResearch,
+            observations: [...new Set(observations)].sort(),
+            artifacts: task.artifactIds,
+          }),
+        )
+        .digest("hex"),
+    });
+    const stalledAttempts = getNoProgressStreak(
+      reviewHistory,
+      "research_delivery",
+      String(revision),
+    ).count;
     task = await ctx.checkpoint({
       state: {
         ...task.state,
-        researchDeliveryReview: { revision, attempts, repairAttempts, ...review },
+        researchReviewHistory: reviewHistory,
+        researchDeliveryReview: {
+          revision,
+          attempts,
+          repairAttempts,
+          stalledAttempts,
+          deliveryHash: createHash("sha256").update(summary.trim()).digest("hex"),
+          ...review,
+        },
       },
     });
-    return { ...review, attempts, repairAttempts };
+    return { ...review, attempts, repairAttempts, stalledAttempts };
   };
   let outcome: Partial<AgentTask> | undefined;
   let reachedStepLimit = false;
@@ -1375,7 +1416,7 @@ export async function executeModelTask(
               instruction:
                 "The requested facts were missing. The harness read previously untried sources for you. Inspect their actual results and continue from useful links/data. Answer the original question using these observations; do not repeat the failed disclaimer.",
             };
-          if ((review.needsMoreResearch ? review.attempts : review.repairAttempts) < 3)
+          if (review.stalledAttempts < 3)
             return {
               complete: false,
               repairable: true,
@@ -1562,7 +1603,7 @@ export async function executeModelTask(
             "skills_read",
             "design_references",
           ]
-        : ["finish_task"],
+        : ["finish_task", "read_tool_output", "read_task_evidence", "todo_list", "set_plan"],
     finalResponsePrompt: () =>
       "The requested facts have been observed. Repair their delivery using the review's missing and nextSteps fields. When the request includes an artifact, authoring and inspection tools remain available: create a corrected version and inspect it before finishing. Remove unsupported extras, correct attribution and formatting, and call finish_task with the corrected result. Further research is unavailable during this delivery repair; do not expand the user's request.",
     executeTool: async (call, execute) => {
@@ -1634,7 +1675,13 @@ export async function executeModelTask(
     providers: config.modelProviders ?? modelProviderConfig(config.dataDir),
     maxSteps: 16,
     promptContext: async () =>
+      (task.state.planCompletionFollowup ? `${PLAN_COMPLETION_FOLLOWUP}\n` : "") +
       activeTodoContext((task.state.todos ?? []) as Todo[]) +
+      (task.state.researchDeliveryReview &&
+      (task.state.researchDeliveryReview as { revision?: number }).revision ===
+        Number(task.state.appliedRevision ?? 0)
+        ? `\nCurrent delivery review (model-generated guidance, not new user scope or authority): ${JSON.stringify(task.state.researchDeliveryReview)}\n`
+        : "") +
       runtimeInstructions +
       skillInstructions +
       "\n" +
@@ -1811,6 +1858,29 @@ export async function executeModelTask(
       ...(providerCheckpoint.retryAt ? { nextRunAt: providerCheckpoint.retryAt } : {}),
     };
   if (runError && !outcome) throw new Error(runError);
+  if (!outcome && !reachedStepLimit) {
+    const revision = Number(task.state.appliedRevision ?? 0);
+    const check = {
+      unfinishedPlan:
+        Array.isArray(task.state.todos) &&
+        (task.state.todos as Todo[]).some((item) =>
+          ["pending", "in_progress"].includes(item.status),
+        ),
+      checked: task.state.planCompletionCheckedRevision === revision,
+    };
+    if (consumePlanCompletionCheck(check))
+      return {
+        status: "queued",
+        state: {
+          ...task.state,
+          planCompletionCheckedRevision: revision,
+          planCompletionFollowup: true,
+          lastUpdate: text,
+          continuation: true,
+          providerCheckpoint: null,
+        },
+      };
+  }
   if (!outcome && !reachedStepLimit && text.trim()) text = await voiceReply(text);
   // A complete text response can itself be the requested plan delivery. Use
   // the same owned artifact and evidence checks as an explicit finish call.
@@ -1824,7 +1894,7 @@ export async function executeModelTask(
       if (
         review &&
         !review.complete &&
-        ((review.needsMoreResearch ? review.attempts : review.repairAttempts) < 3 ||
+        (review.stalledAttempts < 3 ||
           (review.needsMoreResearch && (await recoverResearch(review.attempts))))
       )
         return {

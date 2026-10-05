@@ -25,6 +25,8 @@ function fixture(setLocale: (locale: "en" | "pt-BR") => Promise<void>) {
       "./i18n": { useI18n: () => ({ locale: "en", setLocale, t: (key: string) => key }) },
       "./muse-surfaces-model": {},
       "./thread-actions": {},
+      "./task-removal": {},
+      "./task-status": {},
       "./memory-settings": { MemorySettings: "MemorySettings" },
       "./message-storage": {},
       "./profile-settings": { ProfileSettings: "ProfileSettings" },

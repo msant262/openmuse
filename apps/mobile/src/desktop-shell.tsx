@@ -53,6 +53,8 @@ import { MemorySettings } from "./memory-settings";
 import { messageStorage } from "./message-storage";
 import { isProductTask, productNotifications, taskPreview } from "./muse-surfaces-model";
 import { ProfileSettings } from "./profile-settings";
+import { ClearFinishedTasksButton, TaskRemoveButton } from "./task-removal";
+import { TaskStatusBadge } from "./task-status";
 import { useThemedStyles } from "./theme";
 import { ThreadActions } from "./thread-actions";
 import { type Selection, useMuseThread } from "./threads";
@@ -968,6 +970,7 @@ export function AgentInspector({
             <Text style={[d.inspectorSection, compact && { fontSize: 18 }]}>
               {tab === "upcoming" ? t("Upcoming") : t("Recent work")}
             </Text>
+            <ClearFinishedTasksButton />
             {!shownTasks.length && (
               <Text style={d.inspectorEmpty}>
                 {locale === "pt-BR"
@@ -976,52 +979,41 @@ export function AgentInspector({
               </Text>
             )}
             {shownTasks.map((task) => {
-              const complete = task.status === "succeeded";
-              const RowIcon = complete
-                ? CheckCircle2
-                : task.status === "waiting_approval"
-                  ? ShieldCheck
-                  : Clock3;
               return (
-                <Pressable
-                  key={task.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={task.title}
-                  onPress={() => showDetail({ type: "task", taskId: task.id })}
-                  style={({ pressed }) => [d.activityRow, pressed && d.activeItem]}
-                >
-                  <View style={[d.activityIcon, compact && { width: 42, height: 42 }]}>
-                    {task.status === "running" ? (
-                      <ActivityIndicator
-                        accessibilityLabel={t("Working on your request")}
-                        size="small"
-                        color={colors.blueDark}
-                      />
-                    ) : (
-                      <RowIcon size={17} strokeWidth={1.6} color={colors.muted} />
-                    )}
-                  </View>
-                  <View style={{ flex: 1, gap: 4 }}>
-                    <Text
-                      numberOfLines={2}
-                      style={[d.activityTitle, compact && { fontSize: 16, lineHeight: 22 }]}
-                    >
-                      {task.title}
-                    </Text>
-                    <Text
-                      numberOfLines={2}
-                      style={[d.activityDetail, compact && { fontSize: 14, lineHeight: 20 }]}
-                    >
-                      {t(taskPreview(task))}
-                    </Text>
-                    <Text style={[d.activityTime, compact && { fontSize: 13, lineHeight: 19 }]}>
-                      {new Date(task.updatedAt).toLocaleTimeString(locale, {
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </Text>
-                  </View>
-                </Pressable>
+                <View key={task.id} style={{ flexDirection: "row", alignItems: "flex-start" }}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={task.title}
+                    onPress={() => showDetail({ type: "task", taskId: task.id })}
+                    style={({ pressed }) => [d.activityRow, { flex: 1 }, pressed && d.activeItem]}
+                  >
+                    <View style={[d.activityIcon, compact && { width: 42, height: 42 }]}>
+                      <TaskStatusBadge task={task} iconOnly />
+                    </View>
+                    <View style={{ flex: 1, gap: 4 }}>
+                      <TaskStatusBadge task={task} />
+                      <Text
+                        numberOfLines={2}
+                        style={[d.activityTitle, compact && { fontSize: 16, lineHeight: 22 }]}
+                      >
+                        {task.title}
+                      </Text>
+                      <Text
+                        numberOfLines={2}
+                        style={[d.activityDetail, compact && { fontSize: 14, lineHeight: 20 }]}
+                      >
+                        {t(taskPreview(task))}
+                      </Text>
+                      <Text style={[d.activityTime, compact && { fontSize: 13, lineHeight: 19 }]}>
+                        {new Date(task.updatedAt).toLocaleTimeString(locale, {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </Text>
+                    </View>
+                  </Pressable>
+                  <TaskRemoveButton task={task} />
+                </View>
               );
             })}
           </>

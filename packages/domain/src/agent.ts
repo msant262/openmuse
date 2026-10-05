@@ -62,6 +62,7 @@ export interface AgentTask {
   state: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
   nextRunAt?: string;
   leaseId?: string | null;
   leaseUntil?: string | null;

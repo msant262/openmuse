@@ -12,7 +12,7 @@ import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 for (const preflight of [false, true])
-  test(`M10 budgets to actual ${preflight ? "preflight" : "declared"} fallback capacity and real M5 selects it after 503`, async (t) => {
+  test(`M10 keeps the primary context window and M5 admits a ${preflight ? "preflight" : "declared"} smaller fallback when the actual request fits after 503`, async (t) => {
     const model = await modelFixture(t, () => undefined, {
       errorStatus: (index) => (index === 0 ? 503 : undefined),
     });
@@ -64,7 +64,7 @@ for (const preflight of [false, true])
     };
     const messages: Message[] = [
       ...Array.from(
-        { length: 50 },
+        { length: 2 },
         (_, i): Message => ({
           id: `old${i}`,
           role: i % 2 ? "assistant" : "user",
@@ -89,7 +89,7 @@ for (const preflight of [false, true])
     agent.threadId = "capacity";
     agent.setMessages(messages);
     await agent.runAgent({ runId: `proof-${preflight}` });
-    assert.equal(resolvedCapacity, actualCapacity);
+    assert.equal(resolvedCapacity, 65536);
     assert.equal(model.requests.length, 2);
     assert.match(model.requests[0].body, /primary/);
     assert.match(model.requests[1].body, /fallback/);
@@ -101,8 +101,8 @@ for (const preflight of [false, true])
       "canonical history is not trimmed",
     );
     assert.ok(
-      model.requests.every((request) => !request.body.includes("old0 ")),
-      "bounded context is used for both actual attempts",
+      model.requests.every((request) => request.body.includes("old0 ")),
+      "both actual attempts retain the source history that fits",
     );
     assert.equal(
       ContextBudget.requiresVision([
