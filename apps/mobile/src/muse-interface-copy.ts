@@ -1,4 +1,59 @@
 export const museInterfacePTBR: Record<string, string> = {
+  Saved: "Salvas",
+  Forgotten: "Esquecidas",
+  Expired: "Expiradas",
+  All: "Todas",
+  "Choose an app and sign in with your account. You can disconnect it whenever you want.":
+    "Escolha um aplicativo e entre com a sua conta. Você pode desconectar quando quiser.",
+  "Search connections": "Buscar conexões",
+  "Google, Gmail, calendar…": "Google, Gmail, agenda…",
+  "Hide advanced connections": "Ocultar conexões avançadas",
+  "Advanced connections": "Conexões avançadas",
+  "Google sign-in is not enabled on this server yet. The administrator needs to finish the app setup.":
+    "A conexão com o Google ainda não está disponível. O responsável pelo aplicativo precisa concluir a configuração.",
+  "Choose your Google account. This screen updates when you return.":
+    "Escolha sua conta Google. Esta tela será atualizada quando você voltar.",
+  "Switch Google account": "Trocar conta Google",
+  "Could not open Google sign-in. Try again.":
+    "Não foi possível abrir o login do Google. Tente novamente.",
+  "Install app": "Instalar aplicativo",
+  "Okami on your phone": "Okami no seu celular",
+  "Download the Android app and open the file to install it. Your conversations stay in the same workspace.":
+    "Baixe o aplicativo Android e abra o arquivo para instalar. Suas conversas continuam no mesmo espaço.",
+  "Android may ask you to allow installation from your browser.":
+    "O Android pode pedir permissão para instalar pelo navegador.",
+  "Open this site in Safari, tap Share, then Add to Home Screen. There is no iOS store download yet.":
+    "Abra este site no Safari, toque em Compartilhar e em Adicionar à Tela de Início. Ainda não há aplicativo na loja do iOS.",
+  "Could not open the download. Try again.": "Não foi possível abrir o download. Tente novamente.",
+  "Review what your assistant remembers. You decide what stays.":
+    "Veja o que seu assistente lembra. Você decide o que fica.",
+  "Add memory": "Adicionar memória",
+  "What should I remember?": "O que devo lembrar?",
+  "Expiration date (optional)": "Data de validade (opcional)",
+  "YYYY-MM-DD · leave empty to keep it": "AAAA-MM-DD · deixe vazio para manter",
+  "Choose a future date in YYYY-MM-DD format.": "Escolha uma data futura no formato AAAA-MM-DD.",
+  "Save memory": "Salvar memória",
+  "Search memories": "Buscar memórias",
+  "Search facts, preferences or plans": "Busque fatos, preferências ou planos",
+  "Loading memories": "Carregando memórias",
+  "No matching memories": "Nenhuma memória encontrada",
+  "No saved memories yet": "Nenhuma memória salva ainda",
+  "No memories here": "Nenhuma memória nesta categoria",
+  "Try a different search or another filter.": "Tente outra busca ou outro filtro.",
+  "Add a memory, or open Forgotten to restore something you removed.":
+    "Adicione uma memória ou abra Esquecidas para restaurar algo que você removeu.",
+  "Memories in this category will appear here.": "As memórias desta categoria aparecerão aqui.",
+  "Load more memories": "Carregar mais memórias",
+  "No saved version is available to restore.": "Não há versão salva disponível para restaurar.",
+  "Your assistant no longer uses this memory. Restore it to remember it again.":
+    "Seu assistente não usa mais esta memória. Restaure para que ele volte a lembrá-la.",
+  "Restore memory": "Restaurar memória",
+  "Hide details": "Ocultar detalhes",
+  "Details and history": "Detalhes e histórico",
+  "Forget this memory? You can restore it later.":
+    "Esquecer esta memória? Você pode restaurá-la depois.",
+  "Confirm forget": "Confirmar esquecimento",
+  "local time": "horário local",
   Remove: "Remover",
   "Clear finished": "Limpar encerradas",
   "Clear finished tasks?": "Limpar tarefas encerradas?",

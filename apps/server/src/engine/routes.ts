@@ -265,6 +265,7 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
           .max(100)
           .parse(c.req.query("limit") ?? 40),
         includeInactive: c.req.query("includeInactive") === "true",
+        status: z.enum(["active", "forgotten", "expired"]).optional().parse(c.req.query("status")),
       }),
     ),
   );

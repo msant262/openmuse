@@ -39,6 +39,9 @@ function provider(initial: Partial<ComposioTool> = {}) {
   const calls: ComposioExecutionInput[] = [];
   let dispatchError: Error | undefined;
   const backend = {
+    async status() {
+      return { configured: true };
+    },
     async search() {
       return {
         sessionId: "server-private-session",
@@ -346,6 +349,24 @@ test("an app account that expires during native review opens a task-bound reconn
   assert.equal(interaction.taskId, task.id);
   assert.equal(current.state.interactionRequestId, interaction.id);
   assert.equal(interaction.schema.credentialKind, "composio");
+});
+
+test("an unconfigured catalog does not offer app tools or request a platform key", async (t) => {
+  const { requests } = await modelFixture(t, () => undefined);
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const fixture = provider();
+  t.mock.method(fixture.backend, "status", async () => ({ configured: false }));
+  server.agent.configureComposio(fixture.backend);
+  await server.agent.createTask("owner", { prompt: "Write a short welcome message." });
+  await server.agent.worker.tick();
+  assert.ok(requests.length);
+  assert.doesNotMatch(
+    requests[0].body,
+    /"name":"(?:search_app_tools|connect_app|execute_app_tool)"/,
+  );
+  assert.match(requests[0].body, /Never request a Composio platform API key/);
+  assert.equal((await server.db.list("owner", "interaction-requests")).length, 0);
+  assert.equal(fixture.calls.length, 0);
 });
 
 test("discovered app reads run through task journal and only observed execution satisfies completion", async (t) => {

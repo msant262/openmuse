@@ -149,6 +149,20 @@ test("agent social tools produce durable AG-UI results and survive a fresh threa
     text: "Parabéns pela conquista!",
   });
   assert.match(fixture.requests[0].body, /react_to_message/);
+  const offered = JSON.parse(fixture.requests[0].body).tools.map(
+    (tool: { name?: string; function?: { name: string } }) => tool.name ?? tool.function?.name,
+  );
+  for (const name of [
+    "react_to_message",
+    "send_sticker",
+    "search_gifs",
+    "send_gif",
+    "reply_to_message",
+  ])
+    assert.ok(
+      offered.some((tool: string | undefined) => tool?.endsWith(name)),
+      `${name} must be directly available in the first chat turn`,
+    );
   const reopened = new LocalThreads(server.db);
   t.after(() => reopened.close());
   const history = await reopened.history("owner", input.threadId);

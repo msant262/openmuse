@@ -31,11 +31,8 @@ test("acknowledgment retains tool errors after a correction was already admitted
       ? { name: "continue_task", arguments: { taskId: task.id } }
       : index === 1
         ? {
-            name: "tool_call",
-            arguments: {
-              id: "okami_continue_task",
-              args: { taskId: task.id, message: "Already recorded correction" },
-            },
+            name: "continue_task",
+            arguments: { taskId: task.id, message: "Already recorded correction" },
           }
         : undefined,
   );
@@ -258,11 +255,8 @@ test("a malformed correction is repaired and its accepted message remains verbat
   await modelFixture(t, (index) =>
     index === 0
       ? {
-          name: "tool_call",
-          arguments: {
-            id: "okami_continue_task",
-            args: { taskId: task.id, message: "Invented replacement for the user's words" },
-          },
+          name: "continue_task",
+          arguments: { taskId: task.id, message: "Invented replacement for the user's words" },
         }
       : index === 1 || index === 3
         ? { name: "continue_task", arguments: { taskId: task.id } }

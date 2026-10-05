@@ -28,18 +28,6 @@ export type ConnectionCatalog = {
   totalItems: number;
 };
 
-export function googleConnectionDestination({
-  toolkit,
-  configured,
-  hasAccount,
-}: {
-  toolkit: "gmail" | "googlecalendar";
-  configured: boolean;
-  hasAccount: boolean;
-}) {
-  return configured || hasAccount ? "native" : toolkit;
-}
-
 export function catalogPath(search: string, category: string, cursor?: string | null) {
   const query = new URLSearchParams({ limit: "24" });
   if (search.trim()) query.set("search", search.trim());

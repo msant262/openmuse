@@ -24,7 +24,7 @@ test("Google availability requires pairing and exposes no configuration values",
 });
 
 for (const missing of ["googleClientId", "googleClientSecret", "encryptionKey"] as const) {
-  test(`Google without ${missing} directs clients to the app catalog without starting OAuth`, async (t) => {
+  test(`Google without ${missing} explains app setup without asking the user for a platform key`, async (t) => {
     const server = await fixture(t, {
       googleClientId: "synthetic-google-client",
       googleClientSecret: "synthetic-google-secret",
@@ -43,7 +43,7 @@ for (const missing of ["googleClientId", "googleClientSecret", "encryptionKey"] 
       assert.equal(response.status, 503);
       const error = await response.json();
       assert.equal(error.code, "GOOGLE_SETUP_REQUIRED");
-      assert.match(error.error, /app catalog in Connections/);
+      assert.match(error.error, /administrator.*app setup/i);
       assert.doesNotMatch(error.error, /GOOGLE_CLIENT|TOKEN_ENCRYPTION|synthetic-google/);
     }
     assert.deepEqual(await server.db.list("system", "oauth"), []);
@@ -74,6 +74,8 @@ test("configured Google still starts native read and write OAuth with PKCE", asy
     assert.equal(url.searchParams.get("code_challenge_method"), "S256");
     assert.ok(url.searchParams.get("code_challenge"));
     assert.ok(url.searchParams.get("state"));
+    assert.equal(url.searchParams.get("prompt"), "select_account consent");
+    assert.equal(url.searchParams.has("login_hint"), false);
     assert.match(url.searchParams.get("scope") ?? "", /gmail\.readonly/);
     assert.equal(
       (url.searchParams.get("scope") ?? "").includes("auth/gmail.send"),
@@ -97,4 +99,52 @@ test("sample Google remains available and connects local data without OAuth", as
   assert.deepEqual(await response.json(), { url: null, connected: true });
   assert.equal(await server.workspace.connected("local-user"), true);
   assert.deepEqual(await server.db.list("system", "oauth"), []);
+});
+
+test("Google app configuration never connects an account; account receipt requires pairing", async (t) => {
+  const server = await fixture(t, {
+    googleClientId: "synthetic-google-client",
+    googleClientSecret: "synthetic-google-secret",
+    encryptionKey: randomBytes(32).toString("base64"),
+  });
+  assert.equal((await server.app.request("/api/google/account")).status, 401);
+  const response = await server.app.request("/api/google/account", { headers: server.headers });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { connected: false });
+  assert.equal(
+    (await server.db.get<{ secret?: string }>("local-user", "credentials", "google"))?.secret ??
+      null,
+    null,
+  );
+});
+
+test("cancelled and expired Google sign-in offer a usable return to the app", async (t) => {
+  const server = await fixture(t, {
+    googleClientId: "synthetic-google-client",
+    googleClientSecret: "synthetic-google-secret",
+    encryptionKey: randomBytes(32).toString("base64"),
+  });
+  const started = await server.app.request("/api/google/connect", {
+    method: "POST",
+    headers: server.headers,
+    body: JSON.stringify({ capability: "read" }),
+  });
+  const { url } = await started.json();
+  const state = new URL(url).searchParams.get("state");
+  assert.ok(state);
+  const cancelled = await server.app.request(
+    `/api/google/callback?error=access_denied&state=${state}`,
+  );
+  assert.equal(cancelled.status, 400);
+  assert.match(await cancelled.text(), /Voltar ao Okami/);
+  assert.equal(cancelled.headers.get("cache-control"), "no-store");
+  assert.equal(await server.db.get("system", "oauth", state), null);
+  const expired = await server.app.request("/api/google/callback?state=expired&code=synthetic");
+  assert.equal(expired.status, 400);
+  assert.match(await expired.text(), /Voltar ao Okami/);
+  assert.equal(
+    (await server.db.get<{ secret?: string }>("local-user", "credentials", "google"))?.secret ??
+      null,
+    null,
+  );
 });

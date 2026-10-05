@@ -32,6 +32,7 @@ function fixture(width = 390) {
         useWindowDimensions: () => ({ width }),
       },
       "./agent-workspace": { useAgentWorkspace: () => ({ data: { identity: {} } }) },
+      "./app-install": { AppInstall: "AppInstall" },
       "./avatar-studio": { AvatarStudio: "AvatarStudio" },
       "./desktop-shell": {
         AppLanguagePicker: "AppLanguagePicker",

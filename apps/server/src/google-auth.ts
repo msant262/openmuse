@@ -100,7 +100,7 @@ export class GoogleAuth {
   async connect(owner: string, write: boolean) {
     if (!this.configured())
       throw new AppError(
-        "Connect Gmail or Google Calendar from the app catalog in Connections.",
+        "Google sign-in is not enabled on this server yet. The administrator needs to finish the app setup.",
         503,
         "GOOGLE_SETUP_REQUIRED",
       );
@@ -138,12 +138,15 @@ export class GoogleAuth {
       scope: scopes.join(" "),
       state,
       access_type: "offline",
-      prompt: "consent",
+      prompt: "select_account consent",
       include_granted_scopes: "true",
       code_challenge_method: "S256",
       code_challenge: createHash("sha256").update(verifier).digest("base64url"),
     }).toString();
     return { url: url.toString() };
+  }
+  async cancel(stateId: string) {
+    await this.db.take<OAuthState>("system", "oauth", stateId);
   }
   async callback(stateId: string, code: string) {
     const state = await this.db.take<OAuthState>("system", "oauth", stateId);

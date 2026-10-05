@@ -1,7 +1,6 @@
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import {
-  ArrowDownToLine,
   ArrowUpRight,
   CalendarDays,
   Check,
@@ -12,7 +11,6 @@ import {
   FileText,
   Globe2,
   Inbox,
-  Link2,
   Mail,
   Plus,
   Search,
@@ -23,7 +21,6 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Image,
-  Linking,
   Platform,
   Pressable,
   Text,
@@ -39,8 +36,7 @@ import type {
 } from "../../../packages/domain/src";
 import { ActionLogScreen } from "./action-log-screen";
 import { API_URL } from "./api";
-import { ConnectionsCatalog } from "./connections-catalog";
-import { type ConnectionToolkit, googleConnectionDestination } from "./connections-state";
+import { ConnectionsHome } from "./connections-home";
 import { localDateTime, zonedInstant } from "./date-time";
 import { useI18n } from "./i18n";
 import { MuseLibrary } from "./muse-library";
@@ -58,7 +54,6 @@ import {
   relativeDate,
   resultSummary,
   SectionHeading,
-  Sheet,
   timeLabel,
   useUI,
 } from "./ui";
@@ -1170,262 +1165,5 @@ export function ActivityScreen() {
   );
 }
 export function ConnectionsScreen({ query }: { query?: string }) {
-  return (
-    <ConnectionsCatalog
-      query={query}
-      nativeConnections={(search, selectToolkit) => (
-        <NativeConnections query={search} selectToolkit={selectToolkit} />
-      )}
-    />
-  );
-}
-
-function NativeConnections({
-  query,
-  selectToolkit,
-}: {
-  query: string;
-  selectToolkit: (toolkit: ConnectionToolkit) => void;
-}) {
-  const { colors, s } = useUI();
-
-  const { t } = useI18n();
-  const { workspace: w, api, refresh, notify, open } = useWorkspace();
-  const [selected, setSelected] = useState<"gmail" | "googlecalendar">();
-  const [nativeConfigured, setNativeConfigured] = useState(w.mode === "sample");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const google = w.connections.find((c) => c.id === "google");
-  const connected = google?.status === "connected" || google?.status === "sample";
-  const hasAccount = connected || Boolean(google?.account);
-  function openCatalog(toolkit: "gmail" | "googlecalendar") {
-    setSelected(undefined);
-    selectToolkit({
-      slug: toolkit,
-      name: toolkit === "gmail" ? "Gmail" : t("Google Calendar"),
-      description: t("Connect this app to use it in your conversations"),
-      categories: [],
-      authSchemes: [],
-      noAuth: false,
-      deprecated: false,
-    });
-  }
-  async function checkNative() {
-    const configured =
-      w.mode === "sample" ||
-      (await api.request<{ configured: boolean }>("/api/google/status")).configured;
-    setNativeConfigured(configured);
-    return configured;
-  }
-  async function selectGoogle(toolkit: "gmail" | "googlecalendar") {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      const destination = googleConnectionDestination({
-        toolkit,
-        configured: await checkNative(),
-        hasAccount,
-      });
-      if (destination === "native") setSelected(toolkit);
-      else openCatalog(destination);
-    } catch {
-      setError(t("Could not check the connection. We will try again."));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function connect(capability: "read" | "write") {
-    setBusy(true);
-    setError("");
-    try {
-      if (!(await checkNative())) {
-        openCatalog(selected ?? "gmail");
-        return;
-      }
-      const result = await api.request<{ url: string | null; connected?: boolean }>(
-        "/api/google/connect",
-        { capability },
-      );
-      if (result.url) {
-        await Linking.openURL(result.url);
-        notify(t("Finish connecting in your browser, then refresh your workspace."));
-      } else {
-        await refresh();
-        notify(t("Local Google data is ready."));
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function disconnect() {
-    setBusy(true);
-    setError("");
-    try {
-      await api.request("/api/google/disconnect", {});
-      await refresh();
-      notify(t("Google disconnected."));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  const rows = [
-    { id: "gmail", name: "Gmail", icon: Mail, color: colors.danger, connected, group: "google" },
-    {
-      id: "googlecalendar",
-      name: "Google Calendar",
-      icon: CalendarDays,
-      color: colors.blueDark,
-      connected,
-      group: "google",
-    },
-    {
-      id: "browser",
-      name: "Agent computer",
-      icon: Globe2,
-      color: colors.blueDark,
-      connected: w.connections.some((c) => c.id === "browser" && c.status === "connected"),
-      group: "browser",
-    },
-  ].filter((row) =>
-    `${row.name} ${t(row.name)} ${row.group}`.toLowerCase().includes(query.toLowerCase()),
-  );
-  return (
-    <View style={{ gap: 24 }}>
-      {!selected && <ErrorNotice error={error} />}
-      {[true, false].map((isConnected) => {
-        const group = rows.filter((row) => row.connected === isConnected);
-        if (!group.length) return null;
-        return (
-          <View key={String(isConnected)} style={{ gap: 8 }}>
-            <Text style={[s.muted, { fontSize: 13 }]}>
-              {isConnected
-                ? w.mode === "sample"
-                  ? t("Your connections")
-                  : t("Connected")
-                : t("Available")}
-            </Text>
-            <View
-              style={{ paddingHorizontal: 16, borderRadius: 16, backgroundColor: colors.subtle }}
-            >
-              {group.map((row, index) => (
-                <Pressable
-                  key={row.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={t("Manage {name}", { name: t(row.name) })}
-                  disabled={row.group === "google" && busy}
-                  onPress={() =>
-                    row.group === "browser"
-                      ? open({ type: "computer" })
-                      : void selectGoogle(row.id === "gmail" ? "gmail" : "googlecalendar")
-                  }
-                  style={[
-                    s.row,
-                    {
-                      gap: 11,
-                      minHeight: 49,
-                      borderBottomWidth: index < group.length - 1 ? 1 : 0,
-                      borderBottomColor: colors.line,
-                    },
-                  ]}
-                >
-                  <View
-                    style={{
-                      width: 27,
-                      height: 27,
-                      borderRadius: 7,
-                      backgroundColor: colors.card,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <row.icon size={20} color={row.color} strokeWidth={1.8} />
-                  </View>
-                  <Text style={[s.text, { flex: 1, fontSize: 13 }]}>{t(row.name)}</Text>
-                  {row.connected && row.group === "google" && w.mode === "sample" && (
-                    <Text style={s.small}>{t("Local data")}</Text>
-                  )}
-                  {row.connected ? (
-                    <ChevronRight size={16} color={colors.muted} />
-                  ) : (
-                    <Text
-                      style={{
-                        fontSize: 13,
-                        color: row.group === "google" ? colors.blueDark : colors.muted,
-                      }}
-                    >
-                      {row.group === "google" ? t("Connect") : t("Setup")}
-                    </Text>
-                  )}
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        );
-      })}
-      {selected && (
-        <Sheet
-          title={t("Google connections")}
-          subtitle={google?.account}
-          onClose={() => setSelected(undefined)}
-        >
-          <View style={{ gap: 18 }}>
-            <Text style={s.muted}>
-              {t(
-                "Bring Gmail and Google Calendar into your conversations. Choose read access, then enable sending and editing when you need it.",
-              )}
-            </Text>
-            <View style={[s.row, { gap: 7, flexWrap: "wrap" }]}>
-              {google?.capabilities.map((cap) => (
-                <Chip key={cap}>{t(capabilityLabel(cap))}</Chip>
-              ))}
-            </View>
-            <ErrorNotice error={error} />
-            {nativeConfigured ? (
-              <>
-                <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
-                  {t("Connect Google")}
-                </Button>
-                <Button busy={busy} onPress={() => void connect("write")}>
-                  {t("Enable sending & editing")}
-                </Button>
-              </>
-            ) : (
-              <Button primary icon={Link2} onPress={() => openCatalog(selected)}>
-                {t("Connect account")}
-              </Button>
-            )}
-            {hasAccount && (
-              <Button busy={busy} danger onPress={() => void disconnect()}>
-                {t("Disconnect Google")}
-              </Button>
-            )}
-            <Button
-              small
-              icon={ArrowDownToLine}
-              onPress={() => void refresh().catch((e) => setError(String(e)))}
-            >
-              {t("Refresh connections")}
-            </Button>
-          </View>
-        </Sheet>
-      )}
-    </View>
-  );
-}
-function capabilityLabel(value: string) {
-  const scope = value.split("/").at(-1) || value;
-  const names: Record<string, string> = {
-    "gmail.readonly": "Read Gmail",
-    "gmail.send": "Send Gmail",
-    "calendar.events.readonly": "Read calendar events",
-    "calendar.calendarlist.readonly": "Read calendar list",
-    "calendar.events": "Manage calendar events",
-    "calendar.readonly": "Read calendars",
-  };
-  return names[scope] || scope;
+  return <ConnectionsHome query={query} />;
 }

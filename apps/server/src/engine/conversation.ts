@@ -1003,6 +1003,7 @@ export class ConversationAgent extends AbstractAgent {
         );
       },
       tools: [...tools.filter((tool) => companionChatTools.has(tool.name)), ...socialTools],
+      toolSearch: false,
       prompt:
         companionConversationInstructions +
         personalContext +

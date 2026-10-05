@@ -33,6 +33,8 @@ type Options = {
   fallbacks?: readonly string[];
   providers?: ModelProviderConfig;
   tools: ToolDefinition[];
+  /** Small foreground conversations need their interaction schemas immediately. */
+  toolSearch?: boolean;
   prompt: string;
   promptContext?: () => Promise<string>;
   contextModel?: ContextModelResolver;
@@ -477,7 +479,7 @@ export function openclawAgent(options: Options) {
               slots: { memory: "none" },
               entries: { "okami-host": { enabled: true, config: { runId: input.runId } } },
             },
-            tools: { allow: names, toolSearch: { enabled: true } },
+            tools: { allow: names, toolSearch: { enabled: options.toolSearch ?? true } },
             skills: { allowBundled: [], load: { watch: false } },
             logging: { level: "error", consoleLevel: "error" },
           };

@@ -205,8 +205,8 @@ test("external tools cannot accidentally block the foreground or trigger connect
     fixture.requests[0].body,
     /"name":"(?:browse_web|web_fetch|create_document|search_mail)"/,
   );
-  assert.ok(events.some((e) => e.type === EventType.CUSTOM && e.name === "okami.harness.tool"));
-  assert.match(fixture.requests[1].body, /Unknown tool/);
+  assert.ok(events.some((e) => e.type === EventType.RUN_FINISHED));
+  assert.match(fixture.requests[1].body, /(?:Unknown tool|not found|not available)/i);
 });
 
 test("delegated mail reads preserve owner isolation and never send mail", async (t) => {

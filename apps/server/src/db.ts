@@ -1081,6 +1081,7 @@ export class Store {
     now = new Date().toISOString(),
     cursor?: string,
     includeInactive = false,
+    status?: "active" | "forgotten" | "expired",
   ): Promise<AgentMemory[]> {
     await this.repairMemoryFingerprints(owner);
     const result = await this.db.query(
@@ -1093,11 +1094,23 @@ export class Store {
          AND suppression.kind='memory-suppressions'
          AND suppression.id=fact.data->>'fingerprint'
          AND fact.data->>'suppressionOverride' IS DISTINCT FROM suppression.id)))
+       AND ($7::text IS NULL OR
+         ($7='forgotten' AND data->>'status'='forgotten') OR
+         ($7='active' AND COALESCE(data->>'status','active')='active' AND (data->>'validUntil' IS NULL OR (data->>'validUntil')::timestamptz>$4::timestamptz)) OR
+         ($7='expired' AND COALESCE(data->>'status','active')='active' AND (data->>'validUntil')::timestamptz<=$4::timestamptz))
        AND ($2='' OR openmuse_search_vector(data->>'text') @@ openmuse_search_query($2) OR id=$2)),
        ranked AS (SELECT data,id,row_number() OVER (ORDER BY score DESC,updated_at DESC,id DESC) AS position FROM matched)
        SELECT data FROM ranked WHERE ($5::text IS NULL OR position>(SELECT position FROM ranked WHERE id=$5))
        ORDER BY position LIMIT $3`,
-      [owner, query, Math.min(101, Math.max(1, limit)), now, cursor ?? null, includeInactive],
+      [
+        owner,
+        query,
+        Math.min(101, Math.max(1, limit)),
+        now,
+        cursor ?? null,
+        includeInactive,
+        status ?? null,
+      ],
     );
     return result.rows.map((row) => row.data as unknown as AgentMemory);
   }
