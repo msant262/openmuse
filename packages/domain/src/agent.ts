@@ -39,7 +39,7 @@ export interface Evidence {
 export interface TaskStep {
   id: string;
   title: string;
-  status: "pending" | "running" | "succeeded" | "failed" | "waiting";
+  status: "pending" | "running" | "succeeded" | "failed" | "waiting" | "cancelled";
   detail?: string;
 }
 export interface AgentTask {
