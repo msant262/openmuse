@@ -90,3 +90,9 @@ matched before and after deployment.
 
 The APK was built and its signing identity checked; this release was not
 installed on a physical Android device during acceptance.
+
+## Subsequent reliability incident
+
+The 5 October delivery and long-conversation fixes, including the rejected
+winner-only infographic and the stricter image acceptance gate, are documented
+in [the harness reliability report](../../../docs/HARNESS-RELIABILITY-20261005.md).

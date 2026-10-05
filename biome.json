@@ -12,6 +12,7 @@
       "!**/android",
       "!**/.openmuse",
       "!**/artifacts",
+      "!**/deployment-secrets",
       "!third_party/openclaw/harness"
     ]
   },
