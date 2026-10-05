@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PublicWeb } from "../apps/server/src/public-web.ts";
 import { selectPublicData } from "../apps/server/src/public-data.ts";
+import { PublicWeb } from "../apps/server/src/public-web.ts";
 
 test("an expanded dataset explains how to repair a grouping pointer without returning partial totals", () => {
   const source = {
