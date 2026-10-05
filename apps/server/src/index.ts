@@ -4,6 +4,7 @@ import { ActionLog } from "./action-log.ts";
 import { createApp } from "./app.ts";
 import { readConfig } from "./config.ts";
 import { createStore } from "./db.ts";
+import { warmOpenclawHarness } from "./engine/openclaw-agent.ts";
 import { startModelTokenMaintenance } from "./providers/maintenance.ts";
 import { RequestDrain, shutdownServer } from "./shutdown.ts";
 import { LocalThreads } from "./threads.ts";
@@ -16,6 +17,7 @@ const db = await createStore({
 await db.recoverInterruptedActions();
 await new ActionLog(db).reconcile(true);
 const { app, agent, actions, threads, executors, codexConnection } = await createApp(db, config);
+if (config.agentBackend === "model") await warmOpenclawHarness(config.dataDir);
 const stopTokenMaintenance = startModelTokenMaintenance(config);
 if (config.taskWorkerEnabled) agent.start();
 const requests = new RequestDrain();

@@ -788,13 +788,26 @@ export class ConversationAgent extends AbstractAgent {
       defineTool({
         name: "delegate_task",
         description:
-          "Immediately hand a whole job to the durable server worker. Use agent for research, images, documents, presentations, mail, calendar and integrations. Send a short faithful brief plus context already known; the worker researches, reads skills, drafts and delivers. Do not prepare the artifact here. Include your acknowledgment and reaction choice in this call. The returned task card confirms admission. Internal IDs are not user-facing.",
+          "Immediately hand a whole job to the durable server worker. Use agent for research, images, documents, presentations, mail, calendar and integrations. The ORIGINAL user message and conversation context are attached automatically: normally OMIT prompt instead of rewriting the request. Choose a short title, acknowledgment and reaction. The worker researches, reads skills, drafts and delivers. Do not prepare the artifact here. The returned task card confirms admission. Internal IDs are not user-facing.",
         // The foreground hands off an objective, not an arbitrary internal task
         // payload. A closed schema lets providers enforce the acknowledgment in
         // the first call instead of repairing missing arguments in another turn.
         parameters: createTaskSchema
-          .omit({ input: true, originThreadId: true, originMessageId: true })
+          .omit({
+            input: true,
+            originThreadId: true,
+            originMessageId: true,
+            criteria: true,
+            prompt: true,
+          })
           .extend({
+            prompt: z
+              .string()
+              .max(12000)
+              .optional()
+              .describe(
+                "Normally omit this field: the original request and its history are already attached. Only use it for additional context unavailable in the conversation; never repeat or expand the user's request.",
+              ),
             kind: z.literal("agent").default("agent"),
             acknowledgment: z
               .string()
@@ -814,7 +827,12 @@ export class ConversationAgent extends AbstractAgent {
         execute: async ({ acknowledgment, reaction, ...args }) => {
           const task = await this.service.createTask(
             this.owner,
-            { ...args, originThreadId: input.threadId, originMessageId: latest?.id },
+            {
+              ...args,
+              prompt: args.prompt || latestText,
+              originThreadId: input.threadId,
+              originMessageId: latest?.id,
+            },
             key("task", args),
             false,
             undefined,

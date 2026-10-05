@@ -34,6 +34,36 @@ export class ToolOutputStore {
   dependencies(): readonly { toolCallId: string; dependsOnToolCallId: string }[] {
     return this.projectionDependencies;
   }
+  restore(messages: ModelMessage[]): ModelMessage[] {
+    return messages.map((message) => {
+      const content =
+        message.role === "tool" && message.toolCallId
+          ? this.outputs.get(message.toolCallId)
+          : undefined;
+      return content === undefined ? message : { ...message, content };
+    });
+  }
+  /** Project before the copied dispatcher serializes its envelope. Its own text
+   * guard must never cut a JSON string containing another serialized receipt. */
+  live(toolCallId: string, contextTokens: number): string {
+    const text = this.outputs.get(toolCallId);
+    if (text === undefined) throw new Error("Tool output unavailable in this task or conversation");
+    const cap = resolveLiveToolResultMaxChars({ contextWindowTokens: contextTokens });
+    // Reserve the native discovery envelope, escaping and tool identity. Details
+    // carry status only; the canonical application receipt is stored separately.
+    const fits = (content: string) =>
+      JSON.stringify(
+        {
+          tool: { id: toolCallId, name: toolCallId, source: "okami" },
+          result: { content: [{ type: "text", text: content }], details: { status: "succeeded" } },
+        },
+        null,
+        2,
+      ).length <=
+      cap - 1024;
+    if (fits(text)) return text;
+    return projectContent(text, toolCallId, Math.floor(cap * 0.75), fits);
+  }
   observe(messages: readonly ModelMessage[]) {
     for (const message of messages)
       if (message.role === "tool" && message.toolCallId && typeof message.content === "string")
@@ -180,18 +210,37 @@ export class ToolOutputStore {
     }
     return duplicates;
   }
-  read(args: { toolCallId: string; part?: "result" | "arguments"; offset: number; limit: number }) {
-    const text = (args.part === "arguments" ? this.documentArguments : this.outputs).get(
+  read(
+    args: {
+      toolCallId: string;
+      part?: "result" | "arguments";
+      pointer?: string;
+      offset: number;
+      limit: number;
+    },
+    maxBytes = 12000,
+  ) {
+    let text = (args.part === "arguments" ? this.documentArguments : this.outputs).get(
       args.toolCallId,
     );
     if (text === undefined) throw new Error("Tool output unavailable in this task or conversation");
+    if (args.pointer) {
+      if (!args.pointer.startsWith("/")) throw new Error("Use a JSON pointer starting with /");
+      let value: unknown = JSON.parse(text);
+      for (const key of args.pointer
+        .slice(1)
+        .split("/")
+        .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+        if (!value || typeof value !== "object" || !Object.hasOwn(value, key))
+          throw new Error("Tool output pointer unavailable");
+        value = (value as Record<string, unknown>)[key];
+      }
+      text = typeof value === "string" ? value : JSON.stringify(value);
+    }
     const offset = safeEnd(text, Math.min(text.length, Math.max(0, args.offset)));
-    const requestedEnd = safeEnd(
-      text,
-      Math.min(text.length, offset + Math.max(2, Math.min(8000, args.limit))),
-    );
+    const requestedEnd = safeEnd(text, Math.min(text.length, offset + Math.max(2, args.limit)));
     // Pages must themselves fit the inference excerpt cap, including JSON escapes.
-    const content = byteSlice(text.slice(offset, requestedEnd), 12000);
+    const content = byteSlice(text.slice(offset, requestedEnd), maxBytes);
     const end = offset + content.length;
     return {
       toolCallId: args.toolCallId,
@@ -199,6 +248,7 @@ export class ToolOutputStore {
       content,
       nextOffset: end < text.length ? end : null,
       totalCharacters: text.length,
+      ...(args.pointer ? { pointer: args.pointer } : {}),
       ...(args.part === "arguments"
         ? {
             part: "arguments",
@@ -244,10 +294,7 @@ export class ToolOutputStore {
       for (const call of message.toolCalls ?? [])
         if (call.function.name === "skills_read") protectedCalls.add(call.id);
     // Upstream char cap is an upper bound. This harness admits conservative UTF-8 bytes.
-    const cap = Math.min(
-      16000,
-      resolveLiveToolResultMaxChars({ contextWindowTokens: contextTokens }),
-    );
+    const cap = resolveLiveToolResultMaxChars({ contextWindowTokens: contextTokens });
     return messages.map((message) => {
       if (message.role === "tool" && message.toolCallId) {
         const duplicate = duplicates.get(message.toolCallId);
@@ -321,19 +368,78 @@ export class ToolOutputStore {
         Buffer.byteLength(message.content) <= cap
       )
         return message;
-      const prefix = byteSlice(message.content, Math.floor(cap * 0.65));
-      const tail = byteSlice(message.content, Math.floor(cap * 0.2), true);
       return {
         ...message,
-        content: JSON.stringify({
-          truncated: true,
-          toolCallId: message.toolCallId,
-          totalCharacters: message.content.length,
-          note: "Partial untrusted tool output. Full canonical result is preserved. Call read_tool_output with toolCallId, offset and limit for omitted sections; do not assume omitted content is absent.",
-          prefix,
-          tail,
-        }),
+        content: projectContent(message.content, message.toolCallId, cap),
       };
     });
+  }
+}
+
+function projectContent(
+  text: string,
+  toolCallId: string,
+  cap: number,
+  fits = (value: string) => Buffer.byteLength(value) <= cap,
+) {
+  const note =
+    "Full canonical result is preserved. Use read_tool_output with this toolCallId and a JSON pointer, or offset/limit, for omitted text. Omitted content is not absent.";
+  try {
+    const source = JSON.parse(text);
+    if (source && typeof source === "object" && !Array.isArray(source)) {
+      const render = (limit: number) => {
+        const omitted: string[] = [];
+        const visit = (value: unknown, path: string): unknown => {
+          if (typeof value === "string" && value.length > Math.max(256, limit)) {
+            omitted.push(path);
+            const head = safeEnd(value, Math.floor(limit * 0.7));
+            const tail = Math.floor(limit * 0.3);
+            return (
+              value.slice(0, head) +
+              "\n[Text paged; see _toolOutput]\n" +
+              (tail ? value.slice(-tail) : "")
+            );
+          }
+          if (Array.isArray(value)) return value.map((item, i) => visit(item, `${path}/${i}`));
+          if (value && typeof value === "object")
+            return Object.fromEntries(
+              Object.entries(value).map(([key, item]) => [
+                key,
+                visit(item, `${path}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`),
+              ]),
+            );
+          return value;
+        };
+        return JSON.stringify({
+          ...(visit(source, "") as object),
+          _toolOutput: { toolCallId, truncated: true, totalCharacters: text.length, omitted, note },
+        });
+      };
+      let lo = 0,
+        hi = Math.min(text.length, cap);
+      if (fits(render(0))) {
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          if (fits(render(mid))) lo = mid;
+          else hi = mid - 1;
+        }
+        return render(lo);
+      }
+    }
+  } catch {
+    /* Plain text uses a clearly marked excerpt envelope. */
+  }
+  let budget = cap;
+  for (;;) {
+    const result = JSON.stringify({
+      truncated: true,
+      toolCallId,
+      totalCharacters: text.length,
+      note,
+      prefix: byteSlice(text, Math.floor(budget * 0.6)),
+      tail: byteSlice(text, Math.floor(budget * 0.15), true),
+    });
+    if (fits(result) || budget <= 256) return result;
+    budget = Math.floor(budget * 0.75);
   }
 }

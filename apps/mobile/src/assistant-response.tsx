@@ -1,10 +1,10 @@
-import { useCallback, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { Linking, Text, type TextStyle } from "react-native";
 import Markdown, { type MarkdownStyles, type RenderRules } from "react-native-markdown-renderer";
 import { assistantMarkdown, isSafeAssistantUrl } from "./assistant-markdown";
 import { ErrorNotice, useUI } from "./ui";
 
-export function AssistantResponse({ content }: { content: string }) {
+export const AssistantResponse = memo(function AssistantResponse({ content }: { content: string }) {
   const { colors } = useUI();
   const textStyle = { color: colors.text, fontSize: 16, lineHeight: 24 };
   const style: Partial<MarkdownStyles> = {
@@ -61,4 +61,4 @@ export function AssistantResponse({ content }: { content: string }) {
       <ErrorNotice error={linkError} />
     </>
   );
-}
+});

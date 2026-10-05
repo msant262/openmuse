@@ -391,6 +391,24 @@ test("SIWC streamed tools execute once and continue only after verified inferenc
   }
 });
 
+test("Responses transport bounds native tool identities consistently across calls and receipts", () => {
+  const id = "tool_call:call_PHD0e6Ri14Nka8N8I1B2lFHU:okami_browser_snapshot:14";
+  assert.equal(id.length, 65);
+  const input = [
+    { type: "function_call", call_id: id, name: "browser_snapshot", arguments: "{}" },
+    { type: "function_call_output", call_id: id, output: "Observed public page" },
+    { type: "function_call", call_id: id + "different", name: "browser_snapshot", arguments: "{}" },
+    { type: "function_call_output", call_id: "short-call", output: "Unchanged" },
+  ];
+  const prepared = siwcRequest({ input }).input as typeof input;
+  assert.ok(prepared.every((item) => item.call_id.length <= 64));
+  assert.equal(prepared[0].call_id, prepared[1].call_id);
+  assert.notEqual(prepared[0].call_id, prepared[2].call_id);
+  assert.equal(prepared[3].call_id, "short-call");
+  assert.equal(input[0].call_id, id, "Durable native identities must remain unchanged");
+  assert.deepEqual(siwcRequest({ input }).input, prepared);
+});
+
 test("SIWC sanitizes preview fields, rejects audio/video/hosted images, and pins OAuth dispatch", async (t) => {
   const prepared = siwcRequest({
     model: "account-model",

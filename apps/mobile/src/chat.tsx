@@ -1007,12 +1007,17 @@ export function ChatScreen({
     )
       setAnnotationSource(undefined);
   }
+  const acceptedMessageIds = new Set(
+    queue instanceof MessageOutbox
+      ? queue.getSnapshot().messageDetails.map((details) => details.messageId)
+      : [],
+  );
   const messages =
     queue instanceof MessageOutbox
       ? mergeOutboxMessages(
           agent.messages || [],
           (queue.getSnapshot().messages as Message[]).filter((message) =>
-            queue.getSnapshot().messageDetails.some((details) => details.messageId === message.id),
+            acceptedMessageIds.has(String(message.id)),
           ),
         )
       : agent.messages || [];
@@ -1026,6 +1031,21 @@ export function ChatScreen({
       ? messages[latestUserIndex].content
       : null;
   const visible = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  const toolMessages = new Map(
+    messages
+      .filter((message): message is ToolMessage => message.role === "tool")
+      .map((message) => [message.toolCallId, message]),
+  );
+  const messageIndexes = new Map(messages.map((message, index) => [message.id, index]));
+  const messageDetails = new Map(
+    social.state.messages.map((details) => [details.messageId, details]),
+  );
+  const messageReactions = new Map<string, typeof social.state.reactions>();
+  for (const reaction of social.state.reactions) {
+    const group = messageReactions.get(reaction.messageId) ?? [];
+    group.push(reaction);
+    messageReactions.set(reaction.messageId, group);
+  }
   const currentTask = agentWorkspace?.tasks.find(
     (task) =>
       task.originThreadId === threadId &&
@@ -1226,20 +1246,18 @@ export function ChatScreen({
         ) : (
           visible.map((message) => {
             const user = message.role === "user";
-            const details = social.state.messages.find((item) => item.messageId === message.id);
+            const details = messageDetails.get(String(message.id));
+            const messageIndex = messageIndexes.get(message.id) ?? -1;
             const awaitingDetails = durableChat && user && !details;
             const text = details
               ? user
-                ? displayJevUserMessage(details.text, messages.slice(0, messages.indexOf(message)))
+                ? displayJevUserMessage(details.text, messages.slice(0, messageIndex))
                 : details.text
               : awaitingDetails
                 ? ""
                 : typeof message.content === "string"
                   ? user
-                    ? displayJevUserMessage(
-                        message.content,
-                        messages.slice(0, messages.indexOf(message)),
-                      )
+                    ? displayJevUserMessage(message.content, messages.slice(0, messageIndex))
                     : message.content
                   : "";
             const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];
@@ -1277,9 +1295,7 @@ export function ChatScreen({
                     text={text}
                     user={user}
                     contextual={wide}
-                    reactions={social.state.reactions.filter(
-                      (item) => item.messageId === message.id,
-                    )}
+                    reactions={messageReactions.get(String(message.id)) ?? []}
                     onReact={
                       durableChat
                         ? (emoji) => void social.react(String(message.id), emoji)
@@ -1346,15 +1362,11 @@ export function ChatScreen({
                   <BrowserRunContext
                     value={{
                       running: busy || agent.isRunning,
-                      active:
-                        (busy || agent.isRunning) && messages.indexOf(message) > latestUserIndex,
+                      active: (busy || agent.isRunning) && messageIndex > latestUserIndex,
                     }}
                   >
                     {toolCalls.map((toolCall) => {
-                      const toolMessage = messages.find(
-                        (candidate): candidate is ToolMessage =>
-                          candidate.role === "tool" && candidate.toolCallId === toolCall.id,
-                      );
+                      const toolMessage = toolMessages.get(toolCall.id);
                       const socialMessage = socialToolMessage(
                         toolCall.function.name,
                         toolMessage?.content,
@@ -1366,9 +1378,7 @@ export function ChatScreen({
                             text={socialMessage.text}
                             user={false}
                             contextual={wide}
-                            reactions={social.state.reactions.filter(
-                              (item) => item.messageId === toolCall.id,
-                            )}
+                            reactions={messageReactions.get(toolCall.id) ?? []}
                             onReact={
                               durableChat
                                 ? (emoji) => void social.react(toolCall.id, emoji)

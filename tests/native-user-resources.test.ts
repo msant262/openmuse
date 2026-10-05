@@ -21,7 +21,7 @@ test("native Python contracts exercise local journals/transfers/resources with i
     "python3",
     ["-m", "unittest", "apps.computer.executor.test_contracts"],
     {
-      env: { PATH: process.env.PATH, LANG: "C.UTF-8" },
+      env: { PATH: process.env.PATH, LANG: "C.UTF-8", TMPDIR: process.env.TMPDIR },
       timeout: 18000,
     },
   );

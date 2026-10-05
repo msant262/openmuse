@@ -70,13 +70,21 @@ type Scope = {
   primitive?: JournalOperation;
 };
 const dispatchScope = new AsyncLocalStorage<Scope>();
+function primitiveOperationId(parentId: string, physicalTaskId: string) {
+  const legacy = `primitive:${parentId}:${physicalTaskId}`;
+  return legacy.length <= 256
+    ? legacy
+    : `primitive:${createHash("sha256")
+        .update(JSON.stringify([parentId, physicalTaskId]))
+        .digest("hex")}`;
+}
 /** Trusted task scope is propagated through nested/parallel async tool calls. */
 export async function authorizeTaskEffect(resources?: ResourceLease[], physicalTaskId?: string) {
   const scope = dispatchScope.getStore();
   if (scope) {
     let operation = scope.operation;
     if (resources && physicalTaskId) {
-      const id = `primitive:${scope.operation.id}:${physicalTaskId}`;
+      const id = primitiveOperationId(scope.operation.id, physicalTaskId);
       operation = await scope.journal.prepare(scope.owner, {
         ...scope.operation,
         id,
@@ -187,7 +195,7 @@ export class TaskJournal {
           continue;
         const descendants = operations.filter((item) => item.parentOperationId === child.id);
         const publication = recovered.find(
-          (file) => child.id === `primitive:${op.id}:file-publication:${file.id}`,
+          (file) => child.id === primitiveOperationId(op.id, `file-publication:${file.id}`),
         );
         const read = descendants.length === 1 ? descendants[0] : undefined;
         const args = read?.args as { operation?: string; path?: string } | undefined;

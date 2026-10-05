@@ -73,6 +73,7 @@ export async function modelFixture(
       needsMoreResearch?: boolean;
       missing: string[];
       nextSteps: string[];
+      requestAudit?: { requirement: string; satisfied: boolean; evidence: string }[];
     };
   } = {},
 ) {
@@ -209,14 +210,24 @@ export async function modelFixture(
       call.arguments = { acknowledgment: null, reaction: null, ...call.arguments };
     // Existing tests isolate the execution loop. Dedicated review tests supply
     // rejection/repair decisions at this external model boundary.
-    const text = isReview
-      ? JSON.stringify(
-          options.researchReview?.(body, reviewRequests.length - 1) ?? {
-            complete: true,
-            missing: [],
-            nextSteps: [],
-          },
-        )
+    const review = isReview
+      ? (options.researchReview?.(body, reviewRequests.length - 1) ?? {
+          complete: true,
+          missing: [],
+          nextSteps: [],
+        })
+      : undefined;
+    const text = review
+      ? JSON.stringify({
+          requestAudit: [
+            {
+              requirement: "Fixture request",
+              satisfied: review.complete,
+              evidence: "Controlled external review decision",
+            },
+          ],
+          ...review,
+        })
       : options.text
         ? options.text(index)
         : call
@@ -393,7 +404,7 @@ export async function modelFixture(
 }
 
 /** Capabilities advertised by the current native harness surface, including
- * deferred tools. This is distinct from the three callable control schemas. */
+ * both direct schemas and tools discoverable through the deferred catalog. */
 export function offeredHostTools(body: string): string[] {
   const request = JSON.parse(body);
   const prompt = String(request.instructions ?? "") + JSON.stringify(request.messages ?? []);
@@ -402,7 +413,9 @@ export function offeredHostTools(body: string): string[] {
   );
   if (remaining) return JSON.parse(remaining[1]);
   const deferred = [...prompt.matchAll(/- okami_(\w+) \(okami-host\):/g)].map((match) => match[1]);
-  return deferred.length
-    ? deferred
-    : (request.tools ?? []).map((tool: OfferedTool) => (tool.function ?? tool).name);
+  const direct = (request.tools ?? [])
+    .flatMap((tool: OfferedTool) => tool.tools ?? [tool])
+    .map((tool: OfferedTool) => (tool.function ?? tool).name)
+    .filter((name: unknown): name is string => typeof name === "string");
+  return [...new Set([...direct, ...deferred])];
 }

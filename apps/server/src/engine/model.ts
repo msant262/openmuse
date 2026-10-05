@@ -121,6 +121,16 @@ export async function executeModelTask(
   const reviewDelivery = async (summary: string) => {
     const operations = await service.journal.operations(owner, task.id);
     if (!needsResearchReview(task, operations)) return undefined;
+    const images = [];
+    for (const fileId of task.artifactIds.slice(-4)) {
+      const file = await service.files.get(owner, fileId);
+      if (!file.mimeType.startsWith("image/") || file.size > 8 * 1024 * 1024) continue;
+      images.push({
+        fileId,
+        mimeType: file.mimeType,
+        data: Buffer.from(await service.files.bytes(owner, fileId)).toString("base64"),
+      });
+    }
     const review = await reviewResearchDelivery({
       task,
       summary,
@@ -129,6 +139,7 @@ export async function executeModelTask(
       fallbacks: config.modelFallbacks,
       providers: config.modelProviders ?? modelProviderConfig(config.dataDir),
       signal,
+      images,
       structured:
         (await service.profiles.get(owner, task.originThreadId)).fields.textStyle === "structured",
     });
@@ -1120,15 +1131,56 @@ export async function executeModelTask(
     ),
     tool(
       "read_web_data",
-      "Read a published public JSON dataset up to 16 MiB. Start with url to inspect structure. Use pointer (JSON pointer, e.g. /states) to select an array, select (e.g. [/uf,/candidates]) to keep needed fields and offset/limit to page complete rows. For object-keyed datasets use entries=true, then select /key and /value/... fields. where filters array rows by an exact field value. Use this for dataSources JSON links and PAGE_TOO_LARGE errors instead of browser rendering. No invented endpoints.",
+      "Read and analyze a published public JSON dataset up to 16 MiB. Inspect structure, select JSON pointers and page complete rows. entries=true turns object keys into {key,value} rows. For thousands of rows, aggregate processes the COMPLETE dataset before paging: groupBy named pointers (optional prefix), sum named numeric pointers with explicit numberFormat, and optional share percentages within named groups. expand selects a nested array and exposes each element as /item and its source row as /parent. Example: entries=true, expand=/value/items, groupBy [{name:region,pointer:/parent/key,prefix:2},{name:category,pointer:/item/name}], sum [{name:total,pointer:/item/amount,numberFormat:pt-BR}], share {of:total,within:[region],name:percent}. where (equals or oneOf) filters the final rows AFTER aggregation and share calculation; other categories still count in the denominator. No code, invented endpoints, manual paging of thousands of raw rows or graphical browser needed.",
       z.object({
         url: z.url().max(4096),
         pointer: z.string().max(1000).default(""),
         entries: z.boolean().default(false),
         select: z.array(z.string().max(500)).max(30).optional(),
         offset: z.number().int().min(0).default(0),
-        limit: z.number().int().min(1).max(100).default(30),
-        where: z.object({ pointer: z.string().max(500), equals: z.string().max(500) }).optional(),
+        limit: z.number().int().min(1).max(10000).default(100),
+        where: z
+          .object({
+            pointer: z.string().max(500),
+            equals: z.string().max(500).optional(),
+            oneOf: z.array(z.string().max(500)).max(100).optional(),
+          })
+          .refine(
+            (value) => value.equals !== undefined || value.oneOf?.length,
+            "Set equals or oneOf",
+          )
+          .optional(),
+        aggregate: z
+          .object({
+            expand: z.string().max(1000).optional(),
+            groupBy: z
+              .array(
+                z.object({
+                  name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/),
+                  pointer: z.string().max(1000),
+                  prefix: z.number().int().min(1).max(1000).optional(),
+                }),
+              )
+              .max(20),
+            sum: z
+              .array(
+                z.object({
+                  name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/),
+                  pointer: z.string().max(1000),
+                  numberFormat: z.enum(["number", "pt-BR", "en-US"]).default("number"),
+                }),
+              )
+              .min(1)
+              .max(20),
+            share: z
+              .object({
+                of: z.string(),
+                within: z.array(z.string()).max(20),
+                name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/),
+              })
+              .optional(),
+          })
+          .optional(),
       }),
       async ({ url, ...query }) => {
         const data = await service.web.readData(url, query, signal);
@@ -1385,7 +1437,15 @@ export async function executeModelTask(
             instruction:
               "The proposed result still has these gaps. Continue using any available tools and sources to fulfill the original request. A failed source is not a failure of the whole request. Calling outcome=partial does not bypass available recovery. If further work is impossible, explain the actual blocker and the alternatives already tried; partial delivery requires the review to confirm no viable next step remains.",
           };
-        const finished = await service.finish(task, ctx, summary, owner, deliveryOutcome);
+        // A failed source is not a missing objective. The independent review
+        // decides research completeness; deterministic file/effect gates still run.
+        const finished = await service.finish(
+          task,
+          ctx,
+          summary,
+          owner,
+          review?.complete ? "completed" : deliveryOutcome,
+        );
         if (finished.status === "queued") {
           task = await ctx.checkpoint({ completion: finished.completion, state: finished.state });
           return {

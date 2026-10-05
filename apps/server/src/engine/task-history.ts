@@ -60,11 +60,13 @@ export function completedMessages(raw: unknown): Message[] {
           .map((part) => part.text)
           .join("\n")
       : parsed.content;
+    let structuredReceipt = false;
     if (parsed.role === "tool" && content) {
       if (typeof content !== "string") content = JSON.stringify(publicJournalValue(content));
       else
         try {
           content = JSON.stringify(publicJournalValue(JSON.parse(content)));
+          structuredReceipt = true;
         } catch {
           /* Text receipts are bounded below. */
         }
@@ -72,7 +74,8 @@ export function completedMessages(raw: unknown): Message[] {
     return MessageSchema.parse({
       id: parsed.id,
       role: parsed.role,
-      content: typeof content === "string" ? publicJournalValue(content) : content,
+      content:
+        typeof content === "string" && !structuredReceipt ? publicJournalValue(content) : content,
       ...(parsed.role === "assistant" && parsed.toolCalls
         ? {
             toolCalls: parsed.toolCalls.map((call) => {

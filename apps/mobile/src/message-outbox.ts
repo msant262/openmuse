@@ -112,6 +112,8 @@ export class MessageOutbox {
   private state = empty();
   private listeners = new Set<() => void>();
   private writes: Promise<unknown> = Promise.resolve();
+  private pendingMessages?: readonly unknown[];
+  private savingMessages?: Promise<void>;
   private opening?: Promise<void>;
   constructor(
     private readonly storage: MessageStorage,
@@ -280,17 +282,32 @@ export class MessageOutbox {
       },
     }));
   }
-  async saveMessages(messages: readonly unknown[]) {
-    await this.commit((previous) => ({
-      // A stream snapshot can precede admission of an optimistic message. Keep
-      // locally saved messages until a snapshot includes the same stable ID.
-      messages: mergeOutboxMessages(
-        messages,
-        previous.messages.filter((message) =>
-          previous.messageDetails.some((details) => details.messageId === messageId(message)),
-        ),
-      ),
-    }));
+  saveMessages(messages: readonly unknown[]): Promise<void> {
+    this.pendingMessages = messages;
+    this.savingMessages ??= (async () => {
+      await this.open();
+      // Streaming snapshots supersede each other. Drain the latest snapshot
+      // rather than queueing a complete disk read/write for every token.
+      while (this.pendingMessages) {
+        const latest = this.pendingMessages;
+        this.pendingMessages = undefined;
+        await this.commit((previous) => {
+          const accepted = new Set(previous.messageDetails.map((details) => details.messageId));
+          return {
+            messages: mergeOutboxMessages(
+              latest,
+              previous.messages.filter((message) => {
+                const id = messageId(message);
+                return id !== undefined && accepted.has(id);
+              }),
+            ),
+          };
+        });
+      }
+    })().finally(() => {
+      this.savingMessages = undefined;
+    });
+    return this.savingMessages;
   }
   async saveMessageDetails(messages: ConversationSocialState["messages"]) {
     await this.commit((previous) => {

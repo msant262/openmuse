@@ -60,16 +60,26 @@ test("worker web_fetch explicitly escalates pending HTTP data to headless and re
 });
 
 test("a declared partial research report cannot pass as a completed task merely because an article was read", async (t) => {
-  await modelFixture(t, (index) =>
-    index === 0
-      ? { name: "web_fetch", arguments: { url: "https://news.example/about-results" } }
-      : {
-          name: "finish_task",
-          arguments: {
-            summary: "Li as instruções, mas não consegui confirmar os resultados atuais.",
-            outcome: "partial",
+  await modelFixture(
+    t,
+    (index) =>
+      index === 0
+        ? { name: "web_fetch", arguments: { url: "https://news.example/about-results" } }
+        : {
+            name: "finish_task",
+            arguments: {
+              summary: "Li as instruções, mas não consegui confirmar os resultados atuais.",
+              outcome: "partial",
+            },
           },
-        },
+    {
+      researchReview: () => ({
+        complete: false,
+        blocked: true,
+        missing: ["The actual count is unavailable in the observed sources"],
+        nextSteps: [],
+      }),
+    },
   );
   const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
   t.mock.method(f.agent.web, "document", async (url: string) => ({

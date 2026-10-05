@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { TaskWorker } from "../apps/server/src/engine/worker.ts";
 import { MediaService } from "../apps/server/src/media-tools.ts";
 import { modelProviderConfig } from "../apps/server/src/providers/config.ts";
 import { writeProtected } from "../apps/server/src/providers/credential-store.ts";
@@ -11,6 +12,62 @@ const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1sAAAAASUVORK5CYII=",
   "base64",
 );
+
+test("image publication accepts native harness call identities without repeating generation", async (t) => {
+  const server = await taskRuntime(t);
+  const config = {
+    ...server.agent.config,
+    modelProviders: modelProviderConfig(server.directory, {}),
+  };
+  await writeProtected(config.modelProviders.grokFile, {
+    version: 1,
+    provider: "grok",
+    token_endpoint: "https://auth.x.ai/oauth2/token",
+    access_token: "fixture-token",
+    refresh_token: "fixture-refresh",
+    token_type: "Bearer",
+    expires_in: 3600,
+    saved_at: new Date().toISOString(),
+  });
+  let generations = 0;
+  const media = new MediaService(server.db, server.files, config, async () => {
+    generations++;
+    return Response.json({ data: [{ b64_json: png.toString("base64") }] });
+  });
+  const task = await server.agent.createTask(
+    "owner",
+    { prompt: "Crie um infográfico" },
+    "durable-chat-admission",
+  );
+  const args = { prompt: "A verified infographic", operationId: "map" };
+  const worker = new TaskWorker(server.db, async (owner, running) => {
+    const call = {
+      id: "f3d00769-256b-4a6a-a1c3-bc4a828467ef:tool_call:call_VjGS2rhWUEFAKuDMG8BcoFFZ:okami_generate_image:14",
+      name: "generate_image",
+      args,
+    };
+    const generate = () =>
+      server.agent.journal.run(
+        owner,
+        running,
+        call,
+        () => media.generatedImage(owner, "chatgpt/fixture", args, running.id),
+        true,
+      );
+    const file = (await generate()) as { fileId: string };
+    assert.deepEqual(await server.files.bytes(owner, file.fileId), png);
+    assert.deepEqual(await generate(), file);
+    return { status: "succeeded", artifactIds: [file.fileId] };
+  });
+  t.after(() => worker.stop());
+  await worker.tick();
+  const saved = await server.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.question);
+  assert.equal(generations, 1);
+  const operations = await server.agent.journal.operations("owner", task.id);
+  assert.ok(operations.some((op) => op.toolName === "primitive.generate_image"));
+  assert.ok(operations.every((op) => op.id.length <= 256 && op.status === "succeeded"));
+});
 
 test("an infographic mislabelled document stays a generic creation task with image delivery criteria", async (t) => {
   const server = await taskRuntime(t);

@@ -16,7 +16,6 @@ test("conversation and worker use the copied harness, broaden research after a f
       arguments: {
         kind: "agent",
         title: "Apuração das eleições no Brasil",
-        prompt,
         acknowledgment: null,
         reaction: null,
       },

@@ -32,6 +32,32 @@ function storage() {
   };
   return disk;
 }
+test("stream snapshots coalesce disk writes while preserving the final long transcript", async () => {
+  const disk = storage();
+  let writes = 0;
+  const original = disk.update;
+  disk.update = (key, change) => {
+    writes++;
+    return original(key, change);
+  };
+  const outbox = new MessageOutbox(disk, "stream", "chat");
+  await outbox.open();
+  const history = Array.from({ length: 500 }, (_, i) => ({
+    id: `old-${i}`,
+    role: "assistant",
+    content: "Saved answer",
+  }));
+  await Promise.all(
+    Array.from({ length: 100 }, (_, i) =>
+      outbox.saveMessages([...history, { id: "live", role: "assistant", content: `Chunk ${i}` }]),
+    ),
+  );
+  assert.ok(writes <= 2, `100 stream snapshots caused ${writes} complete transcript writes`);
+  const restored = new MessageOutbox(disk, "stream", "chat");
+  await restored.open();
+  assert.equal((restored.getSnapshot().messages.at(-1) as { content: string }).content, "Chunk 99");
+  assert.equal(restored.getSnapshot().messages.length, 501);
+});
 test("prior lost ACK remains uncertain after later authentication or task rejection", async () => {
   const disk = storage();
   let outbox = new MessageOutbox(disk, "task-guidance", "chat");

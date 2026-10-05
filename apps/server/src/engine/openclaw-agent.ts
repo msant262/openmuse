@@ -22,6 +22,7 @@ import type { ModelSelection, ProviderContinuationCheckpoint } from "../provider
 import { continuationMessages, modelAdapter } from "../providers/models.ts";
 import type { ContextModelResolver } from "./context-budget.ts";
 import { harnessToolCatalog } from "./harness-tool-catalog.ts";
+import { resolveLiveToolResultMaxChars } from "./openclaw/tool-result-limits.ts";
 import { publicJournalValue } from "./task-history.ts";
 import { ToolOutputStore } from "./tool-output.ts";
 
@@ -36,6 +37,8 @@ type Options = {
   /** Small foreground conversations need their interaction schemas immediately. */
   toolSearch?: boolean;
   prompt: string;
+  /** Startup preflight ends locally before any model transport or host tool. */
+  initializeOnly?: boolean;
   promptContext?: () => Promise<string>;
   contextModel?: ContextModelResolver;
   /** Storage for the original session tree; the app transcript remains authoritative. */
@@ -90,6 +93,7 @@ type NativeContext = {
 type NativeStream = { push(event: Record<string, unknown>): void; end(): void };
 type WorkingSession = {
   appendMessageAsync(message: NativeMessage): Promise<unknown>;
+  getHeader(): unknown;
   getEntries(): unknown[];
   buildSessionContext(): { messages: NativeMessage[] };
 };
@@ -174,12 +178,14 @@ Object.defineProperty(globalThis, hostKey, {
   },
 });
 let runtime: Promise<Runtime> | undefined;
+const warmed = new Map<string, Promise<void>>();
 let scheduler: InstanceType<Runtime["GatewayScheduler"]> | undefined;
 const active = new Map<
   string,
   { dataDir: string; abort: AbortController; completion: Promise<void> }
 >();
 export async function stopOpenclawHarness(dataDir: string) {
+  warmed.delete(dataDir);
   const pending = [...active.values()].filter((run) => run.dataDir === dataDir);
   for (const run of pending) run.abort.abort();
   await Promise.allSettled(pending.map((run) => run.completion));
@@ -211,9 +217,94 @@ async function loadRuntime(dataDir: string): Promise<Runtime> {
   })();
   return runtime;
 }
+/** Import and initialize the copied runtime before accepting chat requests. */
+export async function warmOpenclawHarness(dataDir: string): Promise<void> {
+  let pending = warmed.get(dataDir);
+  if (!pending) {
+    pending = (async () => {
+      await loadRuntime(dataDir);
+      // Initialize the original plugin loader and attempt executor too. The
+      // host's owned-terminal boundary returns NO_REPLY before model transport;
+      // this preflight has no credentials, tools, application journal or effects.
+      await new Promise<void>((resolve, reject) => {
+        let failure: Error | undefined;
+        openclawAgent({
+          dataDir,
+          model: "openai/unconfigured",
+          tools: [],
+          prompt: "Runtime initialization.",
+          initializeOnly: true,
+          shouldContinue: () => false,
+        })
+          .run({
+            threadId: randomUUID(),
+            runId: randomUUID(),
+            messages: [{ id: randomUUID(), role: "user", content: "Initialize the executor." }],
+            tools: [],
+            context: [],
+            state: {},
+          })
+          .subscribe({
+            next: (event) => {
+              if (event.type === EventType.RUN_ERROR) failure = new Error(String(event.message));
+            },
+            error: reject,
+            complete: () => (failure ? reject(failure) : resolve()),
+          });
+      });
+    })();
+    warmed.set(dataDir, pending);
+    pending.catch(() => {
+      warmed.delete(dataDir);
+    });
+  }
+  await pending;
+}
 const controls = new Set(["tool_search", "tool_describe", "tool_call"]);
+// Use the original executor's direct tool surface for frequent operations.
+// Hiding these makes even an ordinary lookup depend on lexical discovery.
+const directTools = new Set([
+  "search_web",
+  "web_fetch",
+  "web_extract",
+  "read_web_data",
+  "generate_image",
+  "image_generation_status",
+  "finish_task",
+  "todo_list",
+  "read_tool_output",
+]);
 const nativeName = (name: string) => (controls.has(name) ? name : `okami_${name}`);
 const publicName = (name: string) => name.replace(/^okami_/, "");
+type ToolSchema = {
+  type?: string | string[];
+  anyOf?: ToolSchema[];
+  oneOf?: ToolSchema[];
+  properties?: Record<string, ToolSchema>;
+  required?: string[];
+  items?: ToolSchema;
+};
+const nullableSchema = (schema: ToolSchema): boolean =>
+  schema.type === "null" ||
+  (Array.isArray(schema.type) && schema.type.includes("null")) ||
+  Boolean((schema.anyOf ?? schema.oneOf)?.some(nullableSchema));
+/** Responses strict schemas encode absent optional fields as null. Restore
+ * omission against the ORIGINAL host schema before native validation. Explicit
+ * nullable fields (including clears) and required fields retain their value. */
+function hostArguments(value: unknown, schema?: ToolSchema): unknown {
+  if (!schema || !value || typeof value !== "object") return value;
+  schema =
+    (schema.anyOf ?? schema.oneOf)?.find((branch) => branch.properties || branch.items) ?? schema;
+  if (Array.isArray(value)) return value.map((item) => hostArguments(item, schema.items));
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, item]) => {
+      const field = schema.properties?.[key];
+      if (item === null && field && !schema.required?.includes(key) && !nullableSchema(field))
+        return [];
+      return [[key, hostArguments(item, field)]];
+    }),
+  );
+}
 const textContent = (message: NativeMessage) =>
   typeof message.content === "string"
     ? message.content
@@ -411,21 +502,38 @@ export function openclawAgent(options: Options) {
           const converted = convertInputToTanStackAI(input);
           const outputs = new ToolOutputStore();
           outputs.observe(converted.messages);
+          const modelBudget = options.contextModel?.({
+            tools: true,
+            vision: false,
+            structuredOutput: false,
+            contextTokens: 0,
+          });
+          const contextWindow = modelBudget?.contextTokens ?? 131072;
+          const outputBudget = resolveLiveToolResultMaxChars({
+            contextWindowTokens: contextWindow,
+          });
           const outputArgs = z.object({
             toolCallId: z.string().min(1).max(500),
             part: z.enum(["result", "arguments"]).default("result"),
             offset: z.number().int().nonnegative().default(0),
-            limit: z.number().int().min(2).max(8000).default(4000),
+            pointer: z.string().max(2000).optional(),
+            limit: z.number().int().min(2).max(outputBudget).default(Math.min(16000, outputBudget)),
           });
           const tools: ToolDefinition[] = [
             ...options.tools,
             defineTool({
               ...harnessToolCatalog[0],
               parameters: outputArgs,
-              execute: async (args) => outputs.read(outputArgs.parse(args)),
+              execute: async (args) => outputs.read(outputArgs.parse(args), outputBudget),
             }),
           ];
           const names = tools.map((tool) => nativeName(tool.name));
+          const schemas = new Map(
+            tools.map((tool) => [
+              tool.name,
+              convertSchemaToJsonSchema(tool.parameters as SchemaInput) as ToolSchema,
+            ]),
+          );
           const plugin = await pluginDirectory(options.dataDir, names);
           const ownerScope = `${options.compaction?.owner ?? "host"}:${options.compaction?.scope ?? input.threadId}`;
           const agentId = createHash("sha256").update(ownerScope).digest("hex").slice(0, 24);
@@ -436,13 +544,6 @@ export function openclawAgent(options: Options) {
             mkdir(workspace, { recursive: true, mode: 0o700 }),
             mkdir(agentDir, { recursive: true, mode: 0o700 }),
           ]);
-          const modelBudget = options.contextModel?.({
-            tools: true,
-            vision: false,
-            structuredOutput: false,
-            contextTokens: 0,
-          });
-          const contextWindow = modelBudget?.contextTokens ?? 131072;
           const config = {
             agents: {
               entries: { [agentId]: { agentDir, workspace } },
@@ -493,10 +594,15 @@ export function openclawAgent(options: Options) {
             const saved: SavedSession = {
               id: agentId,
               model: options.model,
-              hashes: hostMessages(manager.buildSessionContext().messages, receipts).map(
-                messageHash,
+              hashes: outputs
+                .restore(hostMessages(manager.buildSessionContext().messages, receipts))
+                .map(messageHash),
+              // fromEntries needs the original versioned header. Without it,
+              // upstream treats every restoration as a legacy migration and
+              // rebuilds entry identities and the session's branch metadata.
+              entries: [manager.getHeader(), ...manager.getEntries()].map((entry) =>
+                publicJournalValue(entry, 1_000_000),
               ),
-              entries: manager.getEntries().map((entry) => publicJournalValue(entry, 1_000_000)),
               receipts: [...receipts].map(
                 ([id, receipt]) =>
                   [id, publicJournalValue(receipt, 1_000_000)] as [string, DispatchReceipt],
@@ -507,9 +613,10 @@ export function openclawAgent(options: Options) {
           const host: Host = {
             tools: tools.map((tool) => ({
               name: nativeName(tool.name),
+              ...(directTools.has(tool.name) ? { catalogMode: "direct-only" } : {}),
               label: tool.name,
               description: tool.description,
-              parameters: convertSchemaToJsonSchema(tool.parameters as SchemaInput),
+              parameters: schemas.get(tool.name),
               execute: async (toolCallId: string, raw: unknown) => {
                 abort.signal.throwIfAborted();
                 const parent = /^tool_call:(.*):okami_[^:]+:\d+$/.exec(toolCallId)?.[1];
@@ -601,8 +708,11 @@ export function openclawAgent(options: Options) {
                   content: text,
                 });
                 return {
-                  content: [{ type: "text", text }],
-                  details: result,
+                  content: [{ type: "text", text: outputs.live(toolCallId, contextWindow) }],
+                  details:
+                    result && typeof result === "object" && (result as { error?: unknown }).error
+                      ? { error: String((result as { error: unknown }).error) }
+                      : { status: "succeeded" },
                   isError: Boolean(
                     result &&
                       typeof result === "object" &&
@@ -628,8 +738,13 @@ export function openclawAgent(options: Options) {
               // A native tool receipt may finish or pause the app workflow. The
               // original finalizer receives its standard silent terminal marker;
               // no further provider call is admitted after that owned outcome.
-              if (!(options.shouldContinue?.() ?? true)) {
-                message.content = [{ type: "text", text: "NO_REPLY" }];
+              if (options.initializeOnly || !(options.shouldContinue?.() ?? true)) {
+                message.content = [
+                  {
+                    type: "text",
+                    text: options.initializeOnly ? "Runtime initialized." : "NO_REPLY",
+                  },
+                ];
                 queueMicrotask(() => {
                   stream.push({ type: "done", reason: "stop", message });
                   stream.end();
@@ -638,13 +753,15 @@ export function openclawAgent(options: Options) {
               }
               void (async () => {
                 const messages = hostMessages(context.messages, receipts);
-                await options.onMessages?.(messages, "beforeModel");
+                await options.onMessages?.(outputs.restore(messages), "beforeModel");
                 await persist();
                 let systemPrompts = [
                   context.systemPrompt ?? "",
                   `Current UTC date and time: ${new Date().toISOString()}`,
-                  options.prompt,
                 ];
+                // extraSystemPrompt already put the host instructions in the
+                // native prompt. Duplicating them here bypasses OpenClaw's
+                // context accounting and can reject an otherwise admitted turn.
                 const latest = await options.promptContext?.();
                 if (latest) systemPrompts.push(latest);
                 const acknowledged =
@@ -770,11 +887,18 @@ export function openclawAgent(options: Options) {
                 }
                 for (const call of calls.values()) {
                   const name = publicName(call.name);
+                  let args = hostArguments(JSON.parse(call.args || "{}"), schemas.get(name));
+                  if (name === "tool_call" && args && typeof args === "object") {
+                    const wrapper = args as Record<string, unknown>;
+                    const target = publicName(String(wrapper.id));
+                    const key = Object.hasOwn(wrapper, "args") ? "args" : "input";
+                    args = { ...wrapper, [key]: hostArguments(wrapper[key], schemas.get(target)) };
+                  }
                   (message.content as Array<Record<string, unknown>>).push({
                     type: "toolCall",
                     id: call.id,
                     name: tools.some((tool) => tool.name === name) ? nativeName(name) : call.name,
-                    arguments: JSON.parse(call.args || "{}"),
+                    arguments: args,
                   });
                 }
                 await options.onProviderRecovered?.();

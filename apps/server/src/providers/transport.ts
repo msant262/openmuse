@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { CHATGPT_RESOURCE, chatGPTAccessToken } from "./chatgpt-auth.ts";
 import type { ModelProviderConfig } from "./config.ts";
 import { httpProviderError, ModelProviderError, publicProviderMessage } from "./errors.ts";
@@ -182,6 +183,26 @@ const forbidden = [
   "previous_response_id",
 ];
 
+/** Provider IDs are wire aliases; preserve native journal identities and pair
+ * every call with its receipt without truncation collisions. */
+function boundedResponseInput(input: unknown) {
+  if (!Array.isArray(input)) return input;
+  return input.map((raw) => {
+    if (!raw || typeof raw !== "object") return raw;
+    const item = raw as Record<string, unknown>;
+    if (
+      !/^(?:function|custom)_call(?:_output)?$/.test(String(item.type)) ||
+      typeof item.call_id !== "string" ||
+      item.call_id.length <= 64
+    )
+      return raw;
+    return {
+      ...item,
+      call_id: `call_${createHash("sha256").update(item.call_id).digest("hex").slice(0, 56)}`,
+    };
+  });
+}
+
 /** The SIWC preview supports client function tools, grouped in a namespace. */
 export function siwcRequest(body: Record<string, unknown>) {
   if (!Array.isArray(body.input))
@@ -210,7 +231,7 @@ export function siwcRequest(body: Record<string, unknown>) {
     }
   };
   body.input.forEach(checkInput);
-  const input = body.input.map((raw) => {
+  const input = (boundedResponseInput(body.input) as unknown[]).map((raw) => {
     if (!raw || typeof raw !== "object") return raw;
     const item = raw as Record<string, unknown>;
     if (item.role === "system") return { ...item, role: "developer" };
@@ -292,6 +313,18 @@ export function providerFetch(
         dispatched = new Request(dispatched, { headers });
       }
       const path = new URL(dispatched.url).pathname;
+      if (path.endsWith("/responses") && dispatched.method === "POST") {
+        const body = await dispatched.clone().json();
+        const input = boundedResponseInput(body.input);
+        if (Array.isArray(input) && input.some((item, index) => item !== body.input[index]))
+          dispatched = new Request(dispatched.url, {
+            method: "POST",
+            headers: dispatched.headers,
+            signal: dispatched.signal,
+            redirect: "error",
+            body: JSON.stringify({ ...body, input }),
+          });
+      }
       const protocol = path.endsWith("/responses")
         ? "responses"
         : path.endsWith("/chat/completions")

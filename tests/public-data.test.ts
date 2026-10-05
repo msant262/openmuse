@@ -1,6 +1,151 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PublicWeb } from "../apps/server/src/public-web.ts";
+import { selectPublicData } from "../apps/server/src/public-data.ts";
+
+test("an expanded dataset explains how to repair a grouping pointer without returning partial totals", () => {
+  const source = {
+    regionA: {
+      items: [
+        { name: "X", votes: 5 },
+        { name: "Y", votes: 4 },
+      ],
+    },
+  };
+  const query = {
+    entries: true,
+    aggregate: {
+      expand: "/value/items",
+      groupBy: [{ name: "region", pointer: "/key" }],
+      sum: [{ name: "votes", pointer: "/item/votes" }],
+    },
+  };
+  assert.throws(() => selectPublicData(source, query), /\/parent\/key/);
+  const repaired = selectPublicData(source, {
+    ...query,
+    aggregate: { ...query.aggregate, groupBy: [{ name: "region", pointer: "/parent/key" }] },
+  });
+  assert.deepEqual(repaired.rows, [{ region: "regionA", count: 2, votes: 9 }]);
+});
+
+test("public data aggregation includes every source row and locale-formatted number", async () => {
+  const body = JSON.stringify({
+    locations: Object.fromEntries(
+      Array.from({ length: 5572 }, (_, i) => [
+        `${i % 2 ? "22" : "11"}${String(i).padStart(5, "0")}`,
+        {
+          candidates: [
+            { name: "A", votes: "1.234" },
+            { name: "B", votes: "766" },
+          ],
+        },
+      ]),
+    ),
+  });
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({ status: 200, headers: { "content-type": "application/json" }, body }),
+  });
+  const result = await web.readData("https://source.example/data.json", {
+    pointer: "/locations",
+    entries: true,
+    limit: 100,
+    aggregate: {
+      expand: "/value/candidates",
+      groupBy: [
+        { name: "state", pointer: "/parent/key", prefix: 2 },
+        { name: "candidate", pointer: "/item/name" },
+      ],
+      sum: [{ name: "votes", pointer: "/item/votes", numberFormat: "pt-BR" }],
+    },
+  });
+  assert.equal(result.total, 4);
+  assert.deepEqual(result.rows, [
+    { state: "11", candidate: "A", count: 2786, votes: 2786 * 1234 },
+    { state: "11", candidate: "B", count: 2786, votes: 2786 * 766 },
+    { state: "22", candidate: "A", count: 2786, votes: 2786 * 1234 },
+    { state: "22", candidate: "B", count: 2786, votes: 2786 * 766 },
+  ]);
+  assert.equal(result.aggregation?.inputRows, 5572);
+  assert.equal(result.aggregation?.expandedRows, 11144);
+  assert.equal(result.nextOffset, null);
+});
+
+test("shares include all categories before filtering and invalid numbers never yield partial totals", async () => {
+  const { selectPublicData } = await import("../apps/server/src/public-data.ts");
+  const aggregate = {
+    groupBy: [
+      { name: "region", pointer: "/region" },
+      { name: "candidate", pointer: "/candidate" },
+    ],
+    sum: [{ name: "votes", pointer: "/votes", numberFormat: "pt-BR" as const }],
+    share: { of: "votes", within: ["region"], name: "percent" },
+  };
+  const rows = [
+    { region: "A", candidate: "X", votes: "40" },
+    { region: "A", candidate: "Y", votes: "30" },
+    { region: "A", candidate: "Z", votes: "30" },
+  ];
+  assert.deepEqual(
+    selectPublicData(rows, { aggregate, where: { pointer: "/candidate", oneOf: ["X", "Y"] } }).rows,
+    [
+      { region: "A", candidate: "X", count: 1, votes: 40, percent: 40 },
+      { region: "A", candidate: "Y", count: 1, votes: 30, percent: 30 },
+    ],
+  );
+  assert.throws(
+    () =>
+      selectPublicData([...rows, { region: "A", candidate: "X", votes: "unknown" }], { aggregate }),
+    /invalid number/,
+  );
+  assert.throws(
+    () =>
+      selectPublicData(rows, {
+        aggregate: { ...aggregate, sum: [{ name: "region", pointer: "/votes" }] },
+      }),
+    /unique/,
+  );
+});
+
+test("compact JWS datasets expose their JSON payload without claiming signature verification", async () => {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const body = `${encode({ alg: "EdDSA", typ: "JOSE" })}.${encode({
+    states: [
+      { uf: "AC", percent: 52 },
+      { uf: "AL", percent: 48 },
+    ],
+    padding: "x".repeat(32000),
+  })}.c2lnbmF0dXJl`;
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({ status: 200, headers: { "content-type": "application/json" }, body }),
+  });
+  const page = await web.read("https://official.example/results.jws");
+  assert.match(page.text, /states/);
+  assert.ok("signatureVerified" in page.provenance);
+  assert.equal(page.provenance.signatureVerified, false);
+  const result = await web.readData(page.url, { pointer: "/states", select: ["/uf", "/percent"] });
+  assert.deepEqual(result.rows, [
+    { "/uf": "AC", "/percent": 52 },
+    { "/uf": "AL", "/percent": 48 },
+  ]);
+  assert.equal(result.encoding, "jws");
+  assert.equal(result.signatureVerified, false);
+});
+
+test("malformed or unencoded compact payloads remain unreadable instead of accepting decoded fragments", async () => {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  for (const body of [
+    `${encode({ alg: "EdDSA", b64: false })}.${encode({ value: 1 })}.c2ln`,
+    `${encode({ alg: "EdDSA" })}.bm90LWpzb24.c2ln`,
+  ]) {
+    const web = new PublicWeb({
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      request: async () => ({ status: 200, headers: { "content-type": "application/json" }, body }),
+    });
+    await assert.rejects(web.readData("https://official.example/results.jws"), /valid JSON/);
+  }
+});
 
 test("large public JSON can be read in complete selected rows instead of discarding the data", async () => {
   const body = JSON.stringify({

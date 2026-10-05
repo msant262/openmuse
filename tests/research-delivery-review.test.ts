@@ -3,6 +3,156 @@ import test from "node:test";
 import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("a review cannot certify a comparison while its request audit identifies missing entities", async (t) => {
+  await modelFixture(t, () => undefined, {
+    researchReview: () => ({
+      complete: true,
+      needsMoreResearch: true,
+      missing: [],
+      nextSteps: ["Read the second candidate's values and revise the image"],
+      requestAudit: [
+        {
+          requirement: "Both candidates' percentages in each region",
+          satisfied: false,
+          evidence: "The image shows only the regional winner's percentage",
+        },
+      ],
+    }),
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Create a map showing candidate A and candidate B percentages in each region.",
+  });
+  const { reviewResearchDelivery } = await import(
+    "../apps/server/src/engine/research-delivery-review.ts"
+  );
+  const providers = f.agent.config.modelProviders;
+  assert.ok(providers);
+  const decision = await reviewResearchDelivery({
+    task,
+    summary: "Map of each region's winner.",
+    operations: [],
+    model: "openai/fixture",
+    providers,
+    structured: false,
+    signal: new AbortController().signal,
+  });
+  assert.equal(decision.complete, false);
+  assert.match(decision.missing.join(" "), /Both candidates/);
+  assert.equal(decision.blocked, false, "a concrete repair path keeps work active");
+});
+
+test("delivery review preserves facts in the middle of a source that fits the configured model", async (t) => {
+  let observed = "";
+  await modelFixture(t, () => undefined, {
+    researchReview: (body) => {
+      const payload = JSON.parse(JSON.parse(body).input[0].content[0].text);
+      observed = payload.observations[0].text;
+      return { complete: true, missing: [], nextSteps: [] };
+    },
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "What are the current percentages?" });
+  const source =
+    "Historical coverage. ".repeat(700) +
+    "Candidate A: 52%; Candidate B: 48%." +
+    " More coverage.".repeat(700);
+  const { reviewResearchDelivery } = await import(
+    "../apps/server/src/engine/research-delivery-review.ts"
+  );
+  await reviewResearchDelivery({
+    task,
+    summary: "Candidate A: 52%; Candidate B: 48%.",
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url: "https://news.example/live" },
+        receipt: { url: "https://news.example/live", text: source },
+      },
+    ] as Parameters<typeof reviewResearchDelivery>[0]["operations"],
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    signal: new AbortController().signal,
+  });
+  assert.equal(
+    observed,
+    source,
+    "review must receive the complete source rather than lose its middle to a fixed character cap",
+  );
+});
+
+test("infographic review receives actual file pixels and discovered links beyond navigation entries", async (t) => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1sAAAAASUVORK5CYII=",
+    "base64",
+  );
+  let checked = false;
+  await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://news.example/results" } },
+        { name: "generate_image", arguments: { prompt: "A map with results", operationId: "map" } },
+        {
+          name: "finish_task",
+          arguments: {
+            summary: "The map is attached, but its regional values are missing.",
+            outcome: "partial",
+          },
+        },
+      ][i],
+    {
+      researchReview: (body) => {
+        const input = JSON.parse(body).input;
+        checked =
+          input.some(
+            (message: { content?: { type: string; image_url?: string }[] }) =>
+              Array.isArray(message.content) &&
+              message.content.some(
+                (part) =>
+                  part.type === "input_image" &&
+                  part.image_url === `data:image/png;base64,${png.toString("base64")}`,
+              ),
+          ) && body.includes("https://news.example/region-26");
+        return {
+          complete: false,
+          blocked: true,
+          missing: ["The observed image lacks the requested regional results"],
+          nextSteps: [],
+        };
+      },
+    },
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: `<main>Current results: A 52%, B 48%.${Array.from({ length: 27 }, (_, i) => `<a href="/region-${i}">Region ${i}</a>`).join("")}</main>`,
+  }));
+  t.mock.method(f.agent.media, "generatedImage", async () => {
+    const file = await f.files.importAttachment(
+      "owner",
+      "map.png",
+      png,
+      "Generated image",
+      "image/png",
+    );
+    return f.files.reference("owner", file.id);
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Crie um infográfico com um mapa e os resultados por região.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.ok(checked);
+  assert.equal(saved.status, "failed");
+  assert.equal(saved.artifactIds.length, 1);
+  assert.notEqual(saved.completion?.status, "verified");
+});
+
 test("an explicit partial result cannot bypass available research recovery", async (t) => {
   const calls = [
     { name: "web_fetch", arguments: { url: "https://official.example/about" } },
