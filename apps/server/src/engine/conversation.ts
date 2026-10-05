@@ -854,13 +854,18 @@ export class ConversationAgent extends AbstractAgent {
           const task = await this.service.getTask(this.owner, taskId);
           if (task.originThreadId !== input.threadId)
             throw new Error("Task is not in this conversation");
-          if (["succeeded", "failed", "cancelled"].includes(task.status))
-            return { ended: true, taskId, title: task.title, result: task.result };
+          const ended = new Error(
+            "This task has already ended; continue_task did not accept or execute the current request. Call delegate_task for the user's renewed request, preserving the current message and relevant historical context. Use agent_status or inspect_task only if the user asked about saved work. An earlier result cannot satisfy a request for a new lookup.",
+          );
+          if (["succeeded", "failed", "cancelled"].includes(task.status)) throw ended;
           const receipt = await this.service.mailbox.enqueue(this.owner, taskId, {
             clientMessageId: `followup:${latest?.id ?? input.runId}`,
             threadId: input.threadId,
             text: latestText,
           });
+          // Completion can race the precheck. Only the durable receipt tells us
+          // whether this direction was admitted before the task ended.
+          if (receipt.status === "completed_before_apply") throw ended;
           workDelegated = true;
           acceptedTasks.push({ title: task.title, status: task.status });
           return { taskId, title: task.title, status: task.status, continued: true, receipt };
@@ -976,7 +981,7 @@ export class ConversationAgent extends AbstractAgent {
         ]);
         return (
           (await humanizerContext(this.config, this.owner)) +
-          "\nCurrent conversation work (receipt data). Use continue_task for corrections to unfinished work; do not create a competing task: " +
+          "\nSaved conversation work (historical receipt data, not new observations). Use continue_task only for corrections to unfinished work, avoiding a competing task. Tasks with status succeeded, failed or cancelled have ended. A renewed request or current lookup after those tasks needs a new delegate_task; an old result does not fulfill it. For a question about saved progress or results, use agent_status or inspect_task: " +
           JSON.stringify(
             taskSnapshot
               .filter((t) => t.originThreadId === input.threadId)

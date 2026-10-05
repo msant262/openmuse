@@ -1371,14 +1371,14 @@ export async function executeModelTask(
       async ({ summary, outcome: deliveryOutcome }) => {
         summary = await voiceReply(summary);
         const review = await reviewDelivery(summary);
-        if (review && !review.complete && deliveryOutcome !== "partial")
+        if (review && !review.complete && (deliveryOutcome !== "partial" || !review.blocked))
           return {
             complete: false,
             repairable: true,
             missing: review.missing,
             nextSteps: review.nextSteps,
             instruction:
-              "The proposed result still has these gaps. Continue using any available tools and sources to fulfill the original request. A failed source is not a failure of the whole request. If further work is impossible, explain the actual blocker and explicitly use outcome=partial.",
+              "The proposed result still has these gaps. Continue using any available tools and sources to fulfill the original request. A failed source is not a failure of the whole request. Calling outcome=partial does not bypass available recovery. If further work is impossible, explain the actual blocker and the alternatives already tried; partial delivery requires the review to confirm no viable next step remains.",
           };
         const finished = await service.finish(task, ctx, summary, owner, deliveryOutcome);
         if (finished.status === "queued") {

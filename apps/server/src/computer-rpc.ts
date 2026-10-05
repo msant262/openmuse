@@ -39,7 +39,7 @@ export class RpcComputerService {
     readonly config: Config,
     private readonly upstream: typeof fetch = fetch,
   ) {}
-  private enabled() {
+  assertConfigured() {
     if (
       !this.config.computerEnabled ||
       !this.config.computerUrl ||
@@ -50,7 +50,7 @@ export class RpcComputerService {
       throw new AppError("Configure the guarded open RPC computer before using it", 503);
   }
   private async request(path: string, body?: unknown, signal?: AbortSignal) {
-    this.enabled();
+    this.assertConfigured();
     let response: Response;
     try {
       response = await this.upstream(`${this.config.computerUrl}${path}`, {
@@ -126,7 +126,7 @@ export class RpcComputerService {
     }
   }
   private async bind(owner: string) {
-    this.enabled();
+    this.assertConfigured();
     const id = hash(this.config.computerDeploymentId ?? this.config.computerUrl ?? "computer");
     await this.db.insertIfAbsent("__computer__", "rpc-owner", { id, owner });
     if (

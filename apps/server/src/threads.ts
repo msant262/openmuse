@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
+import { scheduler } from "node:timers/promises";
 import {
   type AbstractAgent,
   type BaseEvent,
@@ -532,6 +533,9 @@ export class LocalThreads extends AgentRunner {
     const persist = (event: BaseEvent) => {
       run.events.push(event);
       pending = pending.then(async () => {
+        // Embedded SQL may resolve in microtasks. A buffered stream must yield
+        // to lease renewal and stop timers between durable writes.
+        await scheduler.yield();
         await this.db.appendRecordEvent(owner, token, event);
         // Each streamed receipt is durable before the phone sees it.
         subject.next(event);

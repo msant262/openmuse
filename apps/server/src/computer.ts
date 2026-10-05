@@ -201,7 +201,7 @@ export class ComputerService {
     readonly config: Config,
     private readonly docker: DockerRunner = runDocker,
   ) {}
-  private enabled() {
+  assertConfigured() {
     if (!this.config.computerEnabled)
       throw new AppError(
         "Computer is not configured. Enable COMPUTER_ENABLED and build the local computer image.",
@@ -321,7 +321,7 @@ export class ComputerService {
       throw new AppError("Computer workspace ownership or isolation does not match", 409);
   }
   private async acquire(owner: string, operation: Lease["operation"] = "operation") {
-    this.enabled();
+    this.assertConfigured();
     const previous = await this.db.get<Lease>(owner, "computer-state", "lease");
     const lease = {
       id: "lease",
@@ -523,7 +523,7 @@ export class ComputerService {
     return this.snapshot(owner);
   }
   async stop(owner: string) {
-    this.enabled();
+    this.assertConfigured();
     let lease = await this.db.get<Lease>(owner, "computer-state", "lease");
     if (!lease || lease.expiresAt <= Date.now()) lease = await this.acquire(owner);
     else if ((lease.operation !== "command" && !lease.stopping) || lease.stopInFlight)
@@ -594,7 +594,7 @@ export class ComputerService {
     return this.snapshot(owner);
   }
   private async running(owner: string) {
-    this.enabled();
+    this.assertConfigured();
     if (!(await this.inspect(owner))?.State.Running)
       throw new AppError("Start the computer before using its terminal or files", 409);
     return computerIdentity(this.config, owner).container;
@@ -609,7 +609,7 @@ export class ComputerService {
       onDispatch?: (receiptId: string) => Promise<void>;
     } = {},
   ): Promise<ComputerCommand> {
-    this.enabled();
+    this.assertConfigured();
     const args = computerCommandSchema.parse(raw),
       cwd = workspacePath(args.cwd);
     if (args.background || (args.timeoutMs && args.timeoutMs > 30000))
