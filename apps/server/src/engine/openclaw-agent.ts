@@ -482,6 +482,7 @@ export function openclawAgent(options: Options) {
             logging: { level: "error", consoleLevel: "error" },
           };
           let messageId: string | undefined;
+          let acknowledgmentBoundary: string | undefined;
           const receipts = new Map<string, DispatchReceipt>();
           let transportError: unknown;
           let manager: WorkingSession | undefined;
@@ -648,6 +649,19 @@ export function openclawAgent(options: Options) {
                   options.finalResponseWhen?.() && options.finalResponseContext
                     ? await options.finalResponseContext()
                     : undefined;
+                let responseMessages = messages;
+                if (acknowledged) {
+                  acknowledgmentBoundary ??= messages.findLast(
+                    (message) => message.role === "tool",
+                  )?.toolCallId;
+                  const boundary = messages.findLastIndex(
+                    (message) =>
+                      message.role === "tool" && message.toolCallId === acknowledgmentBoundary,
+                  );
+                  // Replace the task history once, then retain subsequent tool
+                  // receipts and errors so acknowledgment attempts can recover.
+                  responseMessages = [...acknowledged.messages, ...messages.slice(boundary + 1)];
+                }
                 if (acknowledged)
                   systemPrompts = [
                     context.systemPrompt ?? "",
@@ -707,7 +721,7 @@ export function openclawAgent(options: Options) {
                 let text = "";
                 for await (const event of adapter.chatStream({
                   model: options.model,
-                  messages: acknowledged?.messages ?? messages,
+                  messages: responseMessages,
                   systemPrompts,
                   tools: selected,
                   request: { signal },

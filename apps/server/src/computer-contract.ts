@@ -86,6 +86,8 @@ type BaseComputerBackend = Pick<
   | "writeBytes"
 >;
 export type ComputerBackend = Omit<BaseComputerBackend, "execute"> & {
+  /** Local configuration validation only; must not dispatch any operation. */
+  assertConfigured?: () => void;
   fileBytes: (
     owner: string,
     path: string,

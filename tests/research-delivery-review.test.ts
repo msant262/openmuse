@@ -3,6 +3,54 @@ import test from "node:test";
 import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("an explicit partial result cannot bypass available research recovery", async (t) => {
+  const calls = [
+    { name: "web_fetch", arguments: { url: "https://official.example/about" } },
+    {
+      name: "finish_task",
+      arguments: { summary: "The official page has no count.", outcome: "partial" },
+    },
+    { name: "web_fetch", arguments: { url: "https://news.example/live" } },
+    {
+      name: "finish_task",
+      arguments: {
+        summary: "Count: A 52%, B 48%. Source: https://news.example/live",
+        outcome: "completed",
+      },
+    },
+  ];
+  await modelFixture(t, (i) => calls[i], {
+    researchReview: (_body, i) =>
+      i === 0
+        ? {
+            complete: false,
+            needsMoreResearch: true,
+            missing: ["The current count"],
+            nextSteps: ["Read the returned alternative https://news.example/live"],
+          }
+        : { complete: true, needsMoreResearch: false, missing: [], nextSteps: [] },
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const urls: string[] = [];
+  t.mock.method(f.agent.web, "document", async (url: string) => {
+    urls.push(url);
+    return {
+      url,
+      contentType: "text/html",
+      body: url.includes("official.example")
+        ? '<article>Election calendar. <a href="https://news.example/live">Live count</a></article>'
+        : "<main>A 52%, B 48%.</main>",
+    };
+  });
+  const task = await f.agent.createTask("owner", { prompt: "What is the current count?" });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.result);
+  assert.deepEqual(urls, ["https://official.example/about", "https://news.example/live"]);
+  assert.match(saved.result ?? "", /52%/);
+  assert.equal(saved.completion?.status, "verified");
+});
+
 test("new research observations keep the worker moving beyond three delivery reviews", async (t) => {
   const calls = Array.from({ length: 5 }, (_, i) => [
     { name: "web_fetch", arguments: { url: `https://news.example/part-${i}` } },
@@ -105,37 +153,43 @@ test("research cannot finish with instructions to consult an unread results link
 });
 
 test("an actual unresolved blocker remains partial after the model uses more than three repair attempts", async (t) => {
-  await modelFixture(
-    t,
-    (i) =>
-      i === 0
-        ? { name: "web_fetch", arguments: { url: "https://news.example/about" } }
-        : {
-            name: "finish_task",
-            arguments: {
-              summary: "The result is unavailable. See the website.",
-              outcome: i >= 5 ? "partial" : "completed",
-            },
-          },
-    {
-      researchReview: () => ({
-        complete: false,
-        missing: ["Requested results remain absent"],
-        nextSteps: ["Try a relevant alternative data source"],
-      }),
-    },
+  const sources = ["official", "news-a", "news-b", "news-c", "archive"].map(
+    (name) => `https://${name}.example/results`,
   );
+  const calls = sources.flatMap((url, i) => [
+    { name: "web_fetch", arguments: { url } },
+    {
+      name: "finish_task",
+      arguments: {
+        summary: "The consulted sources have not published the requested results.",
+        outcome: i === 4 ? "partial" : "completed",
+      },
+    },
+  ]);
+  await modelFixture(t, (i) => calls[i], {
+    researchReview: (_body, i) => ({
+      complete: false,
+      blocked: i >= 4,
+      missing: ["Requested results remain absent"],
+      nextSteps: i >= 4 ? [] : ["Try a relevant alternative data source"],
+    }),
+  });
   const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
-  t.mock.method(f.agent.web, "document", async (url: string) => ({
-    url,
-    contentType: "text/html",
-    body: "<title>About</title><article>Counting starts today.</article>",
-  }));
+  const observed: string[] = [];
+  t.mock.method(f.agent.web, "document", async (url: string) => {
+    observed.push(url);
+    return {
+      url,
+      contentType: "text/html",
+      body: "<article>The requested results have not been published.</article>",
+    };
+  });
   const task = await f.agent.createTask("owner", { prompt: "What are the results now?" });
   await f.agent.worker.tick();
   const saved = await f.agent.getTask("owner", task.id);
   assert.equal(saved.status, "failed");
   assert.notEqual(saved.completion?.status, "verified");
+  assert.deepEqual(observed, sources);
   assert.ok(
     (await f.agent.journal.operations("owner", task.id)).filter((o) => o.toolName === "finish_task")
       .length >= 5,

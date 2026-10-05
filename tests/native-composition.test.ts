@@ -408,7 +408,12 @@ for (const source of ["manual-command", "manual-file", "model-file"] as const)
             )
           ).taskId;
     const pending = server.agent.worker.tick();
-    const batch = await server.node("claim", { epoch: server.epoch, waitMs: 5000 });
+    // An empty long poll is valid while the copied model runtime starts. Native
+    // clients poll again; admission must not depend on the first five seconds.
+    const deadline = Date.now() + 20000;
+    let batch = await server.node("claim", { epoch: server.epoch, waitMs: 5000 });
+    while (!batch.operations.length && Date.now() < deadline)
+      batch = await server.node("claim", { epoch: server.epoch, waitMs: 5000 });
     assert.equal(batch.operations.length, 1);
     const operation = batch.operations[0];
     assert.equal(

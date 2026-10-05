@@ -135,6 +135,9 @@ export function auditedComputer(
     operation: () => Promise<T>,
     request?: ReturnType<typeof fileResource>,
   ) => {
+    // A disabled/misconfigured backend has not dispatched an effect. Validate
+    // before acquiring physical resources or advancing the task journal.
+    backend.assertConfigured?.();
     const lockId = `computer-operation:${randomUUID()}`;
     const lease = request && resources ? await resources.acquire(owner, lockId, [request]) : [];
     if (request && resources && !lease) throw new ResourceBusyError([request]);
@@ -222,6 +225,7 @@ export function auditedComputer(
     operation: (bound: typeof options) => Promise<ComputerCommand>,
   ) =>
     withActivePreflight(async (attemptId) => {
+      backend.assertConfigured?.();
       let dispatchStarted = false;
       const bound = { ...options, idempotencyKey: options.idempotencyKey ?? randomUUID() };
       const receiptId = createHash("sha256")

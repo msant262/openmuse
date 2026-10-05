@@ -1,5 +1,9 @@
 # Embedded harness acceptance — 5 October 2026
 
+Subsequent testing with an existing conversation exposed failures missed by the
+fresh-conversation run below. See [renewed-work acceptance](../../docs/RENEWED-WORK-ACCEPTANCE.md)
+for the corrections, failure reproductions and broader interaction coverage.
+
 The active chat and model-backed task executors are OpenClaw's original
 `runEmbeddedAgent`, compiled from the copied source at
 `b56ae70a5e7e302dc2165c96b60214e84e19c7b1`. The source manifest verifies 10,664
