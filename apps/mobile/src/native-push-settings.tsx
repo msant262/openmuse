@@ -28,7 +28,7 @@ export function NativePushSettings() {
       <Text style={s.heading}>{t("Phone notifications")}</Text>
       <Text style={s.small}>
         {t(
-          "Native delivery is optional. Results always stay in Activity. Delivery requires your phone's permission and server platform credentials.",
+          "Receive a phone notification when a task needs your attention. Your results stay available in Activity.",
         )}
       </Text>
       <View style={[s.row, { gap: 8 }]}>

@@ -17,6 +17,7 @@ export type PendingAttachment = CachedAttachment & {
   transcribe: boolean;
   fileId?: string;
   includeSubtitles?: boolean;
+  transcriptionRequestId?: string;
   transcriptionTaskId?: string;
   transcriptionStatus?: "queued" | "running" | "error" | "complete";
   transcriptionStage?: string;
@@ -63,6 +64,7 @@ export class AttachmentQueue {
         | "transcript"
         | "error"
         | "includeSubtitles"
+        | "transcriptionRequestId"
         | "transcriptionTaskId"
         | "transcriptionStatus"
         | "transcriptionStage"

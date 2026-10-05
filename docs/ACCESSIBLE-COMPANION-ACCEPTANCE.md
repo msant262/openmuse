@@ -1,8 +1,18 @@
 # Accessible companion — 5 October 2026
 
-Published release: `a3349fe0d616429cabe604118d6c4d86f4bb1473`, derived from
-production `47c4079`. The publication includes only this task's runtime and mobile
-changes. Other unpublished changes on the development branch were excluded.
+**Corrected after a user-reported web regression.** API release
+`a3349fe0d616429cabe604118d6c4d86f4bb1473`, derived from `47c4079`, remains deployed.
+Its mobile tree was older than the already-published app. Building web and Android
+from that API source removed existing UI and conversation recovery behavior. The
+earlier claim that the omitted mobile changes were unpublished was incorrect.
+
+Web and Android now use mobile source
+`0cf8a94e339358efe7467ff771ff64c06f5566ad`, which retains the published mobile
+history through `1ed264c3` and includes the improvements below. API and mobile
+source pins are recorded separately. See [the recovery record](WEB-RELEASE-RECOVERY.md)
+for the deployed files and conversation checks. The original verification below
+is retained as historical evidence; it did **not** establish release continuity
+or adequate coverage of existing conversation navigation.
 
 ## Delivered behavior
 
@@ -69,9 +79,9 @@ to authorize; deterministic tests cover those state transitions.
   remain). Production server build/typecheck passed. The isolated production
   mobile baseline still has three pre-existing nullable-budget type errors in
   `task-runtime-controls.tsx`; web export and signed Android compilation passed.
-- Production browser verification found installation, memory filters and native
+- Original production browser verification found installation, memory filters and native
   Google controls, with no page errors. The public APK download's SHA-256 matched
-  the signed build: `df80b836f660a621781bd834dd8063263743f3b4b1f43cddc20dff92235c2106`.
+  the now-withdrawn signed build: `df80b836f660a621781bd834dd8063263743f3b4b1f43cddc20dff92235c2106`.
   The final APK receipt records a dirty checkout solely from an untracked web
   build log; no tracked application source changed during the build. Physical
   Android microphone/install acceptance was not performed.

@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 
 const require = createRequire(import.meta.url);
 const workerRequire = createRequire(resolve("apps/worker/package.json"));
@@ -13,9 +13,7 @@ const mobileRequire = createRequire(resolve("apps/mobile/package.json"));
 const { chromium }: typeof import("../apps/worker/node_modules/playwright/index.js") =
   workerRequire("playwright");
 
-test("mounted viewer preserves pixels without permitting stale input across takeover and capture recovery", {
-  timeout: 45_000,
-}, async (t) => {
+async function createViewerPage(t: TestContext) {
   if (!existsSync(chromium.executablePath())) {
     t.skip("Install the workspace's pinned Playwright Chromium to run the component regression");
     return;
@@ -40,14 +38,26 @@ test("mounted viewer preserves pixels without permitting stale input across take
         import {createRoot} from 'react-dom/client';
         import {DesktopViewer} from './src/desktop';
         import {WorkspaceContext} from './src/workspace';
-        import {ApiError} from './src/api-errors';
-        const api={request:async(path,body)=>{
-          const result=await window.desktopRequest(path,body);
-          if(result.error)throw new ApiError(result.error,result.status,result.code);
-          return result.value;
-        }};
+        import {MuseApi} from './src/api';
+        window.desktopTransportAborts=0;
+        globalThis.fetch=(url,init)=>new Promise((resolve,reject)=>{
+          const signal=init?.signal;
+          const cancel=()=>{
+            window.desktopTransportAborts++;
+            reject(signal.reason);
+          };
+          if(signal?.aborted){cancel();return;}
+          signal?.addEventListener('abort',cancel);
+          window.desktopRequest(new URL(url).pathname,init?.body?JSON.parse(init.body):undefined)
+            .then(result=>resolve(new Response(
+              JSON.stringify(result.error?{error:result.error,code:result.code}:result.value),
+              {status:result.status??200}
+            )),reject)
+            .finally(()=>signal?.removeEventListener('abort',cancel));
+        });
+        const api=new MuseApi('fixture-token');
         createRoot(document.getElementById('root')).render(
-          <WorkspaceContext.Provider value={{api,refresh:async()=>{}}}>
+          <WorkspaceContext.Provider value={{api,refresh:async()=>window.desktopRefresh()}}>
             <DesktopViewer/>
           </WorkspaceContext.Provider>
         );`,
@@ -79,6 +89,15 @@ test("mounted viewer preserves pixels without permitting stale input across take
   const page = await browser.newPage();
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.message));
+  return { page, pageErrors, bundle };
+}
+
+test("mounted viewer preserves pixels without permitting stale input across takeover and capture recovery", {
+  timeout: 45_000,
+}, async (t) => {
+  const fixture = await createViewerPage(t);
+  if (!fixture) return;
+  const { page, pageErrors, bundle } = fixture;
   const session = {
     id: randomUUID(),
     browserSessionId: randomUUID(),
@@ -98,6 +117,10 @@ test("mounted viewer preserves pixels without permitting stale input across take
     heartbeats = 0,
     takes = 0,
     observations = 0;
+  let workspaceRefreshes = 0;
+  await page.exposeFunction("desktopRefresh", () => {
+    workspaceRefreshes++;
+  });
   let failCapture = false,
     rejectHeartbeat = false;
   let held!: () => void, release!: () => void;
@@ -152,7 +175,7 @@ test("mounted viewer preserves pixels without permitting stale input across take
         takes++;
         control = "human";
         revision++;
-        return { value: { control, revision, grantId, expiresAt: Date.now() + 30_000 } };
+        return { value: { control, revision, grantId, expiresAt: Date.now() + 5_000 } };
       }
       if (path.endsWith("/heartbeat")) {
         heartbeats++;
@@ -237,13 +260,26 @@ test("mounted viewer preserves pixels without permitting stale input across take
   await page.getByRole("button", { name: "Hand back to agent", exact: true }).waitFor();
   await visibleImage();
   assert.equal(await enter.isDisabled(), true);
-  release();
-  await freshPollStarted;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      freshPollStarted,
+      new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error("Takeover waited behind an obsolete observation")),
+          1000,
+        );
+      }),
+    ]);
+  } finally {
+    if (deadline) clearTimeout(deadline);
+  }
   await visibleImage();
   assert.equal(await enter.isDisabled(), true);
   assert.equal(inputs.length, 0);
   releaseFresh();
   await readyInput();
+  release();
   assert.equal(
     await page.getByRole("button", { name: "Hand back to agent", exact: true }).count(),
     1,
@@ -252,15 +288,27 @@ test("mounted viewer preserves pixels without permitting stale input across take
   assert.equal(previousImages[2], undefined, "takeover requires complete fresh pixels");
   assert.equal(opened, 1);
   assert.equal(takes, 1);
+  assert.ok(
+    (await page.evaluate<number>("window.desktopTransportAborts")) > 0,
+    "takeover must cancel the API transport",
+  );
+  assert.equal(workspaceRefreshes, 0, "control changes cannot reload unrelated workspace data");
   assert.equal(
     await page.evaluate("window.desktopImageLoads"),
     0,
     "same pixels must regain input without another onLoad",
   );
 
+  const beforeInput = await desktopImage.boundingBox();
+  const heartbeatsBeforeInput = heartbeats;
   await desktopImage.click({ position: { x: 25, y: 25 } });
   await inputPollStarted;
   await visibleImage();
+  assert.deepEqual(
+    await desktopImage.boundingBox(),
+    beforeInput,
+    "a pending click cannot move or resize the displayed desktop",
+  );
   assert.equal(
     await originalImage?.evaluate((image) => image.isConnected),
     true,
@@ -276,6 +324,12 @@ test("mounted viewer preserves pixels without permitting stale input across take
   assert.equal((inputs[0].action as { action: string }).action, "click");
   releaseInputFrame();
   await readyInput();
+  assert.equal(workspaceRefreshes, 0, "native input cannot fetch unrelated workspace data");
+  assert.equal(
+    heartbeats,
+    heartbeatsBeforeInput,
+    "a renewed permit needs no heartbeat before every frame",
+  );
   assert.equal(await page.evaluate("window.desktopImageLoads"), 0);
 
   failCapture = true;
@@ -318,4 +372,187 @@ test("mounted viewer preserves pixels without permitting stale input across take
   assert.equal(await desktopImage.count(), 0, "authorization changes must drop the old pixels");
   assert.equal(inputs.length, 1);
   assert.deepEqual(effects, [], "capture recovery cannot dispatch or replay input/handback");
+});
+
+async function controlledViewer(t: TestContext) {
+  const fixture = await createViewerPage(t);
+  if (!fixture) return;
+  const { page, bundle } = fixture;
+  const session = {
+    id: randomUUID(),
+    browserSessionId: randomUUID(),
+    sessionGeneration: randomUUID(),
+    profileId: "test",
+    width: 1280,
+    height: 720,
+  };
+  const viewerId = randomUUID();
+  let grantId = randomUUID(),
+    control = "agent",
+    revision = 0,
+    sequence = 0;
+  let inputFailure: { error: string; status: number; code?: string } | undefined;
+  let hold: { started: () => void; released: Promise<void> } | undefined;
+  const inputs: Record<string, unknown>[] = [];
+  const calls: string[] = [];
+  await page.exposeFunction("desktopRefresh", () => {});
+  await page.exposeFunction(
+    "desktopRequest",
+    async (path: string, body?: Record<string, unknown>) => {
+      calls.push(path);
+      if (path === "/api/desktop")
+        return { value: { ...session, enabled: true, control, revision, runtimePaused: false } };
+      if (path === "/api/desktop/viewers") return { value: { viewerId, session } };
+      if (path.endsWith("/take-control")) {
+        control = "human";
+        revision++;
+        grantId = randomUUID();
+        return { value: { control, revision, grantId, expiresAt: Date.now() + 30_000 } };
+      }
+      if (path.endsWith("/heartbeat")) {
+        assert.equal(body?.grantId, grantId);
+        return { value: { control, revision, grantId, expiresAt: Date.now() + 30_000 } };
+      }
+      if (path.endsWith("/input")) {
+        assert.equal(body?.grantId, grantId);
+        inputs.push(body?.input as Record<string, unknown>);
+        return inputFailure ?? { value: { inputDelivered: true, cleanupConfirmed: true } };
+      }
+      if (path.endsWith("/observe")) {
+        const frame = {
+          sessionGeneration: session.sessionGeneration,
+          frameId: randomUUID(),
+          sequence: ++sequence,
+          observedAt: new Date().toISOString(),
+          width: 1280,
+          height: 720,
+          imageHash: "a".repeat(64),
+          imageUnchanged: Boolean(body?.previousImage),
+          ...(!body?.previousImage
+            ? {
+                mimeType: "image/png",
+                image:
+                  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jI3UAAAAASUVORK5CYII=",
+              }
+            : {}),
+        };
+        if (hold) {
+          const held = hold;
+          hold = undefined;
+          held.started();
+          await held.released;
+        }
+        return { value: frame };
+      }
+      if (path.endsWith("/close")) return { value: { closed: true } };
+      throw new Error(`Unexpected viewer effect: ${path}`);
+    },
+  );
+  await page.setContent('<div id="root"></div>');
+  await page.addScriptTag({ content: bundle.outputFiles[0].text });
+  const image = page.getByLabel("Current masked agent desktop", { exact: true });
+  const enter = page.getByRole("button", { name: "Enter", exact: true });
+  const ready = () =>
+    enter.and(page.locator(':not([aria-disabled="true"]):not([disabled])')).waitFor();
+  await image.waitFor();
+  await page.getByRole("button", { name: "Take control", exact: true }).click();
+  await ready();
+  return {
+    ...fixture,
+    inputs,
+    calls,
+    image,
+    enter,
+    ready,
+    failInput: (failure?: typeof inputFailure) => {
+      inputFailure = failure;
+    },
+    holdFrame: () => {
+      let started!: () => void, release!: () => void;
+      const beginning = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      hold = { started, released };
+      t.after(release);
+      return { beginning, release };
+    },
+  };
+}
+
+test("a denied input discards its local grant before the next observation", {
+  timeout: 15_000,
+}, async (t) => {
+  const viewer = await controlledViewer(t);
+  if (!viewer) return;
+  const { page, image, enter } = viewer;
+  const original = await image.elementHandle();
+  const fresh = viewer.holdFrame();
+  viewer.failInput({ error: "Desktop device or control grant changed", status: 403 });
+  await enter.click();
+  await page.getByText("Desktop device or control grant changed", { exact: true }).waitFor();
+  await fresh.beginning;
+  assert.equal(
+    await page.getByRole("button", { name: "Hand back to agent", exact: true }).count(),
+    0,
+  );
+  assert.equal(await original?.evaluate((node) => node.isConnected), false);
+  assert.equal(viewer.inputs.length, 1);
+  fresh.release();
+});
+
+test("a rejected stale input waits for fresh pixels without replaying the gesture", {
+  timeout: 15_000,
+}, async (t) => {
+  const viewer = await controlledViewer(t);
+  if (!viewer) return;
+  const fresh = viewer.holdFrame();
+  viewer.failInput({
+    error: "Desktop changed; observe before acting",
+    status: 409,
+    code: "STALE_FRAME",
+  });
+  await viewer.enter.click();
+  await fresh.beginning;
+  assert.equal(await viewer.enter.isDisabled(), true);
+  assert.equal(await viewer.image.isVisible(), true);
+  assert.equal(
+    await viewer.page.getByRole("button", { name: "Hand back to agent", exact: true }).count(),
+    1,
+  );
+  await viewer.image.click({ position: { x: 20, y: 20 }, force: true });
+  assert.equal(viewer.inputs.length, 1);
+  viewer.failInput();
+  fresh.release();
+  await viewer.ready();
+  assert.equal(viewer.inputs.length, 1);
+  await viewer.enter.click();
+  await viewer.ready();
+  assert.equal(viewer.inputs.length, 2);
+});
+
+test("an uncertain input cannot gain another input grant from a fresh preview alone", {
+  timeout: 15_000,
+}, async (t) => {
+  const viewer = await controlledViewer(t);
+  if (!viewer) return;
+  viewer.failInput({
+    error: "Desktop receipt is pending. Inspect it before repeating input",
+    status: 503,
+    code: "OUTCOME_UNKNOWN",
+  });
+  await viewer.enter.click();
+  await viewer.page
+    .getByText("Desktop receipt is pending. Inspect it before repeating input", { exact: true })
+    .waitFor();
+  await viewer.image.waitFor();
+  assert.equal(
+    await viewer.page.getByRole("button", { name: "Hand back to agent", exact: true }).count(),
+    0,
+  );
+  await viewer.image.click({ position: { x: 20, y: 20 }, force: true });
+  assert.equal(viewer.inputs.length, 1);
+  assert.equal(viewer.calls.filter((path) => path.endsWith("/take-control")).length, 1);
 });

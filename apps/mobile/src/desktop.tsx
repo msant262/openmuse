@@ -51,6 +51,7 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
   const point = useRef<{ x: number; y: number } | undefined>(undefined);
   const version = useRef(0);
   const refreshFrame = useRef<() => void>(() => {});
+  const cancelRead = useRef<() => void>(() => {});
   const human = control?.control === "human" && Boolean(control.grantId);
   function showFrame(next?: RenderedDesktop) {
     visible.current = next;
@@ -62,19 +63,23 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
     grant.current = undefined;
     setControl(undefined);
     let running = false;
+    let pollController: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     function schedule(immediate = false) {
       if (timer) clearTimeout(timer);
       const delay = desktopPollDelay(
         active.current && AppState.currentState === "active",
         unchanged.current,
+        Boolean(grant.current?.grantId),
       );
       if (delay !== undefined) timer = setTimeout(() => void poll(), immediate ? 0 : delay);
     }
     refreshFrame.current = () => {
       unchanged.current = 0;
+      pollController?.abort();
       if (!running) schedule(true);
     };
+    cancelRead.current = () => pollController?.abort();
     async function poll() {
       if (running || !active.current || AppState.currentState !== "active") return;
       if (pending.current) {
@@ -82,12 +87,16 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
         return;
       }
       running = true;
+      const controller = new AbortController();
+      pollController = controller;
+      const read = <T,>(request: (signal: AbortSignal) => Promise<T>) =>
+        readDesktop(request, undefined, controller.signal);
       let request = version.current;
       let stage: "status" | "open" | "heartbeat" | "observe" = "status";
       const currentRequest = () => active.current && request === version.current;
       try {
-        const current = await readDesktop(() =>
-          api.request<Status | { enabled: false }>("/api/desktop"),
+        const current = await read((signal) =>
+          api.request<Status | { enabled: false }>("/api/desktop", undefined, undefined, signal),
         );
         if (!currentRequest()) return;
         if (!current.enabled) {
@@ -126,10 +135,15 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
         setStatus(current);
         if (!viewer.current) {
           stage = "open";
-          const opened = await readDesktop(() =>
-            api.request<{ viewerId: string; session: DesktopSession }>("/api/desktop/viewers", {
-              sessionId: current.id,
-            }),
+          const opened = await read((signal) =>
+            api.request<{ viewerId: string; session: DesktopSession }>(
+              "/api/desktop/viewers",
+              {
+                sessionId: current.id,
+              },
+              undefined,
+              signal,
+            ),
           );
           if (!currentRequest()) {
             void api.request(`/api/desktop/viewers/${opened.viewerId}/close`, {}).catch(() => {});
@@ -138,28 +152,39 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
           viewer.current = { id: opened.viewerId, session: opened.session };
         }
         const connected = viewer.current;
-        if (grant.current?.grantId) {
+        if (grant.current?.grantId && (grant.current.expiresAt ?? 0) - Date.now() <= 20_000) {
           stage = "heartbeat";
           const grantId = grant.current.grantId;
-          const renewed = await readDesktop(() =>
-            api.request<DesktopControl>(`/api/desktop/viewers/${connected.id}/heartbeat`, {
-              sessionId: current.id,
-              grantId,
-              operationId: Crypto.randomUUID(),
-            }),
+          const renewed = await read((signal) =>
+            api.request<DesktopControl>(
+              `/api/desktop/viewers/${connected.id}/heartbeat`,
+              {
+                sessionId: current.id,
+                grantId,
+                operationId: Crypto.randomUUID(),
+              },
+              undefined,
+              signal,
+            ),
           );
           if (!currentRequest()) return;
           grant.current = renewed;
           setControl(renewed);
-        } else setControl({ control: current.control, revision: current.revision });
+        } else if (!grant.current?.grantId)
+          setControl({ control: current.control, revision: current.revision });
         stage = "observe";
         const previous = latest.current;
         const frame = desktopFrameSchema.parse(
-          await readDesktop(() =>
-            api.request(`/api/desktop/viewers/${connected.id}/observe`, {
-              sessionId: current.id,
-              ...(previous ? { previousImage: previous.frame.imageHash } : {}),
-            }),
+          await read((signal) =>
+            api.request(
+              `/api/desktop/viewers/${connected.id}/observe`,
+              {
+                sessionId: current.id,
+                ...(previous ? { previousImage: previous.frame.imageHash } : {}),
+              },
+              undefined,
+              signal,
+            ),
           ),
         );
         if (!currentRequest() || viewer.current?.id !== connected.id) return;
@@ -212,6 +237,7 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
         }
       } finally {
         running = false;
+        if (pollController === controller) pollController = undefined;
         schedule(request !== version.current);
       }
     }
@@ -223,6 +249,7 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
       } else {
         if (timer) clearTimeout(timer);
         version.current++;
+        pollController?.abort();
         latest.current = undefined;
         displayed.current = undefined;
         setImageLoaded(false);
@@ -233,6 +260,7 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
     return () => {
       active.current = false;
       version.current++;
+      pollController?.abort();
       if (timer) clearTimeout(timer);
       subscription.remove();
       latest.current = undefined;
@@ -242,6 +270,7 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
       const current = viewer.current;
       viewer.current = undefined;
       refreshFrame.current = () => {};
+      cancelRead.current = () => {};
       if (current) void api.request(`/api/desktop/viewers/${current.id}/close`, {}).catch(() => {});
     };
   }, [api]);
@@ -250,6 +279,7 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
     if (!current || pending.current) return;
     unchanged.current = 0;
     version.current++;
+    cancelRead.current();
     pending.current = true;
     setBusy(true);
     setError("");
@@ -272,9 +302,23 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
         setControl(result);
       }
       latest.current = undefined;
-      void refresh().catch(() => {});
+      if (name === "import-downloads" || name === "open-browser") void refresh().catch(() => {});
     } catch (failure) {
-      if (active.current) setError(failure instanceof Error ? failure.message : String(failure));
+      if (active.current && viewer.current?.id === current.id) {
+        setError(failure instanceof Error ? failure.message : String(failure));
+        const denied = failure instanceof ApiError && [401, 403].includes(failure.status);
+        const staleFrame = failure instanceof ApiError && failure.code === "STALE_FRAME";
+        // A fresh screenshot cannot restore authority after denied or uncertain
+        // input. Require an explicit takeover; never replay the failed gesture.
+        if (denied || (name === "input" && !staleFrame)) {
+          grant.current = undefined;
+          setControl(undefined);
+          if (denied) {
+            displayed.current = undefined;
+            showFrame();
+          }
+        }
+      }
     } finally {
       pending.current = false;
       if (active.current) setBusy(false);
@@ -327,11 +371,6 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
         {t("Add browser downloads to Files")}
       </Button>
       <ErrorNotice error={t(error || connectionError)} />
-      {rendered && !imageLoaded ? (
-        <Text style={s.small}>
-          {t("Updating desktop image… Input is disabled until a fresh frame arrives.")}
-        </Text>
-      ) : null}
       {rendered?.frame.paused ? (
         <Text style={s.small}>
           {t("Paused · last masked frame from {observedAt}. Resume to refresh or send input.", {
@@ -432,6 +471,7 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
                 source={{ uri: rendered.uri }}
                 style={{ width: imageWidth, height: imageHeight }}
                 resizeMode="contain"
+                fadeDuration={0}
                 onLoad={() => {
                   if (
                     visible.current?.uri !== rendered.uri ||
@@ -461,6 +501,23 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
                 {t("Waiting for a fresh desktop frame…")}
               </Text>
             )}
+            {rendered && !imageLoaded ? (
+              <View
+                pointerEvents="none"
+                style={{
+                  position: "absolute",
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  padding: 8,
+                  backgroundColor: colors.code,
+                }}
+              >
+                <Text style={[s.small, { color: colors.onFeature }]}>
+                  {t("Updating desktop image… Input is disabled until a fresh frame arrives.")}
+                </Text>
+              </View>
+            ) : null}
           </View>
         </ScrollView>
       </View>

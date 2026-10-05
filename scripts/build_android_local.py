@@ -77,7 +77,39 @@ def public_api_url(value):
     return value.rstrip("/")
 
 
-def inspect_apk(apk, badging, manifest, signer, abi, mode, api_url, expected_signer_sha256=None):
+def load_google_services(path):
+    """Validate the Android client configuration without printing its contents."""
+    try:
+        value = json.loads(path.expanduser().read_text())
+        project = value["project_info"]
+        client = next(client for client in value["client"]
+                      if client["client_info"]["android_client_info"]["package_name"] == PACKAGE)
+        result = {"project_id": project["project_id"],
+                  "gcm_defaultSenderId": project["project_number"],
+                  "google_app_id": client["client_info"]["mobilesdk_app_id"],
+                  "google_api_key": client["api_key"][0]["current_key"]}
+        if (any(not isinstance(v, str) or not v.strip() for v in result.values()) or
+                not result["gcm_defaultSenderId"].isdigit() or
+                not result["google_app_id"].startswith(f'1:{result["gcm_defaultSenderId"]}:android:')):
+            raise ValueError()
+        return result
+    except (KeyError, TypeError, IndexError, StopIteration, ValueError):
+        raise ValueError("Firebase configuration must contain the matching Android package and complete project/client identifiers") from None
+
+
+def firebase_resources(resources):
+    names = ["google_app_id", "gcm_defaultSenderId", "google_api_key", "project_id"]
+    result = {}
+    for name in names:
+        match = re.search(rf'^\s*resource [^\n]*:string/{name}:[^\n]*\n\s*\(string(?:8|16)\) "([^"\n]+)"',
+                          resources, re.MULTILINE)
+        if match:
+            result[name] = match[1]
+    return result
+
+
+def inspect_apk(apk, badging, manifest, signer, abi, mode, api_url, expected_signer_sha256=None,
+                *, resources="", require_push=False, google_services=None):
     package = re.search(r"package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'", badging)
     if not package or package[1] != PACKAGE:
         raise ValueError("APK package does not preserve the paired app identity")
@@ -119,6 +151,13 @@ def inspect_apk(apk, badging, manifest, signer, abi, mode, api_url, expected_sig
             raise ValueError("Project signing refuses an Android debug certificate")
         if fingerprint != expected_signer_sha256:
             raise ValueError("APK signer fingerprint differs from the expected project certificate")
+    firebase = firebase_resources(resources)
+    if require_push and (len(firebase) != 4 or
+                         not firebase["gcm_defaultSenderId"].isdigit() or
+                         not firebase["google_app_id"].startswith(f'1:{firebase["gcm_defaultSenderId"]}:android:')):
+        raise ValueError("Notification release is missing compiled Firebase Android resources")
+    if google_services and firebase != google_services:
+        raise ValueError("APK Firebase resources differ from the requested Android configuration")
     return {
         "package": package[1], "versionCode": package[2], "versionName": package[3],
         "label": LABEL, "scheme": SCHEME, "mode": mode, "nativeAbis": abis,
@@ -127,6 +166,8 @@ def inspect_apk(apk, badging, manifest, signer, abi, mode, api_url, expected_sig
         "signing": ("project-private-verified" if expected_signer_sha256 else
                     "android-debug-local-only" if debug_signature else "non-debug-owner-verification-required"),
         "productionSigned": bool(expected_signer_sha256), "signatureVerified": True,
+        "nativePushConfigured": len(firebase) == 4,
+        **({"firebaseProjectId": firebase["project_id"]} if len(firebase) == 4 else {}),
         "signerSha256": fingerprint,
         **({"expectedSignerSha256": expected_signer_sha256} if expected_signer_sha256 else {}),
         "sha256": hashlib.sha256(apk.read_bytes()).hexdigest(), "bytes": apk.stat().st_size,
@@ -161,8 +202,12 @@ def verify(apk, tools, args, signing=None):
     badging = run([str(tools["aapt"]), "dump", "badging", str(apk)], capture=True)
     manifest = run([str(tools["aapt"]), "dump", "xmltree", str(apk), "AndroidManifest.xml"], capture=True)
     signer = run([str(tools["apksigner"]), "verify", "--print-certs", str(apk)], capture=True)
+    resources = run([str(tools["aapt"]), "dump", "--values", "resources", str(apk)], capture=True)
     return inspect_apk(apk, badging, manifest, signer, args.abi, args.mode, args.api_url,
-                       signing.expected_sha256 if signing else None)
+                       signing.expected_sha256 if signing else None,
+                       resources=resources,
+                       require_push=getattr(args, "require_push", False),
+                       google_services=getattr(args, "google_services", None))
 
 
 def publish_apk(built, output, tools, args, signing=None):
@@ -194,6 +239,8 @@ def main():
     parser.add_argument("--verify-apk", type=Path, help="verify an already built APK")
     parser.add_argument("--signing-config", type=Path,
                         help="private JSON referencing an existing project keystore and password files")
+    parser.add_argument("--google-services-file", type=Path, default=os.environ.get("GOOGLE_SERVICES_FILE"),
+                        help="Firebase Android client JSON; required for a signed public release")
     parser.add_argument("--api-url", default="http://10.0.2.2:8787")
     parser.add_argument("--abi", choices=["arm64-v8a", "x86_64"], default="arm64-v8a")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "artifacts/android")
@@ -204,6 +251,10 @@ def main():
     if not 1 <= args.max_workers <= 8:
         raise ValueError("max-workers must be between 1 and 8")
     signing = load_signing_config(args.signing_config) if args.signing_config else None
+    args.require_push = bool(signing and urlsplit(args.api_url).scheme == "https")
+    args.google_services = load_google_services(args.google_services_file) if args.google_services_file else None
+    if args.require_push and not args.google_services and not args.verify_apk:
+        raise ValueError("Signed public Android releases require --google-services-file for notifications")
     sdk, tools = android_tools()
     cli = MOBILE / "node_modules/expo/bin/cli"
     if not args.verify_apk and not cli.is_file():
@@ -212,6 +263,7 @@ def main():
         print(json.dumps({"sdk": str(sdk), "buildTools": tools["aapt"].parent.name,
                           "apiUrl": args.api_url, "abi": args.abi, "mode": args.mode,
                           "cloudBuild": False,
+                          "nativePushConfigured": bool(args.google_services),
                           "signing": "project-private-configured" if signing else "local Android debug key by default"}, indent=2))
         return
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -229,6 +281,8 @@ def main():
                    "EXPO_PUBLIC_API_URL": args.api_url, "EXPO_NO_TELEMETRY": "1", "CI": "1",
                    "NODE_ENV": "production", "TMPDIR": metro_cache,
                    "CMAKE_BUILD_PARALLEL_LEVEL": str(args.max_workers)}
+            if args.google_services_file:
+                env["GOOGLE_SERVICES_FILE"] = str(args.google_services_file.expanduser().resolve())
             unchanged = {path: path.read_bytes() for path in [MOBILE / "package.json", ROOT / "pnpm-lock.yaml"]}
             run(["node", str(cli), "prebuild", "--platform", "android", "--no-install",
                  "--skip-dependency-update", "react,react-native"], cwd=MOBILE, env=env)

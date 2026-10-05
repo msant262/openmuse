@@ -3,7 +3,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { Camera, FilePlus2 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AppState, Text, View } from "react-native";
+import { AppState, Platform, Text, View } from "react-native";
 import type { Artifact } from "../../../packages/domain/src";
 import { ApiError } from "./api";
 import {
@@ -227,6 +227,13 @@ export function ChatAttachments({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const active = useRef(false);
+  const picker = useRef(false);
+  const recoveringCamera = useRef(false);
+  const pendingCamera = useRef<
+    ImagePicker.ImagePickerResult | ImagePicker.ImagePickerErrorResult | null
+  >(null);
+  const recoverRef = useRef<() => Promise<void>>(async () => {});
+  const cameraKey = `camera-picker:${api.identityKey}`;
   async function flush() {
     if (active.current) return;
     active.current = true;
@@ -245,7 +252,7 @@ export function ChatAttachments({
           language: "auto",
           includeSubtitles: item.includeSubtitles ?? false,
           threadId,
-          requestId: `transcribe-${item.id}`,
+          requestId: item.transcriptionRequestId ?? `transcribe-${item.id}`,
         };
         try {
           const result = await api.request<TranscriptionResponse>(
@@ -315,7 +322,10 @@ export function ChatAttachments({
         if (live) setError(String(cause));
       });
     const poll = () => {
-      if (AppState.currentState === "active") void flushRef.current();
+      if (AppState.currentState === "active") {
+        void recoverRef.current();
+        void flushRef.current();
+      }
     };
     poll();
     const interval = setInterval(poll, 15000);
@@ -328,11 +338,15 @@ export function ChatAttachments({
       subscription.remove();
     };
   }, [queue]);
-  async function save(file: PickedAttachment, transcribe = false, includeSubtitles = false) {
+  async function save(
+    file: PickedAttachment,
+    transcribe = false,
+    includeSubtitles = false,
+    id = Crypto.randomUUID(),
+  ) {
     setBusy(true);
     setError("");
-    const id = Crypto.randomUUID(),
-      cacheKey = sha256(`${key}:${id}`);
+    const cacheKey = sha256(`${key}:${id}`);
     try {
       const cached = await cacheAttachment(cacheKey, file);
       try {
@@ -359,6 +373,10 @@ export function ChatAttachments({
     }
   }
   async function document() {
+    if (picker.current) return;
+    picker.current = true;
+    setBusy(true);
+    setError("");
     try {
       const selected = await DocumentPicker.getDocumentAsync({
         type: "*/*",
@@ -375,40 +393,98 @@ export function ChatAttachments({
       }
     } catch (cause) {
       setError(String(cause));
+    } finally {
+      picker.current = false;
+      setBusy(false);
     }
   }
-  async function camera() {
-    try {
-      if (!(await ImagePicker.requestCameraPermissionsAsync()).granted)
-        throw new Error("Sem acesso à câmera. Você pode escolher um arquivo.");
-      const selected = await ImagePicker.launchCameraAsync({
-        mediaTypes: ["images"],
-        quality: 0.8,
-      });
-      if (!selected.canceled) {
-        const file = selected.assets[0];
-        await save({
+  async function saveCameraResult(
+    selected: ImagePicker.ImagePickerResult | ImagePicker.ImagePickerErrorResult | null,
+    id: string,
+  ) {
+    if (!selected) return;
+    if ("code" in selected) throw new Error(selected.message ?? selected.code);
+    if (!selected.canceled) {
+      const file = selected.assets[0];
+      await save(
+        {
           uri: file.uri,
           name: file.fileName ?? `foto-${Date.now()}.jpg`,
           mimeType: file.mimeType ?? "image/jpeg",
           file: file.file,
-        });
-      }
+        },
+        false,
+        false,
+        id,
+      );
+    }
+    await messageStorage.write(cameraKey, "null");
+  }
+  async function camera() {
+    if (picker.current || recoveringCamera.current) return;
+    picker.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      if (!(await ImagePicker.requestCameraPermissionsAsync()).granted)
+        throw new Error("Sem acesso à câmera. Você pode escolher um arquivo.");
+      const id = `camera-${Crypto.randomUUID()}`;
+      await messageStorage.write(cameraKey, JSON.stringify({ threadId, id }));
+      const selected = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        quality: 0.8,
+      });
+      pendingCamera.current = selected;
+      await saveCameraResult(selected, id);
+      pendingCamera.current = null;
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      picker.current = false;
+      setBusy(false);
+    }
+  }
+  async function recoverCamera() {
+    if (Platform.OS !== "android" || picker.current || recoveringCamera.current) return;
+    recoveringCamera.current = true;
+    try {
+      const value = await messageStorage.read(cameraKey);
+      const context = value ? record(JSON.parse(value)) : undefined;
+      // An activity recreated in another conversation must keep the result for
+      // the conversation where the user launched the camera.
+      if (context?.threadId !== threadId || typeof context.id !== "string") return;
+      pendingCamera.current ??= await ImagePicker.getPendingResultAsync();
+      if (!pendingCamera.current) return;
+      await saveCameraResult(pendingCamera.current, context.id);
+      pendingCamera.current = null;
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      recoveringCamera.current = false;
+    }
+  }
+  recoverRef.current = recoverCamera;
+  async function startTranscription(item: PendingAttachment, includeSubtitles: boolean) {
+    try {
+      await queue.patch(item.id, {
+        transcribe: true,
+        includeSubtitles,
+        // Retrying a terminal failure needs a new idempotency key. Foreground
+        // polls and network retries keep this persisted identity unchanged.
+        ...(item.transcriptionStatus === "error" && {
+          transcriptionRequestId: `transcribe-${item.id}-${Crypto.randomUUID()}`,
+          transcriptionTaskId: undefined,
+        }),
+        transcriptionStatus: "queued",
+        transcriptionStage: undefined,
+        transcriptionMessage: undefined,
+        transcriptionError: undefined,
+      });
+      setItems(await queue.list());
+      void flush();
     } catch (cause) {
       setError(String(cause));
     }
-  }
-  async function startTranscription(item: PendingAttachment, includeSubtitles: boolean) {
-    await queue.patch(item.id, {
-      transcribe: true,
-      includeSubtitles,
-      transcriptionStatus: "queued",
-      transcriptionStage: undefined,
-      transcriptionMessage: undefined,
-      transcriptionError: undefined,
-    });
-    setItems(await queue.list());
-    void flush();
   }
   async function fullTranscript(item: PendingAttachment) {
     if (item.transcript !== undefined) return item.transcript;
@@ -526,8 +602,17 @@ export function ChatAttachments({
               </Button>
             )}
             {item.transcribe && item.transcriptionStatus !== "complete" && (
-              <Button small onPress={() => void flush()}>
-                Atualizar transcrição
+              <Button
+                small
+                onPress={() =>
+                  void (item.transcriptionStatus === "error"
+                    ? startTranscription(item, item.includeSubtitles ?? false)
+                    : flush())
+                }
+              >
+                {item.transcriptionStatus === "error"
+                  ? t("Try transcription again")
+                  : "Atualizar transcrição"}
               </Button>
             )}
             {!item.transcribe && (

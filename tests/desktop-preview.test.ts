@@ -13,3 +13,11 @@ test("desktop preview stops while hidden, backs off unchanged pixels and renews 
   assert.equal(inlinePreviewVisible(true, false, false), false);
   assert.equal(inlinePreviewVisible(true, true, true), false);
 });
+
+test("idle pixels cannot make a human-controlled desktop wait seconds for the next update", () => {
+  const active = desktopPollDelay(true, 0, true);
+  const idle = desktopPollDelay(true, 100, true);
+  assert.ok(active !== undefined && active < 1000);
+  assert.ok(idle !== undefined && idle < 1000);
+  assert.equal(desktopPollDelay(false, 100, true), undefined);
+});

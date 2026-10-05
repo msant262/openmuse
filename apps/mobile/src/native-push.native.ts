@@ -1,6 +1,6 @@
 import { File, Paths } from "expo-file-system";
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import type { MuseApi } from "./api";
 
 Notifications.setNotificationHandler({
@@ -35,6 +35,8 @@ function save(value: Preference) {
 // Consent changes invalidate asynchronous token acquisition immediately. Network mutations
 // remain ordered, so Disable/logout cannot finish before an older POST and its DELETE.
 let generation = 0;
+let tokenRevision = 0;
+let rotatedToken: string | undefined;
 let session: object | undefined;
 let mutations: Promise<unknown> = Promise.resolve();
 function ordered<T>(operation: () => Promise<T>): Promise<T> {
@@ -43,6 +45,7 @@ function ordered<T>(operation: () => Promise<T>): Promise<T> {
   return result;
 }
 async function register(api: MuseApi, version: number, token?: string) {
+  const revision = tokenRevision;
   const native = token ?? (await Notifications.getDevicePushTokenAsync()).data;
   return ordered(async () => {
     const pref = preference();
@@ -50,7 +53,7 @@ async function register(api: MuseApi, version: number, token?: string) {
     return api.request<{ configured: boolean }>("/api/agent/push/devices", {
       installationId: pref.id,
       platform: Platform.OS,
-      token: native,
+      token: revision !== tokenRevision && rotatedToken ? rotatedToken : native,
     });
   });
 }
@@ -80,22 +83,43 @@ export async function enableNativePush(api: MuseApi, enabled: boolean): Promise<
   if (version !== generation || !result) return "Notification setting changed.";
   return result.configured
     ? "Phone notifications enabled."
-    : "Phone registered. Server notification credentials are not configured; in-app updates remain available.";
+    : "Phone registered. Notifications are temporarily unavailable. Your updates remain available in Activity.";
 }
 export function startNativePush(api: MuseApi, tap: (taskId?: string) => void): () => void {
   let stopped = false;
   const currentSession = {};
   session = currentSession;
-  const version = ++generation;
+  ++generation;
   const pref = preference();
-  void (async () => {
+  const resume = async () => {
+    const version = generation;
     const permission = await Notifications.getPermissionsAsync();
-    if (stopped || version !== generation || !preference().enabled || !permission.granted) return;
-    await register(api, version);
-  })().catch(() => {});
+    if (
+      stopped ||
+      session !== currentSession ||
+      version !== generation ||
+      !preference().enabled ||
+      !permission.granted
+    )
+      return;
+    if (Platform.OS === "android")
+      await Notifications.setNotificationChannelAsync("openmuse", {
+        name: "OkamiBot",
+        importance: Notifications.AndroidImportance.DEFAULT,
+      });
+    if (!stopped && session === currentSession && version === generation)
+      await register(api, version);
+  };
+  void resume().catch(() => {});
+  const appState = AppState.addEventListener("change", (state) => {
+    if (state === "active") void resume().catch(() => {});
+  });
   const rotation = Notifications.addPushTokenListener((token) => {
-    if (!stopped && session === currentSession && preference().enabled)
-      void register(api, ++generation, token.data).catch(() => {});
+    if (!stopped && session === currentSession && preference().enabled) {
+      rotatedToken = token.data;
+      tokenRevision++;
+      void register(api, generation, token.data).catch(() => {});
+    }
   });
   const handle = (response: Notifications.NotificationResponse) => {
     const data = response.notification.request.content.data;
@@ -112,6 +136,7 @@ export function startNativePush(api: MuseApi, tap: (taskId?: string) => void): (
     .catch(() => {});
   return () => {
     stopped = true;
+    appState.remove();
     rotation.remove();
     response.remove();
     if (session === currentSession) {

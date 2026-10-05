@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from build_android_local import ROOT, inspect_apk, load_signing_config, public_api_url, publish_apk
+from build_android_local import ROOT, inspect_apk, load_google_services, load_signing_config, public_api_url, publish_apk
 
 
 class AndroidReleaseTest(unittest.TestCase):
@@ -35,7 +35,40 @@ Signer #1 certificate SHA-256 digest: 0123456789abcdef0123456789abcdef0123456789
         return inspect_apk(self.apk, kwargs.get("badging", self.badging),
                            kwargs.get("manifest", self.manifest), kwargs.get("signer", self.signer),
                            "arm64-v8a", "release", "http://10.0.2.2:8787",
-                           kwargs.get("expected_signer_sha256"))
+                           kwargs.get("expected_signer_sha256"),
+                           resources=kwargs.get("resources", ""),
+                           require_push=kwargs.get("require_push", False))
+
+    def test_notification_release_requires_compiled_firebase_resources(self):
+        with self.assertRaisesRegex(ValueError, "Firebase"):
+            self.inspect(require_push=True)
+        resources = "\n".join(
+            f'        resource 0x7f120001 app.openmuse.mobile:string/{name}: t=0x03\n'
+            f'          (string8) "{value}"'
+            for name, value in [("google_app_id", "1:123456:android:abc"),
+                                ("gcm_defaultSenderId", "123456"),
+                                ("google_api_key", "synthetic-public-api-key"),
+                                ("project_id", "okamibot")])
+        self.assertTrue(self.inspect(require_push=True, resources=resources)["nativePushConfigured"])
+        with self.assertRaisesRegex(ValueError, "Firebase"):
+            self.inspect(require_push=True, resources=resources.replace('"123456"', '""'))
+
+    def test_google_services_matches_the_existing_android_identity(self):
+        config = Path(self.directory.name) / "google-services.json"
+        value = {"project_info": {"project_number": "123456", "project_id": "okamibot"},
+                 "client": [{"client_info": {"mobilesdk_app_id": "1:123456:android:abc",
+                    "android_client_info": {"package_name": "app.openmuse.mobile"}},
+                    "api_key": [{"current_key": "synthetic-public-api-key"}]}]}
+        config.write_text(json.dumps(value))
+        self.assertEqual(load_google_services(config)["project_id"], "okamibot")
+        value["client"][0]["client_info"]["android_client_info"]["package_name"] = "wrong.package"
+        config.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "package"):
+            load_google_services(config)
+        config.write_text('{"private_key":"synthetic-secret-canary"}')
+        with self.assertRaises(ValueError) as raised:
+            load_google_services(config)
+        self.assertNotIn("synthetic-secret-canary", str(raised.exception))
 
     def signing_config(self):
         directory = Path(self.directory.name)
@@ -180,6 +213,8 @@ Signer #1 certificate SHA-256 digest: 0123456789abcdef0123456789abcdef0123456789
                 return self.badging
             if command[1:3] == ["dump", "xmltree"]:
                 return self.manifest
+            if command[1:4] == ["dump", "--values", "resources"]:
+                return ""
             if command[1] == "verify":
                 self.assertEqual(output.read_bytes(), b"previous verified APK")
                 return self.signer.replace("CN=Android Debug, O=Android", "CN=OkamiBot Project")

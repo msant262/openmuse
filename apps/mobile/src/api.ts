@@ -42,24 +42,31 @@ export class MuseApi {
       ? Promise.resolve(`Bearer ${this.credential}`)
       : this.credential.authorization();
   }
-  async request<T>(path: string, body?: unknown, method?: string): Promise<T> {
+  async request<T>(
+    path: string,
+    body?: unknown,
+    method?: string,
+    signal?: AbortSignal,
+  ): Promise<T> {
     if (durableComputerPath(path) && (!method || ["POST", "GET"].includes(method)))
       return this.computerRequests.request(
         this.identityKey,
         path,
         body,
         (nextPath, nextBody, requestId) =>
-          this.send(nextPath, nextBody, nextPath === path ? method : "GET", requestId),
+          this.send(nextPath, nextBody, nextPath === path ? method : "GET", requestId, signal),
       );
-    return this.send(path, body, method);
+    return this.send(path, body, method, undefined, signal);
   }
   private async send<T>(
     path: string,
     body?: unknown,
     method?: string,
     requestId?: string,
+    signal?: AbortSignal,
   ): Promise<T> {
     const init = {
+      signal,
       method: method ?? (body === undefined ? "GET" : "POST"),
       headers: {
         Authorization: `Bearer ${this.token}`,

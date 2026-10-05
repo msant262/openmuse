@@ -530,6 +530,18 @@ export const ptBR: Record<string, string> = {
   "Older changes": "Alterações anteriores",
   "Reload current fact": "Recarregar fato atual",
   "Phone notifications": "Notificações no celular",
+  "Receive a phone notification when a task needs your attention. Your results stay available in Activity.":
+    "Receba uma notificação no celular quando uma tarefa precisar da sua atenção. Seus resultados continuam disponíveis em Atividade.",
+  "Phone notifications enabled.": "Notificações no celular ativadas.",
+  "Phone notifications disabled. In-app updates remain available.":
+    "Notificações no celular desativadas. As atualizações continuam disponíveis no app.",
+  "Notification setting changed.": "A configuração das notificações foi alterada.",
+  "Notifications are disabled in your phone settings. In-app updates remain available.":
+    "As notificações estão desativadas nas configurações do celular. As atualizações continuam disponíveis no app.",
+  "Phone registered. Notifications are temporarily unavailable. Your updates remain available in Activity.":
+    "Celular registrado. As notificações estão temporariamente indisponíveis. Suas atualizações continuam disponíveis em Atividade.",
+  "Retry saving recording": "Tentar salvar a gravação novamente",
+  "Try transcription again": "Tentar transcrever novamente",
   "Native delivery is optional. Results always stay in Activity. Delivery requires your phone's permission and server platform credentials.":
     "O envio nativo é opcional. Os resultados sempre ficam em Atividade. O envio requer permissão no celular e credenciais da plataforma no servidor.",
   Enable: "Ativar",

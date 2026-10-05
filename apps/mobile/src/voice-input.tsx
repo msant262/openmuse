@@ -34,32 +34,64 @@ export function VoiceInput({
   const state = useAudioRecorderState(recorder, 500);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<PickedAttachment>();
+  const pendingRef = useRef<PickedAttachment | undefined>(undefined);
+  const recording = useRef(false);
+  const starting = useRef(false);
   const stopping = useRef(false);
+  const mounted = useRef(true);
+  const allowed = useRef(active);
+  allowed.current = active;
+  const generation = useRef(0);
   async function stop() {
-    if (stopping.current) return;
+    generation.current++;
+    if (starting.current || stopping.current) return;
+    if (!recording.current && !recorder.isRecording && !pendingRef.current) return;
     stopping.current = true;
-    setBusy(true);
+    if (mounted.current) setBusy(true);
     try {
-      await recorder.stop();
-      if (!recorder.uri) throw new Error(t("The recording is unavailable. Try again."));
-      await save(
-        {
+      if (recording.current || recorder.isRecording) {
+        try {
+          // Android can pause the recorder before delivering AppState.change.
+          // We still own that paused recording and must stop/release it.
+          await recorder.stop();
+        } finally {
+          recording.current = false;
+          await setAudioModeAsync({ allowsRecording: false });
+        }
+        if (!recorder.uri) throw new Error(t("The recording is unavailable. Try again."));
+        pendingRef.current = {
           uri: recorder.uri,
           name: `voz-${Date.now()}.${Platform.OS === "web" ? "webm" : "m4a"}`,
           mimeType: Platform.OS === "web" ? "audio/webm" : "audio/mp4",
-        },
-        true,
-        true,
-      );
-      setError("");
+        };
+        if (mounted.current) setPending(pendingRef.current);
+      }
+      if (pendingRef.current) await save(pendingRef.current, true, true);
+      pendingRef.current = undefined;
+      if (mounted.current) {
+        setPending(undefined);
+        setError("");
+      }
     } catch (error) {
-      setError(String(error));
+      if (mounted.current) setError(String(error));
     } finally {
       stopping.current = false;
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
   async function start() {
+    if (starting.current || stopping.current || recording.current || pendingRef.current) return;
+    starting.current = true;
+    const request = ++generation.current;
+    const canStart = () =>
+      mounted.current &&
+      allowed.current &&
+      request === generation.current &&
+      AppState.currentState !== "background" &&
+      AppState.currentState !== "inactive";
+    let modeSet = false;
+    let prepared = false;
     setBusy(true);
     setError("");
     try {
@@ -68,13 +100,34 @@ export function VoiceInput({
         throw new Error(
           t("Microphone access is unavailable. You can keep typing or attach audio."),
         );
+      if (!canStart()) return;
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
+      modeSet = true;
+      if (!canStart()) return;
       await recorder.prepareToRecordAsync();
+      prepared = true;
+      if (!canStart()) return;
       recorder.record();
+      recording.current = true;
     } catch (error) {
-      setError(String(error));
+      if (mounted.current) setError(String(error));
     } finally {
-      setBusy(false);
+      if (!recording.current && modeSet) {
+        if (prepared) {
+          // Stopping a prepared recorder may reject for lack of samples; native
+          // Expo still releases it in its finally block.
+          try {
+            await recorder.stop();
+          } catch {}
+        }
+        try {
+          await setAudioModeAsync({ allowsRecording: false });
+        } catch (error) {
+          if (mounted.current) setError(String(error));
+        }
+      }
+      starting.current = false;
+      if (mounted.current) setBusy(false);
     }
   }
   const stopRef = useRef(stop);
@@ -88,21 +141,27 @@ export function VoiceInput({
     if (!recorder.isRecording) void startRef.current();
   }, [active, startRequest, recorder]);
   useEffect(() => {
-    if ((!active || state.durationMillis >= 1800000) && recorder.isRecording)
-      void stopRef.current();
+    if (!active) generation.current++;
+    if ((!active || state.durationMillis >= 1800000) && recording.current) void stopRef.current();
   }, [active, recorder, state.durationMillis]);
   useEffect(() => {
+    mounted.current = true;
     const subscription = AppState.addEventListener("change", (next) => {
-      if (next !== "active" && recorder.isRecording) void stopRef.current();
+      if (next !== "active" && recording.current) void stopRef.current();
     });
-    return () => subscription.remove();
+    return () => {
+      mounted.current = false;
+      generation.current++;
+      subscription.remove();
+      if (recording.current) void stopRef.current();
+    };
   }, [recorder]);
   return (
     <View style={{ gap: 6 }}>
       <Button
         small
         busy={busy}
-        icon={state.isRecording ? Square : Mic}
+        icon={state.isRecording || recording.current ? Square : Mic}
         style={
           compact
             ? {
@@ -114,9 +173,13 @@ export function VoiceInput({
               }
             : undefined
         }
-        onPress={() => void (state.isRecording ? stop() : start())}
+        onPress={() => void (state.isRecording || recording.current || pending ? stop() : start())}
       >
-        {state.isRecording ? t("Stop and transcribe") : t("Record audio")}
+        {pending
+          ? t("Retry saving recording")
+          : state.isRecording || recording.current
+            ? t("Stop and transcribe")
+            : t("Record audio")}
       </Button>
       {state.isRecording && (
         <Text style={s.small}>
