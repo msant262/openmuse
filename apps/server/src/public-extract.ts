@@ -1,0 +1,102 @@
+import {
+  type PublicWeb,
+  type RenderedPublicPage,
+  readablePage,
+  WebReadError,
+} from "./public-web.ts";
+
+export type ExtractedPage = RenderedPublicPage & {
+  error?: string;
+  code?: string;
+  observedAt?: string;
+};
+
+/** Port of Hermes tools/web_tools_extract.py::_merge_in_order (MIT).
+ * Source 1298c8e74baa73e1a2b90124228d017261ac6bc4; see third_party/hermes-learning.
+ * Successful entries keep their source identity when only failed positions are rescued. */
+export function mergeExtractResults(
+  total: number,
+  fixed: Map<number, ExtractedPage>,
+  positions: number[],
+  urls: string[],
+  results: ExtractedPage[],
+) {
+  const merged = new Map(fixed);
+  positions.forEach((position, index) => {
+    merged.set(
+      position,
+      results[index] ?? {
+        url: urls[index],
+        title: "",
+        text: "",
+        truncated: false,
+        error: "Extract backend returned no result for this URL",
+      },
+    );
+  });
+  return Array.from({ length: total }, (_, index) => merged.get(index)!);
+}
+
+/** Bounded batch extraction with Hermes-style per-call rescue and ordered outcomes.
+ * Our configured backends are public HTTP and the isolated VPS renderer. Policy
+ * failures and cancellation never enter fallback; one source cannot erase the rest. */
+export async function extractPublicSources(
+  web: PublicWeb,
+  urls: string[],
+  signal?: AbortSignal,
+  render?: (url: string, signal?: AbortSignal) => Promise<RenderedPublicPage>,
+): Promise<ExtractedPage[]> {
+  signal?.throwIfAborted();
+  const fixed = new Map<number, ExtractedPage>();
+  const positions: number[] = [],
+    fallbackUrls: string[] = [];
+  const failures = new Map<number, ExtractedPage>();
+  for (const [index, url] of urls.slice(0, 4).entries()) {
+    signal?.throwIfAborted();
+    try {
+      const page = await web.read(url, signal, { mode: "auto", render });
+      if (readablePage(page) || !render) fixed.set(index, page);
+      else {
+        positions.push(index);
+        fallbackUrls.push(url);
+        failures.set(index, page);
+      }
+    } catch (error) {
+      signal?.throwIfAborted();
+      const failure = {
+        url,
+        title: "",
+        text: "",
+        truncated: false,
+        error: String(error),
+        code: error instanceof WebReadError ? error.code : undefined,
+      };
+      // Network/URL policy errors are intentionally not converted into browser work.
+      if (
+        render &&
+        error instanceof WebReadError &&
+        ["HTTP_403", "HTTP_429", "PAGE_BLOCKED", "PAGE_TOO_LARGE"].includes(error.code)
+      ) {
+        positions.push(index);
+        fallbackUrls.push(url);
+        failures.set(index, failure);
+      } else fixed.set(index, failure);
+    }
+  }
+  const rescued: ExtractedPage[] = [];
+  // Browser profile leases are exclusive. Keep rendering sequential, even if
+  // future HTTP backends support concurrent extraction.
+  for (const [index, url] of fallbackUrls.entries()) {
+    signal?.throwIfAborted();
+    try {
+      rescued.push(await web.read(url, signal, { mode: "headless", render }));
+    } catch (error) {
+      signal?.throwIfAborted();
+      rescued.push({
+        ...failures.get(positions[index])!,
+        error: `${failures.get(positions[index])?.error ?? "HTTP content incomplete"}; renderer: ${String(error)}`,
+      });
+    }
+  }
+  return mergeExtractResults(Math.min(urls.length, 4), fixed, positions, fallbackUrls, rescued);
+}

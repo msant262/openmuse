@@ -30,7 +30,7 @@ export const publicReadDescription =
   "Read public HTML/JSON over HTTP, including embedded application JSON and published data/API URLs. Default auto never launches a browser. Inspect dataSources and prefer relevant API/MCP tools before requesting mode=headless for JavaScript-only data. Headless uses the VPS, never the personal graphical browser. mode=browser is a legacy alias for headless. Partial content is not verified evidence.";
 
 export const publicResearchInstructions =
-  " For research choose the least costly relevant source: first search_tools for topic-specific configured API/MCP read tools (search by the requested data, not only web_fetch); use search_app_tools for connected-app APIs when relevant. Use available structured tools before page scraping. Do not invent endpoints, install connectors, or ask for new credentials for a public lookup. Next use search_web and web_fetch HTTP, inspecting embedded JSON and dataSources for published public data endpoints. Fetch relevant data URLs directly with web_fetch before rendering. If those paths are unavailable or insufficient, explicitly call web_fetch mode=headless for JavaScript/network data; this never opens the personal graphical browser. Only use personal/graphical navigation as a last resort for a task that actually requires interactive/session access. WebMCP is a site/browser capability, not a universal HTTP API: use it only when actually exposed by an available supported tool. Never claim a MCP/WebMCP/API was tried without a tool receipt. Stop when the requested facts are obtained, retain successful evidence after later failures, and declare outcome=partial when the requested data remains missing. Headless navigation and pending application data each get up to 60 seconds, returning sooner when ready. A deadline limits resource use; waiting a fixed number of seconds does not verify data.";
+  " For ordinary public research, start with search_web; its schema is already available. Read relevant result URLs with web_extract, which handles multiple sources and HTTP-to-headless recovery in one call. Prefer a configured structured API when it directly provides the requested data; use search_app_tools for connected-app data when relevant. Tool discovery searches capabilities, not news or factual answers. Do not invent endpoints, install connectors, or ask for new credentials for a public lookup. Next use search_web and web_fetch HTTP, inspecting embedded JSON and dataSources for published public data endpoints. Fetch relevant data URLs directly with web_fetch before rendering. If those paths are unavailable or insufficient, explicitly call web_fetch mode=headless for JavaScript/network data; this never opens the personal graphical browser. Only use personal/graphical navigation as a last resort for a task that actually requires interactive/session access. WebMCP is a site/browser capability, not a universal HTTP API: use it only when actually exposed by an available supported tool. Never claim a MCP/WebMCP/API was tried without a tool receipt. Stop when the requested facts are obtained, retain successful evidence after later failures, and declare outcome=partial when the requested data remains missing. Headless navigation and pending application data each get up to 60 seconds, returning sooner when ready. A deadline limits resource use; waiting a fixed number of seconds does not verify data.";
 
 function pageData(root: Node, base: string) {
   const dataSources: { url: string; kind: string }[] = [];
@@ -197,14 +197,15 @@ export function htmlNodes(node: Node, predicate: (node: Node) => boolean): Node[
   }
   return found;
 }
-export function htmlText(node: Node): string {
+export function htmlText(node: Node, excludedTags: readonly string[] = []): string {
   const text: string[] = [],
     pending = [node];
   while (pending.length) {
     const current = pending.pop()!;
     if (
       "tagName" in current &&
-      /^(script|style|noscript|template|svg|canvas|iframe)$/.test(current.tagName)
+      (/^(script|style|noscript|template|svg|canvas|iframe)$/.test(current.tagName) ||
+        excludedTags.includes(current.tagName))
     )
       continue;
     if (
@@ -492,6 +493,16 @@ export class PublicWeb {
             htmlText(node).length > 0)
         );
       }).length > 0;
+    const hasScripts = htmlNodes(root, (node) => node.nodeName === "script").length > 0;
+    // Live widgets can contain substantial article text while their data is
+    // still a template. Default zero counts beside unresolved fields are not
+    // observed results. Code examples remain ordinary readable content.
+    const unresolvedBindings =
+      html &&
+      hasScripts &&
+      new Set(
+        htmlText(main ?? root, ["code", "pre"]).match(/\{\{?\s*[A-Za-z_$][\w.$-]*\s*\}?\}/g) ?? [],
+      ).size >= 2;
     const shell =
       html &&
       !products.length &&
@@ -499,7 +510,7 @@ export class PublicWeb {
       htmlNodes(root, (node) => node.nodeName === "script" && Boolean(htmlAttribute(node, "src")))
         .length > 0;
     const extraction =
-      pending || (shell && !data.embedded && !products.length)
+      pending || unresolvedBindings || (shell && !data.embedded && !products.length)
         ? {
             status: "partial" as const,
             reason:

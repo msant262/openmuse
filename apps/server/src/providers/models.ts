@@ -108,6 +108,8 @@ export type ProviderContinuationCheckpoint = z.infer<typeof providerContinuation
 export interface ModelAdapterRuntime {
   /** Model-visible schemas; the owner retains the complete authorized execution registry. */
   projectTools?: (tools: NonNullable<TextOptions["tools"]>) => NonNullable<TextOptions["tools"]>;
+  /** Reply composition prefers a final answer over a provider's progress preamble. */
+  preferFinalText?: () => boolean;
   /** A successful model turn received these owner-verified image pixels. */
   onFileImageObserved?: (fileId: string) => Promise<void>;
   workClass?: WorkClass;
@@ -557,6 +559,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
           dispatchController.signal,
         ]);
         current = attempt(lease.model, this.config, true);
+        current.state.preferFinalText = this.runtime.preferFinalText?.();
         const prepared = {
           ...options,
           model: current.adapter.model,
