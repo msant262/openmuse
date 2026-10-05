@@ -7,6 +7,33 @@ import { type PublicDataQuery, selectPublicData } from "./public-data.ts";
 
 const maxBytes = 2 * 1024 * 1024;
 const maxText = 30000;
+const compactJson = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+/** Some public feeds use compact JWS despite an application/json header.
+ * Decode source data only: this is never a signature or identity verifier. */
+function publicJson(body: string) {
+  if (!compactJson.test(body.trim()))
+    return {
+      data: JSON.parse(body) as unknown,
+      encoding: "json" as const,
+      signatureVerified: undefined,
+    };
+  const [header, payload] = body.trim().split(".");
+  const decode = (value: string) =>
+    JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(value, "base64url")));
+  const metadata = decode(header);
+  if (
+    !metadata ||
+    typeof metadata !== "object" ||
+    typeof metadata.alg !== "string" ||
+    metadata.b64 === false
+  )
+    throw new Error("Unsupported compact JSON encoding");
+  return {
+    data: decode(payload) as unknown,
+    encoding: "jws" as const,
+    signatureVerified: false as const,
+  };
+}
 type Target = Awaited<ReturnType<typeof validatePublicUrl>>;
 type Response = { status: number; headers: IncomingHttpHeaders; body: string };
 export class WebReadError extends Error {
@@ -358,21 +385,23 @@ export class PublicWeb {
   ) {}
   async readData(url: string, query: PublicDataQuery = {}, signal?: AbortSignal) {
     const document = await this.document(url, signal, 16 * 1024 * 1024);
-    let data: unknown;
+    let source: ReturnType<typeof publicJson>;
     try {
-      data = JSON.parse(document.body);
+      source = publicJson(document.body);
     } catch {
       throw new WebReadError(
         "INVALID_JSON",
         "This source is not valid JSON; use web_fetch for an HTML page.",
       );
     }
-    const result = selectPublicData(data, query);
+    const result = selectPublicData(source.data, query);
     return {
       ...result,
       url: document.url,
       observedAt: new Date().toISOString(),
       bytes: Buffer.byteLength(document.body),
+      encoding: source.encoding,
+      signatureVerified: source.signatureVerified,
     };
   }
   async validate(url: string, signal?: AbortSignal) {
@@ -433,6 +462,7 @@ export class PublicWeb {
           "text/plain",
           "text/csv",
           "application/json",
+          "application/jose",
           "text/xml",
           "application/xml",
           "application/rss+xml",
@@ -511,14 +541,17 @@ export class PublicWeb {
   }
   private async readHttp(url: string, signal?: AbortSignal) {
     const document = await this.document(url, signal);
-    if (/json/.test(document.contentType) && document.body.length > maxText) {
-      let data: unknown;
+    if (
+      (/json/.test(document.contentType) && document.body.length > maxText) ||
+      compactJson.test(document.body.trim())
+    ) {
+      let source: ReturnType<typeof publicJson>;
       try {
-        data = JSON.parse(document.body);
+        source = publicJson(document.body);
       } catch {
         throw new WebReadError("INVALID_JSON", "This source is not valid JSON.");
       }
-      const projection = selectPublicData(data);
+      const projection = selectPublicData(source.data);
       return {
         url: document.url,
         title: new URL(document.url).hostname,
@@ -532,7 +565,12 @@ export class PublicWeb {
         },
         truncated: true,
         observedAt: new Date().toISOString(),
-        provenance: { backend: "http" as const, authenticated: false as const },
+        provenance: {
+          backend: "http" as const,
+          authenticated: false as const,
+          encoding: source.encoding,
+          signatureVerified: source.signatureVerified,
+        },
       };
     }
     const root = parse(document.body);

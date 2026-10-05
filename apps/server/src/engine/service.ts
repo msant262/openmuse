@@ -390,18 +390,8 @@ export class AgentService {
     this.refreshing = true;
     try {
       const globallyPaused = (await this.runtimePause.get("__runtime__")).paused;
-      if (this.config.computerEnabled) {
-        await reconcileComputerAudit(this.computer, new ActionLog(this.db));
-        await reconcileWaitingComputerTasks(
-          this.db,
-          this.computer,
-          this.workAdmission,
-          this.resourceLeases,
-        );
-      }
-      await new ActionLog(this.db).reconcile();
-      if (!globallyPaused) await this.monitorObservations.flush();
-      // Recover publications if the process exited after committing an outcome.
+      // Confirmed native cleanup must free occupancy even when a separate
+      // connector or audit repair fails later in this maintenance cycle.
       for (const { owner, value } of await this.db.scan<AgentTask>("tasks")) {
         if (
           (value.state.nativeCleanupPending === true ||
@@ -431,8 +421,21 @@ export class AgentService {
             );
           }
         }
-        await this.publishOutcome(owner, value);
       }
+      if (this.config.computerEnabled) {
+        await reconcileComputerAudit(this.computer, new ActionLog(this.db));
+        await reconcileWaitingComputerTasks(
+          this.db,
+          this.computer,
+          this.workAdmission,
+          this.resourceLeases,
+        );
+      }
+      await new ActionLog(this.db).reconcile();
+      if (!globallyPaused) await this.monitorObservations.flush();
+      // Recover publications if the process exited after committing an outcome.
+      for (const { owner, value } of await this.db.scan<AgentTask>("tasks"))
+        await this.publishOutcome(owner, value);
       if (!globallyPaused)
         for (const { owner, value } of await this.db.scan<Monitor>("monitors"))
           await this.activateMonitor(owner, value);
@@ -737,7 +740,13 @@ export class AgentService {
       originMessageId: input.originMessageId,
       status: held ? "paused" : "queued",
       timing: { timezone: "Europe/Berlin", priority: "normal", ...input.timing },
-      criteria: mandatoryTaskCriteria(input, input.criteria, originalUserPrompt),
+      // A conversational brief is model-authored. Only the actual user request
+      // may define its obligations; explicit service/API criteria remain intact.
+      criteria: mandatoryTaskCriteria(
+        input,
+        originalUserPrompt ? undefined : input.criteria,
+        originalUserPrompt,
+      ),
       plan: titles.map((title, i) => ({ id: String(i), title, status: "pending" })),
       evidence: [],
       input: input.input,
@@ -746,6 +755,7 @@ export class AgentService {
         appliedRevision: 0,
         mailboxSeq: 0,
         appliedMailboxSeq: 0,
+        ...(originalUserPrompt ? { criteriaOrigin: "user-request" } : {}),
         ...(conversationMessages
           ? {
               conversationContext: delegatedContext(
@@ -908,6 +918,11 @@ export class AgentService {
       { status: task.status, leaseId: task.leaseId ?? null, updatedAt: task.updatedAt },
       {
         status,
+        ...(action === "retry" &&
+        (task.state.criteriaOrigin === "user-request" ||
+          (task.state.conversationContext && task.state.delegatedBrief))
+          ? { criteria: mandatoryTaskCriteria(task) }
+          : {}),
         leaseId: null,
         leaseUntil: null,
         error: null,

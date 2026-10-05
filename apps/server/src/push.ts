@@ -206,7 +206,10 @@ export function nativePushAdapters(
                 notificationId: payload.id,
                 ...(payload.taskId ? { taskId: payload.taskId } : {}),
               },
-              android: { notification: { channel_id: "openmuse", tag: payload.id } },
+              android: {
+                priority: "HIGH",
+                notification: { channel_id: "openmuse", tag: payload.id },
+              },
             },
           }),
         },
