@@ -171,6 +171,16 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
   app.get("/tasks/:id", async (c) =>
     c.json(await service.detail(c.get("owner"), c.req.param("id"))),
   );
+  app.post("/tasks/:id/remove", async (c) => {
+    const { cancelActive } = z
+      .object({ cancelActive: z.boolean().default(false) })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(await service.removeTask(c.get("owner"), c.req.param("id"), cancelActive));
+  });
+  app.post("/tasks/clear-finished", async (c) =>
+    c.json(await service.clearFinishedTasks(c.get("owner"))),
+  );
   app.post("/tasks/:id/control", async (c) => {
     const { action } = z
       .object({ action: z.enum(["pause", "resume", "cancel", "retry"]) })

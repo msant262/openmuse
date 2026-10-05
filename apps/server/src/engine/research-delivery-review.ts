@@ -165,6 +165,9 @@ export async function reviewResearchDelivery(options: {
           role: "user",
           content: JSON.stringify({
             originalRequest: options.task.prompt,
+            responseCriteria: options.task.criteria?.filter(
+              (criterion) => criterion.kind === "response",
+            ),
             conversationContext: options.task.state.conversationContext,
             appliedUserDirections: options.task.state.directives,
             userAnswers: options.task.state.interactionAnswer ?? options.task.state.answer,

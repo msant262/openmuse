@@ -644,12 +644,32 @@ export class TaskVerification {
             );
           } else if (criterion.kind === "response") {
             const text = (delivery ?? task.result ?? "").trim();
+            const review = task.state.researchDeliveryReview as
+              | { complete?: boolean; revision?: number; deliveryHash?: string }
+              | undefined;
+            const researchAccepted =
+              review?.complete === true &&
+              review.revision === revision &&
+              review.deliveryHash === createHash("sha256").update(text).digest("hex") &&
+              ops.some(
+                (op) =>
+                  op.revision === revision &&
+                  op.status === "succeeded" &&
+                  [
+                    "web_fetch",
+                    "web_extract",
+                    "read_web_data",
+                    "read_web",
+                    "browser_research",
+                  ].includes(op.toolName),
+              );
             if (
               text.length >= 8 &&
               !/^(done|completed|pronto|feito|conclu[ií]do)[.!\s]*$/i.test(text) &&
-              criterion.requiredItems.every((item) =>
-                textContains(text, item, criterion.requiredItems),
-              )
+              (researchAccepted ||
+                criterion.requiredItems.every((item) =>
+                  textContains(text, item, criterion.requiredItems),
+                ))
             )
               evidenceIds = [`${taskId}:response:${revision}`];
           } else {

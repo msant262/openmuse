@@ -418,6 +418,7 @@ export async function createApp(
   agent.social = social;
   if (threads instanceof LocalThreads) {
     agent.configureThreads(threads);
+    threads.beforeDelete = (owner, threadId) => agent.cancelThreadTasks(owner, threadId);
     threads.configureInbox(inbox, conversationAgentFactory(config, agent));
     inbox.configureAnnotationValidator(
       createConversationAnnotationValidator({

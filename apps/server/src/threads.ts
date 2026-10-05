@@ -86,6 +86,7 @@ export class LocalThreads extends AgentRunner {
   private createAgent?: (owner: string) => AbstractAgent;
   private inboxTimer?: ReturnType<typeof setInterval>;
   private pumping = false;
+  beforeDelete?: (owner: string, threadId: string) => Promise<void>;
   configureInbox(inbox: ConversationInbox, createAgent: (owner: string) => AbstractAgent) {
     this.inbox = inbox;
     this.createAgent = createAgent;
@@ -787,11 +788,35 @@ export class LocalThreads extends AgentRunner {
     if (!match) return undefined;
     const id = identifier.parse(decodeURIComponent(match[1]));
     if (request.method === "DELETE" && !match[2]) {
-      const result = await this.db.deleteThread(owner, id, randomUUID());
+      const stopActive = url.searchParams.get("stopActive") === "true";
+      let result = await this.db.deleteThread(owner, id, randomUUID());
+      // The final deletion remains atomic with inbox acceptance. A new racing
+      // message/task makes it busy again; never delete underneath a live writer.
+      for (let attempt = 0; stopActive && result.status === "busy" && attempt < 30; attempt++) {
+        for (const message of await this.db.list<{ id: string; threadId: string; status: string }>(
+          owner,
+          "conversation-inbox",
+        )) {
+          if (message.threadId === id && message.status === "accepted")
+            await this.db.compareAndSwap(
+              owner,
+              "conversation-inbox",
+              message.id,
+              { status: "accepted" },
+              { status: "interrupted" },
+            );
+        }
+        await this.withOwner(owner, () => this.stop({ threadId: id }));
+        await this.beforeDelete?.(owner, id);
+        result = await this.db.deleteThread(owner, id, randomUUID());
+        if (result.status === "busy") await new Promise((resolve) => setTimeout(resolve, 100));
+      }
       if (result.status === "not_found") throw new AppError("Conversation not found", 404);
       if (result.status === "busy")
         throw new AppError(
-          "Stop the reply and finish or cancel this conversation's active tasks before deleting it.",
+          stopActive
+            ? "The conversation is still stopping. Try deleting it again in a moment."
+            : "Stop the reply and finish or cancel this conversation's active tasks before deleting it.",
           409,
         );
       return Response.json({
