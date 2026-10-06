@@ -35,6 +35,7 @@ const eager = new Set([
   "skills_search",
   "skills_read",
   "read_runtime",
+  "list_google_accounts",
   "search_app_tools",
   "execute_app_tool",
   "AGUISendStateSnapshot",

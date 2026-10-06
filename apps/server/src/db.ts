@@ -31,6 +31,18 @@ interface Database {
 }
 
 export class Store {
+  async chatSocialRecords<T>(
+    owner: string,
+    threadId: string,
+    kind: "message-reactions" | "conversation-inbox",
+    messageIds: string[],
+  ) {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind=$2 AND data->>'threadId'=$3 AND data->>'messageId'=ANY($4::text[])",
+      [owner, kind, threadId, messageIds],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
   async chatSource<T>(
     owner: string,
     source: { messageId: string; threadId: string; runId: string },

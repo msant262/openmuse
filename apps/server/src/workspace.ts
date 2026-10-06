@@ -93,6 +93,21 @@ export class WorkspaceService {
       ? (await this.db.get<{ enabled: boolean }>(owner, "settings", "google"))?.enabled !== false
       : Boolean(await this.googleAuth.tokens(owner));
   }
+  /** Public native OAuth catalog. No source reads, browser passwords or token values. */
+  async googleAccounts(owner: string) {
+    if (this.config.mode !== "sample") return this.googleAuth.accounts(owner);
+    const connection = await this.connection(owner);
+    return connection
+      ? [
+          {
+            connectionId: connection.id,
+            account: connection.account,
+            isDefault: true,
+            capabilities: ["Gmail", "Calendar"],
+          },
+        ]
+      : [];
+  }
   async sourceAuthority(owner: string, source: "mail" | "calendar") {
     if (this.config.mode === "sample") return this.connection(owner);
     const tokens = await this.googleAuth.tokens(owner);

@@ -783,6 +783,13 @@ export async function createApp(
   app.get("/api/conversations/:threadId/social", async (c) =>
     c.json(await social.state(c.get("owner"), c.req.param("threadId"))),
   );
+  app.post("/api/conversations/:threadId/social/window", async (c) => {
+    const { messageIds } = z
+      .object({ messageIds: z.array(z.string().min(1).max(256)).max(200) })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(await social.state(c.get("owner"), c.req.param("threadId"), messageIds));
+  });
   app.post("/api/conversations/:threadId/reactions", async (c) =>
     c.json(await social.react(c.get("owner"), c.req.param("threadId"), "user", await c.req.json())),
   );

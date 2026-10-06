@@ -50,6 +50,35 @@ function secretFixture() {
   };
 }
 
+test("browser connections exclude native OAuth rows and return only login metadata", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  const broker = new CredentialBroker(db, secretFixture().store, [adapter]);
+  const connection = {
+    id: "site-login",
+    adapterId: adapter.id,
+    serviceName: adapter.serviceName,
+    origin: adapter.origin,
+    credentialRef: { id: "opaque-login", version: 1 },
+    status: "saved",
+    updatedAt: new Date().toISOString(),
+  };
+  await db.put("owner", "credentials", { ...connection, secret: canary });
+  await db.put("owner", "credentials", {
+    id: "google",
+    connectionId: "google-native",
+    secret: canary,
+  });
+  await db.put("owner", "credentials", {
+    id: `google:${"a".repeat(64)}`,
+    connectionId: "google-other",
+    secret: canary,
+  });
+  assert.deepEqual(await broker.connections("owner"), [connection]);
+  assert.deepEqual(await broker.connections("another-owner"), []);
+  await assert.rejects(() => broker.connection("owner", "google"), /not found/i);
+});
+
 test("credential forms store secrets privately and resume the matching task by reference once", async (t) => {
   const db = await createStore();
   t.after(() => db.close());

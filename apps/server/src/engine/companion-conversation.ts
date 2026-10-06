@@ -28,6 +28,7 @@ export const companionChatTools = new Set([
   "search_gifs",
   "reply_to_message",
   "read_runtime",
+  "list_google_accounts",
   "list_procedures",
   "read_procedure",
   "find_ideas",

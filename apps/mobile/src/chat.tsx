@@ -108,7 +108,7 @@ import {
 } from "./message-outbox";
 import { messageStorage } from "./message-storage";
 import { modelSelectionNotice, modelUsageUrl } from "./model-errors";
-import { ProactivityCard } from "./proactivity-card";
+import { ProactivityAlerts } from "./proactivity-card";
 import { suggestionsFromRequests } from "./proactivity-state";
 
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
@@ -1567,16 +1567,13 @@ export function ChatScreen({
                 void syncReplay();
               }}
             />
-            {suggestions.map((suggestion) => (
-              <ProactivityCard
-                key={suggestion.id}
-                suggestion={suggestion}
-                onAnswered={() => {
-                  void refreshAgent();
-                  void syncReplay();
-                }}
-              />
-            ))}
+            <ProactivityAlerts
+              suggestions={suggestions}
+              onAnswered={() => {
+                void refreshAgent();
+                void syncReplay();
+              }}
+            />
             {(busy || agent.isRunning) && (
               <View
                 accessibilityLabel={t("Agent is working")}

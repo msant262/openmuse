@@ -379,6 +379,10 @@ export const museInterfacePTBR: Record<string, string> = {
   "Back to settings": "Voltar às configurações",
   "Customize your companion": "Personalizar seu companheiro",
   "Open notifications": "Abrir notificações",
+  Alerts: "Alertas",
+  "Open alerts": "Abrir alertas",
+  "Needs attention": "Precisa de atenção",
+  Snoozed: "Adiado",
   "Review requests before your assistant takes an action on your behalf.":
     "Revise os pedidos antes de seu assistente realizar uma ação em seu nome.",
   "Needs review": "Precisa de revisão",

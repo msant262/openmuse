@@ -111,11 +111,24 @@ export class ConversationSocial {
     throw new AppError("This reaction request changed. Try again.", 409);
   }
 
-  async state(owner: string, threadId: string): Promise<ConversationSocialState> {
+  async state(
+    owner: string,
+    threadId: string,
+    messageIds?: string[],
+  ): Promise<ConversationSocialState> {
     await this.requireThread(owner, threadId);
     const [reactions, messages] = await Promise.all([
-      this.db.list<MessageReaction>(owner, "message-reactions"),
-      this.db.list<InboxMessage>(owner, "conversation-inbox"),
+      messageIds
+        ? this.db.chatSocialRecords<MessageReaction>(
+            owner,
+            threadId,
+            "message-reactions",
+            messageIds,
+          )
+        : this.db.list<MessageReaction>(owner, "message-reactions"),
+      messageIds
+        ? this.db.chatSocialRecords<InboxMessage>(owner, threadId, "conversation-inbox", messageIds)
+        : this.db.list<InboxMessage>(owner, "conversation-inbox"),
     ]);
     return {
       reactions: reactions.filter((item) => item.threadId === threadId && item.emoji),

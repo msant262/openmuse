@@ -169,7 +169,7 @@ export function useConversationSocial(
     setLoadError("");
   }, [owner]);
   const userMessages = transcript.filter((message) => message.role === "user");
-  const userMessageIds = JSON.stringify(userMessages.map((message) => message.id));
+  const messageIds = JSON.stringify(transcript.map((message) => message.id));
   useEffect(() => {
     let live = true;
     let reading = false;
@@ -178,9 +178,19 @@ export function useConversationSocial(
       reading = true;
       const version = mutation.current;
       try {
-        const next = await api.request<ConversationSocialState>(
-          `/api/conversations/${threadId}/social`,
-        );
+        const ids = JSON.parse(messageIds) as string[];
+        const next: ConversationSocialState = { reactions: [], messages: [] };
+        // Fetch only the history explicitly loaded on this screen, never the
+        // owner's complete inbox. POST keeps long opaque IDs out of URL limits.
+        for (let offset = 0; offset < Math.max(1, ids.length); offset += 200) {
+          if (!live || target.current !== owner) return;
+          const page = await api.request<ConversationSocialState>(
+            `/api/conversations/${threadId}/social/window`,
+            { messageIds: ids.slice(offset, offset + 200) },
+          );
+          next.reactions.push(...page.reactions);
+          next.messages.push(...page.messages);
+        }
         if (live && target.current === owner && version === mutation.current) {
           // A successful social read distinguishes ordinary history from
           // messages with canonical quote/sticker metadata. Until then the
@@ -212,7 +222,7 @@ export function useConversationSocial(
       live = false;
       clearInterval(timer);
     };
-  }, [owner, enabled, outbox, userMessageIds]);
+  }, [owner, enabled, outbox, messageIds]);
   async function react(messageId: string, emoji: MessageReaction["emoji"]) {
     if (!enabled || changing.current || target.current !== owner) return;
     changing.current = true;

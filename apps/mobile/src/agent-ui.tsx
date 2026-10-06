@@ -71,6 +71,7 @@ import {
 import { NativePushSettings } from "./native-push-settings";
 import { PlaybooksPanel } from "./playbooks";
 import { useInlinePreview } from "./preview";
+import { ProactivityHistory } from "./proactivity-card";
 import { ProfileSettings } from "./profile-settings";
 import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
@@ -2331,6 +2332,7 @@ export function NotificationsSheet() {
     <Sheet title="Notifications" onClose={close}>
       <View style={{ gap: 14 }}>
         <ErrorNotice error={error} />
+        <ProactivityHistory />
         {productNotifications(data?.tasks ?? [], data?.notifications ?? []).map((item) => (
           <View
             key={item.id}

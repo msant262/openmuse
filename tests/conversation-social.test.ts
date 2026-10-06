@@ -8,6 +8,53 @@ import { ConversationInbox, messageContentHash } from "../apps/server/src/conver
 import { ConversationSocial } from "../apps/server/src/conversation-social.ts";
 import { createStore } from "../apps/server/src/db.ts";
 
+test("social metadata reads only the selected message window without deserializing historical inbox rows", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  await db.put("owner", "threads", { id: "chat" });
+  await db.put("owner", "conversation-inbox", {
+    id: "old",
+    threadId: "chat",
+    messageId: "old",
+    text: "HISTORICAL BODY",
+    stickerId: "hello",
+  });
+  await db.put("owner", "conversation-inbox", {
+    id: "current",
+    threadId: "chat",
+    messageId: "current",
+    text: "Current",
+    stickerId: "thanks",
+  });
+  await db.put("other", "conversation-inbox", {
+    id: "foreign",
+    threadId: "chat",
+    messageId: "current",
+    text: "FOREIGN BODY",
+    stickerId: "hello",
+  });
+  await db.put("owner", "message-reactions", {
+    id: "current-r",
+    threadId: "chat",
+    messageId: "current",
+    actor: "assistant",
+    emoji: "❤️",
+  });
+  const social = new ConversationSocial(db, async () => []);
+  t.mock.method(db, "list", () => {
+    throw new Error("Whole history must not be read");
+  });
+  const page = await social.state("owner", "chat", ["current"]);
+  assert.deepEqual(
+    page.messages.map((m) => m.messageId),
+    ["current"],
+  );
+  assert.equal(page.reactions.length, 1);
+  assert.doesNotMatch(JSON.stringify(page), /HISTORICAL BODY|FOREIGN BODY/);
+  assert.deepEqual(await social.state("owner", "chat", []), { messages: [], reactions: [] });
+  await assert.rejects(() => social.state("unpaired-owner", "chat", ["current"]), /not found/i);
+});
+
 test("reactions keep each actor's latest choice and reject changed retries without writes", async (t) => {
   const db = await createStore();
   t.after(() => db.close());

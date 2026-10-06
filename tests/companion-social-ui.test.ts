@@ -90,7 +90,7 @@ test("polling cannot overwrite an in-flight reaction and a failed reaction resto
   let reads = 0;
   let rejectReaction: (cause: Error) => void = () => {};
   const view = fixture(async (_path, body) => {
-    if (body)
+    if (body && !_path.endsWith("/social/window"))
       return new Promise((_resolve, reject) => {
         rejectReaction = reject;
       });

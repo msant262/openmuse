@@ -346,7 +346,6 @@ function WorkspaceShell({
   const { data } = useAgentWorkspace();
   const {
     selection,
-    visited,
     loading: threadsLoading,
     error: threadsError,
     retry: retryThreads,
@@ -480,24 +479,15 @@ function WorkspaceShell({
             ) : threadsLoading ? (
               <ActivityIndicator color={colors.blueDark} />
             ) : null}
-            {visited.map((thread) => (
-              <View
-                key={thread.id}
-                style={{ display: selection.id === thread.id ? "flex" : "none", flex: 1 }}
-              >
-                <ChatScreen
-                  thread={thread}
-                  active={
-                    !settingsOpen &&
-                    !customizeOpen &&
-                    section === "chat" &&
-                    selection.id === thread.id
-                  }
-                  wide={desktop}
-                  prompt={selection.id === thread.id ? prompt : undefined}
-                />
-              </View>
-            ))}
+            {!threadsLoading && (
+              <ChatScreen
+                key={selection.id}
+                thread={selection}
+                active={!settingsOpen && !customizeOpen && section === "chat"}
+                wide={desktop}
+                prompt={prompt}
+              />
+            )}
           </>
         ) : (
           <ChatScreen

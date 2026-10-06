@@ -103,7 +103,34 @@ export class CredentialBroker {
   }
 
   async connections(owner: string) {
-    return this.db.list<CredentialConnection>(owner, "credentials");
+    const rows = await this.db.list<CredentialConnection>(owner, "credentials");
+    return rows
+      .filter((row) => row.adapterId && row.credentialRef?.id && row.origin && row.status)
+      .map(
+        ({
+          id,
+          adapterId,
+          serviceName,
+          origin,
+          credentialRef,
+          status,
+          updatedAt,
+          lastAuthenticatedAt,
+          challengeId,
+          challengeKind,
+        }) => ({
+          id,
+          adapterId,
+          serviceName,
+          origin,
+          credentialRef: { id: credentialRef.id, version: credentialRef.version },
+          status,
+          updatedAt,
+          ...(lastAuthenticatedAt ? { lastAuthenticatedAt } : {}),
+          ...(challengeId ? { challengeId } : {}),
+          ...(challengeKind ? { challengeKind } : {}),
+        }),
+      );
   }
 
   catalog() {
@@ -718,7 +745,7 @@ export class CredentialBroker {
   }
 
   async connection(owner: string, id: string) {
-    const connection = await this.db.get<CredentialConnection>(owner, "credentials", id);
+    const connection = (await this.connections(owner)).find((row) => row.id === id);
     if (!connection) throw new AppError("Connection not found", 404);
     return connection;
   }
