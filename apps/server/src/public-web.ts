@@ -170,7 +170,7 @@ export function requestPublicPage(
         headers: {
           "User-Agent": "Mozilla/5.0",
           Accept: "text/html,application/xhtml+xml,text/plain,application/json;q=0.8",
-          "Accept-Encoding": "identity",
+          "Accept-Encoding": "gzip, deflate, br",
         },
         lookup: (_host, options, callback) => {
           if (options.all) callback(null, [{ address: target.address, family: target.family }]);

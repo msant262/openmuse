@@ -310,4 +310,9 @@ Passaram os onze testes de conclusão de imagem. O caso novo salva um rascunho,
 recebe duas conclusões parciais com pesquisas diferentes, abre a fonte final e
 entrega somente a imagem corrigida, sem revisor ou reescrita. O caso de fonte
 realmente bloqueada termina sem loop. Tipos, compilação e lint passaram sem
-erros. A décima sétima reprodução independente ainda precisa ser conferida.
+erros. A décima sétima reprodução independente entregou o pedido em 563,5 segundos: pesquisa com Luna, uma geração com GPT Image 2, inspeção com view_file e finish_task selecionando apenas a imagem final. O operador não forneceu URLs ou valores à execução. A inspeção independente dos pixels conferiu as 27 UFs e os 54 percentuais contra o JSON consolidado efetivamente lido: nenhuma diferença. O mapa preserva a forma geográfica solicitada. O resultado funcional passa; o tempo de 9min23s continua excessivo frente aos dois minutos relatados pelo usuário.
+
+
+## Compressão no transporte público
+
+O leitor público já decodificava gzip, deflate e Brotli, mas solicitava sempre identity. Passa a negociar os três formatos, mantendo o limite aplicado aos bytes descompactados e a validação de cada destino. No VPS, o conjunto municipal ocupa 10.208.549 bytes sem compressão e 1.020.393 com gzip (90% menos transferência). Duas leituras independentes terminaram em 4,34s com gzip e 1,64s sem compressão: a medição não prova que essa alteração isolada elimina o timeout intermitente ou reduz o tempo total. Passaram 37 testes de HTTP/dados, incluindo negociação e rejeição de conteúdo descompactado excessivo; compilação passou, lint sem erros. A reprodução seguinte mede o comportamento sem inserir fontes ou fatos do operador.

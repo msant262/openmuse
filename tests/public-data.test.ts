@@ -270,7 +270,8 @@ test("HTTP reader decodes gzip JSON while enforcing the decompressed size limit"
   const { gzipSync } = await import("node:zlib");
   const { requestPublicPage } = await import("../apps/server/src/public-web.ts");
   const body = JSON.stringify({ rows: [{ state: "AC", percent: 51 }], padding: "x".repeat(5000) });
-  const server = createServer((_req, res) => {
+  const server = createServer((req, res) => {
+    assert.equal(req.headers["accept-encoding"], "gzip, deflate, br");
     res.writeHead(200, { "Content-Type": "application/json", "Content-Encoding": "gzip" });
     res.end(gzipSync(body));
   });
