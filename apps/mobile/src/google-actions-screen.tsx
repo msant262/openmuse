@@ -22,6 +22,9 @@ export function GoogleActionsScreen({ onOpen }: { onOpen?: () => void } = {}) {
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const visible = page?.owner === api.identityKey ? page : undefined;
+  const actionRevision = workspace.actions
+    .map((action) => `${action.id}:${action.status}`)
+    .join("|");
   useEffect(() => {
     let active = true;
     const owner = api.identityKey;
@@ -43,7 +46,7 @@ export function GoogleActionsScreen({ onOpen }: { onOpen?: () => void } = {}) {
     return () => {
       active = false;
     };
-  }, [api, api.identityKey, attempt]);
+  }, [api, api.identityKey, attempt, actionRevision]);
   async function more() {
     if (!visible?.cursor || busy) return;
     const owner = api.identityKey;

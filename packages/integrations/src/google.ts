@@ -7,6 +7,7 @@ import {
   type EventDraft,
   emailDraftSchema,
   eventDraftSchema,
+  eventRemindersSchema,
   type Mail,
 } from "../../domain/src/index.ts";
 import {
@@ -183,6 +184,7 @@ const googleEventSchema = z.object({
   location: z.string().default(""),
   description: z.string().default(""),
   attendees: z.array(z.object({ email: z.string() })).default([]),
+  reminders: eventRemindersSchema.optional(),
 });
 export interface MailAttachment {
   name: string;
@@ -405,6 +407,7 @@ function mapEventWithMetadata(
       location: event.location,
       description: event.description,
       attendees: event.attendees.map((attendee) => attendee.email),
+      ...(event.reminders ? { reminders: event.reminders } : {}),
     },
     timeZoneSource: eventTimeZone
       ? "event"
@@ -435,6 +438,7 @@ function eventBody(draft: EventDraft, patch = false) {
     location: draft.location,
     description: draft.description,
     attendees: draft.attendees.map((email) => ({ email })),
+    ...(draft.reminders ? { reminders: draft.reminders } : {}),
   };
 }
 function encodedSubject(subject: string): string {

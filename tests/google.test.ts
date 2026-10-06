@@ -926,3 +926,46 @@ test("Google's last write barrier follows awaited profile and credential preflig
   await sending;
   assert.equal(writes, 0);
 });
+
+test("calendar creation preserves named-zone instants and carries the requested reminder through the provider receipt", async () => {
+  const reminders = { useDefault: false, overrides: [{ method: "popup" as const, minutes: 5 }] };
+  const draft = eventDraftSchema.parse({
+    title: "Requested local time",
+    start: "2026-10-07T15:00:00+02:00",
+    end: "2026-10-07T15:15:00+02:00",
+    timeZone: "Europe/Berlin",
+    reminders,
+  });
+  let writes = 0;
+  const client = clientWith(async (request) => {
+    const body = await request.json();
+    writes++;
+    assert.equal(body.start.dateTime, draft.start);
+    assert.equal(body.start.timeZone, "Europe/Berlin");
+    assert.deepEqual(body.reminders, reminders);
+    return json({
+      id: "local-event",
+      ...body,
+      start: { dateTime: "2026-10-07T13:00:00Z", timeZone: "Europe/Berlin" },
+    });
+  });
+  const result = await client.createEvent(draft);
+  assert.equal(writes, 1);
+  assert.equal(Date.parse(result.start), Date.parse(draft.start));
+  assert.equal(result.timeZone, "Europe/Berlin");
+  assert.deepEqual(result.reminders, reminders);
+  assert.equal(
+    eventDraftSchema.safeParse({
+      ...draft,
+      reminders: { useDefault: true, overrides: reminders.overrides },
+    }).success,
+    false,
+  );
+  assert.equal(
+    eventDraftSchema.safeParse({
+      ...draft,
+      reminders: { useDefault: false, overrides: [{ method: "popup", minutes: -1 }] },
+    }).success,
+    false,
+  );
+});

@@ -1894,7 +1894,7 @@ export async function executeModelTask(
     ),
     tool(
       "prepare_event",
-      "Create an event under the configured native action policy",
+      "Create a Google Calendar event in the selected connected account, with exact start/end offsets and named timezone. Supports reminders: {useDefault:false,overrides:[{method:popup,minutes:5}]}. If no timezone was requested, read calendar.calendars.get for the selected calendar first. Returns the confirmed event under the configured action policy.",
       eventDraftSchema.and(z.object({ account: z.string().min(1).max(320).optional() })),
       async ({ account, ...data }) => {
         const key = taskOperationId() ?? randomUUID();

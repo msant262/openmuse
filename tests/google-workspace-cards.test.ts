@@ -267,6 +267,7 @@ test("calendar reviews display the same instant in its named zone instead of cop
 test("the Actions tab fetches one summary page and reopens a selected draft without issuing Google operations", async () => {
   const calls: string[] = [],
     opened: any[] = [];
+  const workspace: { actions: any[] } = { actions: [] };
   const api = {
     identityKey: "owner",
     request: async (path: string) => {
@@ -278,7 +279,7 @@ test("the Actions tab fetches one summary page and reopens a selected draft with
             subject: "Saved subject",
             account: "work@example.com",
             to: ["msant262@gmail.com"],
-            status: "saved",
+            status: workspace.actions[0]?.status ?? "saved",
             updatedAt: "2026-10-06T12:00:00Z",
           },
         ],
@@ -295,7 +296,7 @@ test("the Actions tab fetches one summary page and reopens a selected draft with
       "./workspace": {
         useWorkspace: () => ({
           api,
-          workspace: { actions: [] },
+          workspace,
           open: (detail: any) => opened.push(detail),
         }),
       },
@@ -318,6 +319,11 @@ test("the Actions tab fetches one summary page and reopens a selected draft with
     assert.equal(opened[0].type, "gmailDraft");
     assert.equal(opened[0].id, "draft-1");
     assert.equal(calls.length, 1);
+    workspace.actions.push({ ...action, status: "denied", createdAt: "2026-10-06T12:01:00Z" });
+    h.render();
+    await h.flush();
+    assert.equal(calls.length, 2, "a decision refreshes the displayed summaries");
+    assert.match(h.text(), /denied/);
   } finally {
     h.close();
   }

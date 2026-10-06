@@ -56,6 +56,7 @@ export interface CalendarEvent {
   location: string;
   description: string;
   attendees: string[];
+  reminders?: EventReminders;
   cache?: WorkspaceCache;
 }
 export interface Artifact {
@@ -98,6 +99,24 @@ export const emailDraftSchema = z.object({
   threadId: z.string().optional(),
   replyToMessageId: z.string().optional(),
 });
+export const eventRemindersSchema = z
+  .object({
+    useDefault: z.boolean(),
+    overrides: z
+      .array(
+        z.object({
+          method: z.enum(["email", "popup"]),
+          minutes: z.number().int().min(0).max(40320),
+        }),
+      )
+      .max(5)
+      .default([]),
+  })
+  .refine(
+    (value) => !value.useDefault || !value.overrides.length,
+    "Choose default reminders or explicit reminders, not both",
+  );
+export type EventReminders = z.infer<typeof eventRemindersSchema>;
 export const eventDraftSchema = z
   .object({
     calendarId: z.string().default("primary"),
@@ -109,6 +128,7 @@ export const eventDraftSchema = z
     location: z.string().max(2000).default(""),
     description: z.string().max(10000).default(""),
     attendees: z.array(z.email()).max(50).default([]),
+    reminders: eventRemindersSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (

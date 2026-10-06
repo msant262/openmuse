@@ -22,6 +22,11 @@ export function connectorReviewLines(
       modify: "Change labels",
       batchModify: "Change labels",
       copy: "Copy",
+      append: "Add rows",
+      import: "Import",
+      quickAdd: "Create",
+      watch: "Enable alerts",
+      unwatch: "Disable alerts",
     };
     return [
       ["Account", data.account],
@@ -40,7 +45,7 @@ export function connectorReviewLines(
         "Action",
         data.requiresHumanApproval
           ? "Delete or remove contents"
-          : (verbs[operation.split(".").at(-1) ?? ""] ?? operation),
+          : (verbs[operation.split(".").at(-1) ?? ""] ?? "Change"),
       ],
       ["Item", data.resourceName],
       ["Subject", data.subject],

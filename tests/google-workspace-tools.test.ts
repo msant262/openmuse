@@ -810,3 +810,58 @@ test("a natural calendar request is verified from its real receipt across equiva
   await worker.stop();
   assert.equal((await server.agent.detail("owner", task.id)).task.status, "succeeded");
 });
+
+test("cloud document writing requires a confirmed native Google receipt with the requested contents", async (t) => {
+  const server = await fixture(t);
+  t.mock.method(
+    server.workspace,
+    "google",
+    () =>
+      new GoogleClient({
+        getAccessToken: async () => "fixture",
+        fetch: async (url, init) => {
+          const request = new Request(url, init);
+          return request.url.endsWith(":batchUpdate")
+            ? Response.json({ documentId: "full-document-id", replies: [{}] })
+            : Response.json({ documentId: "full-document-id", title: "Own document" });
+        },
+      }),
+  );
+  const task = await server.agent.createTask("owner", {
+    prompt: "Na conta work@example.com, cria no Google Docs um documento contendo Texto confirmado",
+  });
+  assert.equal(task.criteria?.[0].id, "requested-google-document");
+  const worker = new TaskWorker(server.db, async (owner, running) => {
+    await server.agent.googleWorkspace.execute(
+      owner,
+      {
+        toolId: "docs.documents.create",
+        account: "work@example.com",
+        parameters: {},
+        body: { title: "Own document" },
+        operationId: "cloud-create",
+      },
+      { taskId: running.id },
+    );
+    assert.notEqual(
+      (await server.agent.verification.assess(owner, running.id, 0)).status,
+      "verified",
+    );
+    await server.agent.googleWorkspace.execute(
+      owner,
+      {
+        toolId: "docs.documents.batchUpdate",
+        account: "work@example.com",
+        parameters: { documentId: "full-document-id" },
+        body: { requests: [{ insertText: { location: { index: 1 }, text: "Texto confirmado" } }] },
+        operationId: "cloud-text",
+      },
+      { taskId: running.id },
+    );
+    assert.equal((await server.agent.verification.assess(owner, running.id, 0)).status, "verified");
+    return { status: "succeeded", result: "Documento escrito e confirmado" };
+  });
+  await worker.tick();
+  await worker.stop();
+  assert.equal((await server.agent.detail("owner", task.id)).task.status, "succeeded");
+});

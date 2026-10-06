@@ -202,13 +202,27 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       /\b(write|draft|redija|escreva|prepare)\b/i.test(prompt) &&
       /\b(email|e-mail)\b/i.test(prompt))
   )
-    if (!criteria.some((criterion) => criterion.kind === "file"))
+    if (!remoteGoogleDocument && !criteria.some((criterion) => criterion.kind === "file"))
       criteria.push({
         id: "requested-artifact",
         kind: "artifact",
         description: "The requested structured result exists and contains useful content",
         requiredItems: content,
       });
+  if (
+    remoteGoogleDocument &&
+    /\b(create|crie|cria|criar|write|escreva|escrever|update|atualize|atualizar|salve|salvar)\b/i.test(
+      prompt,
+    ) &&
+    !criteria.length
+  )
+    criteria.push({
+      id: "requested-google-document",
+      kind: "receipt",
+      effect: "external",
+      description: "The requested cloud document operation has a confirmed native Google receipt",
+      requiredItems: content,
+    });
   if (nativeGmailDraft)
     criteria.push({
       id: "requested-gmail-draft",
@@ -385,6 +399,8 @@ function actionMatches(
   )
     return false;
   const args = binding?.args ?? action.data;
+  if (criterion.id === "requested-google-document" && binding?.serverId !== "google-workspace")
+    return false;
   if (!useful(action.result) || !required(criterion, { args, result: action.result })) return false;
   if (!criterion.effect) return true;
   if (criterion.effect === "email.draft")
