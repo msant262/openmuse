@@ -1,4 +1,5 @@
 import {
+  type PublicReadOptions,
   type PublicWeb,
   type RenderedPublicPage,
   readablePage,
@@ -120,6 +121,7 @@ export async function extractPublicSources(
   urls: string[],
   signal?: AbortSignal,
   render?: (url: string, signal?: AbortSignal) => Promise<RenderedPublicPage>,
+  options: PublicReadOptions = {},
 ): Promise<ExtractedPage[]> {
   signal?.throwIfAborted();
   const fixed = new Map<number, ExtractedPage>();
@@ -129,8 +131,9 @@ export async function extractPublicSources(
   for (const [index, url] of urls.slice(0, 4).entries()) {
     signal?.throwIfAborted();
     try {
-      const page = await web.read(url, signal, { mode: "auto", render });
-      if (readablePage(page) || !render) fixed.set(index, page);
+      const page = await web.read(url, signal, { ...options, mode: "auto", render });
+      if (readablePage(page) || !render || ("spill" in page && page.spill && !page.spill.truncated))
+        fixed.set(index, page);
       else {
         positions.push(index);
         fallbackUrls.push(url);
@@ -164,7 +167,7 @@ export async function extractPublicSources(
   for (const [index, url] of fallbackUrls.entries()) {
     signal?.throwIfAborted();
     try {
-      rescued.push(await web.read(url, signal, { mode: "headless", render }));
+      rescued.push(await web.read(url, signal, { ...options, mode: "headless", render }));
     } catch (error) {
       signal?.throwIfAborted();
       rescued.push({

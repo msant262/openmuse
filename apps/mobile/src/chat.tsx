@@ -26,6 +26,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -1007,45 +1008,58 @@ export function ChatScreen({
     )
       setAnnotationSource(undefined);
   }
-  const acceptedMessageIds = new Set(
-    queue instanceof MessageOutbox
-      ? queue.getSnapshot().messageDetails.map((details) => details.messageId)
-      : [],
-  );
-  const messages =
-    queue instanceof MessageOutbox
-      ? mergeOutboxMessages(
-          agent.messages || [],
-          (queue.getSnapshot().messages as Message[]).filter((message) =>
-            acceptedMessageIds.has(String(message.id)),
-          ),
-        )
-      : agent.messages || [];
-  const latestPanelId = latestJevPanelId(messages, threadId);
-  const latestUserIndex = messages.reduce(
-    (last, message, index) => (message.role === "user" ? index : last),
-    -1,
+  const savedHistory = queue instanceof MessageOutbox ? queue.getSnapshot() : null;
+  const messages = useMemo(() => {
+    if (!savedHistory) return agent.messages || [];
+    const acceptedMessageIds = new Set(
+      savedHistory.messageDetails.map((details) => details.messageId),
+    );
+    return mergeOutboxMessages(
+      agent.messages || [],
+      (savedHistory.messages as Message[]).filter((message) =>
+        acceptedMessageIds.has(String(message.id)),
+      ),
+    );
+  }, [agent.messages, savedHistory?.messages, savedHistory?.messageDetails]);
+  const latestPanelId = useMemo(() => latestJevPanelId(messages, threadId), [messages, threadId]);
+  const latestUserIndex = useMemo(
+    () => messages.reduce((last, message, index) => (message.role === "user" ? index : last), -1),
+    [messages],
   );
   const latestUserText =
     latestUserIndex >= 0 && typeof messages[latestUserIndex]?.content === "string"
       ? messages[latestUserIndex].content
       : null;
-  const visible = messages.filter((m) => m.role === "user" || m.role === "assistant");
-  const toolMessages = new Map(
-    messages
-      .filter((message): message is ToolMessage => message.role === "tool")
-      .map((message) => [message.toolCallId, message]),
+  const visible = useMemo(
+    () => messages.filter((m) => m.role === "user" || m.role === "assistant"),
+    [messages],
   );
-  const messageIndexes = new Map(messages.map((message, index) => [message.id, index]));
-  const messageDetails = new Map(
-    social.state.messages.map((details) => [details.messageId, details]),
+  const toolMessages = useMemo(
+    () =>
+      new Map(
+        messages
+          .filter((message): message is ToolMessage => message.role === "tool")
+          .map((message) => [message.toolCallId, message]),
+      ),
+    [messages],
   );
-  const messageReactions = new Map<string, typeof social.state.reactions>();
-  for (const reaction of social.state.reactions) {
-    const group = messageReactions.get(reaction.messageId) ?? [];
-    group.push(reaction);
-    messageReactions.set(reaction.messageId, group);
-  }
+  const messageIndexes = useMemo(
+    () => new Map(messages.map((message, index) => [message.id, index])),
+    [messages],
+  );
+  const messageDetails = useMemo(
+    () => new Map(social.state.messages.map((details) => [details.messageId, details])),
+    [social.state.messages],
+  );
+  const messageReactions = useMemo(() => {
+    const reactions = new Map<string, typeof social.state.reactions>();
+    for (const reaction of social.state.reactions) {
+      const group = reactions.get(reaction.messageId) ?? [];
+      group.push(reaction);
+      reactions.set(reaction.messageId, group);
+    }
+    return reactions;
+  }, [social.state.reactions]);
   const currentTask = agentWorkspace?.tasks.find(
     (task) =>
       task.originThreadId === threadId &&
@@ -1251,13 +1265,13 @@ export function ChatScreen({
             const awaitingDetails = durableChat && user && !details;
             const text = details
               ? user
-                ? displayJevUserMessage(details.text, messages.slice(0, messageIndex))
+                ? displayJevUserMessage(details.text, messages, messageIndex)
                 : details.text
               : awaitingDetails
                 ? ""
                 : typeof message.content === "string"
                   ? user
-                    ? displayJevUserMessage(message.content, messages.slice(0, messageIndex))
+                    ? displayJevUserMessage(message.content, messages, messageIndex)
                     : message.content
                   : "";
             const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];

@@ -11,7 +11,7 @@ import {
   observedSourceAlternatives,
   unreadSourceLinks,
 } from "../public-extract.ts";
-import { publicReadDescription, readablePage } from "../public-web.ts";
+import { preservePublicSource, publicReadDescription, readablePage } from "../public-web.ts";
 import { searchInstructions, searchTools } from "../search-tools.ts";
 import { TaskBrowserHistory } from "./browser-history.ts";
 import { delegatedContextMessages } from "./delegated-context.ts";
@@ -22,6 +22,7 @@ import {
 } from "./openclaw/plan-completion.ts";
 import type { ToolCallRecord } from "./openclaw/tool-call-record.ts";
 import { getNoProgressStreak } from "./openclaw/tool-loop-no-progress.ts";
+import { calculateMaxToolResultCharsWithCap } from "./openclaw/tool-result-limits.ts";
 import { taskActivity } from "./task-activity.ts";
 import "../config.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -339,10 +340,7 @@ export async function executeModelTask(
             (criterion) => criterion.id === check.criterionId && criterion.kind === "file",
           ),
       );
-      const observations =
-        deliveryOutcome === "partial"
-          ? researchObservations(await service.journal.operations(owner, task.id))
-          : [];
+      const observations = researchObservations(await service.journal.operations(owner, task.id));
       const availableLinks = unreadSourceLinks(observations);
       // Continue on changed evidence, rather than imposing one research attempt
       // per user revision. Duplicate reads and timestamps do not create progress.
@@ -405,18 +403,26 @@ export async function executeModelTask(
         (missingFiles.length > 0 || (!config.researchReviewEnabled && availableLinks.length > 0)) &&
         task.state.researchContinuationKey !== researchKey &&
         task.evidence.some((item) => item.kind === "web");
+      const unresolvedPartial =
+        deliveryOutcome === "completed" &&
+        task.state.researchContinuationKey === researchKey &&
+        JSON.stringify(task.state.researchContinuationArtifactIds) === JSON.stringify(selected);
       if (
         (missingFiles.length > 0 && deliveryOutcome === "completed") ||
         unreadAggregation ||
-        researchContinuation
+        researchContinuation ||
+        unresolvedPartial
       ) {
         task = await ctx.checkpoint({
           completion,
           state: {
             ...task.state,
             deliveryCandidateArtifactIds: undefined,
-            completionFollowup: completion.remaining,
-            ...(researchContinuation && { researchContinuationKey: researchKey }),
+            completionFollowup: missingFiles.length ? completion.remaining : null,
+            ...(researchContinuation && {
+              researchContinuationKey: researchKey,
+              researchContinuationArtifactIds: selected,
+            }),
           },
         });
         return {
@@ -430,6 +436,9 @@ export async function executeModelTask(
             availableData: { request: lastDataRead?.args, nextOffset: data?.nextOffset },
           }),
           instruction:
+            (unresolvedPartial
+              ? "You declared this same delivery partial, and no source evidence or selected artifact has changed since then. Changing only outcome to completed cannot resolve the missing requirements. Continue the research or correct the artifact; if the concrete paths remain blocked, report partial honestly. "
+              : "") +
             (unreadAggregation
               ? `The last successful aggregation returned ${data?.rows?.length} of ${data?.total} rows and exposes the remaining rows. This is available unread data, not a source failure. Retrieve the complete aggregate with a sufficient limit or page the remaining groups before declaring the data unobtainable. For categories in nested arrays, expand and group by the observed category identifier; array positions may vary. `
               : "") +
@@ -752,8 +761,20 @@ export async function executeModelTask(
     return observedSourceAlternatives(url, sources);
   };
   const extractSources = async (urls: string[]) => {
-    const pages = await extractPublicSources(service.web, urls, signal, (url, readSignal) =>
-      service.browser.observe(owner, url, undefined, task.id, ctx.trackResourceLeases, readSignal),
+    const pages = await extractPublicSources(
+      service.web,
+      urls,
+      signal,
+      (url, readSignal) =>
+        service.browser.observe(
+          owner,
+          url,
+          undefined,
+          task.id,
+          ctx.trackResourceLeases,
+          readSignal,
+        ),
+      { spill: preservePublicSource(service.files, owner) },
     );
     for (const page of pages) await recordPage(page);
     return {
@@ -1650,10 +1671,30 @@ export async function executeModelTask(
       z.object({
         url: z.url().max(4096),
         mode: z.enum(["auto", "http", "headless", "browser"]).default("auto"),
+        maxChars: z
+          .number()
+          .int()
+          .min(100)
+          .max(16 * 1024 * 1024)
+          .optional(),
       }),
-      async ({ url, mode }) => {
+      async ({ url, mode, maxChars }) => {
         const page = await service.web.read(url, signal, {
           mode,
+          maxChars:
+            maxChars === undefined
+              ? undefined
+              : Math.min(
+                  maxChars,
+                  calculateMaxToolResultCharsWithCap(
+                    routingCapabilities(
+                      selectedModel,
+                      config.modelProviders ?? modelProviderConfig(config.dataDir),
+                    ).capabilities.contextTokens,
+                    16 * 1024 * 1024,
+                  ),
+                ),
+          spill: preservePublicSource(service.files, owner),
           render: (target, readSignal) =>
             service.browser.observe(
               owner,
@@ -2096,7 +2137,13 @@ export async function executeModelTask(
   const agent = openclawAgent({
     dataDir: config.dataDir,
     directToolNames: config.computerEnabled
-      ? ["computer_status", "start_computer", "run_computer_command", "computer_command_status"]
+      ? [
+          "computer_status",
+          "start_computer",
+          "run_computer_command",
+          "computer_command_status",
+          "import_computer_file",
+        ]
       : [],
     compaction: { db: service.db, owner, scope: `task:${task.id}` },
     contextModel: selectionContextModel(config, selection) ?? service.contextModel,

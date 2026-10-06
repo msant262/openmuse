@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { type DefaultTreeAdapterMap, parse, serialize } from "parse5";
 import { type Resolver, validatePublicUrl } from "../../worker/src/network.ts";
+import type { Files } from "./files.ts";
 import { type PublicDataQuery, selectPublicData } from "./public-data.ts";
 
 const maxBytes = 2 * 1024 * 1024;
@@ -47,6 +49,7 @@ export class WebReadError extends Error {
 }
 
 export type RenderedPublicPage = {
+  spill?: PublicSourceSpill;
   dataSources?: { url: string; kind: string }[];
   url: string;
   title: string;
@@ -56,6 +59,40 @@ export type RenderedPublicPage = {
   links?: { title: string; url: string }[];
   extraction?: { status: "readable" | "partial"; reason?: string };
 };
+
+export type PublicSourceSpill = {
+  fileId: string;
+  chars: number;
+  size: number;
+  sha256: string;
+  truncated: boolean;
+};
+export type PublicReadOptions = {
+  maxChars?: number;
+  spill?: (source: { url: string; text: string; mimeType: string }) => Promise<PublicSourceSpill>;
+};
+
+/** Keep a fetched source in the owner's private file store, outside delivered attachments. */
+export function preservePublicSource(
+  files: Files,
+  owner: string,
+): NonNullable<PublicReadOptions["spill"]> {
+  return async ({ url, text, mimeType }) => {
+    const sha256 = createHash("sha256").update(text).digest("hex");
+    const origin = createHash("sha256").update(url).digest("hex").slice(0, 12);
+    const extension = mimeType === "application/json" ? "json" : "txt";
+    const file = await files.importAttachment(
+      owner,
+      `web-source-${origin}-${sha256.slice(0, 12)}.${extension}`,
+      Buffer.from(text),
+      `web_fetch:${url}`,
+      mimeType,
+      undefined,
+      true,
+    );
+    return { fileId: file.id, chars: text.length, size: file.size, sha256, truncated: false };
+  };
+}
 /** Keep observed anchor destinations beside their rendered labels, as in the
  * native HTTP Markdown reader. Ambiguous labels never acquire a guessed URL. */
 export function renderedPublicText(page: RenderedPublicPage) {
@@ -84,7 +121,7 @@ export function renderedPublicText(page: RenderedPublicPage) {
 }
 
 export const publicReadDescription =
-  "Read public HTML/JSON and discovered data URLs. Default auto uses HTTP; mode=headless renders JavaScript on the VPS. mode=browser is a legacy alias for headless. Inspect dataSources for published datasets. Truncated content does not establish that unread fields are absent.";
+  "Read public HTML/JSON and discovered data URLs. Default auto uses HTTP; mode=headless renders JavaScript HTML on the VPS. Published JSON uses HTTP without rendering. mode=browser is a legacy alias for headless. maxChars requests a larger excerpt within the model context budget. Truncated sources expose spill.fileId containing the fetched full text: import_computer_file then run_computer_command can analyze that snapshot without fetching again. Inspect dataSources for published datasets; unread fields are not absent.";
 
 export const publicResearchInstructions =
   " Search with search_web and read relevant pages with web_fetch or web_extract (up to four URLs together). Snippets are leads, not full source reads. Prefer HTTP; use headless for JavaScript content. Follow relevant page links before treating missing facts as unavailable: Match the subject, metric, category and date of each data record to the request; dataSources can include unrelated analytics or datasets for other subjects. A page listing other subjects is a lead to follow, not the requested comparison. Every reported number must appear in a relevant source read or a computation from its data; never fill missing values from memory. Use observed URLs or published URL templates, never invented endpoints. Use run_computer_command for complex datasets and batches; discover read_web_data when its structured queries help. Do not page thousands of records to compute a summary. Truncated excerpts and missing fields are not absence of data. Use the live runtime date. Attribute a reputable publisher's data honestly when direct primary-source access is unavailable. Public research needs no new credentials. Once the requested facts are sufficient, produce the requested deliverable. Report partial results only after relevant available paths are exhausted.";
@@ -512,14 +549,17 @@ export class PublicWeb {
   async read(
     url: string,
     signal?: AbortSignal,
-    options: {
+    options: PublicReadOptions & {
       mode?: "auto" | "http" | "headless" | "browser";
       render?: (url: string, signal?: AbortSignal) => Promise<RenderedPublicPage>;
     } = {},
   ) {
-    if (options.mode !== "browser" && options.mode !== "headless") {
+    const publishedData =
+      /\.(?:json|jws)$/i.test(new URL(url).pathname) ||
+      new URL(url).searchParams.get("format")?.toLowerCase() === "json";
+    if ((options.mode !== "browser" && options.mode !== "headless") || publishedData) {
       try {
-        return await this.readHttp(url, signal);
+        return await this.readHttp(url, signal, options);
       } catch (error) {
         signal?.throwIfAborted();
         // Never convert network/URL policy rejection or cancellation into browser dispatch.
@@ -568,7 +608,7 @@ export class PublicWeb {
       // does not establish that the source is unavailable through HTTP. The HTTP
       // reader validates and pins every destination and redirect independently.
       try {
-        const page = await this.readHttp(url, signal);
+        const page = await this.readHttp(url, signal, options);
         if (readablePage(page)) return page;
       } catch {
         signal?.throwIfAborted();
@@ -576,18 +616,28 @@ export class PublicWeb {
       throw error;
     }
     const text = renderedPublicText(rendered);
+    const limit = options.maxChars ?? maxText;
+    const spill =
+      text.length > limit && options.spill
+        ? {
+            ...(await options.spill({ url: rendered.url, text, mimeType: "text/plain" })),
+            truncated: rendered.truncated,
+          }
+        : undefined;
     return {
       ...rendered,
-      text: text.slice(0, maxText),
+      text: text.slice(0, limit),
+      ...(spill && { spill }),
       links: rendered.links ?? [],
       dataSources: rendered.dataSources ?? [],
-      truncated: rendered.truncated || text.length > maxText,
+      truncated: rendered.truncated || text.length > limit,
       extraction: rendered.extraction ?? { status: "readable" as const },
       observedAt: new Date().toISOString(),
       provenance: { backend: "browser" as const, mode: "headless" as const },
     };
   }
-  private async readHttp(url: string, signal?: AbortSignal) {
+  private async readHttp(url: string, signal?: AbortSignal, options: PublicReadOptions = {}) {
+    const limit = options.maxChars ?? maxText;
     const target = new URL(url);
     const publishedData =
       /\.(?:json|jws)$/i.test(target.pathname) ||
@@ -596,10 +646,7 @@ export class PublicWeb {
     // should receive their values/shape and paging guidance, not a page-size
     // error that makes an accessible dataset look unavailable.
     const document = await this.document(url, signal, publishedData ? maxDataBytes : maxBytes);
-    if (
-      (/json/.test(document.contentType) && document.body.length > maxText) ||
-      compactJson.test(document.body.trim())
-    ) {
+    if (/json/.test(document.contentType) || compactJson.test(document.body.trim())) {
       let source: ReturnType<typeof publicJson>;
       try {
         source = publicJson(document.body);
@@ -610,19 +657,32 @@ export class PublicWeb {
       // Match the upstream JSON reader: preserve source values in its text,
       // rather than replacing a large root object with an empty query result.
       const text = JSON.stringify(source.data, null, 2);
+      const truncated = text.length > limit;
+      const spill =
+        truncated && options.spill
+          ? await options.spill({
+              url: document.url,
+              text: JSON.stringify(source.data),
+              mimeType: "application/json",
+            })
+          : undefined;
       return {
         url: document.url,
         title: new URL(document.url).hostname,
-        text: text.slice(0, maxText),
+        text: text.slice(0, limit),
+        ...(spill && { spill }),
+        sourceLength: text.length,
         structure: projection.structure,
         links: [],
         dataSources: [{ url: document.url, kind: "published-data-link" }],
         extraction: {
-          status: "partial" as const,
-          reason:
-            "This is a source JSON excerpt; unread fields remain available at this URL. Use run_computer_command to read and compute the complete dataset, or discover read_web_data for selected fields and aggregation. Do not infer absence from this excerpt or page thousands of rows to compute a summary.",
+          status: truncated ? ("partial" as const) : ("readable" as const),
+          ...(truncated && {
+            reason:
+              "This is a source JSON excerpt; unread fields remain available at this URL. Use run_computer_command to read and compute the complete dataset, or discover read_web_data for selected fields and aggregation. Do not infer absence from this excerpt or page thousands of rows to compute a summary.",
+          }),
         },
-        truncated: true,
+        truncated,
         observedAt: new Date().toISOString(),
         provenance: {
           backend: "http" as const,
@@ -749,17 +809,30 @@ export class PublicWeb {
           })
           .slice(0, 80)
       : [];
+    const spill =
+      text.length > limit && options.spill
+        ? {
+            ...(await options.spill({
+              url: document.url,
+              text: readableText + structured + (data.embedded ? `\n${data.embedded}` : ""),
+              mimeType: "text/plain",
+            })),
+            truncated: data.truncated,
+          }
+        : undefined;
     return {
       url: document.url,
       title,
-      text: text.slice(0, maxText),
+      text: text.slice(0, limit),
+      ...(spill && { spill }),
+      sourceLength: text.length,
       links,
       dataSources: data.dataSources,
       extraction,
       truncated:
         data.truncated ||
         (Boolean(data.embedded) && extracted.length > 17500) ||
-        text.length > maxText ||
+        text.length > limit ||
         (Boolean(structured) && (readableText.length > 19000 || structured.length > 11000)),
       observedAt: new Date().toISOString(),
       provenance: { backend: "http" as const, authenticated: false as const },

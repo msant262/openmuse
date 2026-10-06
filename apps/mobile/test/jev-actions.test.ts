@@ -161,6 +161,23 @@ test("the transcript shows the trusted option label instead of the action payloa
   assert.equal(displayJevUserMessage(action, []), "Choice unavailable");
 });
 
+test("a choice only uses tool results preceding its position in the full history", () => {
+  const action = selectionText(panel, "explore");
+  const history = [
+    { role: "assistant", toolCalls: [{ id: "tool-1", name: "present_choices" }] },
+    { role: "user", content: action },
+    { role: "tool", toolCallId: "tool-1", content: JSON.stringify({ panel }) },
+  ];
+  assert.equal(displayJevUserMessage(action, history, 1), "Choice unavailable");
+  assert.equal(displayJevUserMessage(action, history, 2), "Choice unavailable");
+  assert.equal(displayJevUserMessage(action, history, 3), "Selected: Explore exhibits");
+  assert.equal(displayJevUserMessage("Hello", history, 1), "Hello");
+  assert.equal(
+    confirmedJevSelection([...history, { role: "assistant", content: "Hello" }], panel.id),
+    null,
+  );
+});
+
 test("a replayed choice is confirmed only after a server continuation", () => {
   const action = selectionText(panel, "explore");
   const history = [

@@ -276,6 +276,14 @@ test("a partial saved image continues as new research progresses and delivers on
             artifactIds: [draftId],
           },
         },
+        {
+          name: "finish_task",
+          arguments: {
+            outcome: "completed",
+            summary: "The same draft is attached, still lacking regional results.",
+            artifactIds: [draftId],
+          },
+        },
         { name: "web_fetch", arguments: { url: "https://results.example/regional" } },
         {
           name: "finish_task",
@@ -341,12 +349,16 @@ test("a partial saved image continues as new research progresses and delivers on
   );
   assert.equal(
     repairs.length,
-    2,
+    3,
     "new source evidence allows another continuation despite the saved draft",
   );
   assert.equal(fixture.reviewRequests.length, 0);
   assert.equal(fixture.imageBriefRequests.length, 0);
-  assert.equal(fixture.requests.length, 8);
+  assert.equal(fixture.requests.length, 9);
+  assert.match(
+    (repairs[1].receipt as { instruction: string }).instruction,
+    /Changing only outcome to completed/,
+  );
 });
 
 test("an actual public-source blocker can finish partial after the bounded continuation", async (t) => {

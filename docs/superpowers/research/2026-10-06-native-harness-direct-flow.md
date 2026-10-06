@@ -316,3 +316,51 @@ erros. A décima sétima reprodução independente entregou o pedido em 563,5 se
 ## Compressão no transporte público
 
 O leitor público já decodificava gzip, deflate e Brotli, mas solicitava sempre identity. Passa a negociar os três formatos, mantendo o limite aplicado aos bytes descompactados e a validação de cada destino. No VPS, o conjunto municipal ocupa 10.208.549 bytes sem compressão e 1.020.393 com gzip (90% menos transferência). Duas leituras independentes terminaram em 4,34s com gzip e 1,64s sem compressão: a medição não prova que essa alteração isolada elimina o timeout intermitente ou reduz o tempo total. Passaram 37 testes de HTTP/dados, incluindo negociação e rejeição de conteúdo descompactado excessivo; compilação passou, lint sem erros. A reprodução seguinte mede o comportamento sem inserir fontes ou fatos do operador.
+
+
+## Fonte completa preservada e conclusão parcial consistente
+
+A décima oitava reprodução terminou em 256,1 segundos, mas entregou somente os
+27 percentuais dos candidatos líderes. Não cumpre a comparação de dois valores
+por UF e não é aprovação. O próprio executor declarou esse arquivo parcial,
+recebeu uma continuação e, sem leitura ou arquivo novo, mudou apenas o outcome
+para completed. O host agora conserva essa declaração: trocar o status sem
+mudar evidência ou artefato não resolve a insuficiência. Uma fonte nova, uma
+imagem corrigida ou mudança de revisão do usuário podem resolver o parcial.
+Um bloqueio real ainda pode terminar parcial, sem obrigar novas inferências.
+O contexto de arquivo ausente também deixa de aparecer quando há rascunho salvo.
+
+Na integração HTTP, o corte de 30 mil caracteres descartava o restante da fonte.
+O OpenClaw original conserva o texto excedente com spillWebFetchContent. O host
+passa a preservar o JSON completo, ou texto público excedente, como arquivo
+interno privado do proprietário; o recibo identifica spill.fileId e hash. Esse
+arquivo não aparece na entrega. import_computer_file e run_computer_command
+podem processar a mesma fotografia da fonte, sem refazer download e sem receber
+números ou URLs do operador. A superfície configurada do computador inclui a
+importação. JSON publicado usa HTTP e não passa por renderização JavaScript.
+web_fetch também aceita maxChars dentro da proporção de contexto do modelo.
+
+Passaram 49 testes de HTTP/dados/conclusão. O caso de fonte truncada confere a
+leitura integral dos bytes privados, isolamento entre proprietários, ausência
+nos anexos e nenhuma abertura de browser para JSON. A sequência de conclusão
+rejeita uma troca de outcome sem trabalho e permite entrega após a correção.
+Tipos e compilação do candidato passaram; não há novo revisor nem troca do Luna.
+API publicada: source c8ac1fa0fc357c4a9d7d7417fd2461b1a0c117ba, imagem
+sha256:12a060efa81df1a8e7909ed6d81a95aa8ff78efb6528e95f43c8a6bcc97f703a.
+A décima nona reprodução usa novamente o pedido original com o ano, sem pistas
+ou fatos fornecidos pelo operador.
+
+## Custo do histórico na interface
+
+Cada mensagem copiava todo o prefixo do histórico antes de descobrir se era uma
+seleção de opção. Mensagens comuns causavam alocações quadráticas. A consulta
+agora recebe o histórico e o índice final sem cópia; opções futuras não podem
+validar mensagens antigas. Os índices de mensagens, ferramentas e reações são
+memorizados enquanto seus dados não mudam. Todos os turnos permanecem disponíveis.
+
+Passaram 28 testes de seleção e outbox, tipos do app e export web. Em cinco
+amostras locais de CPU, a mediana do trecho com 20 mil mensagens caiu de 178,381ms
+para 0,070ms. Isso mede o trecho alterado, não o tempo de quadro do navegador;
+ScrollView continua montando o histórico e não se afirma que todo atraso do chat
+foi eliminado. O browser colaborativo falhou ao abrir e navegar na prévia; não
+se apresenta isso como teste visual autenticado. Não foi publicado novo APK.

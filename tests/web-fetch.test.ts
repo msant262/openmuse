@@ -576,3 +576,50 @@ test("cancellation during source validation does not become an empty search resu
   assert.equal(result.status, "cancelled");
   assert.equal(result.code, "SEARCH_CANCELLED");
 });
+
+test("a truncated JSON read preserves the complete owner-only source snapshot without browser rendering", async (t) => {
+  const { extractPublicSources } = await import("../apps/server/src/public-extract.ts");
+  const { preservePublicSource } = await import("../apps/server/src/public-web.ts");
+  const f = await taskRuntime(t);
+  const data = {
+    rows: Array.from({ length: 800 }, (_, index) => ({
+      region: `Region ${index}`,
+      values: [51, 49],
+      description: "x".repeat(80),
+    })),
+  };
+  let reads = 0;
+  t.mock.method(f.agent.web, "document", async (url: string) => {
+    reads++;
+    return { url, contentType: "application/json", body: JSON.stringify(data) };
+  });
+  const render = async () => {
+    throw new Error("JSON must not be rendered");
+  };
+  const [page] = await extractPublicSources(
+    f.agent.web,
+    ["https://results.example/data.json"],
+    undefined,
+    render,
+    { spill: preservePublicSource(f.files, "owner") },
+  );
+  assert.equal(reads, 1);
+  assert.equal(page.truncated, true);
+  assert.ok(page.spill);
+  assert.equal(page.spill.truncated, false);
+  assert.deepEqual(JSON.parse((await f.files.bytes("owner", page.spill.fileId)).toString()), data);
+  await assert.rejects(f.files.bytes("other-owner", page.spill.fileId));
+  assert.equal(
+    (await f.files.list("owner")).length,
+    0,
+    "cached sources are not delivered attachments",
+  );
+  const full = await f.agent.web.read("https://results.example/data.json", undefined, {
+    mode: "headless",
+    maxChars: 300000,
+    render,
+  });
+  assert.equal(full.truncated, false);
+  assert.equal(full.extraction.status, "readable");
+  assert.deepEqual(JSON.parse(full.text), data);
+});

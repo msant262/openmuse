@@ -117,9 +117,14 @@ function actionFromText(text: string): JevAction | null {
   }
 }
 
-function panelForAction(messages: readonly unknown[], action: JevAction): JevPanel | null {
+function panelForAction(
+  messages: readonly unknown[],
+  action: JevAction,
+  endIndex = messages.length,
+): JevPanel | null {
   const choices = new Set<string>();
-  for (const message of messages) {
+  for (let index = 0; index < Math.min(endIndex, messages.length); index++) {
+    const message = messages[index];
     if (!message || typeof message !== "object") continue;
     const item = message as Record<string, unknown>;
     if (item.role === "assistant" && Array.isArray(item.toolCalls)) {
@@ -145,11 +150,15 @@ function panelForAction(messages: readonly unknown[], action: JevAction): JevPan
   return null;
 }
 
-export function displayJevUserMessage(text: string, precedingMessages: readonly unknown[]): string {
+export function displayJevUserMessage(
+  text: string,
+  precedingMessages: readonly unknown[],
+  endIndex = precedingMessages.length,
+): string {
   if (!text.startsWith(jevActionPrefix)) return text;
   const action = actionFromText(text);
   if (!action) return "Choice unavailable";
-  const option = panelForAction(precedingMessages, action)?.options.find(
+  const option = panelForAction(precedingMessages, action, endIndex)?.options.find(
     (candidate) => candidate.id === action.optionId,
   );
   return option ? `Selected: ${option.label}` : "Choice unavailable";
@@ -169,7 +178,7 @@ export function confirmedJevSelection(
       pending = null;
       if (typeof item.content === "string") {
         const action = actionFromText(item.content);
-        if (action?.panelId === panelId && panelForAction(messages.slice(0, index), action))
+        if (action?.panelId === panelId && panelForAction(messages, action, index))
           pending = action.optionId;
       }
     }
