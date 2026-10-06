@@ -501,7 +501,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
 
   const previewVisible = useInlinePreview();
   const { t, locale } = useI18n();
-  const { width, height } = useWindowDimensions();
+  const { width } = useWindowDimensions();
   const wide = width >= 780;
   const [selected, setSelected] = useState("summary");
   const [manage, setManage] = useState(false);
@@ -639,6 +639,95 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
       (selectedStep?.id.startsWith("execution:") &&
         `execution:${operation.id}` === selectedStep.id),
   );
+  const timelineNodes = timeline.map((row) => {
+    const grouped = row.events.length > 1;
+    const selectedHere = row.events.some((event) => selected === `event:${event.id}`);
+    const expanded = expandedStages[row.id];
+    return (
+      <View key={row.id} style={{ gap: 3 }}>
+        <Pressable
+          accessibilityRole="button"
+          aria-selected={selectedHere}
+          aria-expanded={grouped ? !!expanded : undefined}
+          onPress={() => {
+            setSelected(`event:${row.events[0].id}`);
+            if (grouped) setExpandedStages((before) => ({ ...before, [row.id]: !expanded }));
+          }}
+          style={{
+            padding: 12,
+            borderRadius: 11,
+            gap: 10,
+            flexDirection: "row",
+            backgroundColor: selectedHere ? colors.hover : "transparent",
+          }}
+        >
+          <FileText size={15} color={colors.muted} style={{ marginTop: 3 }} />
+          <View style={{ flex: 1, gap: 3 }}>
+            <Text style={[s.text, { fontSize: 13, lineHeight: 20 }]}>{t(row.title)}</Text>
+            {grouped && (
+              <Text style={s.small}>{t("{count} steps", { count: row.events.length })}</Text>
+            )}
+          </View>
+          {grouped &&
+            (expanded ? (
+              <ChevronDown size={14} color={colors.muted} />
+            ) : (
+              <ChevronRight size={14} color={colors.muted} />
+            ))}
+        </Pressable>
+        {grouped &&
+          expanded &&
+          row.events.map((event, index) => (
+            <Pressable
+              key={event.id}
+              accessibilityRole="button"
+              aria-selected={selected === `event:${event.id}`}
+              onPress={() => setSelected(`event:${event.id}`)}
+              style={{
+                paddingVertical: 9,
+                paddingHorizontal: 14,
+                marginLeft: 22,
+                borderLeftWidth: 1,
+                borderColor: colors.line,
+                backgroundColor: selected === `event:${event.id}` ? colors.hover : "transparent",
+                gap: 3,
+              }}
+            >
+              <Text style={s.text}>{t("Step {number}", { number: index + 1 })}</Text>
+              <Text style={s.small}>{stamp(event.date)}</Text>
+            </Pressable>
+          ))}
+      </View>
+    );
+  });
+  const planNodes = task?.plan.map((step) => (
+    <Pressable
+      key={step.id}
+      accessibilityRole="button"
+      aria-selected={selected === `step:${step.id}`}
+      onPress={() => setSelected(`step:${step.id}`)}
+      style={{
+        padding: 12,
+        borderRadius: 11,
+        gap: 10,
+        flexDirection: "row",
+        backgroundColor: selected === `step:${step.id}` ? colors.subtle : "transparent",
+      }}
+    >
+      {step.status === "running" ? (
+        <ActivityIndicator
+          accessibilityLabel={t("In progress")}
+          size="small"
+          color={colors.blueDark}
+        />
+      ) : step.status === "succeeded" ? (
+        <CheckCircle2 size={15} color={colors.success} style={{ marginTop: 3 }} />
+      ) : (
+        <Circle size={15} color={colors.muted} style={{ marginTop: 3 }} />
+      )}
+      <Text style={[s.text, { flex: 1, fontSize: 13, lineHeight: 20 }]}>{t(step.title)}</Text>
+    </Pressable>
+  ));
   return (
     <Sheet
       title={task?.title || "Task"}
@@ -667,17 +756,24 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
       ) : (
         <View style={{ flex: 1, minHeight: 0, flexDirection: wide ? "row" : "column" }}>
           <ScrollView
+            horizontal={!wide}
+            showsHorizontalScrollIndicator={false}
             style={{
               width: wide ? 300 : "100%",
               flexGrow: 0,
               flexShrink: wide ? 0 : 1,
-              maxHeight: wide ? undefined : Math.min(150, height * 0.2),
+              maxHeight: wide ? undefined : 72,
               backgroundColor: colors.subtle,
               borderRightWidth: wide ? 1 : 0,
               borderBottomWidth: wide ? 0 : 1,
               borderColor: colors.line,
             }}
-            contentContainerStyle={{ padding: wide ? 17 : 14, gap: 3 }}
+            contentContainerStyle={{
+              padding: wide ? 17 : 10,
+              gap: 3,
+              flexDirection: wide ? "column" : "row",
+              alignItems: wide ? undefined : "center",
+            }}
           >
             <Pressable
               accessibilityRole="button"
@@ -688,7 +784,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                 borderRadius: 11,
                 gap: 10,
                 flexDirection: "row",
-                backgroundColor: selected === "summary" ? colors.subtle : "transparent",
+                backgroundColor: selected === "summary" ? colors.hover : "transparent",
               }}
             >
               <CheckCircle2 size={16} color={colors.text} style={{ marginTop: 2 }} />
@@ -705,13 +801,13 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                 borderRadius: 11,
                 gap: 8,
                 flexDirection: "row",
-                backgroundColor: selected === "request" ? colors.subtle : "transparent",
+                backgroundColor: selected === "request" ? colors.hover : "transparent",
               }}
             >
               <Circle size={15} color={colors.muted} style={{ marginTop: 2 }} />
               <View style={{ flex: 1, gap: 3 }}>
-                <Text style={[s.text, { fontSize: 13 }]}>{t("Started")}</Text>
-                <Text style={s.small}>{stamp(task.createdAt)}</Text>
+                <Text style={[s.text, { fontSize: 13 }]}>{t("Your request")}</Text>
+                {wide && <Text style={s.small}>{stamp(task.createdAt)}</Text>}
               </View>
             </Pressable>
             {!!task.plan.length && (
@@ -724,118 +820,53 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                   borderRadius: 11,
                   gap: 10,
                   flexDirection: "row",
-                  backgroundColor: selected === "plan" ? colors.subtle : "transparent",
+                  backgroundColor: selected === "plan" ? colors.hover : "transparent",
                 }}
               >
                 <ListChecks size={16} color={colors.muted} style={{ marginTop: 3 }} />
                 <Text style={[s.text, { fontSize: 13 }]}>{t("Plan")}</Text>
               </Pressable>
             )}
-            {events.length
-              ? timeline.map((row) => {
-                  const grouped = row.events.length > 1;
-                  const selectedHere = row.events.some((event) => selected === `event:${event.id}`);
-                  const expanded = expandedStages[row.id];
-                  return (
-                    <View key={row.id} style={{ gap: 3 }}>
-                      <Pressable
-                        accessibilityRole="button"
-                        aria-selected={selectedHere}
-                        aria-expanded={grouped ? !!expanded : undefined}
-                        onPress={() => {
-                          setSelected(`event:${row.events[0].id}`);
-                          if (grouped)
-                            setExpandedStages((before) => ({ ...before, [row.id]: !expanded }));
-                        }}
-                        style={{
-                          padding: 12,
-                          borderRadius: 11,
-                          gap: 10,
-                          flexDirection: "row",
-                          backgroundColor: selectedHere ? colors.hover : "transparent",
-                        }}
-                      >
-                        <FileText size={15} color={colors.muted} style={{ marginTop: 3 }} />
-                        <View style={{ flex: 1, gap: 3 }}>
-                          <Text style={[s.text, { fontSize: 13, lineHeight: 20 }]}>
-                            {t(row.title)}
-                          </Text>
-                          {grouped && (
-                            <Text style={s.small}>
-                              {t("{count} steps", { count: row.events.length })}
-                            </Text>
-                          )}
-                        </View>
-                        {grouped &&
-                          (expanded ? (
-                            <ChevronDown size={14} color={colors.muted} />
-                          ) : (
-                            <ChevronRight size={14} color={colors.muted} />
-                          ))}
-                      </Pressable>
-                      {grouped &&
-                        expanded &&
-                        row.events.map((event, index) => (
-                          <Pressable
-                            key={event.id}
-                            accessibilityRole="button"
-                            aria-selected={selected === `event:${event.id}`}
-                            onPress={() => setSelected(`event:${event.id}`)}
-                            style={{
-                              paddingVertical: 9,
-                              paddingHorizontal: 14,
-                              marginLeft: 22,
-                              borderLeftWidth: 1,
-                              borderColor: colors.line,
-                              backgroundColor:
-                                selected === `event:${event.id}` ? colors.hover : "transparent",
-                              gap: 3,
-                            }}
-                          >
-                            <Text style={s.text}>{t("Step {number}", { number: index + 1 })}</Text>
-                            <Text style={s.small}>{stamp(event.date)}</Text>
-                          </Pressable>
-                        ))}
-                    </View>
-                  );
-                })
-              : task.plan.map((step) => (
-                  <Pressable
-                    key={step.id}
-                    accessibilityRole="button"
-                    aria-selected={selected === `step:${step.id}`}
-                    onPress={() => setSelected(`step:${step.id}`)}
-                    style={{
-                      padding: 12,
-                      borderRadius: 11,
-                      gap: 10,
-                      flexDirection: "row",
-                      backgroundColor:
-                        selected === `step:${step.id}` ? colors.subtle : "transparent",
-                    }}
-                  >
-                    {step.status === "running" ? (
-                      <ActivityIndicator
-                        accessibilityLabel={t("In progress")}
-                        size="small"
-                        color={colors.blueDark}
-                      />
-                    ) : step.status === "succeeded" ? (
-                      <CheckCircle2 size={15} color={colors.success} style={{ marginTop: 3 }} />
-                    ) : (
-                      <Circle size={15} color={colors.muted} style={{ marginTop: 3 }} />
-                    )}
-                    <Text style={[s.text, { flex: 1, fontSize: 13, lineHeight: 20 }]}>
-                      {t(step.title)}
-                    </Text>
-                  </Pressable>
-                ))}
+            {wide ? (
+              events.length ? (
+                timelineNodes
+              ) : (
+                planNodes
+              )
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                aria-selected={
+                  selected === "timeline" ||
+                  selected.startsWith("event:") ||
+                  selected.startsWith("step:")
+                }
+                onPress={() => setSelected("timeline")}
+                style={{
+                  padding: 12,
+                  borderRadius: 11,
+                  backgroundColor:
+                    selected === "timeline" ||
+                    selected.startsWith("event:") ||
+                    selected.startsWith("step:")
+                      ? colors.hover
+                      : "transparent",
+                }}
+              >
+                <Text style={[s.text, { fontSize: 13 }]}>{t("Steps")}</Text>
+              </Pressable>
+            )}
           </ScrollView>
           <ScrollView
             style={{ flex: 1, minHeight: 0, backgroundColor: colors.card }}
             contentContainerStyle={{ padding: wide ? 30 : 22, gap: 20 }}
           >
-            {selected === "plan" ? (
+            {selected === "timeline" ? (
+              <View style={{ gap: 8 }}>
+                <Text style={s.heading}>{t("Steps")}</Text>
+                {events.length ? timelineNodes : planNodes}
+              </View>
+            ) : selected === "plan" ? (
               <View style={{ gap: 20 }}>
                 <Text style={s.heading}>{t("Plan")}</Text>
                 <Text style={s.small}>
