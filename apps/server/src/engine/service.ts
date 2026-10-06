@@ -626,18 +626,22 @@ export class AgentService {
       pushDeliveries,
       admissions,
     ] = await Promise.all([
-      this.db.list<AgentTask>(owner, "tasks"),
+      this.db.list<AgentTask & { historyHiddenAt?: string }>(owner, "tasks"),
       this.db.list<Goal>(owner, "goals"),
       this.db.list<Monitor>(owner, "monitors"),
       this.db.list<Idea>(owner, "ideas"),
       this.memory.recall(owner),
-      this.db.list<AgentArtifact>(owner, "agent-artifacts"),
+      this.db.visibleRecords<AgentArtifact>(owner, "agent-artifacts"),
       this.db
-        .recordPage<AgentNotification>(owner, "notifications", { limit: 100, order: "createdAt" })
+        .recordPage<AgentNotification>(owner, "notifications", {
+          limit: 100,
+          order: "createdAt",
+          visibleOnly: true,
+        })
         .then((page) => page.entries),
       this.db.get<AgentIdentity>(owner, "agent-settings", "identity"),
       this.runtimePause.get(owner),
-      this.db.list<ActionProposal>(owner, "actions"),
+      this.db.visibleRecords<ActionProposal>(owner, "actions"),
       this.db.list<{ status: string }>(owner, "computer-commands"),
       this.db.list<{ status: string }>(owner, "image-generations"),
       this.db.list<{ status: string }>(owner, "mcp-receipts"),
@@ -648,7 +652,7 @@ export class AgentService {
     const profile = await this.profiles.get(owner);
     const removed = new Set(tasks.filter((task) => task.deletedAt).map((task) => task.id));
     return {
-      tasks: tasks.filter((task) => !task.deletedAt),
+      tasks: tasks.filter((task) => !task.deletedAt && !task.historyHiddenAt),
       goals,
       monitors,
       ideas,

@@ -228,7 +228,7 @@ export class Files {
     return { ...file, url: this.auth.sign(owner, `/api/files/${file.id}/content`) };
   }
   async list(owner: string) {
-    return (await this.db.list<Artifact>(owner, "files"))
+    return (await this.db.visibleRecords<Artifact>(owner, "files"))
       .filter((file) => !file.internal)
       .map((file) => this.signed(owner, file));
   }

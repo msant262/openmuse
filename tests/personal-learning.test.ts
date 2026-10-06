@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { messageContentHash } from "../apps/server/src/conversation-inbox.ts";
 import { createStore } from "../apps/server/src/db.ts";
 import { MemoryService } from "../apps/server/src/memory.ts";
+import { sharedModelRouter } from "../apps/server/src/providers/model-router.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
@@ -446,4 +447,64 @@ test("a failed memory correction cannot be reported as a completed no-change rev
     id,
     "retry the same pending review instead of losing its source",
   );
+});
+
+test("an interrupted provider review resumes automatically with its original source and saved memory receipt", async (t) => {
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      i === 0
+        ? {
+            name: "learn_memory",
+            arguments: {
+              text: "User prefers quiet hotels.",
+              category: "preference",
+              evidence: [{ messageId: "quiet-retry", quote: "Prefiro hotéis tranquilos" }],
+            },
+          }
+        : { name: "finish_learning", arguments: { summary: "Saved the preference." } },
+    {
+      dropAfterStart: (i) => i === 1,
+    },
+  );
+  const f = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    memoryLearningEnabled: true,
+  });
+  await source(f, "quiet-retry", "Prefiro hotéis tranquilos.");
+  const id = await f.agent.learning.scheduleDue("owner");
+  assert.ok(id);
+  await f.agent.worker.tick();
+  const pending = await f.agent.getTask("owner", id);
+  assert.equal(pending.status, "waiting_provider");
+  assert.ok(pending.nextRunAt);
+  assert.equal(
+    (pending.state.providerCheckpoint as { failureCode: string }).failureCode,
+    "provider_stream_incomplete",
+  );
+  assert.equal((await f.agent.memory.recall("owner")).length, 1);
+  assert.equal(await f.agent.learning.scheduleDue("owner"), id);
+  assert.equal(await f.agent.learning.settled("owner"), false);
+  await f.db.compareAndSwapTask(
+    "owner",
+    id,
+    { status: "waiting_provider" },
+    { nextRunAt: new Date(0).toISOString() },
+  );
+  assert.ok(f.agent.config.modelProviders);
+  sharedModelRouter(f.agent.config.modelProviders).health.succeeded("openai/fixture");
+  // This is a scheduler wake, not a user retry or an extra persistence command.
+  await f.agent.worker.tick();
+  const completed = await f.agent.getTask("owner", id);
+  assert.equal(completed.status, "succeeded");
+  assert.equal(completed.error, null);
+  assert.equal((await f.agent.memory.recall("owner")).length, 1);
+  assert.equal(
+    (await f.agent.journal.operations("owner", id)).filter(
+      (o) => o.toolName === "learn_memory" && o.status === "succeeded",
+    ).length,
+    1,
+  );
+  assert.ok(fixture.requests.length >= 3);
 });

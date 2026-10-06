@@ -20,7 +20,7 @@ type Status = {
     lastReviewedAt?: string;
     lastError?: string;
     changes?: number;
-    activeTask?: { status: string; error?: string } | null;
+    activeTask?: { status: string; error?: string; nextRunAt?: string | null } | null;
   };
 };
 
@@ -107,6 +107,14 @@ export function ProactivitySettings({ learningOnly = false }: { learningOnly?: b
             {t("Last review: {date}", { date: date(status.learning.lastReviewedAt) })}
           </Text>
         )}
+        {status?.learning.activeTask?.status === "waiting_provider" &&
+          status.learning.activeTask.nextRunAt && (
+            <Text style={s.small}>
+              {t("Provider interrupted the review; automatic retry at {date}", {
+                date: date(status.learning.activeTask.nextRunAt),
+              })}
+            </Text>
+          )}
         <ErrorNotice
           error={error || status?.learning.lastError || status?.learning.activeTask?.error || ""}
         />

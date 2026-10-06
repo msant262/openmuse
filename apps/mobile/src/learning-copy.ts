@@ -10,6 +10,8 @@ export const learningPtBR: Record<string, string> = {
   "Learning disabled": "Aprendizado desativado",
   "Paused with the assistant": "Pausado junto com o assistente",
   "Review in progress": "Revisão em andamento",
+  "Provider interrupted the review; automatic retry at {date}":
+    "O provedor interrompeu a revisão; nova tentativa automática em {date}",
   "Last review: {date}": "Última revisão: {date}",
   "Next review: {date}": "Próxima revisão: {date}",
   "Not yet reviewed": "Ainda não revisado",

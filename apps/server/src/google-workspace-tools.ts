@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
-import { type ActionProposal, emailDraftSchema } from "../../../packages/domain/src/index.ts";
 import type {
   GoogleMailDraft,
   GoogleMailDraftSummary,
 } from "../../../packages/domain/src/google-mail-draft.ts";
+import { type ActionProposal, emailDraftSchema } from "../../../packages/domain/src/index.ts";
 import {
   decodeMimeHeader,
   parseAddressList,
@@ -636,6 +636,7 @@ export class GoogleWorkspaceHarness {
       limit: 20,
       cursor,
       order: "updatedAt",
+      visibleOnly: true,
     });
     const entries: GoogleMailDraftSummary[] = await Promise.all(
       page.entries.map(async ({ id }) => {

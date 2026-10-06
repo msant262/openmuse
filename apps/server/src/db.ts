@@ -508,6 +508,14 @@ export class Store {
     );
     return result.rows.map((row) => row.data as T);
   }
+  /** Presentation archive keeps canonical records available to receipts and reconciliation. */
+  async visibleRecords<T>(owner: string, kind: string): Promise<T[]> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind=$2 AND data->>'historyHiddenAt' IS NULL ORDER BY updated_at DESC,id",
+      [owner, kind],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
   async recordPage<T>(
     owner: string,
     kind: string,
@@ -517,12 +525,14 @@ export class Store {
       field?: string;
       value?: string;
       order?: "createdAt" | "updatedAt";
+      visibleOnly?: boolean;
     } = {},
   ) {
     const limit = Math.min(100, Math.max(1, options.limit ?? 40));
     const timestamp = options.order === "updatedAt" ? "updatedAt" : "createdAt";
     const result = await this.db.query(
       `SELECT data FROM records WHERE owner=$1 AND kind=$2
+       AND (NOT $8::boolean OR data->>'historyHiddenAt' IS NULL)
        AND ($3::text IS NULL OR (NOT $7::boolean AND id>$3) OR ($7::boolean AND (
          data->>'${timestamp}'<(SELECT data->>'${timestamp}' FROM records WHERE owner=$1 AND kind=$2 AND id=$3) OR
          (data->>'${timestamp}'=(SELECT data->>'${timestamp}' FROM records WHERE owner=$1 AND kind=$2 AND id=$3) AND id>$3))))
@@ -536,6 +546,7 @@ export class Store {
         options.field ?? null,
         options.value ?? null,
         !!options.order,
+        options.visibleOnly === true,
       ],
     );
     const entries = result.rows.slice(0, limit).map((row) => row.data as T);
@@ -1211,10 +1222,31 @@ export class Store {
     return saved as unknown as AgentMemory;
   }
   /** Durable sources survive model context trimming; reservations coalesce review jobs. */
+  async learningReviewSources(owner: string, sources: { kind: string; id: string }[]) {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('kind',source.kind,'value',source.data) AS data
+       FROM records source JOIN jsonb_to_recordset($2::jsonb) proof(kind text,id text)
+         ON source.kind=proof.kind AND source.id=proof.id
+       WHERE source.owner=$1 AND source.data->>'learningExcluded' IS DISTINCT FROM 'true'
+       AND ((source.kind='tasks' AND source.data->>'deletedAt' IS NULL
+         AND source.data->>'status'='succeeded' AND source.data->'completion'->>'status'='verified')
+         OR (source.kind='conversation-inbox' AND source.data->>'status' IN ('finished','interrupted')
+           AND NOT EXISTS(SELECT 1 FROM records thread WHERE thread.owner=$1 AND thread.kind='threads'
+             AND thread.id=source.data->>'threadId' AND thread.data->>'deletedAt' IS NOT NULL)))`,
+      [owner, JSON.stringify(sources)],
+    );
+    return result.rows.map(
+      (row) =>
+        row.data as unknown as { kind: string; value: Record<string, unknown> & { id: string } },
+    );
+  }
   async learningCandidates(owner: string, limit = 8) {
     const result = await this.db.query(
       `SELECT jsonb_build_object('kind',source.kind,'value',source.data) AS data FROM records source WHERE source.owner=$1
-       AND ((source.kind='conversation-inbox' AND source.data->>'status' IN ('finished','interrupted'))
+       AND source.data->>'learningExcluded' IS DISTINCT FROM 'true'
+       AND ((source.kind='conversation-inbox' AND source.data->>'status' IN ('finished','interrupted')
+         AND NOT EXISTS(SELECT 1 FROM records thread WHERE thread.owner=$1 AND thread.kind='threads'
+           AND thread.id=source.data->>'threadId' AND thread.data->>'deletedAt' IS NOT NULL))
          OR (source.kind='tasks' AND source.data->>'status'='succeeded'
            AND source.data->>'deletedAt' IS NULL
            AND source.data->'completion'->>'status'='verified'
@@ -1241,8 +1273,11 @@ export class Store {
   }
   async learningConversation(owner: string, threadIds: string[]) {
     const result = await this.db.query(
-      `SELECT data FROM records WHERE owner=$1 AND kind='conversation-inbox'
+      `SELECT data FROM records source WHERE owner=$1 AND kind='conversation-inbox'
       AND data->>'threadId'=ANY($2::text[]) AND data->>'status' IN ('finished','interrupted')
+      AND data->>'learningExcluded' IS DISTINCT FROM 'true'
+      AND NOT EXISTS(SELECT 1 FROM records thread WHERE thread.owner=$1 AND thread.kind='threads'
+        AND thread.id=source.data->>'threadId' AND thread.data->>'deletedAt' IS NOT NULL)
       ORDER BY data->>'createdAt' DESC,id DESC LIMIT 40`,
       [owner, threadIds],
     );

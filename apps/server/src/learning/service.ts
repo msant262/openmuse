@@ -11,6 +11,7 @@ import type { AgentService } from "../engine/service.ts";
 import { tanstackAgent } from "../engine/tanstack-agent.ts";
 import type { TaskContext } from "../engine/worker.ts";
 import { AppError } from "../errors.ts";
+import type { ProviderContinuationCheckpoint } from "../providers/models.ts";
 import { modelSelection, selectionContextModel } from "../providers/preferences.ts";
 import { sourcedMemoryInput as learningMemoryInput, writeSourcedMemory } from "./memory-writer.ts";
 import { learningReviewPrompt } from "./prompts.ts";
@@ -61,7 +62,9 @@ export class PersonalLearning {
     return {
       enabled: this.enabled,
       ...state,
-      activeTask: task ? { id: task.id, status: task.status, error: task.error } : null,
+      activeTask: task
+        ? { id: task.id, status: task.status, error: task.error, nextRunAt: task.nextRunAt }
+        : null,
     };
   }
   async retry(owner: string) {
@@ -82,8 +85,24 @@ export class PersonalLearning {
     if (state.activeTaskId) {
       const task = await this.db.get<AgentTask>(owner, "tasks", state.activeTaskId);
       if (task && !["succeeded", "failed", "cancelled"].includes(task.status)) return task.id;
-      // A failed source remains visibly pending; never silently mark its correction reviewed.
-      if (task?.status === "failed" || task?.status === "cancelled") return task.id;
+      // Removed evidence can be retired without inference. Valid failed corrections
+      // remain pending; a cancelled review is never restarted automatically.
+      if (task?.status === "failed") {
+        const sources = (task.input.learningSources ?? []) as Source[];
+        if (sources.length && !(await this.db.learningReviewSources(owner, sources)).length)
+          await this.db.compareAndSwapTask(
+            owner,
+            task.id,
+            { status: "failed" },
+            {
+              status: "queued",
+              error: null,
+              nextRunAt: null,
+            },
+          );
+        return task.id;
+      }
+      if (task?.status === "cancelled") return task.id;
       await this.db.compareAndSwap(
         owner,
         "learning-state",
@@ -177,6 +196,9 @@ export class PersonalLearning {
     if (await this.db.learningConversationActive(owner)) return defer();
     const watermark = await this.db.learningWatermark(owner);
     let preempted = false;
+    let sourcesChanged = false;
+    let availableKeys: Set<string> | undefined;
+    const sources = task.input.learningSources as Source[];
     const guard = async () => {
       await ctx.guard();
       if (preempted || (await this.db.learningWatermark(owner)) !== watermark)
@@ -185,20 +207,57 @@ export class PersonalLearning {
           409,
           "LEARNING_PREEMPTED",
         );
+      if (availableKeys) {
+        const expectedKeys = availableKeys;
+        const current = await this.db.learningReviewSources(owner, sources);
+        if (
+          current.length !== expectedKeys.size ||
+          current.some((s) => !expectedKeys.has(`${s.kind}:${s.value.id}`))
+        ) {
+          sourcesChanged = true;
+          throw new AppError(
+            "Learning evidence was removed; review the remaining sources",
+            409,
+            "LEARNING_SOURCE_CHANGED",
+          );
+        }
+      }
     };
-    const sources = task.input.learningSources as Source[];
     const messages: InboxMessage[] = [];
     const completed: AgentTask[] = [];
-    for (const s of sources) {
-      if (s.kind === "conversation-inbox") {
-        const m = await this.db.get<InboxMessage>(owner, s.kind, s.id);
-        if (m && ["finished", "interrupted"].includes(m.status)) messages.push(m);
-      } else if (s.kind === "tasks") {
-        const t = await this.db.get<AgentTask>(owner, s.kind, s.id);
-        if (t?.status === "succeeded" && !t.deletedAt && t.completion?.status === "verified")
-          completed.push(t);
-      }
+    const available = await this.db.learningReviewSources(owner, sources);
+    const liveKeys = new Set(available.map((s) => `${s.kind}:${s.value.id}`));
+    availableKeys = liveKeys;
+    const retired = sources.filter((s) => !liveKeys.has(`${s.kind}:${s.id}`));
+    const pendingWrites = new Map<string, string>(
+      Array.isArray(task.state.learningWriteErrors)
+        ? (task.state.learningWriteErrors as [string, string][])
+        : [],
+    );
+    for (const s of retired) if (s.kind === "tasks") pendingWrites.delete(`procedure:${s.id}`);
+    task.state = {
+      ...task.state,
+      learningRetiredSources: retired,
+      learningWriteErrors: [...pendingWrites],
+    };
+    if (!available.length) {
+      // This is a retirement receipt, not a claim that removed evidence was learned.
+      return {
+        status: "succeeded",
+        error: null,
+        result:
+          "Review retired because its source data was removed. No new learning was performed.",
+        state: {
+          ...task.state,
+          learningWriteErrors: [],
+          learningSummary: "Source data removed; nothing to review.",
+        },
+        completion: { status: "verified", checks: [], remaining: [] },
+      };
     }
+    for (const s of available)
+      if (s.kind === "conversation-inbox") messages.push(s.value as unknown as InboxMessage);
+      else if (s.kind === "tasks") completed.push(s.value as unknown as AgentTask);
     // Like Hermes' conversation snapshot, retain later user context during backlog recovery.
     const recent = await this.db.learningConversation(owner, [
       ...new Set(messages.map((m) => m.threadId)),
@@ -211,11 +270,6 @@ export class PersonalLearning {
     const memories = (await this.service.memory.page(owner, { limit: 40, includeInactive: true }))
       .entries;
     const viewedProcedures = new Set<string>();
-    const pendingWrites = new Map<string, string>(
-      Array.isArray(task.state.learningWriteErrors)
-        ? (task.state.learningWriteErrors as [string, string][])
-        : [],
-    );
     let toolQueue: Promise<unknown> = Promise.resolve();
     const written = new Set(
       (await this.service.journal.operations(owner, task.id))
@@ -228,6 +282,7 @@ export class PersonalLearning {
     let changes = written.size,
       finished = false,
       learningSummary = "";
+    let providerFailure: ProviderContinuationCheckpoint | undefined;
     const countChanges = async () => {
       changes = (await this.service.journal.operations(owner, task.id)).filter(
         (o) => o.status === "succeeded" && ["learn_memory", "learn_procedure"].includes(o.toolName),
@@ -364,6 +419,10 @@ export class PersonalLearning {
       tools,
       prompt: learningReviewPrompt,
       workClass: "background",
+      onProviderInterrupted: async (checkpoint) => {
+        providerFailure = checkpoint;
+        task = await ctx.checkpoint({ state: { ...task.state, providerCheckpoint: checkpoint } });
+      },
       shouldContinue: () => !finished,
       trackTool: (execute) => this.service.toolOperations.run(execute),
       executeTool: (_call, execute) => {
@@ -437,10 +496,32 @@ export class PersonalLearning {
       if (pendingWrites.size)
         throw new AppError("Learning ended with failed writes; the source remains pending", 502);
     } catch (error) {
-      if (preempted || (error instanceof AppError && error.code === "LEARNING_PREEMPTED"))
-        return defer();
+      if (
+        preempted ||
+        sourcesChanged ||
+        (error instanceof AppError && error.code === "LEARNING_PREEMPTED")
+      )
+        return { ...defer(), state: { ...task.state, learningWriteErrors: [...pendingWrites] } };
       await ctx.guard();
       const failures = Number(task.state.learningFailures ?? 0) + 1;
+      const retryAt = providerFailure?.retryAt && Date.parse(providerFailure.retryAt);
+      if (retryAt && Number.isFinite(retryAt))
+        return {
+          status: "waiting_provider",
+          nextRunAt: new Date(
+            Math.max(
+              retryAt,
+              this.now() + Math.min(1800000, 60000 * 2 ** Math.min(failures - 1, 5)),
+            ),
+          ).toISOString(),
+          error: error instanceof Error ? error.message : String(error),
+          state: {
+            ...task.state,
+            learningFailures: failures,
+            learningChanges: changes,
+            learningWriteErrors: [...pendingWrites],
+          },
+        };
       if (failures < 3)
         return {
           ...defer(),
@@ -453,6 +534,14 @@ export class PersonalLearning {
             learningWriteErrors: [...pendingWrites],
           },
         };
+      task = await ctx.checkpoint({
+        state: {
+          ...task.state,
+          learningFailures: failures,
+          learningChanges: changes,
+          learningWriteErrors: [...pendingWrites],
+        },
+      });
       throw error;
     } finally {
       if (this.active.get(owner) === interrupt) this.active.delete(owner);
@@ -463,10 +552,17 @@ export class PersonalLearning {
       throw new AppError("Learning review ended without a persistence or no-change receipt", 502);
     return {
       status: "succeeded",
+      error: null,
       result: changes
         ? `Saved ${changes} personal learning changes`
         : "No durable learning in this review",
-      state: { ...task.state, learningChanges: changes, learningSummary, learningWriteErrors: [] },
+      state: {
+        ...task.state,
+        learningChanges: changes,
+        learningSummary,
+        learningWriteErrors: [],
+        providerCheckpoint: null,
+      },
       completion: { status: "verified", checks: [], remaining: [] },
     };
   }

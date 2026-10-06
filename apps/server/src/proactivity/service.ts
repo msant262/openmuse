@@ -84,8 +84,11 @@ export class ProactivityService {
   }
   async list(owner: string, threadId?: string) {
     return (
-      await this.db.listPage<ProactivitySuggestion>(owner, "proactivity-suggestions", 100)
-    ).values.filter((s) => !threadId || s.threadId === threadId);
+      await this.db.recordPage<ProactivitySuggestion>(owner, "proactivity-suggestions", {
+        limit: 100,
+        visibleOnly: true,
+      })
+    ).entries.filter((s) => !threadId || s.threadId === threadId);
   }
   async reconcileMemorySuggestions(owner: string) {
     await this.db.retireInvalidProactivityEvents(owner, new Date(this.now()).toISOString());

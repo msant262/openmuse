@@ -888,7 +888,7 @@ export class LocalThreads extends AgentRunner {
         .min(1)
         .max(100)
         .parse(url.searchParams.get("limit") ?? 20);
-      const all = (await this.db.list<Thread>(owner, "threads"))
+      const all = (await this.db.visibleRecords<Thread>(owner, "threads"))
         .filter((item) => !item.deletedAt)
         .filter((item) => url.searchParams.get("includeArchived") === "true" || !item.archived)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));

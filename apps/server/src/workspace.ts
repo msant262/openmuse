@@ -649,8 +649,8 @@ export class WorkspaceService {
       events: events.sort((a, b) => a.start.localeCompare(b.start)),
       files: await this.files.list(owner),
       browsers: await this.db.list<BrowserSession>(owner, "browsers"),
-      actions: await this.db.list<ActionProposal>(owner, "actions"),
-      activity: await this.db.list<ActivityEntry>(owner, "activity"),
+      actions: await this.db.visibleRecords<ActionProposal>(owner, "actions"),
+      activity: await this.db.visibleRecords<ActivityEntry>(owner, "activity"),
       connections: [
         {
           id: "google",

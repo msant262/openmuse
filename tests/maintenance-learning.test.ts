@@ -78,3 +78,102 @@ test("removed work cannot stop the due proactive cycle", async (t) => {
     true,
   );
 });
+
+test("a source removed after scheduling retires its review without inference and lets real learning continue", async (t) => {
+  const fixture = await modelFixture(t, () => ({
+    name: "finish_learning",
+    arguments: { summary: "Only a greeting." },
+  }));
+  const f = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    memoryLearningEnabled: true,
+  });
+  const source = await f.agent.createTask("owner", { prompt: "A test query" });
+  await f.db.put("owner", "tasks", {
+    ...source,
+    status: "succeeded",
+    completion: { status: "verified", checks: [], remaining: [] },
+  });
+  const id = await f.agent.learning.scheduleDue("owner");
+  assert.ok(id);
+  await f.agent.removeTask("owner", source.id);
+  await f.agent.worker.tick();
+  const review = await f.agent.getTask("owner", id);
+  assert.equal(review.status, "succeeded");
+  assert.deepEqual(review.state.learningRetiredSources, [{ kind: "tasks", id: source.id }]);
+  assert.equal(fixture.requests.length, 0, "removed evidence must not be sent to the model");
+  assert.equal(await f.agent.learning.scheduleDue("owner"), undefined);
+  assert.equal(await f.agent.learning.settled("owner"), true);
+});
+
+test("a historical failed review of removed work recovers without dropping a valid pending correction", async (t) => {
+  const f = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    memoryLearningEnabled: true,
+  });
+  const source = await f.agent.createTask("owner", { prompt: "Developer test" });
+  await f.db.put("owner", "tasks", {
+    ...source,
+    status: "succeeded",
+    completion: { status: "verified", checks: [], remaining: [] },
+  });
+  const id = await f.agent.learning.scheduleDue("owner");
+  assert.ok(id);
+  const review = await f.agent.getTask("owner", id);
+  await f.db.put("owner", "tasks", {
+    ...review,
+    status: "failed",
+    error: "A resposta do chatgpt foi interrompida.",
+    state: {
+      ...review.state,
+      learningFailures: 2,
+      learningWriteErrors: [[`procedure:${source.id}`, "Task not found"]],
+    },
+  });
+  await f.agent.removeTask("owner", source.id);
+  assert.equal(await f.agent.learning.scheduleDue("owner"), id);
+  assert.equal((await f.agent.getTask("owner", id)).status, "queued");
+  await f.agent.worker.tick();
+  const retired = await f.agent.getTask("owner", id);
+  assert.equal(retired.status, "succeeded");
+  assert.deepEqual(retired.state.learningWriteErrors, []);
+  assert.deepEqual(retired.state.learningRetiredSources, [{ kind: "tasks", id: source.id }]);
+  await f.agent.learning.scheduleDue("owner");
+  assert.equal(await f.agent.learning.settled("owner"), true);
+});
+
+test("removing a source during inference defers learning instead of attempting an impossible procedure write", async (t) => {
+  let remove: () => Promise<unknown> = async () => {};
+  const fixture = await modelFixture(t, async () => {
+    await remove();
+    return { name: "finish_learning", arguments: { summary: "No reusable procedure." } };
+  });
+  const f = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    memoryLearningEnabled: true,
+  });
+  const source = await f.agent.createTask("owner", { prompt: "Test source" });
+  await f.db.put("owner", "tasks", {
+    ...source,
+    status: "succeeded",
+    completion: { status: "verified", checks: [], remaining: [] },
+  });
+  const id = await f.agent.learning.scheduleDue("owner");
+  assert.ok(id);
+  remove = () => f.agent.removeTask("owner", source.id);
+  await f.agent.worker.tick();
+  assert.equal((await f.agent.getTask("owner", id)).status, "scheduled");
+  await f.db.compareAndSwapTask(
+    "owner",
+    id,
+    { status: "scheduled" },
+    { nextRunAt: new Date(0).toISOString() },
+  );
+  await f.agent.worker.tick();
+  assert.equal((await f.agent.getTask("owner", id)).status, "succeeded");
+  assert.equal(fixture.requests.length, 1);
+  assert.equal((await f.agent.journal.operations("owner", id)).length, 0);
+});
