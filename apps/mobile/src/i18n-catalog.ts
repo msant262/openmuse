@@ -703,6 +703,8 @@ export const ptBR: Record<string, string> = {
   "Connect Google": "Conectar ao Google",
   "Enable sending & editing": "Ativar envio e edição",
   "Enable Google Workspace access": "Ativar acesso ao Google Workspace",
+  "Connect Gmail, Calendar, Drive, Docs, Sheets and Slides to read, send and manage your work. Each account stays connected independently.":
+    "Conecte Gmail, Agenda, Drive, Docs, Sheets e Slides para consultar, enviar e gerenciar seu trabalho. Todas as contas permanecem conectadas ao mesmo tempo.",
   "Connect Gmail, Calendar, Drive, Docs, Sheets and Slides. Each account stays connected independently. Enable Google Workspace access to send emails, save drafts and create or edit events and documents.":
     "Conecte Gmail, Agenda, Drive, Docs, Sheets e Slides. Cada conta permanece conectada de forma independente. Ative o acesso ao Google Workspace para enviar e-mails, salvar rascunhos e criar ou editar eventos e documentos.",
   "Manage Gmail and drafts": "Gerenciar Gmail e rascunhos",

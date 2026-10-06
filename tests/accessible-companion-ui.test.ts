@@ -304,11 +304,22 @@ test("mobile web installation opens the APK and retains a usable screen after a 
 
 function googleView(configured = true) {
   const calls: string[] = [];
+  const requests: { path: string; body: unknown }[] = [];
   const workspace = {
     mode: "live",
     connections: [] as { id: string; status: string; account?: string; capabilities: string[] }[],
   };
-  let account: { connected: boolean; connectionId?: string; account?: string } = {
+  let account: {
+    connected: boolean;
+    connectionId?: string;
+    account?: string;
+    accounts?: {
+      account: string;
+      connectionId: string;
+      capabilities: string[];
+      isDefault: boolean;
+    }[];
+  } = {
     connected: false,
   };
   let poll: () => Promise<void> = async () => {};
@@ -329,8 +340,9 @@ function googleView(configured = true) {
     },
   };
   const api = {
-    async request(path: string) {
+    async request(path: string, body?: unknown) {
       calls.push(path);
+      requests.push({ path, body });
       if (failed) throw new Error("Network unavailable");
       if (path === "/api/google/status") return { configured };
       if (path === "/api/google/account") return account;
@@ -388,6 +400,7 @@ function googleView(configured = true) {
   return {
     view,
     calls,
+    requests,
     popup,
     refreshed: () => refreshed,
     closed: () => closed,
@@ -402,7 +415,21 @@ function googleView(configured = true) {
       await view.flush();
     },
     account(value: typeof account) {
-      account = value;
+      account = {
+        ...value,
+        accounts:
+          value.accounts ??
+          (value.connected && value.account && value.connectionId
+            ? [
+                {
+                  account: value.account,
+                  connectionId: value.connectionId,
+                  capabilities: [],
+                  isDefault: true,
+                },
+              ]
+            : []),
+      };
     },
     fail(value: boolean) {
       failed = value;
@@ -412,6 +439,53 @@ function googleView(configured = true) {
     },
   };
 }
+
+test("normal Google connection and adding another account both request Workspace permissions", async () => {
+  const fixture = googleView();
+  try {
+    await fixture.select();
+    fixture.view.button("Connect Google").onPress();
+    await fixture.view.flush();
+    assert.deepEqual(
+      JSON.parse(
+        JSON.stringify(fixture.requests.findLast((r) => r.path === "/api/google/connect")?.body),
+      ),
+      {
+        capability: "write",
+        add: true,
+      },
+    );
+    fixture.account({
+      connected: true,
+      account: "personal@example.test",
+      connectionId: "personal",
+      accounts: [
+        {
+          account: "personal@example.test",
+          connectionId: "personal",
+          capabilities: [],
+          isDefault: true,
+        },
+      ],
+    });
+    await fixture.poll();
+    fixture.view.button("Add another Google account").onPress();
+    await fixture.view.flush();
+    assert.deepEqual(
+      JSON.parse(
+        JSON.stringify(fixture.requests.findLast((r) => r.path === "/api/google/connect")?.body),
+      ),
+      {
+        capability: "write",
+        add: true,
+      },
+    );
+    assert.ok(fixture.view.text().includes("personal@example.test"));
+    assert.ok(!fixture.requests.some((r) => r.path === "/api/google/disconnect"));
+  } finally {
+    fixture.view.close();
+  }
+});
 
 test("Google setup is an app concern and never sends an unconfigured person to Composio", async () => {
   const fixture = googleView(false);
@@ -440,7 +514,7 @@ test("Google opens authorization on the tap, refreshes each new receipt and supp
     fixture.account({ connected: true, account: "wife@example.test", connectionId: "first" });
     await fixture.poll();
     assert.equal(fixture.refreshed(), 1);
-    assert.ok(view.button("Switch Google account"));
+    assert.ok(view.button("Add another Google account"));
     await fixture.poll();
     assert.equal(
       fixture.refreshed(),
@@ -451,11 +525,11 @@ test("Google opens authorization on the tap, refreshes each new receipt and supp
     await fixture.poll();
     assert.equal(fixture.refreshed(), 2, "same-account permission upgrades must also update");
     fixture.blockPopup();
-    view.button("Switch Google account").onPress();
+    view.button("Add another Google account").onPress();
     await view.flush();
     assert.match(fixture.popup.location.href, /accounts.google.com/);
     fixture.fail(true);
-    view.button("Switch Google account").onPress();
+    view.button("Add another Google account").onPress();
     await view.flush();
     assert.ok(
       view
@@ -463,7 +537,7 @@ test("Google opens authorization on the tap, refreshes each new receipt and supp
         .some((node) => node.type === "ErrorNotice" && node.props.error === "Network unavailable"),
     );
     fixture.fail(false);
-    view.button("Disconnect Google").onPress();
+    view.button("Disconnect this account").onPress();
     await view.flush();
     assert.ok(view.button("Connect Google"));
   } finally {

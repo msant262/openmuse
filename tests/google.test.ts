@@ -85,6 +85,35 @@ test("Google reads honor Retry-After and budget with jitter without retrying per
   assert.equal(budgetCalls, 1);
 });
 
+test("disabled project APIs are reported as server setup errors, not missing account consent", async () => {
+  for (const detail of [
+    { errors: [{ reason: "accessNotConfigured" }] },
+    {
+      details: [
+        {
+          reason: "SERVICE_DISABLED",
+          domain: "googleapis.com",
+          metadata: { service: "drive.googleapis.com" },
+        },
+      ],
+    },
+  ]) {
+    let calls = 0;
+    const client = new GoogleClient({
+      getAccessToken: async () => "fixture",
+      fetch: async () => {
+        calls++;
+        return Response.json(
+          { error: { message: "The API is disabled in the application's project.", ...detail } },
+          { status: 403 },
+        );
+      },
+    });
+    await assert.rejects(client.listCalendars(), { status: 403, code: "GOOGLE_API_DISABLED" });
+    assert.equal(calls, 1);
+  }
+});
+
 test("Google read retries are abortable and external writes with uncertain outcomes dispatch once", async () => {
   const controller = new AbortController();
   let calls = 0;

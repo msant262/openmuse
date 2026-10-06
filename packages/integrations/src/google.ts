@@ -735,17 +735,27 @@ export class GoogleClient {
       if (!response.ok) {
         let detail = response.statusText || "Request failed";
         let rateLimited = response.status === 429;
+        let apiDisabled = false;
         try {
           const result = z
             .object({
               error: z.object({
                 message: z.string(),
                 errors: z.array(z.object({ reason: z.string().optional() })).optional(),
+                details: z.array(z.object({ reason: z.string().optional() })).optional(),
               }),
             })
             .safeParse(await abortable(readJson(response), signal));
           if (result.success) {
             detail = result.data.error.message.slice(0, 500);
+            apiDisabled =
+              response.status === 403 &&
+              ((result.data.error.errors ?? []).some(
+                ({ reason }) => reason === "accessNotConfigured",
+              ) ||
+                (result.data.error.details ?? []).some(
+                  ({ reason }) => reason === "SERVICE_DISABLED",
+                ));
             rateLimited ||=
               response.status === 403 &&
               (result.data.error.errors ?? []).some(({ reason }) =>
@@ -774,7 +784,7 @@ export class GoogleClient {
         throw new GoogleApiError(
           response.status,
           detail,
-          rateLimited ? "GOOGLE_RATE_LIMITED" : undefined,
+          rateLimited ? "GOOGLE_RATE_LIMITED" : apiDisabled ? "GOOGLE_API_DISABLED" : undefined,
         );
       }
       if (response.status === 204) return { confirmed: true };

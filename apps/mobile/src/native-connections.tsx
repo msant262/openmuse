@@ -291,7 +291,7 @@ export function NativeConnections({ query }: { query: string }) {
           <View style={{ gap: 18 }}>
             <Text style={s.muted}>
               {t(
-                "Connect Gmail, Calendar, Drive, Docs, Sheets and Slides. Each account stays connected independently. Enable Google Workspace access to send emails, save drafts and create or edit events and documents.",
+                "Connect Gmail, Calendar, Drive, Docs, Sheets and Slides to read, send and manage your work. Each account stays connected independently.",
               )}
             </Text>
             <ErrorNotice error={error} />
@@ -312,13 +312,17 @@ export function NativeConnections({ query }: { query: string }) {
                     {t("Use as default")}
                   </Button>
                 )}
-                <Button
-                  small
-                  busy={busy}
-                  onPress={() => void connect("write", account.connectionId)}
-                >
-                  {t("Enable Google Workspace access")}
-                </Button>
+                {!["gmail.modify", "calendar", "drive"].every((scope) =>
+                  account.capabilities.includes(`https://www.googleapis.com/auth/${scope}`),
+                ) && (
+                  <Button
+                    small
+                    busy={busy}
+                    onPress={() => void connect("write", account.connectionId)}
+                  >
+                    {t("Enable Google Workspace access")}
+                  </Button>
+                )}
                 <Button
                   small
                   danger
@@ -330,7 +334,7 @@ export function NativeConnections({ query }: { query: string }) {
               </View>
             ))}
             {nativeConfigured ? (
-              <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
+              <Button busy={busy} primary icon={Link2} onPress={() => void connect("write")}>
                 {t(connected ? "Add another Google account" : "Connect Google")}
               </Button>
             ) : (

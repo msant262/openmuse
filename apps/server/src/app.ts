@@ -1098,7 +1098,7 @@ export async function createApp(
   app.post("/api/google/connect", async (c) => {
     const body = z
       .object({
-        capability: z.enum(["read", "write"]),
+        capability: z.enum(["read", "write"]).default("write"),
         add: z.boolean().optional(),
         connectionId: z.string().min(1).optional(),
       })

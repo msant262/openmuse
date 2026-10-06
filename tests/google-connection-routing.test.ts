@@ -85,6 +85,25 @@ test("configured Google still starts native read and write OAuth with PKCE", asy
   }
 });
 
+test("normal account connection requests the complete Workspace grant by default", async (t) => {
+  const server = await fixture(t, {
+    googleClientId: "synthetic-google-client",
+    googleClientSecret: "synthetic-google-secret",
+    encryptionKey: randomBytes(32).toString("base64"),
+  });
+  const response = await server.app.request("/api/google/connect", {
+    method: "POST",
+    headers: server.headers,
+    body: JSON.stringify({ add: true }),
+  });
+  assert.equal(response.status, 200);
+  const url = new URL((await response.json()).url);
+  const scopes = (url.searchParams.get("scope") ?? "").split(" ");
+  for (const scope of ["gmail.modify", "gmail.send", "calendar", "drive"])
+    assert.ok(scopes.includes(`https://www.googleapis.com/auth/${scope}`), scope);
+  assert.equal(url.searchParams.get("include_granted_scopes"), "true");
+});
+
 test("sample Google remains available and connects local data without OAuth", async (t) => {
   const server = await fixture(t, { mode: "sample" });
   const status = await server.app.request("/api/google/status", { headers: server.headers });
