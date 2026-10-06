@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { type TestContext, test } from "node:test";
 import { TaskWorker } from "../apps/server/src/engine/worker.ts";
+import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import { googleWorkspaceVerificationBinding } from "../apps/server/src/google-workspace-tools.ts";
 import type { ActionProposal } from "../packages/domain/src/index.ts";
 import { GoogleClient } from "../packages/integrations/src/google.ts";
@@ -37,6 +38,66 @@ async function fixture(t: TestContext, policy: "money" | "all" = "money") {
     });
   return server;
 }
+
+test("ordinary write and reply requests require a real draft; negated sending never requires an outbound receipt", () => {
+  for (const prompt of [
+    "Escreve um e-mail para msant262@gmail.com confirmando que o teste funcionou",
+    "Responde ao email do João agradecendo o convite",
+    "Write an email to someone@example.com",
+    "Crie um rascunho no Gmail e não envie ainda",
+    "Draft an email, do not send it",
+  ]) {
+    const criteria = taskCriteria({ kind: "agent", prompt });
+    assert.ok(
+      criteria.some((criterion) => criterion.effect === "email.draft"),
+      prompt,
+    );
+    assert.ok(!criteria.some((criterion) => criterion.effect === "email.send"), prompt);
+    assert.ok(!criteria.some((criterion) => criterion.kind === "artifact"), prompt);
+  }
+  assert.ok(
+    taskCriteria({ kind: "agent", prompt: "Envie um e-mail para msant262@gmail.com" }).some(
+      (criterion) => criterion.effect === "email.send",
+    ),
+  );
+});
+
+test("draft execution applies optional defaults at the runtime boundary, not only in advertised schemas", async (t) => {
+  const server = await fixture(t);
+  let writes = 0;
+  t.mock.method(
+    server.workspace,
+    "google",
+    (
+      _owner: string,
+      connectionId?: string,
+      signal?: AbortSignal,
+      beforeWrite?: () => Promise<void>,
+    ) =>
+      new GoogleClient({
+        signal,
+        beforeWrite,
+        getAccessToken: async () => "fixture",
+        fetch: async (url, init) => {
+          assert.equal(connectionId, "work-id");
+          if (new Request(url, init).method === "GET")
+            return Response.json({ emailAddress: "work@example.com" });
+          writes++;
+          return Response.json({ id: "gmail-draft" });
+        },
+      }),
+  );
+  const result = await server.agent.googleWorkspace.draft("owner", {
+    account: "work-id",
+    draft: { to: ["msant262@gmail.com"], subject: "Ordinary email", body: "Test content" },
+    operationId: "missing-optional-fields",
+  } as any);
+  assert.equal(result.draftCard.status, "saved");
+  assert.deepEqual(result.draftCard.draft.attachmentIds, []);
+  assert.deepEqual(result.draftCard.draft.cc, []);
+  assert.deepEqual(result.draftCard.draft.bcc, []);
+  assert.equal(writes, 1);
+});
 
 test("calendar deletion displays the actual event and dispatches only after an exact human approval", async (t) => {
   const server = await fixture(t);

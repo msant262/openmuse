@@ -131,11 +131,21 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
   const remoteGoogleDocument =
     /\b(?:google\s*(?:drive|docs|sheets|slides)|drive|docs|sheets|slides)\b/i.test(prompt) &&
     !/\b(?:download|baixar|baixe|anexo|attachment|pdf|docx|xlsx|pptx|txt|csv)\b/i.test(prompt);
+  const mailRequest = /\b(?:gmail|e-?mail)\b/i.test(prompt);
+  const explicitSend = [
+    ...prompt.matchAll(/\b(?:send|envie|envia|enviar|mande|manda|mandar)\b/gi),
+  ].some(
+    (match) =>
+      !/(?:n[aã]o|not|don't|do not|without|sem|nunca|never)(?:\s+\S+){0,3}\s*$/i.test(
+        prompt.slice(Math.max(0, (match.index ?? 0) - 60), match.index),
+      ),
+  );
   const nativeGmailDraft =
-    /\bgmail\b/i.test(prompt) &&
-    /\b(?:draft|rascunho)\b/i.test(prompt) &&
-    (/\b(?:create|crie|criar|save|salve|salvar|write|escreva|redija|prepare)\b/i.test(prompt) ||
-      /^\s*draft\b/i.test(prompt));
+    mailRequest &&
+    !explicitSend &&
+    /\b(?:draft|rascunho|write|compose|escreve|escreva|escrever|redija|prepare|responde|responda|responder|reply)\b/i.test(
+      prompt,
+    );
   const format = /\bpdf\b/i.test(prompt)
     ? "application/pdf"
     : /\bdocx\b/i.test(prompt)
@@ -209,8 +219,7 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     });
   const send =
     task.kind === "document" ||
-    (/\b(send|envie|enviar|reply|responda|mande)\b/i.test(prompt) &&
-      /\b(email|e-mail|recipient|destinat[aá]rio)\b/i.test(prompt));
+    (explicitSend && /\b(email|e-mail|recipient|destinat[aá]rio)\b/i.test(prompt));
   if (send)
     criteria.push({
       id: "requested-send",

@@ -215,6 +215,7 @@ export class GoogleWorkspaceHarness {
     return account;
   }
   async search(owner: string, input: z.infer<typeof googleSearchSchema>) {
+    input = googleSearchSchema.parse(input);
     const result = this.catalog.search(input);
     const accounts = await this.workspace.googleAccounts(owner);
     return {
@@ -230,6 +231,7 @@ export class GoogleWorkspaceHarness {
     };
   }
   describe(input: z.infer<typeof googleDescribeSchema>) {
+    input = googleDescribeSchema.parse(input);
     return this.catalog.describe(input.toolId, input.schemaPath);
   }
   private async upload(owner: string, input: ExecuteInput) {
@@ -476,6 +478,7 @@ export class GoogleWorkspaceHarness {
     input: z.infer<typeof gmailDraftSchema>,
     options: Parameters<GoogleWorkspaceHarness["execute"]>[2] = {},
   ) {
+    input = gmailDraftSchema.parse(input);
     const id = bindingHash({ scope: options.taskId ?? "http", operationId: input.operationId });
     const requestHash = bindingHash(input);
     const previous = await this.db.get<{ requestHash: string; input: ExecuteInput }>(
