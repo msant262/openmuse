@@ -4,11 +4,64 @@ import test from "node:test";
 import { EventType } from "@ag-ui/core";
 import { lastValueFrom, toArray } from "rxjs";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
+import { WebReadError } from "../apps/server/src/public-web.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const html =
   '<html><title>Promoções de maquiagem</title><main><h1>Batom</h1><p>Preço atual €12, em estoque na Alemanha.</p><a href="/batom">Ver produto</a></main></html>';
+
+test("a worker's 404 receipt exposes the exact discovered URL and preserves the later real read", async (t) => {
+  const observed = "https://news.example/results-as-published";
+  await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "search_web", arguments: { query: "published results", limit: 1 } },
+        { name: "web_extract", arguments: { urls: ["https://news.example/results-shortened"] } },
+        { name: "web_fetch", arguments: { url: observed } },
+        { name: "finish_task", arguments: { summary: "Candidate A has 52%." } },
+      ][i],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.search, "search", async () => ({
+    query: "published results",
+    status: "ok",
+    truncated: false,
+    observedAt: new Date().toISOString(),
+    sources: [{ url: observed, title: "Published results", snippet: "Read the results" }],
+    provenance: {
+      backend: "http",
+      provider: "bing-rss",
+      searchUrl: "https://www.bing.com/search",
+      fullPagesRead: false,
+    },
+  }));
+  const reads: string[] = [];
+  t.mock.method(f.agent.web, "document", async (url: string) => {
+    reads.push(url);
+    if (url !== observed) throw new WebReadError("HTTP_404", "Source not found");
+    return {
+      url,
+      contentType: "text/html",
+      body: "<title>Published results</title><article>Candidate A has 52%.</article>",
+    };
+  });
+  const task = await f.agent.createTask("owner", { prompt: "Read the published results" });
+  await f.agent.worker.tick();
+  const result = await f.agent.detail("owner", task.id);
+  assert.equal(result.task.status, "succeeded", result.task.error);
+  const failed = result.operations.find((op) => op.toolName === "web_extract");
+  assert.ok(failed);
+  const page = (failed.receipt as { pages: { observedAlternatives: string[]; error: string }[] })
+    .pages[0];
+  assert.deepEqual(page.observedAlternatives, [observed]);
+  assert.ok(page.error);
+  assert.deepEqual(reads, ["https://news.example/results-shortened", observed]);
+  assert.ok(
+    result.task.evidence.some((item) => item.url === observed && item.excerpt.includes("52%")),
+  );
+});
 
 test("worker web_fetch explicitly escalates pending HTTP data to headless and records the source", async (t) => {
   await modelFixture(t, (index) =>

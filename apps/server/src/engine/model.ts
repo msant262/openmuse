@@ -6,7 +6,7 @@ import { desktopInstructions, desktopTools } from "../desktop-tools.ts";
 import { DocumentReview, documentReviewArgs } from "../document-review.ts";
 import { humanizerContext } from "../humanizer-context.ts";
 import { personalInstructions, personalTools } from "../personal-tools.ts";
-import { extractPublicSources } from "../public-extract.ts";
+import { extractPublicSources, observedSourceAlternatives } from "../public-extract.ts";
 import { publicReadDescription, readablePage } from "../public-web.ts";
 import { searchInstructions, searchTools } from "../search-tools.ts";
 import { TaskBrowserHistory } from "./browser-history.ts";
@@ -576,6 +576,21 @@ export async function executeModelTask(
               await pauseBrowser(error.sessionId);
             const message = error instanceof Error ? error.message : "Tool failed";
             await ctx.event("error", `${name} failed`, message);
+            if (
+              name === "web_fetch" &&
+              error instanceof Error &&
+              "code" in error &&
+              error.code === "HTTP_404"
+            ) {
+              const url = (args as { url: string }).url;
+              return {
+                error: message,
+                url,
+                observedAlternatives: await sourceAlternatives(url),
+                instruction:
+                  "The attempted URL returned 404. These are unread URLs returned by your searches on the same origin. Copy an observed URL exactly; do not reconstruct its slug from the title. One failed URL does not establish source unavailability.",
+              };
+            }
             return { error: message };
           }
         }),
@@ -672,13 +687,39 @@ export async function executeModelTask(
       ],
     });
   };
+  const sourceAlternatives = async (url: string) => {
+    const sources = (await service.journal.operations(owner, task.id))
+      .filter(
+        (operation) => operation.toolName === "search_web" && operation.status === "succeeded",
+      )
+      .flatMap((operation) => {
+        const result = operation.receipt as { sources?: { url?: string }[] } | undefined;
+        return (
+          result?.sources?.flatMap((source) =>
+            typeof source.url === "string" ? [source.url] : [],
+          ) ?? []
+        );
+      });
+    return observedSourceAlternatives(url, sources);
+  };
   const extractSources = async (urls: string[]) => {
     const pages = await extractPublicSources(service.web, urls, signal, (url, readSignal) =>
       service.browser.observe(owner, url, undefined, task.id, ctx.trackResourceLeases, readSignal),
     );
     for (const page of pages) await recordPage(page);
     return {
-      pages,
+      pages: await Promise.all(
+        pages.map(async (page) =>
+          page.code === "HTTP_404"
+            ? {
+                ...page,
+                observedAlternatives: await sourceAlternatives(page.url),
+                instruction:
+                  "Unread alternatives were returned by your searches on this origin. Copy their URLs verbatim; do not rewrite slugs based on titles.",
+              }
+            : page,
+        ),
+      ),
       instruction:
         "These are actual source reads, not search snippets. Use the relevant observed facts, retaining source URL and time. A readable page may still lack the requested data.",
     };

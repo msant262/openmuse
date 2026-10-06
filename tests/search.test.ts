@@ -130,10 +130,12 @@ test("chat delegates search promptly and the worker journals HTTP reads without 
   const server = await createApp(fixture.db, config);
   t.after(() => server.agent.stop());
   await fixture.db.put("owner", "threads", { id: "search-chat" });
-  const document = t.mock.method(server.agent.web, "document", async () => ({
-    url: "https://html.duckduckgo.com/html/?q=fixture",
-    contentType: "text/html",
-    body: '<div class="result"><a class="result__a" href="https://example.org/source">Primary fixture</a><div class="result__snippet">Index evidence</div></div>',
+  const document = t.mock.method(server.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: url.includes("bing.com") ? "text/xml" : "text/html",
+    body: url.includes("bing.com")
+      ? "<rss><channel><item><title>Primary fixture</title><link>https://example.org/source</link><description>Index evidence</description></item></channel></rss>"
+      : '<div class="result"><a class="result__a" href="https://example.org/source">Primary fixture</a><div class="result__snippet">Index evidence</div></div>',
   }));
   t.mock.method(server.agent.web, "validate", async (url: string) => ({
     url: new URL(url),

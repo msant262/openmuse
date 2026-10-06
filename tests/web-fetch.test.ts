@@ -439,7 +439,7 @@ test("deep valid HTML stays readable and redirect loops stop after five requests
   assert.equal(requests, 5);
 });
 
-test("HTTP search uses a public RSS fallback when both DuckDuckGo endpoints fail", async () => {
+test("HTTP search reads public RSS without first waiting on unavailable DuckDuckGo endpoints", async () => {
   const { PublicWeb } = await import("../apps/server/src/public-web.ts");
   const { HttpSearchBackend } = await import("../apps/server/src/search.ts");
   const urls: string[] = [];
@@ -464,7 +464,48 @@ test("HTTP search uses a public RSS fallback when both DuckDuckGo endpoints fail
   assert.equal(result.provenance.provider, "bing-rss");
   assert.equal(result.sources[0].url, "https://shop.example/sale");
   assert.equal(result.sources[0].title, "Makeup discounts");
-  assert.equal(urls.length, 3);
+  assert.equal(urls.length, 1);
+});
+
+test("failed source reads recover exact observed URLs without inventing or claiming to read them", async () => {
+  const { observedSourceAlternatives } = await import("../apps/server/src/public-extract.ts");
+  assert.deepEqual(
+    observedSourceAlternatives("https://news.example/results-shortened", [
+      "https://news.example/results-as-published",
+      "https://other.example/results",
+      "https://news.example/results-as-published",
+      "invalid",
+      "https://news.example/results-shortened",
+    ]),
+    ["https://news.example/results-as-published"],
+  );
+});
+
+test("subsequent searches use the available provider while retaining fallback and fresh query results", async () => {
+  const { PublicWeb } = await import("../apps/server/src/public-web.ts");
+  const { HttpSearchBackend } = await import("../apps/server/src/search.ts");
+  const hosts: string[] = [];
+  const web = new PublicWeb({
+    resolve,
+    request: async (target) => {
+      hosts.push(target.url.hostname);
+      return target.url.hostname === "www.bing.com"
+        ? { status: 503, headers: { "content-type": "text/html" }, body: "Unavailable" }
+        : {
+            status: 200,
+            headers: { "content-type": "text/html" },
+            body: `<a class="result__a" href="https://shop.example/${target.url.searchParams.get("q")}">Available source</a>`,
+          };
+    },
+  });
+  const backend = new HttpSearchBackend(web);
+  assert.equal(
+    (await backend.search({ query: "first", limit: 1 }, { owner: "owner" })).status,
+    "ok",
+  );
+  const second = await backend.search({ query: "second", limit: 1 }, { owner: "owner" });
+  assert.equal(second.sources[0].url, "https://shop.example/second");
+  assert.deepEqual(hosts, ["www.bing.com", "lite.duckduckgo.com", "lite.duckduckgo.com"]);
 });
 
 test("search snippets stay attached to their result when another result has no snippet", async () => {

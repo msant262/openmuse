@@ -165,8 +165,8 @@ conclusão, dados públicos, objetivo e revisões também passaram.
 
 A publicação é restrita às fronteiras do executor, configuração e entrypoint do
 harness, sobre a base de produção existente. Web e APK não são substituídos.
-Fonte publicada: `32eb3f0a4391e75d75aad92550c0078d5d1ff3bc`.
-Imagem: `sha256:ffef3e405bb1924ccdc12fbf5c7201444729f96e58ecb114499643225dd9262e`.
+Fonte publicada: `5a6bee053879a28fbd71dd2fd312557c4f0dde47`.
+Imagem: `sha256:b3a0fbadc477b1a599ee5c1d72961a20fcb5efa744a02efc49abaa2f358fc5f5`.
 Luna permanece como executor de produção, com contexto de 1.050.000 tokens.
 DeepSeek, MiMo e MiniMax não foram validados ao vivo nesta sessão.
 
@@ -211,3 +211,28 @@ Passaram 28 testes de comandos e recuperação, 21 de conclusão e entrega,
 14 de pesquisa e dados, e 60 contratos nativos. Compilação e checagem de tipos
 passaram; lint sem erros. A décima terceira reprodução está em observação e
 precisa conferir a cobertura estadual e os pixels, além do tempo real.
+
+
+## Links exatos e latência da descoberta
+
+A décima terceira reprodução parou em 51,5 segundos, sem arquivo, com uma
+pergunta sobre a disponibilidade da eleição. A busca tinha devolvido a URL
+correta do G1. O modelo encurtou seu slug, recebeu 404 e concluiu incorretamente
+que faltavam resultados. A história da conversa original confirma que o pedido
+estava em uma conversa separada, iniciada pela mensagem do infográfico; não havia
+uma resposta nacional anterior nesse thread para herdar.
+
+Recibos de leitura com 404 passam a incluir URLs exatas já observadas nas buscas
+da mesma tarefa e origem. São alternativas ainda não lidas; não viram evidência
+nem provocam navegação automática. O executor pode corrigir a chamada sem
+reconstruir slugs pelo título. O teste do worker confirma o erro, o URL exato
+recuperado e a leitura real posterior, sem atribuir fatos ao link que falhou.
+
+A descoberta HTTP tentava os dois endpoints indisponíveis do DuckDuckGo antes
+do RSS do Bing, somando até 18 segundos em cada pesquisa. O backend disponível
+é tentado primeiro e a última rota que respondeu passa a ter prioridade nas
+pesquisas seguintes. Mantém alternativas se ela falhar, valida cada link e
+faz uma leitura nova para cada query. Passaram os 32 testes de extração e fluxo,
+os dois de busca e os 11 de mídia; tipos, compilação e lint sem erros.
+A décima quarta reprodução começou sem URLs nem percentuais fornecidos pelo
+operador e ainda precisa concluir a conferência da entrega.
