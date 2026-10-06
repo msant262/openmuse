@@ -238,6 +238,22 @@ test("the copied worker discovers Google Workspace, creates and edits a remote D
     ["POST", "POST", "GET"],
   );
   assert.equal((await server.db.list("owner", "google-workspace-receipts")).length, 2);
+  const operations = await server.agent.journal.operations("owner", task.id);
+  assert.deepEqual(
+    operations
+      .filter((op) => op.toolName === "execute_google_workspace_tool")
+      .map((op) => op.effect),
+    [true, true, false],
+    "Docs writes are effects; its provider read is an observation",
+  );
+  assert.ok(
+    operations
+      .filter((op) =>
+        /^(search_google_workspace_tools|describe_google_workspace_tool)$/.test(op.toolName),
+      )
+      .every((op) => !op.effect),
+    "catalog discovery must not be classified as a provider write",
+  );
   assert.doesNotMatch(
     fixture.requests.map((request) => request.body).join("\n"),
     /private-google-access|private-google-refresh/,

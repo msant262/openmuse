@@ -73,6 +73,19 @@ function catalog() {
   return pinnedCatalog;
 }
 
+export function googleWorkspaceReadTool(name: string, args: unknown): boolean {
+  if (["search_google_workspace_tools", "describe_google_workspace_tool"].includes(name))
+    return true;
+  if (name !== "execute_google_workspace_tool" || !args || typeof args !== "object") return false;
+  const toolId = (args as { toolId?: unknown }).toolId;
+  if (typeof toolId !== "string") return false;
+  try {
+    return catalog().effect(toolId) === "read";
+  } catch {
+    return false;
+  }
+}
+
 /** Only a completed provider read can satisfy an observed-result criterion. */
 export function googleWorkspaceReadObservation(args: unknown, receipt: unknown): boolean {
   if (!args || typeof args !== "object" || !receipt || typeof receipt !== "object") return false;
@@ -100,7 +113,7 @@ export function googleWorkspaceReadObservation(args: unknown, receipt: unknown):
     return false;
   try {
     return (
-      catalog().effect(input.toolId) === "read" &&
+      googleWorkspaceReadTool("execute_google_workspace_tool", args) &&
       ((result.data !== null && typeof result.data === "object") ||
         (typeof result.artifact?.id === "string" && Boolean(result.artifact.id)))
     );
