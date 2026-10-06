@@ -46,6 +46,7 @@ import type { Store } from "../db.ts";
 import type { DesktopService } from "../desktop-service.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
+import { GoogleWorkspaceHarness } from "../google-workspace-tools.ts";
 import { ConnectedSearchBackend, type IntegrationService } from "../integrations.ts";
 import { InteractionRequests } from "../interaction-requests.ts";
 import { ProcedureMaintenance } from "../learning/procedure-maintenance.ts";
@@ -94,6 +95,7 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const date = () => new Date().toISOString();
 const terminal = new Set(["succeeded", "failed", "cancelled"]);
 export class AgentService {
+  readonly googleWorkspace: GoogleWorkspaceHarness;
   social?: import("../conversation-social.ts").ConversationSocial;
   private get monitorObservations() {
     return new MonitorObservations(this.db, (owner, title, body, taskId, key) =>
@@ -265,6 +267,7 @@ export class AgentService {
     credentials?: CredentialBroker,
     credentialLogin?: CredentialLoginService,
   ) {
+    this.googleWorkspace = new GoogleWorkspaceHarness(db, workspace, files, actions);
     this.credentials = credentials;
     this.avatars = new AvatarService(db, files, config);
     this.credentialLogin = credentialLogin;

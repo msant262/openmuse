@@ -25,6 +25,7 @@ import type { Config } from "../config.ts";
 import type { InboxMessage } from "../conversation-inbox.ts";
 import { genericCredentialTools } from "../generic-credential-tools.ts";
 import { googleAgentContext } from "../google-agent-context.ts";
+import { googleWorkspaceTools } from "../google-workspace-tools.ts";
 import { createJevAdapter, type JevAdapter } from "../jev/adapter.ts";
 import { JevService } from "../jev/service.ts";
 import { presentChoicesTool } from "../jev/tools.ts";
@@ -483,6 +484,14 @@ export class ConversationAgent extends AbstractAgent {
         directReads.has(tool.name) ? [tool] : delegateTools([tool]),
       );
     const tools = [
+      ...googleWorkspaceTools(this.service.googleWorkspace, this.owner, {
+        signal: browserAbort.signal,
+        before: () => this.service.runtimePause.assertResumed(this.owner).then(() => {}),
+      }).flatMap<ToolDefinition>((tool) =>
+        ["execute_google_workspace_tool", "save_gmail_draft"].includes(tool.name)
+          ? delegateTools([tool])
+          : [tool],
+      ),
       ...composioTools(this.service.composio, this.owner, `chat:${input.threadId}`, {
         signal: browserAbort.signal,
         stopped: () => credentialPaused,

@@ -28,6 +28,7 @@ import {
   parseAddressList,
   unfoldHeaderValue,
 } from "./google-parser.ts";
+import type { PreparedGoogleRequest } from "./google-workspace-catalog.ts";
 
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const CALENDAR = "https://www.googleapis.com/calendar/v3";
@@ -661,8 +662,14 @@ export class GoogleClient {
     method = "GET",
     body?: unknown,
     conditionalHeaders: Record<string, string> = {},
+    transport?: {
+      rawBody?: Uint8Array;
+      contentType?: string;
+      download?: boolean;
+      readOnly?: boolean;
+    },
   ): Promise<unknown> {
-    const write = method !== "GET";
+    const write = method !== "GET" && !transport?.readOnly;
     const now = this.options.retry?.now ?? Date.now;
     const budgetMs = Math.min(60_000, Math.max(1, this.options.retry?.budgetMs ?? 10_000));
     if (!write && this.readDeadline === undefined) this.readDeadline = now() + budgetMs;
@@ -692,10 +699,18 @@ export class GoogleClient {
             headers: {
               Authorization: `Bearer ${token}`,
               Accept: "application/json",
-              ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+              ...(transport?.contentType
+                ? { "Content-Type": transport.contentType }
+                : body === undefined
+                  ? {}
+                  : { "Content-Type": "application/json" }),
               ...conditionalHeaders,
             },
-            body: body === undefined ? undefined : JSON.stringify(body),
+            body: transport?.rawBody
+              ? Buffer.from(transport.rawBody)
+              : body === undefined
+                ? undefined
+                : JSON.stringify(body),
             signal,
             redirect: "error",
           }),
@@ -762,8 +777,30 @@ export class GoogleClient {
           rateLimited ? "GOOGLE_RATE_LIMITED" : undefined,
         );
       }
-      if (method === "DELETE" && response.status === 204) return undefined;
+      if (response.status === 204) return { confirmed: true };
       try {
+        if (transport?.download) {
+          const reader = response.body?.getReader();
+          if (!reader) throw new Error("Google returned an empty download");
+          const chunks: Uint8Array[] = [];
+          let size = 0;
+          try {
+            while (true) {
+              const item = await abortable(reader.read(), signal);
+              if (item.done) break;
+              size += item.value.byteLength;
+              if (size > 16 * 1024 * 1024) throw new Error("Google download exceeds 16 MiB");
+              chunks.push(item.value);
+            }
+          } finally {
+            await reader.cancel().catch(() => {});
+          }
+          return {
+            bytes: Buffer.concat(chunks),
+            mimeType:
+              response.headers.get("Content-Type")?.split(";")[0] ?? "application/octet-stream",
+          };
+        }
         return await abortable(readJson(response), signal);
       } catch {
         if (write) throw new OutcomeUnknownError();
@@ -772,6 +809,38 @@ export class GoogleClient {
       }
     }
     throw new Error("Google read retry budget exhausted");
+  }
+
+  /** Only the pinned Workspace catalog builds this request; tokens remain inside this client. */
+  async workspaceRequest(request: PreparedGoogleRequest): Promise<unknown> {
+    const url = new URL(request.url);
+    if (
+      !new Set([
+        "www.googleapis.com",
+        "gmail.googleapis.com",
+        "docs.googleapis.com",
+        "sheets.googleapis.com",
+        "slides.googleapis.com",
+      ]).has(url.hostname) ||
+      url.protocol !== "https:" ||
+      url.port ||
+      url.username ||
+      url.password
+    )
+      throw new Error("Invalid Google API destination");
+    const result = await this.request(request.url, request.method, request.body, {}, request);
+    if (
+      !request.readOnly &&
+      request.receiptField &&
+      (!result ||
+        typeof result !== "object" ||
+        typeof (result as Record<string, unknown>)[request.receiptField] !== "string" ||
+        !(result as Record<string, unknown>)[request.receiptField])
+    )
+      throw new OutcomeUnknownError(
+        "Google returned no resource identifier; check the action before repeating it.",
+      );
+    return result;
   }
 
   private async backoff(
@@ -909,10 +978,10 @@ export class GoogleClient {
     return new Uint8Array(bytes);
   }
 
-  async sendEmail(
+  async prepareEmailMessage(
     input: EmailDraft,
     attachments: MailAttachment[],
-  ): Promise<{ id: string; threadId?: string }> {
+  ): Promise<{ raw: string; threadId?: string }> {
     const draft = emailDraftSchema.parse(input);
     singleLine(draft.subject, "subject");
     for (const address of [...draft.to, ...draft.cc, ...draft.bcc])
@@ -999,10 +1068,21 @@ export class GoogleClient {
         "",
       ].join("\r\n");
     }
-    const result = await this.request(`${GMAIL}/messages/send`, "POST", {
+    return {
       raw: Buffer.from(mime).toString("base64url"),
       ...(threadId ? { threadId } : {}),
-    });
+    };
+  }
+
+  async sendEmail(
+    input: EmailDraft,
+    attachments: MailAttachment[],
+  ): Promise<{ id: string; threadId?: string }> {
+    const result = await this.request(
+      `${GMAIL}/messages/send`,
+      "POST",
+      await this.prepareEmailMessage(input, attachments),
+    );
     const parsed = z
       .object({ id: z.string().min(1), threadId: z.string().optional() })
       .safeParse(result);

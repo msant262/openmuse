@@ -14,6 +14,7 @@ import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { DocumentReview } from "../document-review.ts";
 import type { Files } from "../files.ts";
+import { googleWorkspaceVerificationBinding } from "../google-workspace-tools.ts";
 import { readablePage } from "../public-web.ts";
 import type { JournalOperation, TaskJournal } from "./task-journal.ts";
 import { officeContent } from "./task-office.ts";
@@ -124,6 +125,9 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
   const prompt = task.prompt,
     criteria: CompletionCriterion[] = [],
     content = requiredContent(prompt);
+  const remoteGoogleDocument =
+    /\b(?:google\s*(?:drive|docs|sheets|slides)|drive|docs|sheets|slides)\b/i.test(prompt) &&
+    !/\b(?:download|baixar|baixe|anexo|attachment|pdf|docx|xlsx|pptx|txt|csv)\b/i.test(prompt);
   const format = /\bpdf\b/i.test(prompt)
     ? "application/pdf"
     : /\bdocx\b/i.test(prompt)
@@ -160,7 +164,10 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       format: "image/*",
       requiredItems: [],
     });
-  else if (/\b(pdf|docx|xlsx|pptx|txt|csv|arquivo|file|document|documento)\b/i.test(prompt))
+  else if (
+    !remoteGoogleDocument &&
+    /\b(pdf|docx|xlsx|pptx|txt|csv|arquivo|file|document|documento)\b/i.test(prompt)
+  )
     criteria.push({
       id: "requested-file",
       kind: "file",
@@ -239,7 +246,7 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     });
   if (
     !criteria.length &&
-    /\b(book|reserve|purchase|pay|pague|create|crie|schedule|agende|transfer|payment|pagamento)\b/i.test(
+    /\b(book|reserve|purchase|pay|pague|create|crie|schedule|agende|transfer|payment|pagamento|save|salve|salvar|edit|edite|update|atualize)\b/i.test(
       prompt,
     )
   )
@@ -340,7 +347,7 @@ function actionMatches(
 ) {
   if (
     action.kind === "external.action" &&
-    ["mcp.call", "composio.execute"].includes(String(action.data.tool)) &&
+    ["mcp.call", "composio.execute", "google.workspace"].includes(String(action.data.tool)) &&
     !binding
   )
     return false;
@@ -430,6 +437,8 @@ export class TaskVerification {
     private readonly journal: TaskJournal,
   ) {}
   private async mcpBinding(owner: string, action: ActionProposal): Promise<McpBinding | undefined> {
+    if (action.kind === "external.action" && action.data.tool === "google.workspace")
+      return googleWorkspaceVerificationBinding(this.db, owner, action);
     if (action.kind === "external.action" && action.data.tool === "composio.execute") {
       const saved = await this.db.get<{
         hash: string;

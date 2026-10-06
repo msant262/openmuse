@@ -2,9 +2,13 @@ import {
   ArrowDownToLine,
   CalendarDays,
   ChevronRight,
+  FileText,
+  FolderOpen,
   Globe2,
   Link2,
   Mail,
+  Presentation,
+  Sheet as SheetIcon,
 } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { AppState, Linking, Platform, Pressable, Text, View } from "react-native";
@@ -174,6 +178,26 @@ export function NativeConnections({ query }: { query: string }) {
       connected,
       group: "google",
     },
+    ...[
+      { id: "googledrive", name: "Google Drive", icon: FolderOpen },
+      { id: "googledocs", name: "Google Docs", icon: FileText },
+      { id: "googlesheets", name: "Google Sheets", icon: SheetIcon },
+      { id: "googleslides", name: "Google Slides", icon: Presentation },
+    ].map((row) => ({
+      ...row,
+      color: colors.blueDark,
+      group: "google",
+      connected:
+        connected &&
+        (w.mode === "sample" ||
+          w.connections.some(
+            (connection) =>
+              (connection.id === "google" || connection.id.startsWith("google:")) &&
+              connection.capabilities.some((capability) =>
+                /auth\/(drive|documents|spreadsheets|presentations)(\.|$)/.test(capability),
+              ),
+          )),
+    })),
     {
       id: "browser",
       name: "Agent computer",
@@ -267,7 +291,7 @@ export function NativeConnections({ query }: { query: string }) {
           <View style={{ gap: 18 }}>
             <Text style={s.muted}>
               {t(
-                "Bring Gmail and Google Calendar into your conversations. Choose read access, then enable sending and editing when you need it.",
+                "Connect Gmail, Calendar, Drive, Docs, Sheets and Slides. Each account stays connected independently. Enable Google Workspace access to send emails, save drafts and create or edit events and documents.",
               )}
             </Text>
             <ErrorNotice error={error} />
@@ -293,7 +317,7 @@ export function NativeConnections({ query }: { query: string }) {
                   busy={busy}
                   onPress={() => void connect("write", account.connectionId)}
                 >
-                  {t("Enable sending & editing")}
+                  {t("Enable Google Workspace access")}
                 </Button>
                 <Button
                   small
@@ -339,10 +363,14 @@ function capabilityLabel(value: string) {
   const names: Record<string, string> = {
     "gmail.readonly": "Read Gmail",
     "gmail.send": "Send Gmail",
+    "gmail.modify": "Manage Gmail and drafts",
     "calendar.events.readonly": "Read calendar events",
     "calendar.calendarlist.readonly": "Read calendar list",
     "calendar.events": "Manage calendar events",
     "calendar.readonly": "Read calendars",
+    calendar: "Manage calendars",
+    "drive.readonly": "Read Drive and documents",
+    drive: "Manage Drive, Docs, Sheets and Slides",
   };
   return names[scope] || scope;
 }

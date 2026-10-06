@@ -1,0 +1,38 @@
+{
+  "gmail": {
+    "version": "v1",
+    "revision": "20260928",
+    "url": "https://gmail.googleapis.com/$discovery/rest?version=v1",
+    "sha256": "0df3408eb6095a8952db037fa28f95773b6e8c72dcf17ad01a688f69105185d4"
+  },
+  "calendar": {
+    "version": "v3",
+    "revision": "20261002",
+    "url": "https://calendar-json.googleapis.com/$discovery/rest?version=v3",
+    "sha256": "91c1d3df5045eb750722d26922b1ba994617fe72eb7b2339e4b625768d72d25a"
+  },
+  "docs": {
+    "version": "v1",
+    "revision": "20260930",
+    "url": "https://docs.googleapis.com/$discovery/rest?version=v1",
+    "sha256": "b03956ef74b5f5da17bd4704273c093ff5b3276aa00e4c2c4efb9f6e46cf5074"
+  },
+  "drive": {
+    "version": "v3",
+    "revision": "20261001",
+    "url": "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
+    "sha256": "81433f6125f28bf231005c8a99e8012fa10acb0ee0a6ad6b13abefbe3d31f5e7"
+  },
+  "sheets": {
+    "version": "v4",
+    "revision": "20260930",
+    "url": "https://sheets.googleapis.com/$discovery/rest?version=v4",
+    "sha256": "70ab512457ceca2b24090fc312acc3d612170669c5f2010972b166aa254d4278"
+  },
+  "slides": {
+    "version": "v1",
+    "revision": "20260928",
+    "url": "https://slides.googleapis.com/$discovery/rest?version=v1",
+    "sha256": "f84f488198df80b83c5227d5baf485b002af73c3932f8ab640038675a7856c86"
+  }
+}

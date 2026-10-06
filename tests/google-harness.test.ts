@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import test from "node:test";
+import { GoogleClient } from "../packages/integrations/src/google.ts";
 import { encryptSecret } from "../packages/integrations/src/vault.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
@@ -108,6 +109,137 @@ test("a worker discovers native Gmail and reads the requested account without a 
   assert.deepEqual(reads, ["in:inbox", "work-thread"]);
   assert.doesNotMatch(
     fixture.requests.map((r) => r.body).join("\n"),
+    /private-google-access|private-google-refresh/,
+  );
+});
+
+test("the copied worker discovers Google Workspace, creates and edits a remote Doc and verifies its native receipts", async (t) => {
+  const steps = [
+    { name: "tool_search", arguments: { query: "Google Workspace Docs create edit" } },
+    { name: "tool_describe", arguments: { id: "okami_search_google_workspace_tools" } },
+    {
+      name: "search_google_workspace_tools",
+      arguments: { query: "docs.documents.create", service: "docs" },
+    },
+    { name: "tool_describe", arguments: { id: "okami_describe_google_workspace_tool" } },
+    { name: "describe_google_workspace_tool", arguments: { toolId: "docs.documents.create" } },
+    { name: "tool_describe", arguments: { id: "okami_execute_google_workspace_tool" } },
+    {
+      name: "execute_google_workspace_tool",
+      arguments: {
+        toolId: "docs.documents.create",
+        body: { title: "Teste Docs" },
+        operationId: "create-doc",
+      },
+    },
+    {
+      name: "execute_google_workspace_tool",
+      arguments: {
+        toolId: "docs.documents.batchUpdate",
+        parameters: { documentId: "doc-google-id" },
+        body: {
+          requests: [{ insertText: { location: { index: 1 }, text: "Integração funcionando." } }],
+        },
+        operationId: "edit-doc",
+      },
+    },
+    {
+      name: "execute_google_workspace_tool",
+      arguments: {
+        toolId: "docs.documents.get",
+        parameters: { documentId: "doc-google-id" },
+        operationId: "read-doc",
+      },
+    },
+    {
+      name: "finish_task",
+      arguments: {
+        outcome: "completed",
+        summary:
+          "Documento criado no Google Docs, editado e lido: https://docs.google.com/document/d/doc-google-id/edit",
+      },
+    },
+  ];
+  const fixture = await modelFixture(t, (index) => steps[index] ?? steps.at(-1)!);
+  const encryptionKey = randomBytes(32).toString("base64");
+  const server = await taskRuntime(t, {
+    mode: "live",
+    agentBackend: "model",
+    model: "openai/fixture",
+    encryptionKey,
+    approvalPolicy: "money",
+  });
+  await server.db.put("owner", "credentials", {
+    id: "google",
+    connectionId: "docs-google",
+    secret: encryptSecret(
+      JSON.stringify({
+        connectionId: "docs-google",
+        account: "work@example.com",
+        accessToken: "private-google-access",
+        refreshToken: "private-google-refresh",
+        expiresAt: Date.now() + 3600000,
+        scopes: ["https://www.googleapis.com/auth/drive"],
+      }),
+      encryptionKey,
+    ),
+  });
+  const requests: Request[] = [];
+  t.mock.method(
+    server.workspace,
+    "google",
+    (
+      _owner: string,
+      connectionId?: string,
+      signal?: AbortSignal,
+      beforeWrite?: () => Promise<void>,
+    ) => {
+      assert.equal(connectionId, "docs-google");
+      return new GoogleClient({
+        signal,
+        beforeWrite,
+        getAccessToken: async () => "fixture",
+        fetch: async (url, init) => {
+          requests.push(new Request(url, init));
+          return Response.json({
+            documentId: "doc-google-id",
+            title: "Teste Docs",
+            body: {
+              content: [
+                { paragraph: { elements: [{ textRun: { content: "Integração funcionando." } }] } },
+              ],
+            },
+          });
+        },
+      });
+    },
+  );
+  const task = await server.agent.createTask("owner", {
+    prompt:
+      "Crie um documento no Google Docs com o texto Integração funcionando. Edite e confira o documento salvo.",
+  });
+  await server.agent.worker.tick();
+  const finished = await server.agent.getTask("owner", task.id);
+  assert.equal(
+    finished.status,
+    "succeeded",
+    JSON.stringify({
+      error: finished.error,
+      completion: finished.completion,
+      tools: (await server.agent.journal.operations("owner", task.id)).map((o) => ({
+        tool: o.toolName,
+        status: o.status,
+        receipt: o.receipt,
+      })),
+    }),
+  );
+  assert.deepEqual(
+    requests.map((request) => request.method),
+    ["POST", "POST", "GET"],
+  );
+  assert.equal((await server.db.list("owner", "google-workspace-receipts")).length, 2);
+  assert.doesNotMatch(
+    fixture.requests.map((request) => request.body).join("\n"),
     /private-google-access|private-google-refresh/,
   );
 });

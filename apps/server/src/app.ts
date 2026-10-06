@@ -8,6 +8,7 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import { emailDraftSchema, proposalSchema } from "../../../packages/domain/src/index.ts";
 import { GoogleApiError } from "../../../packages/integrations/src/google.ts";
+import { GoogleWorkspaceInputError } from "../../../packages/integrations/src/google-workspace-catalog.ts";
 import { ActionLog } from "./action-log.ts";
 import { approvalPolicy } from "./action-policy.ts";
 import { ActionService } from "./actions.ts";
@@ -70,6 +71,12 @@ import { fileVersionRoutes } from "./file-versions.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
 import { googleCallbackPage } from "./google-callback-page.ts";
+import {
+  gmailDraftSchema,
+  googleDescribeSchema,
+  googleExecuteSchema,
+  googleSearchSchema,
+} from "./google-workspace-tools.ts";
 import { IntegrationService, integrationRoutes } from "./integrations.ts";
 import { backgroundFailure } from "./log.ts";
 import { McpAuth } from "./mcp-auth.ts";
@@ -511,7 +518,11 @@ export async function createApp(
         { error: error.message, code: error.code },
         error.status === 401 ? 401 : error.status === 403 ? 403 : error.status === 429 ? 429 : 502,
       );
-    if (error.name === "PdfError" || error.name === "RecurringEventError")
+    if (
+      error instanceof GoogleWorkspaceInputError ||
+      error.name === "PdfError" ||
+      error.name === "RecurringEventError"
+    )
       return c.json({ error: error.message }, 422);
     if (error instanceof SyntaxError) return c.json({ error: "Invalid request data" }, 400);
     // Provider and document errors are useful, but raw stack traces and token-bearing responses are not.
@@ -1022,6 +1033,41 @@ export async function createApp(
   });
   app.get("/api/google/status", (c) =>
     c.json({ configured: config.mode === "sample" || google.configured() }),
+  );
+  app.post("/api/google/tools/search", async (c) =>
+    c.json(
+      await agent.googleWorkspace.search(
+        c.get("owner"),
+        googleSearchSchema.parse(await c.req.json()),
+      ),
+    ),
+  );
+  app.post("/api/google/tools/describe", async (c) =>
+    c.json(agent.googleWorkspace.describe(googleDescribeSchema.parse(await c.req.json()))),
+  );
+  app.post("/api/google/tools/execute", async (c) =>
+    c.json(
+      await agent.googleWorkspace.execute(
+        c.get("owner"),
+        googleExecuteSchema.parse(await c.req.json()),
+        {
+          signal: c.req.raw.signal,
+          before: () => agent.runtimePause.assertResumed(c.get("owner")).then(() => {}),
+        },
+      ),
+    ),
+  );
+  app.post("/api/google/drafts/save", async (c) =>
+    c.json(
+      await agent.googleWorkspace.draft(
+        c.get("owner"),
+        gmailDraftSchema.parse(await c.req.json()),
+        {
+          signal: c.req.raw.signal,
+          before: () => agent.runtimePause.assertResumed(c.get("owner")).then(() => {}),
+        },
+      ),
+    ),
   );
   app.get("/api/google/account", async (c) => {
     c.header("Cache-Control", "no-store");
