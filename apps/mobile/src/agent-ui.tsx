@@ -75,7 +75,8 @@ import { useInlinePreview } from "./preview";
 import { ProfileSettings } from "./profile-settings";
 import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
-import { type TaskOperationDetail, taskOperationValue } from "./task-operation-details";
+import type { TaskOperationDetail } from "./task-operation-details";
+import { TaskOperationViewer } from "./task-operation-viewer";
 import { ClearFinishedTasksButton, TaskRemoveButton } from "./task-removal";
 import { TaskBudgetControls, TaskCompletion, TaskTimingControls } from "./task-runtime-controls";
 import { TaskStatusBadge } from "./task-status";
@@ -874,22 +875,19 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                 {selectedStep && <Text style={s.small}>{t(statusLabel(selectedStep.status))}</Text>}
                 {selectedOperation ? (
                   <View style={{ gap: 14 }}>
-                    <Text style={s.small}>
-                      {selectedOperation.toolName} · {t(statusLabel(selectedOperation.status))}
-                    </Text>
+                    <Text style={s.small}>{t(statusLabel(selectedOperation.status))}</Text>
                     {!!selectedEvent?.detail && (
                       <Text selectable style={s.text}>
                         {selectedEvent.detail}
                       </Text>
                     )}
-                    <Text style={s.heading}>{t("Saved input")}</Text>
-                    <Text selectable style={s.text}>
-                      {taskOperationValue(selectedOperation.args) || t("No saved input.")}
-                    </Text>
-                    <Text style={s.heading}>{t("Saved output")}</Text>
-                    <Text selectable style={s.text}>
-                      {taskOperationValue(selectedOperation.receipt) || t("No saved output yet.")}
-                    </Text>
+                    <TaskOperationViewer
+                      key={selectedOperation.id}
+                      operation={selectedOperation}
+                      files={detail?.files ?? []}
+                      artifacts={detail?.artifacts ?? []}
+                      criteria={task.criteria}
+                    />
                   </View>
                 ) : (
                   <Text selectable style={s.text}>
