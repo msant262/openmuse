@@ -1069,6 +1069,14 @@ export async function createApp(
       ),
     ),
   );
+  app.get("/api/google/mail-drafts", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const cursor = z.string().min(1).max(200).optional().parse(c.req.query("cursor"));
+    return c.json(await agent.googleWorkspace.mailDrafts(c.get("owner"), cursor));
+  });
+  app.post("/api/google/mail-drafts/:id/collapse", async (c) =>
+    c.json(await agent.googleWorkspace.collapseMailDraft(c.get("owner"), c.req.param("id"))),
+  );
   app.get("/api/google/mail-drafts/:id", async (c) => {
     c.header("Cache-Control", "no-store");
     return c.json(await agent.googleWorkspace.mailDraft(c.get("owner"), c.req.param("id")));

@@ -8,6 +8,26 @@ import { useI18n } from "./i18n";
 import { Button, Card, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
+export function googleActionStatus(status: string) {
+  return (
+    (
+      {
+        saved: "Saved in Gmail",
+        sent: "Sent",
+        deleted: "Deleted",
+        succeeded: "Completed",
+        denied: "Declined",
+        cancelled: "Cancelled",
+        expired: "Expired",
+        failed: "Failed",
+        awaiting_review: "Waiting for your approval",
+        executing: "In progress",
+        outcome_unknown: "Result uncertain",
+      } as Record<string, string>
+    )[status] ?? status.replace(/_/g, " ")
+  );
+}
+
 /** A click approves this exact server proposal; mounting a card never executes it. */
 export function GoogleApprovalCard({
   action,
@@ -16,15 +36,22 @@ export function GoogleApprovalCard({
   action: ActionProposal;
   onAnswered?: () => Promise<void>;
 }) {
-  const { api, refresh } = useWorkspace();
+  const { api, refresh, open, workspace } = useWorkspace();
   const { t } = useI18n();
   const { s, colors } = useUI();
   const [answer, setAnswer] = useState<ActionProposal>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [technical, setTechnical] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const lock = useRef(false);
-  const current = answer?.id === action.id ? answer : action;
+  const observed = workspace?.actions.find((item) => item.id === action.id);
+  const current =
+    observed && observed.status !== "awaiting_review"
+      ? observed
+      : answer?.id === action.id
+        ? answer
+        : action;
   const deletion =
     current.data.requiresHumanApproval === true || current.kind === "calendar.delete";
   const pending = current.status === "awaiting_review";
@@ -39,6 +66,8 @@ export function GoogleApprovalCard({
         decision,
       });
       setAnswer(result);
+      setExpanded(false);
+      setTechnical(false);
       await onAnswered?.();
       await refresh();
     } catch (e) {
@@ -48,12 +77,28 @@ export function GoogleApprovalCard({
       setBusy(false);
     }
   }
+  if (!pending && !expanded && !error)
+    return (
+      <Card style={{ gap: 6, paddingVertical: 12 }}>
+        <Text numberOfLines={1} style={s.heading}>
+          {String(current.data.subject ?? current.data.resourceName ?? current.title)}
+        </Text>
+        <Text style={s.small}>{t(googleActionStatus(current.status))}</Text>
+        <ErrorNotice error={current.error} />
+        <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+          <Button small onPress={() => setExpanded(true)}>
+            {t("View details")}
+          </Button>
+          <Button small onPress={() => open({ type: "actions" })}>
+            {t("Actions")}
+          </Button>
+        </View>
+      </Card>
+    );
   return (
     <Card style={{ gap: 14, borderWidth: 1, borderColor: deletion ? colors.danger : colors.line }}>
       <Text style={s.heading}>{t(deletion ? "Confirm deletion" : "Review action")}</Text>
-      <Text style={s.small}>
-        {t(pending ? "Waiting for your approval" : current.status.replace(/_/g, " "))}
-      </Text>
+      <Text style={s.small}>{t(googleActionStatus(current.status))}</Text>
       {connectorReviewLines(current.data).map((line) => (
         <View key={line.label} style={{ gap: 4 }}>
           <Text style={s.small}>{t(line.label)}</Text>
@@ -104,13 +149,30 @@ export function GoogleApprovalCard({
         </Text>
       )}
       <ErrorNotice error={error || current.error} />
+      {!pending && (
+        <Button
+          small
+          onPress={() => {
+            setExpanded(false);
+            setTechnical(false);
+          }}
+        >
+          {t("Collapse")}
+        </Button>
+      )}
     </Card>
   );
 }
 
 /** The sender, contents and remote draft ID come from an owner-scoped server record. */
-export function GoogleMailDraftCard({ id }: { id: string }) {
-  const { api, refresh } = useWorkspace();
+export function GoogleMailDraftCard({
+  id,
+  initialExpanded = false,
+}: {
+  id: string;
+  initialExpanded?: boolean;
+}) {
+  const { api, refresh, open, workspace } = useWorkspace();
   const { t } = useI18n();
   const { s } = useUI();
   const [record, setRecord] = useState<{
@@ -122,12 +184,19 @@ export function GoogleMailDraftCard({ id }: { id: string }) {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [presentation, setPresentation] = useState<{ key: string; expanded: boolean }>();
   const lock = useRef(false);
   const intent = useRef<
     { owner: string; id: string; operation: string; operationId: string } | undefined
   >(undefined);
   const draft =
     record?.owner === api.identityKey && record.draft.id === id ? record.draft : undefined;
+  const key = `${api.identityKey}:${id}`;
+  const expanded =
+    presentation?.key === key ? presentation.expanded : initialExpanded || !draft?.collapsed;
+  const observedStatus = draft?.actionId
+    ? workspace?.actions.find((item) => item.id === draft.actionId)?.status
+    : undefined;
   async function load() {
     const owner = api.identityKey;
     const next = await api.request<GoogleMailDraft>(`/api/google/mail-drafts/${id}`);
@@ -156,7 +225,7 @@ export function GoogleMailDraftCard({ id }: { id: string }) {
     return () => {
       active = false;
     };
-  }, [api, api.identityKey, id, attempt]);
+  }, [api, api.identityKey, id, attempt, observedStatus]);
   async function operate(operation: "save" | "send" | "delete") {
     if (lock.current || !draft) return;
     lock.current = true;
@@ -174,6 +243,7 @@ export function GoogleMailDraftCard({ id }: { id: string }) {
         operationId: intent.current.operationId,
       });
       await load();
+      setPresentation({ key, expanded: false });
       intent.current = undefined;
       await refresh();
     } catch (e) {
@@ -202,6 +272,8 @@ export function GoogleMailDraftCard({ id }: { id: string }) {
         if (!copied) throw new Error(t("Clipboard unavailable"));
       }
       setCopied(true);
+      setPresentation({ key, expanded: false });
+      await api.request(`/api/google/mail-drafts/${id}/collapse`, {});
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -210,77 +282,101 @@ export function GoogleMailDraftCard({ id }: { id: string }) {
     !!draft && ["awaiting_review", "executing", "outcome_unknown"].includes(draft.status);
   const terminal = !!draft && ["sent", "deleted"].includes(draft.status);
   return (
-    <Card style={{ gap: 14 }}>
-      <Text style={s.heading}>{t("Gmail draft")}</Text>
+    <Card style={{ gap: expanded ? 14 : 6, paddingVertical: expanded ? 20 : 12 }}>
+      <Text numberOfLines={expanded ? undefined : 1} style={s.heading}>
+        {expanded || !draft ? t("Gmail draft") : draft.draft.subject}
+      </Text>
       {!draft && !error && <Text style={s.small}>{t("Loading draft…")}</Text>}
       {draft && (
         <>
           <Text style={s.small}>
-            {t(
-              draft.status === "saved"
-                ? "Saved in Gmail"
-                : draft.status === "sent"
-                  ? "Sent"
-                  : draft.status === "deleted"
-                    ? "Deleted"
-                    : draft.status.replace(/_/g, " "),
-            )}
+            {t(copied && draft.status === "saved" ? "Copied" : googleActionStatus(draft.status))}
           </Text>
-          <View style={{ gap: 8 }}>
-            {[
-              ["From", draft.account],
-              ["To", draft.draft.to.join(", ")],
-              ["Cc", draft.draft.cc.join(", ")],
-              ["Bcc", draft.draft.bcc.join(", ")],
-              ["Subject", draft.draft.subject],
-            ]
-              .filter(([, value]) => !!value)
-              .map(([label, value]) => (
-                <View key={label} style={{ gap: 3 }}>
-                  <Text style={s.small}>{t(label)}</Text>
-                  <Text selectable style={s.text}>
-                    {value}
-                  </Text>
-                </View>
-              ))}
-          </View>
-          <View style={s.divider} />
-          <Text selectable style={[s.text, { lineHeight: 24 }]}>
-            {draft.draft.body}
-          </Text>
-          {!!draft.draft.attachmentIds.length && (
-            <Text style={s.small}>
-              {t("Attachments")}: {draft.draft.attachmentIds.length}
-            </Text>
+          {!expanded && (
+            <>
+              <Text numberOfLines={1} style={s.small}>
+                {draft.account} → {draft.draft.to.join(", ")}
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                <Button small onPress={() => setPresentation({ key, expanded: true })}>
+                  {t("View draft")}
+                </Button>
+                <Button small onPress={() => open({ type: "actions" })}>
+                  {t("Actions")}
+                </Button>
+              </View>
+            </>
           )}
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            <Button
-              small
-              primary
-              disabled={busy || pending || terminal}
-              onPress={() => void operate("send")}
-            >
-              {t("Send")}
-            </Button>
-            <Button small disabled={busy} onPress={() => void copy()}>
-              {t(copied ? "Copied" : "Copy")}
-            </Button>
-            <Button
-              small
-              disabled={busy || pending || terminal}
-              onPress={() => void operate("save")}
-            >
-              {t("Save draft")}
-            </Button>
-            <Button
-              small
-              danger
-              disabled={busy || pending || terminal}
-              onPress={() => void operate("delete")}
-            >
-              {t("Delete")}
-            </Button>
-          </View>
+          {expanded && (
+            <>
+              <View style={{ gap: 8 }}>
+                {[
+                  ["From", draft.account],
+                  ["To", draft.draft.to.join(", ")],
+                  ["Cc", draft.draft.cc.join(", ")],
+                  ["Bcc", draft.draft.bcc.join(", ")],
+                  ["Subject", draft.draft.subject],
+                ]
+                  .filter(([, value]) => !!value)
+                  .map(([label, value]) => (
+                    <View key={label} style={{ gap: 3 }}>
+                      <Text style={s.small}>{t(label)}</Text>
+                      <Text selectable style={s.text}>
+                        {value}
+                      </Text>
+                    </View>
+                  ))}
+              </View>
+              <View style={s.divider} />
+              <Text selectable style={[s.text, { lineHeight: 24 }]}>
+                {draft.draft.body}
+              </Text>
+              {!!draft.draft.attachmentIds.length && (
+                <Text style={s.small}>
+                  {t("Attachments")}: {draft.draft.attachmentIds.length}
+                </Text>
+              )}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                <Button
+                  small
+                  primary
+                  disabled={busy || pending || terminal}
+                  onPress={() => void operate("send")}
+                >
+                  {t("Send")}
+                </Button>
+                <Button small disabled={busy} onPress={() => void copy()}>
+                  {t(copied ? "Copied" : "Copy")}
+                </Button>
+                <Button
+                  small
+                  disabled={busy || pending || terminal}
+                  onPress={() => void operate("save")}
+                >
+                  {t("Save draft")}
+                </Button>
+                <Button
+                  small
+                  danger
+                  disabled={busy || pending || terminal}
+                  onPress={() => void operate("delete")}
+                >
+                  {t("Delete")}
+                </Button>
+              </View>
+              <Button
+                small
+                onPress={() => {
+                  setPresentation({ key, expanded: false });
+                  void api
+                    .request(`/api/google/mail-drafts/${id}/collapse`, {})
+                    .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+                }}
+              >
+                {t("Collapse")}
+              </Button>
+            </>
+          )}
           {draft.status === "outcome_unknown" && (
             <Text style={s.small}>
               {t("The result is uncertain. Check Gmail before attempting another change.")}

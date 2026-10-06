@@ -20,4 +20,11 @@ export interface GoogleMailDraft {
     | "cancelled"
     | "expired";
   updatedAt: string;
+  /** A handled card stays compact when the conversation is reopened. */
+  collapsed?: boolean;
 }
+
+export type GoogleMailDraftSummary = Omit<GoogleMailDraft, "draft"> & {
+  subject: string;
+  to: string[];
+};

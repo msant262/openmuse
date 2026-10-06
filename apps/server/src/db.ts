@@ -516,17 +516,18 @@ export class Store {
       limit?: number;
       field?: string;
       value?: string;
-      order?: "createdAt";
+      order?: "createdAt" | "updatedAt";
     } = {},
   ) {
     const limit = Math.min(100, Math.max(1, options.limit ?? 40));
+    const timestamp = options.order === "updatedAt" ? "updatedAt" : "createdAt";
     const result = await this.db.query(
       `SELECT data FROM records WHERE owner=$1 AND kind=$2
        AND ($3::text IS NULL OR (NOT $7::boolean AND id>$3) OR ($7::boolean AND (
-         data->>'createdAt'<(SELECT data->>'createdAt' FROM records WHERE owner=$1 AND kind=$2 AND id=$3) OR
-         (data->>'createdAt'=(SELECT data->>'createdAt' FROM records WHERE owner=$1 AND kind=$2 AND id=$3) AND id>$3))))
+         data->>'${timestamp}'<(SELECT data->>'${timestamp}' FROM records WHERE owner=$1 AND kind=$2 AND id=$3) OR
+         (data->>'${timestamp}'=(SELECT data->>'${timestamp}' FROM records WHERE owner=$1 AND kind=$2 AND id=$3) AND id>$3))))
        AND ($5::text IS NULL OR data->>$5=$6)
-       ORDER BY CASE WHEN $7::boolean THEN data->>'createdAt' ELSE NULL END DESC,id LIMIT $4`,
+       ORDER BY CASE WHEN $7::boolean THEN data->>'${timestamp}' ELSE NULL END DESC,id LIMIT $4`,
       [
         owner,
         kind,
@@ -534,7 +535,7 @@ export class Store {
         limit + 1,
         options.field ?? null,
         options.value ?? null,
-        options.order === "createdAt",
+        !!options.order,
       ],
     );
     const entries = result.rows.slice(0, limit).map((row) => row.data as T);

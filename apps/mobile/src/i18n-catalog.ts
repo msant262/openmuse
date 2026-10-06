@@ -8,6 +8,17 @@ import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  Actions: "Ações",
+  Collapse: "Recolher",
+  Declined: "Recusado",
+  "View draft": "Ver rascunho",
+  "View details": "Ver detalhes",
+  "Result uncertain": "Resultado incerto",
+  "Loading actions…": "Carregando ações…",
+  "No actions here yet.": "Nenhuma ação por aqui ainda.",
+  "Show more actions": "Ver mais ações",
+  "Drafts, approvals and completed actions. Open an item to see its details.":
+    "Rascunhos, aprovações e ações concluídas. Abra um item para ver os detalhes.",
   "Clipboard unavailable": "Área de transferência indisponível",
   "Change labels": "Alterar marcadores",
   "Clear contents": "Limpar conteúdo",

@@ -18,6 +18,8 @@ export type Detail =
   | { type: "file"; file: Artifact }
   | { type: "browser"; browser: BrowserSession }
   | { type: "review"; action: ActionProposal }
+  | { type: "gmailDraft"; id: string }
+  | { type: "actions" }
   | { type: "task"; taskId: string }
   | { type: "delegate" }
   | { type: "notifications" }

@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import { type ActionProposal, emailDraftSchema } from "../../../packages/domain/src/index.ts";
-import type { GoogleMailDraft } from "../../../packages/domain/src/google-mail-draft.ts";
+import type {
+  GoogleMailDraft,
+  GoogleMailDraftSummary,
+} from "../../../packages/domain/src/google-mail-draft.ts";
 import {
   decodeMimeHeader,
   parseAddressList,
@@ -264,10 +267,19 @@ export class GoogleWorkspaceHarness {
           id?: string;
           raw?: string;
           message?: { raw?: string };
+          start?: { dateTime?: string; date?: string; timeZone?: string };
+          end?: { dateTime?: string; date?: string; timeZone?: string };
         }
       | undefined;
     const title = body?.title ?? body?.name ?? body?.summary;
     if (typeof title === "string") display.resourceName = title;
+    if (input.toolId.startsWith("calendar.events.")) {
+      if (body?.start?.dateTime || body?.start?.date)
+        display.starts = body.start.dateTime ?? body.start.date ?? "";
+      if (body?.end?.dateTime || body?.end?.date)
+        display.ends = body.end.dateTime ?? body.end.date ?? "";
+      if (body?.start?.timeZone) display.timeZone = body.start.timeZone;
+    }
     const raw = body?.raw ?? body?.message?.raw;
     if (raw && input.toolId.startsWith("gmail.")) {
       const headers = Buffer.from(raw, "base64url")
@@ -415,10 +427,18 @@ export class GoogleWorkspaceHarness {
               eventId: input.parameters.eventId,
             },
           }),
-        )) as { summary?: string; etag?: string; start?: { dateTime?: string; date?: string } };
+        )) as {
+        summary?: string;
+        etag?: string;
+        start?: { dateTime?: string; date?: string; timeZone?: string };
+        end?: { dateTime?: string; date?: string };
+      };
       display.resourceName = event.summary ?? String(input.parameters.eventId);
       if (event.start?.dateTime || event.start?.date)
         display.starts = event.start.dateTime ?? event.start.date ?? "";
+      if (event.start?.timeZone) display.timeZone = event.start.timeZone;
+      if (event.end?.dateTime || event.end?.date)
+        display.ends = event.end.dateTime ?? event.end.date ?? "";
       targetVersion = event.etag;
     }
     if (
@@ -595,7 +615,32 @@ export class GoogleWorkspaceHarness {
         await this.db.put(owner, "google-mail-drafts", saved);
     }
     const { raw: _raw, lastOperationId: _lastOperationId, ...publicDraft } = saved;
-    return publicDraft;
+    return {
+      ...publicDraft,
+      collapsed:
+        !["awaiting_review", "executing", "outcome_unknown"].includes(saved.status) &&
+        (saved.collapsed === true || !!_lastOperationId || saved.status !== "saved"),
+    };
+  }
+  async mailDrafts(owner: string, cursor?: string) {
+    const page = await this.db.recordPage<GoogleMailDraft>(owner, "google-mail-drafts", {
+      limit: 20,
+      cursor,
+      order: "updatedAt",
+    });
+    const entries: GoogleMailDraftSummary[] = await Promise.all(
+      page.entries.map(async ({ id }) => {
+        const { draft, ...summary } = await this.mailDraft(owner, id);
+        return { ...summary, subject: draft.subject, to: draft.to };
+      }),
+    );
+    return { entries, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+  }
+  async collapseMailDraft(owner: string, id: string) {
+    const saved = await this.db.get<GoogleMailDraft>(owner, "google-mail-drafts", id);
+    if (!saved) throw new AppError("Gmail draft not found", 404);
+    await this.db.put(owner, "google-mail-drafts", { ...saved, collapsed: true });
+    return this.mailDraft(owner, id);
   }
   async operateMailDraft(
     owner: string,
@@ -643,7 +688,7 @@ export class GoogleWorkspaceHarness {
         lastOperationId: operationId,
       });
       return {
-        draft: result.draftCard,
+        draft: await this.mailDraft(owner, id),
         actionId: result.actionId,
         approvalRequired: "approvalRequired" in result && result.approvalRequired,
       };

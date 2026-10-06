@@ -49,6 +49,7 @@ import { CompanionHeading } from "./companion-heading";
 import { cachedConversationTitle, isEmptyConversationCache } from "./conversation-label";
 import { desktopStyles as createDesktopStyles } from "./desktop-shell-styles";
 import { useI18n } from "./i18n";
+import { GoogleActionsScreen } from "./google-actions-screen";
 import { MemorySettings } from "./memory-settings";
 import { messageStorage } from "./message-storage";
 import { isProductTask, productNotifications, taskPreview } from "./muse-surfaces-model";
@@ -779,6 +780,7 @@ export function AgentInspector({
   const tabs = [
     { id: "activity", label: t("Activity"), caption: t("Activity"), icon: List },
     { id: "approvals", label: t("Approvals"), caption: t("Reviews"), icon: ShieldCheck },
+    { id: "actions", label: t("Actions"), caption: t("Actions"), icon: SquareCheck },
     { id: "upcoming", label: t("Upcoming"), caption: t("Schedule"), icon: Clock3 },
     { id: "identity", label: t("Personality & memory"), caption: t("Agent"), icon: Fingerprint },
   ];
@@ -925,6 +927,8 @@ export function AgentInspector({
             onCustomize={onSettings}
             onOpen={(type) => showDetail({ type })}
           />
+        ) : tab === "actions" ? (
+          <GoogleActionsScreen onOpen={compact ? onClose : undefined} />
         ) : tab === "approvals" ? (
           <>
             <Text style={[d.inspectorSection, compact && { fontSize: 18 }]}>{t("Approvals")}</Text>
@@ -958,7 +962,7 @@ export function AgentInspector({
                   >
                     {action.status === "awaiting_review"
                       ? t("Waiting for approval")
-                      : action.result || action.status.replaceAll("_", " ")}
+                      : t(action.status.replaceAll("_", " "))}
                   </Text>
                 </View>
                 <ChevronRight size={14} color={colors.muted} />

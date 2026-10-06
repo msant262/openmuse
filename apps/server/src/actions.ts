@@ -162,10 +162,7 @@ export class ActionService {
         return existing;
       }
     }
-    const connection = await this.options.connection?.(
-      owner,
-      parsed.kind === "email.send" ? parsed.account : undefined,
-    );
+    const connection = await this.options.connection?.(owner, parsed.account);
     if (this.options.connection && !connection)
       throw new AppError("Connect Google before preparing an action", 409);
     const prepared = await this.options.prepare?.(owner, parsed, connection?.id);

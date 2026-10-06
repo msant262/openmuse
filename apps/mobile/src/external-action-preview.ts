@@ -50,7 +50,9 @@ export function connectorReviewLines(
       ["Calendar", data.calendarId],
       ["Event reference", data.eventId],
       ["File reference", data.fileId],
-      ["Starts", data.starts],
+      ["Starts", calendarReviewTime(data.starts, data.timeZone)],
+      ["Ends", calendarReviewTime(data.ends, data.timeZone)],
+      ["Time zone", data.timeZone],
       ["Document reference", data.documentId],
       ["Spreadsheet reference", data.spreadsheetId],
       ["Presentation reference", data.presentationId],
@@ -69,4 +71,17 @@ export function connectorReviewLines(
   ].flatMap(([label, value]) =>
     typeof value === "string" ? [{ label: String(label), value }] : [],
   );
+}
+
+/** The offset is an instant, not a wall clock. Always name the zone being displayed. */
+export function calendarReviewTime(value: unknown, zone: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  if (!Number.isFinite(Date.parse(value))) return value;
+  const timeZone = typeof zone === "string" && zone ? zone : "UTC";
+  try {
+    return `${new Intl.DateTimeFormat("pt-BR", { timeZone, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(value))} · ${timeZone}`;
+  } catch {
+    return value;
+  }
 }

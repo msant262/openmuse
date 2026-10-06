@@ -140,14 +140,20 @@ export const proposalSchema = z.discriminatedUnion("kind", [
     data: emailDraftSchema,
     account: z.string().min(1).max(320).optional(),
   }),
-  z.object({ kind: z.literal("calendar.create"), data: eventDraftSchema }),
+  z.object({
+    kind: z.literal("calendar.create"),
+    data: eventDraftSchema,
+    account: z.string().min(1).max(320).optional(),
+  }),
   z.object({
     kind: z.literal("calendar.update"),
     data: eventDraftSchema.and(z.object({ eventId: z.string().min(1) })),
+    account: z.string().min(1).max(320).optional(),
   }),
   z.object({
     kind: z.literal("calendar.delete"),
     data: z.object({ calendarId: z.string(), eventId: z.string().min(1), title: z.string() }),
+    account: z.string().min(1).max(320).optional(),
   }),
 ]);
 export type EmailDraft = z.infer<typeof emailDraftSchema>;

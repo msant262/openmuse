@@ -51,7 +51,8 @@ import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
 import { connectorReviewLines } from "./external-action-preview";
 import { FileContentPreview, hasFileContentPreview } from "./file-content-preview";
-import { GoogleApprovalCard } from "./google-workspace-cards";
+import { GoogleApprovalCard, GoogleMailDraftCard } from "./google-workspace-cards";
+import { GoogleActionsScreen } from "./google-actions-screen";
 import { useI18n } from "./i18n";
 import PdfReader from "./PdfReader";
 import {
@@ -84,6 +85,18 @@ export function Details({ detail, embedded = false }: { detail: Detail; embedded
     return <EventEditor event={detail.event} draft={detail.draft} neighbors={detail.neighbors} />;
   if (detail.type === "file") return <FileDetail file={detail.file} embedded={embedded} />;
   if (detail.type === "review") return <ReviewDetail initial={detail.action} />;
+  if (detail.type === "gmailDraft")
+    return (
+      <Sheet title={t("Gmail draft")} onClose={close}>
+        <GoogleMailDraftCard key={detail.id} id={detail.id} initialExpanded />
+      </Sheet>
+    );
+  if (detail.type === "actions")
+    return (
+      <Sheet title={t("Actions")} onClose={close}>
+        <GoogleActionsScreen />
+      </Sheet>
+    );
   if (detail.type === "browser")
     return <BrowserDetail initial={detail.browser} embedded={embedded} />;
   return (

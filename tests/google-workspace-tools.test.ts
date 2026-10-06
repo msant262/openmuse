@@ -284,6 +284,10 @@ test("draft cards preserve sender and content, save and send once, and never aut
   assert.equal(created.draftCard.gmailDraftId, "remote-draft");
   assert.deepEqual(created.draftCard.draft, input.draft);
   assert.doesNotMatch(JSON.stringify(created.draftCard), /raw|fixture/);
+  assert.equal(created.draftCard.collapsed, false);
+  await server.agent.googleWorkspace.collapseMailDraft("owner", linked);
+  assert.equal((await server.agent.googleWorkspace.mailDraft("owner", linked)).collapsed, true);
+  assert.equal(writes.length, 1);
   await assert.rejects(
     server.agent.googleWorkspace.mailDraft("foreign-owner", linked),
     /not found/,
@@ -295,6 +299,7 @@ test("draft cards preserve sender and content, save and send once, and never aut
     "save-click",
   );
   assert.equal(saved.draft.status, "saved");
+  assert.equal(saved.draft.collapsed, true);
   await server.agent.googleWorkspace.operateMailDraft("owner", linked, "save", "save-click");
   assert.equal(writes.length, 2);
   const pending = await server.agent.googleWorkspace.operateMailDraft(
@@ -304,6 +309,7 @@ test("draft cards preserve sender and content, save and send once, and never aut
     "delete-click",
   );
   assert.equal(pending.draft.status, "awaiting_review");
+  assert.equal(pending.draft.collapsed, false);
   assert.equal(writes.length, 2);
   const action = await server.db.get<ActionProposal>("owner", "actions", pending.actionId);
   assert.ok(action);
@@ -311,6 +317,7 @@ test("draft cards preserve sender and content, save and send once, and never aut
   assert.equal(action.data.to, "msant262@gmail.com");
   await server.actions.decide("owner", action.id, action.hash, "deny");
   assert.equal((await server.agent.googleWorkspace.mailDraft("owner", linked)).status, "denied");
+  assert.equal((await server.agent.googleWorkspace.mailDraft("owner", linked)).collapsed, true);
   assert.equal(writes.length, 2);
   const sent = await server.agent.googleWorkspace.operateMailDraft(
     "owner",
@@ -700,4 +707,106 @@ test("calendar free/busy queries retry as reads and do not require write permiss
   assert.equal(result.status, "succeeded");
   assert.equal(calls, 2);
   assert.deepEqual(await server.db.list("owner", "actions"), []);
+});
+
+test("mail draft history returns recent bounded owner-scoped summaries without MIME or message bodies", async (t) => {
+  const server = await fixture(t);
+  for (let i = 0; i < 23; i++)
+    await server.db.put("owner", "google-mail-drafts", {
+      id: `history-${String(i).padStart(2, "0")}`,
+      account: "work@example.com",
+      connectionId: "work-id",
+      draft: {
+        to: ["msant262@gmail.com"],
+        cc: [],
+        bcc: [],
+        attachmentIds: [],
+        subject: `Subject ${i}`,
+        body: "private-body-canary",
+      },
+      raw: "private-mime-canary",
+      lastOperationId: "private-operation-canary",
+      operation: "save",
+      status: "saved",
+      updatedAt: new Date(Date.UTC(2026, 9, 6, 0, i)).toISOString(),
+    });
+  const first = await server.agent.googleWorkspace.mailDrafts("owner");
+  assert.equal(first.entries.length, 20);
+  assert.equal(first.entries[0].subject, "Subject 22");
+  assert.ok(first.nextCursor);
+  assert.doesNotMatch(
+    JSON.stringify(first),
+    /private-body-canary|private-mime-canary|private-operation-canary/,
+  );
+  const second = await server.agent.googleWorkspace.mailDrafts("owner", first.nextCursor);
+  assert.equal(second.entries.length, 3);
+  assert.equal(second.nextCursor, undefined);
+  assert.equal(new Set([...first.entries, ...second.entries].map((entry) => entry.id)).size, 23);
+  assert.deepEqual(await server.agent.googleWorkspace.mailDrafts("foreign-owner"), { entries: [] });
+  await assert.rejects(
+    server.agent.googleWorkspace.collapseMailDraft("foreign-owner", "history-00"),
+    /not found/,
+  );
+});
+
+test("a natural calendar request is verified from its real receipt across equivalent timezone offsets", async (t) => {
+  const server = await fixture(t);
+  const body = {
+    summary: "Okami teste de agenda pelo chat",
+    start: { dateTime: "2026-10-07T15:00:00Z", timeZone: "UTC" },
+    end: { dateTime: "2026-10-07T15:15:00Z", timeZone: "UTC" },
+    reminders: { useDefault: false, overrides: [{ method: "popup", minutes: 5 }] },
+  };
+  t.mock.method(
+    server.workspace,
+    "google",
+    (
+      _owner: string,
+      connectionId?: string,
+      signal?: AbortSignal,
+      beforeWrite?: () => Promise<void>,
+    ) => {
+      assert.equal(connectionId, "work-id");
+      return new GoogleClient({
+        signal,
+        beforeWrite,
+        getAccessToken: async () => "fixture",
+        fetch: async (url, init) => {
+          const request = new Request(url, init);
+          assert.equal(request.method, "POST");
+          assert.deepEqual(await request.json(), body);
+          return Response.json({
+            id: "provider-event",
+            ...body,
+            start: { dateTime: "2026-10-07T17:00:00+02:00", timeZone: "UTC" },
+            end: { dateTime: "2026-10-07T17:15:00+02:00", timeZone: "UTC" },
+          });
+        },
+      });
+    },
+  );
+  const task = await server.agent.createTask("owner", {
+    prompt:
+      "Na conta work@example.com, coloca na minha agenda amanhã às 15h UTC um evento de 15 minutos chamado Okami teste de agenda pelo chat, com lembrete cinco minutos antes.",
+  });
+  assert.equal(task.criteria?.[0].effect, "calendar.create");
+  const worker = new TaskWorker(server.db, async (owner, running) => {
+    const result = await server.agent.googleWorkspace.execute(
+      owner,
+      {
+        toolId: "calendar.events.insert",
+        account: "work@example.com",
+        parameters: { calendarId: "primary" },
+        body,
+        operationId: "natural-calendar",
+      },
+      { taskId: running.id },
+    );
+    assert.equal(result.status, "succeeded");
+    assert.equal((await server.agent.verification.assess(owner, running.id, 0)).status, "verified");
+    return { status: "succeeded", result: "Evento às 15h UTC confirmado" };
+  });
+  await worker.tick();
+  await worker.stop();
+  assert.equal((await server.agent.detail("owner", task.id)).task.status, "succeeded");
 });

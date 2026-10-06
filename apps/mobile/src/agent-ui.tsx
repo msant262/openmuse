@@ -58,6 +58,7 @@ import { AssistantResponse } from "./assistant-response";
 import { t as translate, useI18n } from "./i18n";
 import { InteractionCard } from "./interaction-card";
 import { GoogleMailDraftCard } from "./google-workspace-cards";
+import { GoogleActionsScreen } from "./google-actions-screen";
 import { MemorySettings } from "./memory-settings";
 import { SubjectIllustration } from "./muse-surfaces-illustration";
 import {
@@ -212,7 +213,7 @@ export function AgentActivityScreen() {
   const { data, mutate } = useAgentWorkspace();
   const { ask, open } = useWorkspace();
   const { t, locale } = useI18n();
-  const [panel, setPanel] = useState<"tasks" | "reviews" | "automations">();
+  const [panel, setPanel] = useState<"tasks" | "reviews" | "actions" | "automations">();
   const [filter, setFilter] = useState("All");
   const [pauseBusy, setPauseBusy] = useState(false);
   const [pauseError, setPauseError] = useState("");
@@ -348,14 +349,16 @@ export function AgentActivityScreen() {
       {panel && (
         <Sheet title={t("Activity")} onClose={() => setPanel(undefined)}>
           <View style={[s.row, { gap: 7, marginBottom: 18, flexWrap: "wrap" }]}>
-            {(["tasks", "reviews", "automations"] as const).map((item) => (
+            {(["tasks", "reviews", "actions", "automations"] as const).map((item) => (
               <Button key={item} small primary={panel === item} onPress={() => setPanel(item)}>
                 {t(
                   item === "tasks"
                     ? "Tasks"
                     : item === "reviews"
                       ? "Reviews & receipts"
-                      : "Automations",
+                      : item === "actions"
+                        ? "Actions"
+                        : "Automations",
                 )}
               </Button>
             ))}
@@ -383,6 +386,7 @@ export function AgentActivityScreen() {
             </>
           )}
           {panel === "reviews" && <ActivityScreen />}
+          {panel === "actions" && <GoogleActionsScreen />}
           {panel === "automations" && (
             <View style={{ gap: 20 }}>
               <ErrorNotice error={pauseError} />

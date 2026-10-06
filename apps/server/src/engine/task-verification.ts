@@ -229,8 +229,14 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       requiredItems: [...new Set(prompt.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi) ?? [])],
     });
   if (
-    /\b(calendar|calend[aá]rio|event|evento)\b/i.test(prompt) &&
-    /\b(create|crie|schedule|agende|put|prepare|adicione|book|reserve)\b/i.test(prompt)
+    (/\b(calendar|calend[aá]rio|event|evento)\b/i.test(prompt) ||
+      (/\bagenda\b/i.test(prompt) &&
+        /\b(coloca|coloque|agende|agendar|marque|marca|marcar|schedule|book|reserve)\b/i.test(
+          prompt,
+        ))) &&
+    /\b(create|crie|cria|criar|schedule|agende|agendar|put|prepare|adicione|adiciona|adicionar|coloca|coloque|marque|marca|marcar|book|reserve)\b/i.test(
+      prompt,
+    )
   )
     criteria.push({
       id: "requested-calendar",

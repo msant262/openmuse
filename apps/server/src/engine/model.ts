@@ -1895,13 +1895,13 @@ export async function executeModelTask(
     tool(
       "prepare_event",
       "Create an event under the configured native action policy",
-      eventDraftSchema,
-      async (data) => {
+      eventDraftSchema.and(z.object({ account: z.string().min(1).max(320).optional() })),
+      async ({ account, ...data }) => {
         const key = taskOperationId() ?? randomUUID();
         const action = await service.prepare(
           owner,
           task,
-          { kind: "calendar.create", data },
+          { kind: "calendar.create", data, account },
           key,
           ctx,
         );

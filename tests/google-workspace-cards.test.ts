@@ -94,6 +94,7 @@ test("the draft card renders human email fields and all controls; retries retain
     "GoogleMailDraftCard",
     { id: draft.id },
     async (path, body) => {
+      if (path.endsWith("/collapse")) return { ...draft, collapsed: true };
       if (body) {
         calls.push({ path, body });
         if (fail) throw new Error("Connection lost");
@@ -115,6 +116,9 @@ test("the draft card renders human email fields and all controls; retries retain
     await h.flush();
     assert.match(copied[0], /From: work@example.com.*To: msant262@gmail.com.*Actual message text/s);
     assert.equal(calls.length, 0);
+    assert.doesNotMatch(h.text(), /Actual message text/);
+    h.button("View draft").onPress();
+    h.render();
     h.button("Save draft").onPress();
     await h.flush();
     fail = false;
@@ -122,6 +126,7 @@ test("the draft card renders human email fields and all controls; retries retain
     await h.flush();
     assert.equal(calls[0].body.operationId, calls[1].body.operationId);
     assert.equal(calls[1].body.operation, "save");
+    assert.doesNotMatch(h.text(), /Actual message text/);
     assert.doesNotMatch(h.text(), /"message"|"raw"/);
   } finally {
     h.close();
@@ -146,6 +151,9 @@ test("deleting from the draft card only prepares a visible approval and disables
     await h.flush();
     assert.equal(calls.length, 1);
     assert.equal(calls[0].body.operation, "delete");
+    assert.doesNotMatch(h.text(), /Actual message text/);
+    h.button("View draft").onPress();
+    h.render();
     assert.equal(h.button("Send").disabled, true);
     assert.equal(h.button("Delete").disabled, true);
     assert.ok(
@@ -177,11 +185,139 @@ test("approval shows readable account and target, hides JSON, and submits only t
     assert.equal(calls[0].path, `/api/actions/${action.id}/decide`);
     assert.equal(calls[0].body.hash, action.hash);
     assert.equal(calls[0].body.decision, "deny");
+    assert.doesNotMatch(h.text(), /gmail.users.drafts.delete|Nothing is deleted/);
+    assert.match(h.text(), /Declined.*View details.*Actions/s);
     assert.ok(
       !h
         .nodes()
         .some((node) => node.type === "Button" && node.props.children === "Approve deletion"),
     );
+  } finally {
+    h.close();
+  }
+});
+
+test("handled drafts remain compact after remount and can be reopened without performing an action", async () => {
+  const calls: any[] = [];
+  for (const status of ["saved", "sent", "deleted", "denied"]) {
+    const h = view("GoogleMailDraftCard", { id: draft.id }, async (path, body) => {
+      if (body) calls.push({ path, body });
+      return { ...draft, status, collapsed: true };
+    });
+    try {
+      await h.flush();
+      assert.match(h.text(), /Visible subject.*View draft.*Actions/s);
+      assert.doesNotMatch(h.text(), /Actual message text/);
+      h.button("View draft").onPress();
+      h.render();
+      assert.match(h.text(), /Actual message text/);
+      assert.equal(h.button("Send").disabled, ["sent", "deleted"].includes(status));
+      assert.equal(calls.length, 0);
+    } finally {
+      h.close();
+    }
+  }
+});
+
+test("sending collapses the card only after success while failures retain the draft controls", async () => {
+  let current = { ...draft, status: "saved", collapsed: false };
+  let fail = true;
+  const h = view("GoogleMailDraftCard", { id: draft.id }, async (_path, body) => {
+    if (body) {
+      if (fail) throw new Error("Google temporarily unavailable");
+      current = { ...current, status: "sent", collapsed: true };
+    }
+    return current;
+  });
+  try {
+    await h.flush();
+    h.button("Send").onPress();
+    await h.flush();
+    assert.match(h.text(), /Actual message text/);
+    fail = false;
+    h.button("Send").onPress();
+    await h.flush();
+    assert.match(h.text(), /Visible subject.*Sent.*View draft/s);
+    assert.doesNotMatch(h.text(), /Actual message text/);
+  } finally {
+    h.close();
+  }
+});
+
+test("calendar reviews display the same instant in its named zone instead of copying the returned hour", () => {
+  const lines = connectorReviewLines({
+    tool: "google.workspace",
+    operation: "calendar.events.delete",
+    account: "work@example.com",
+    starts: "2026-10-07T17:00:00+02:00",
+    ends: "2026-10-07T17:15:00+02:00",
+    timeZone: "UTC",
+  });
+  assert.match(lines.find((line) => line.label === "Starts")!.value, /07\/10\/2026.*15:00.*UTC/);
+  assert.match(lines.find((line) => line.label === "Ends")!.value, /15:15.*UTC/);
+  const local = connectorReviewLines({
+    tool: "google.workspace",
+    operation: "calendar.events.insert",
+    starts: "2026-10-07T15:00:00Z",
+    timeZone: "Europe/Berlin",
+  });
+  assert.match(local.find((line) => line.label === "Starts")!.value, /17:00.*Europe\/Berlin/);
+});
+
+test("the Actions tab fetches one summary page and reopens a selected draft without issuing Google operations", async () => {
+  const calls: string[] = [],
+    opened: any[] = [];
+  const api = {
+    identityKey: "owner",
+    request: async (path: string) => {
+      calls.push(path);
+      return {
+        entries: [
+          {
+            id: "draft-1",
+            subject: "Saved subject",
+            account: "work@example.com",
+            to: ["msant262@gmail.com"],
+            status: "saved",
+            updatedAt: "2026-10-06T12:00:00Z",
+          },
+        ],
+      };
+    },
+  };
+  const h = componentHarness(
+    new URL("../apps/mobile/src/google-actions-screen.tsx", import.meta.url),
+    "GoogleActionsScreen",
+    {
+      "react-native": { Text: "Text", View: "View", Pressable: "Pressable" },
+      "./i18n": { useI18n: () => ({ t: (key: string) => key }) },
+      "./ui": { Button: "Button", Card: "Card", ErrorNotice: "ErrorNotice" },
+      "./workspace": {
+        useWorkspace: () => ({
+          api,
+          workspace: { actions: [] },
+          open: (detail: any) => opened.push(detail),
+        }),
+      },
+      "./external-action-preview": { connectorReviewLines },
+      "./google-workspace-cards": { googleActionStatus: (status: string) => status },
+    },
+  );
+  try {
+    h.render();
+    await h.flush();
+    assert.deepEqual(calls, ["/api/google/mail-drafts"]);
+    assert.match(h.text(), /Saved subject.*work@example.com.*msant262@gmail.com/s);
+    const row = h
+      .nodes()
+      .find(
+        (node) => node.type === "Pressable" && node.props.accessibilityLabel === "Saved subject",
+      );
+    assert.ok(row);
+    (row.props.onPress as () => void)();
+    assert.equal(opened[0].type, "gmailDraft");
+    assert.equal(opened[0].id, "draft-1");
+    assert.equal(calls.length, 1);
   } finally {
     h.close();
   }
