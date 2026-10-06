@@ -952,7 +952,7 @@ export class ConversationAgent extends AbstractAgent {
         before: async () => browserAbort.signal.throwIfAborted(),
         recent: () => this.service.media.recentDocumentDesigns(this.owner),
       }),
-      ...skillTools(new SkillCatalog(this.service.config), this.owner, {
+      ...skillTools(new SkillCatalog(this.service.config, this.service.playbooks), this.owner, {
         tools: () => tools,
         before: async () => browserAbort.signal.throwIfAborted(),
       }),

@@ -6,6 +6,7 @@ import test, { type TestContext } from "node:test";
 import { EventType } from "@ag-ui/core";
 import { lastValueFrom, toArray } from "rxjs";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
+import { SkillCatalog } from "../apps/server/src/skill-catalog.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
@@ -17,6 +18,66 @@ const skill = (
   requiredTools = ["read_runtime"],
 ) =>
   `---\nname: ${name}\ndescription: A specialized report workflow\nrequired-tools: ${JSON.stringify(requiredTools)}\n---\n# ${name}\n\n${body}\n`;
+
+test("verified learned methods are discoverable and readable through real skill tools without catalog views", async (t) => {
+  const f = await fixture(t);
+  const task = await f.agent.taskRecord(
+    "owner",
+    { prompt: "Prepare a recurring rail comparison" },
+    "learned-source",
+  );
+  await f.db.put("owner", "tasks", {
+    ...task,
+    status: "succeeded",
+    completion: { status: "verified", checks: [], remaining: [] },
+  });
+  await f.db.put("owner", "task-operations", {
+    id: "learned-read",
+    taskId: task.id,
+    toolName: "read_runtime",
+    status: "succeeded",
+    receipt: { status: "available" },
+  });
+  const saved = await f.agent.playbooks.saveLearned(
+    "owner",
+    {
+      requestId: "rail-method",
+      sourceTaskId: task.id,
+      title: "Rail comparison workflow",
+      steps: ["Read connected services before comparing current rail fares."],
+      inputs: [],
+      verification: ["The comparison cites current fares and dates."],
+      requiredTools: ["read_runtime"],
+    },
+    [task.id],
+  );
+  const id = `learned:${saved.id}`;
+  const found = await f.call("skills_search", { query: "Rail comparison" });
+  assert.ok(found.skills.some((s: { id: string }) => s.id === id));
+  assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 0);
+  const read = await f.call("skills_read", { id });
+  assert.equal(read.source, "learned");
+  assert.equal(read.authority, "workflow_guidance");
+  assert.match(read.content, /Read connected services/);
+  assert.match(read.content, /cites current fares/);
+  assert.equal(read.sha256, createHash("sha256").update(read.content).digest("hex"));
+  assert.equal(read.truncated, false);
+  assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 1);
+  const catalog = new SkillCatalog(f.agent.config, f.agent.playbooks);
+  await assert.rejects(catalog.read("other-owner", id, ["read_runtime"]), /not found/i);
+  await assert.rejects(catalog.read("owner", id, []), /Ineligible/);
+  assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 1);
+  assert.ok(!(await catalog.inventory("owner", [])).skills.some((s) => s.id === id));
+  await f.agent.playbooks.manage("owner", saved.id, {
+    requestId: "archive-method",
+    expectedVersion: 1,
+    action: "archive",
+    reason: "The user no longer wants this workflow.",
+  });
+  assert.ok(!(await f.call("skills_list")).skills.some((s: { id: string }) => s.id === id));
+  await assert.rejects(catalog.read("owner", id, ["read_runtime"]), /Ineligible/);
+  assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 1);
+});
 
 async function fixture(t: TestContext) {
   let nextCall = { name: "skills_list", arguments: {} as object };

@@ -1937,7 +1937,7 @@ export async function executeModelTask(
       designReferenceInstructions,
     ),
     ...withInstructions(
-      skillTools(new SkillCatalog(config), owner, {
+      skillTools(new SkillCatalog(config, service.playbooks), owner, {
         tools: () => tools,
         queue: serial,
         before: async () => {
@@ -2163,7 +2163,7 @@ export async function executeModelTask(
     executeTool: async (call, execute) => {
       try {
         const title = taskActivity(call.name);
-        await ctx.event("step", title);
+        await ctx.event("step", title, "", `tool:${task.id}:${call.id}`);
         task = await ctx.checkpoint({
           state: { ...task.state, currentActivity: { title, startedAt: new Date().toISOString() } },
         });

@@ -76,6 +76,8 @@ export interface AgentTask {
 export interface RunEvent {
   id: string;
   taskId: string;
+  /** Exact durable tool intention, when this event represents a tool step. */
+  operationId?: string;
   date: string;
   kind: "plan" | "step" | "observation" | "approval" | "result" | "error" | "status";
   title: string;

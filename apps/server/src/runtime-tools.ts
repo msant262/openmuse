@@ -54,7 +54,7 @@ export function runtimeTool(
         const names = [...new Set(tools.map((tool) => tool.name))].sort();
         const procedures = (await service.playbooks.catalog(owner, { limit: 30 })).entries;
         const installed = names.includes("skills_read")
-          ? await new SkillCatalog(service.config).inventory(owner, names)
+          ? await new SkillCatalog(service.config, service.playbooks).inventory(owner, names)
           : { skills: [], incomplete: false };
         const registered = boundedMetadata(names, 2000);
         const saved = boundedMetadata(

@@ -1133,6 +1133,7 @@ export class Store {
       `SELECT jsonb_build_object('kind',source.kind,'value',source.data) AS data FROM records source WHERE source.owner=$1
        AND ((source.kind='conversation-inbox' AND source.data->>'status' IN ('finished','interrupted'))
          OR (source.kind='tasks' AND source.data->>'status'='succeeded'
+           AND source.data->>'deletedAt' IS NULL
            AND source.data->'completion'->>'status'='verified'
            AND source.data->'input'->>'internalActivity' IS DISTINCT FROM 'true'
            AND NOT (source.data->'input' ? 'proactivityCycleId')))

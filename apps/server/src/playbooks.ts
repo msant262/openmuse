@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
+import type { AgentTask } from "../../../packages/domain/src/agent.ts";
 import {
   type Procedure,
   type ProcedureVersion,
@@ -52,7 +53,8 @@ export class Playbooks {
     return this.service.db.procedureUsage(owner, id, version);
   }
   async recordOutcome(owner: string, taskId: string) {
-    const task = await this.service.getTask(owner, taskId);
+    const task = await this.service.db.get<AgentTask>(owner, "tasks", taskId);
+    if (!task || task.deletedAt) return;
     if (!["succeeded", "failed", "cancelled"].includes(task.status)) return;
     const run = await this.service.db.procedureRunForTask<{
       procedureId?: string;

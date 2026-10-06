@@ -79,6 +79,8 @@ import { nativeWebMarkdown, stopOpenclawHarness } from "./openclaw-agent.ts";
 import { ResourceLeases } from "./resource-leases.ts";
 import { RuntimePause } from "./runtime-pause.ts";
 import { TaskActor, TaskBudgetExhaustedError } from "./task-actor.ts";
+import { taskEventOperations } from "./task-event-operations.ts";
+import { publicJournalValue, publicToolArguments } from "./task-history.ts";
 import { TaskJournal, validateTaskEffect } from "./task-journal.ts";
 import { TaskMailbox } from "./task-mailbox.ts";
 import { executionSteps, liveTaskPlan } from "./task-progress.ts";
@@ -629,14 +631,21 @@ export class AgentService {
       ),
       files: files.map((file) => this.files.signed(owner, file)),
       browsers: browsers.map((browser) => this.browser.decorate(owner, browser)),
-      events: (await this.db.list<RunEvent>(owner, "run-events"))
-        .filter((e) => e.taskId === id)
-        .sort((a, b) => a.date.localeCompare(b.date)),
+      events: taskEventOperations(
+        (await this.db.list<RunEvent>(owner, "run-events"))
+          .filter((e) => e.taskId === id)
+          .sort((a, b) => a.date.localeCompare(b.date)),
+        operations,
+      ),
       artifacts: (await this.db.list<AgentArtifact>(owner, "agent-artifacts")).filter(
         (a) => a.taskId === id,
       ),
       directives: await this.mailbox.list(owner, id),
-      operations,
+      operations: operations.map((operation) => ({
+        ...operation,
+        args: publicToolArguments(operation.toolName, operation.args),
+        receipt: publicJournalValue(operation.receipt),
+      })),
     };
   }
   async createTask(
@@ -1991,7 +2000,10 @@ export class AgentService {
     };
   }
   private async publishOutcome(owner: string, saved: AgentTask) {
-    const task = await this.getTask(owner, saved.id);
+    // Historical scans include logically removed work. Removal racing this
+    // scan must not stop every owner's learning and heartbeat with a 404.
+    const task = await this.db.get<AgentTask>(owner, "tasks", saved.id);
+    if (!task || task.deletedAt) return;
     if (typeof task.input.proactivityCycleId === "string" || task.input.internalActivity === true)
       return;
     await this.playbooks.recordOutcome(owner, task.id);

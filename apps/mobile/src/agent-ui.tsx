@@ -75,6 +75,7 @@ import { useInlinePreview } from "./preview";
 import { ProfileSettings } from "./profile-settings";
 import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
+import { type TaskOperationDetail, taskOperationValue } from "./task-operation-details";
 import { ClearFinishedTasksButton, TaskRemoveButton } from "./task-removal";
 import { TaskBudgetControls, TaskCompletion, TaskTimingControls } from "./task-runtime-controls";
 import { TaskStatusBadge } from "./task-status";
@@ -506,6 +507,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
     browsers: BrowserSession[];
     interactions?: InteractionRequest[];
     executionSteps?: AgentTask["plan"];
+    operations?: TaskOperationDetail[];
   }>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -527,6 +529,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
           browsers: BrowserSession[];
           interactions?: InteractionRequest[];
           executionSteps?: AgentTask["plan"];
+          operations?: TaskOperationDetail[];
         }>(`/api/agent/tasks/${taskId}`)
         .then((result) => {
           if (active) {
@@ -611,6 +614,12 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
   const events = orderedTaskEvents(detail?.events || []);
   const selectedEvent = events.find((event) => `event:${event.id}` === selected);
   const selectedStep = task?.plan.find((step) => `step:${step.id}` === selected);
+  const selectedOperation = detail?.operations?.find(
+    (operation) =>
+      operation.id === selectedEvent?.operationId ||
+      (selectedStep?.id.startsWith("execution:") &&
+        `execution:${operation.id}` === selectedStep.id),
+  );
   return (
     <Sheet
       title={task?.title || "Task"}
@@ -863,13 +872,34 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                   </Text>
                 )}
                 {selectedStep && <Text style={s.small}>{t(statusLabel(selectedStep.status))}</Text>}
-                <Text selectable style={s.text}>
-                  {selectedEvent?.detail ||
-                    selectedStep?.detail ||
-                    (selected === "request"
-                      ? task.prompt
-                      : t("This step has no additional details."))}
-                </Text>
+                {selectedOperation ? (
+                  <View style={{ gap: 14 }}>
+                    <Text style={s.small}>
+                      {selectedOperation.toolName} · {t(statusLabel(selectedOperation.status))}
+                    </Text>
+                    {!!selectedEvent?.detail && (
+                      <Text selectable style={s.text}>
+                        {selectedEvent.detail}
+                      </Text>
+                    )}
+                    <Text style={s.heading}>{t("Saved input")}</Text>
+                    <Text selectable style={s.text}>
+                      {taskOperationValue(selectedOperation.args) || t("No saved input.")}
+                    </Text>
+                    <Text style={s.heading}>{t("Saved output")}</Text>
+                    <Text selectable style={s.text}>
+                      {taskOperationValue(selectedOperation.receipt) || t("No saved output yet.")}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text selectable style={s.text}>
+                    {selectedEvent?.detail ||
+                      selectedStep?.detail ||
+                      (selected === "request"
+                        ? task.prompt
+                        : t("This step has no additional details."))}
+                  </Text>
+                )}
                 <Button small onPress={() => setSelected("summary")}>
                   {t("Back to summary")}
                 </Button>

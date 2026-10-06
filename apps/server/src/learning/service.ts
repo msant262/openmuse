@@ -195,7 +195,8 @@ export class PersonalLearning {
         if (m && ["finished", "interrupted"].includes(m.status)) messages.push(m);
       } else if (s.kind === "tasks") {
         const t = await this.db.get<AgentTask>(owner, s.kind, s.id);
-        if (t?.status === "succeeded" && t.completion?.status === "verified") completed.push(t);
+        if (t?.status === "succeeded" && !t.deletedAt && t.completion?.status === "verified")
+          completed.push(t);
       }
     }
     // Like Hermes' conversation snapshot, retain later user context during backlog recovery.
