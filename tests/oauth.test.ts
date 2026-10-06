@@ -390,7 +390,7 @@ test("adding Google accounts preserves the first account, scopes, default and pe
   };
   await signIn("personal", {}, true);
   const personal = (await auth.tokens("owner"))!;
-  const add = await signIn("work", { add: true });
+  const add = await signIn("work");
   assert.equal(
     (await auth.tokens("owner"))?.account,
     "personal@example.com",

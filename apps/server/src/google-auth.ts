@@ -105,7 +105,7 @@ export class GoogleAuth {
     );
     const id =
       existing?.row.id ??
-      (state.add && stored.length
+      (stored.length
         ? `google:${createHash("sha256").update(tokens.account.toLowerCase()).digest("hex")}`
         : "google");
     const value = {
@@ -188,8 +188,8 @@ export class GoogleAuth {
     const selected = options.connectionId ? await this.tokens(owner, options.connectionId) : null;
     if (options.connectionId && !selected)
       throw new AppError("Google account is disconnected or changed", 409);
-    const { generation, previous } = await this.rotateGeneration(owner);
-    const existing = selected ?? (options.add ? null : this.decodeTokens(previous));
+    const { generation } = await this.rotateGeneration(owner);
+    const existing = selected;
     const scopes = Array.from(
       new Set([
         "https://www.googleapis.com/auth/gmail.readonly",
