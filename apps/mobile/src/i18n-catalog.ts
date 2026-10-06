@@ -243,6 +243,12 @@ export const ptBR: Record<string, string> = {
   "Required for a live workspace": "Insira sua chave de acesso",
   "Open workspace": "Entrar",
   "Retry saved pairing": "Tentar acesso salvo novamente",
+  "Enter access key": "Inserir chave de acesso",
+  "Back to saved access": "Voltar ao acesso salvo",
+  "Your saved session is no longer valid. Enter your access key to reconnect.":
+    "A sessão salva não é mais válida. Insira sua chave de acesso para conectar novamente.",
+  "Refresh credential is invalid":
+    "A sessão salva não é mais válida. Insira sua chave de acesso para conectar novamente.",
   "Access key is incorrect": "A chave de acesso está incorreta",
   "Failed to fetch": "Não foi possível conectar. Verifique sua conexão e tente novamente.",
   "Here when you need me": "Aqui quando você precisar",

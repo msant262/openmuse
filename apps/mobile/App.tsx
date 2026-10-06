@@ -107,6 +107,7 @@ export default function App() {
   const { t } = useI18n();
   const [session, setSession] = useState(authManager.snapshot);
   const [accessKey, setAccessKey] = useState("");
+  const [accessKeyEntry, setAccessKeyEntry] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const connect = useCallback(async (key?: string) => {
@@ -114,6 +115,8 @@ export default function App() {
     setError("");
     try {
       await authManager.pair(key);
+      setAccessKey("");
+      setAccessKeyEntry(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -134,7 +137,13 @@ export default function App() {
           authManager.snapshot.status === "missing"
         )
       )
-        setError(e instanceof Error ? e.message : String(e));
+        setError(
+          e instanceof ApiError && e.code === "SESSION_REFRESH_INVALID"
+            ? "Your saved session is no longer valid. Enter your access key to reconnect."
+            : e instanceof Error
+              ? e.message
+              : String(e),
+        );
     } finally {
       setBusy(false);
     }
@@ -203,10 +212,13 @@ export default function App() {
               )}
               <Card style={{ width: "100%" }}>
                 <ErrorNotice error={t(error)} />
-                {session.status === "unavailable" ? (
-                  <Button primary onPress={() => void restore()}>
-                    {t("Retry saved pairing")}
-                  </Button>
+                {session.status === "unavailable" && !accessKeyEntry ? (
+                  <>
+                    <Button primary onPress={() => void restore()}>
+                      {t("Retry saved pairing")}
+                    </Button>
+                    <Button onPress={() => setAccessKeyEntry(true)}>{t("Enter access key")}</Button>
+                  </>
                 ) : (
                   <>
                     <Field
@@ -216,9 +228,18 @@ export default function App() {
                       secureTextEntry
                       placeholder={t("Required for a live workspace")}
                     />
-                    <Button primary onPress={() => void connect(accessKey || undefined)}>
+                    <Button
+                      primary
+                      disabled={accessKeyEntry && !accessKey.trim()}
+                      onPress={() => void connect(accessKey.trim() || undefined)}
+                    >
                       {t("Open workspace")}
                     </Button>
+                    {accessKeyEntry && (
+                      <Button onPress={() => setAccessKeyEntry(false)}>
+                        {t("Back to saved access")}
+                      </Button>
+                    )}
                   </>
                 )}
                 <Text style={[s.small, { marginTop: 15 }]}>
