@@ -596,7 +596,7 @@ export class AgentService {
     return !!(await this.db.compareAndSwapTask(
       owner,
       task.id,
-      { status: "waiting_provider", nextRunAt: task.nextRunAt ?? null },
+      { status: "waiting_provider", nextRunAt: task.nextRunAt },
       { nextRunAt: new Date(Date.now() + 5000).toISOString() },
     ));
   }

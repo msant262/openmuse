@@ -102,28 +102,29 @@ test("maintenance recovers historical Google read timeouts but never releases an
 
 test("legacy interrupted streams get an automatic retry while credential failures stay unscheduled", async (t) => {
   const server = await taskRuntime(t);
-  for (const failureCode of [
-    undefined,
-    "provider_stream_incomplete",
-    "invalid_grant",
-    "subscription_sharing_usage_limit_exceeded",
-  ]) {
-    const task = await server.agent.createTask("owner", { prompt: "Consulte minha agenda" });
-    const interrupted = await server.db.put("owner", "tasks", {
-      ...task,
-      status: "waiting_provider" as const,
-      nextRunAt: null,
-      state: {
-        ...task.state,
-        providerCheckpoint: { code: "MODEL_PROVIDER_INTERRUPTED", accepted: true, failureCode },
-      },
-    });
-    const expected = failureCode === undefined || failureCode === "provider_stream_incomplete";
-    assert.equal(await server.agent.recoverInterruptedProvider("owner", interrupted), expected);
-    const saved = await server.agent.getTask("owner", task.id);
-    assert.equal(!!saved.nextRunAt, expected);
-    assert.equal(saved.status, "waiting_provider");
-  }
+  for (const nextRunAt of [undefined, null])
+    for (const failureCode of [
+      undefined,
+      "provider_stream_incomplete",
+      "invalid_grant",
+      "subscription_sharing_usage_limit_exceeded",
+    ]) {
+      const task = await server.agent.createTask("owner", { prompt: "Consulte minha agenda" });
+      const interrupted = await server.db.put("owner", "tasks", {
+        ...task,
+        status: "waiting_provider" as const,
+        nextRunAt,
+        state: {
+          ...task.state,
+          providerCheckpoint: { code: "MODEL_PROVIDER_INTERRUPTED", accepted: true, failureCode },
+        },
+      });
+      const expected = failureCode === undefined || failureCode === "provider_stream_incomplete";
+      assert.equal(await server.agent.recoverInterruptedProvider("owner", interrupted), expected);
+      const saved = await server.agent.getTask("owner", task.id);
+      assert.equal(!!saved.nextRunAt, expected);
+      assert.equal(saved.status, "waiting_provider");
+    }
 });
 
 const runningComputer: ComputerSnapshot = {
