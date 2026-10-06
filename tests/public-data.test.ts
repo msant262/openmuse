@@ -3,6 +3,37 @@ import test from "node:test";
 import { selectPublicData } from "../apps/server/src/public-data.ts";
 import { PublicWeb } from "../apps/server/src/public-web.ts";
 
+test("ordinary JSON fetches expose datasets above the HTML transfer limit without losing complete queries", async () => {
+  const body = JSON.stringify({
+    records: Array.from({ length: 30000 }, (_, i) => ({
+      state: i % 2 ? "A" : "B",
+      votes: 1,
+      notes: "x".repeat(80),
+    })),
+  });
+  assert.ok(Buffer.byteLength(body) > 2 * 1024 * 1024);
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({ status: 200, headers: { "content-type": "application/json" }, body }),
+  });
+  const page = await web.read("https://source.example/PRESIDENTE.JSON");
+  assert.match(page.text, /"votes": 1/);
+  assert.equal(page.truncated, true);
+  const result = await web.readData("https://source.example/PRESIDENTE.JSON", {
+    pointer: "/records",
+    aggregate: {
+      groupBy: [{ name: "state", pointer: "/state" }],
+      sum: [{ name: "votes", pointer: "/votes" }],
+    },
+  });
+  assert.equal(result.total, 2);
+  assert.deepEqual(
+    result.rows.map((row) => (row as { votes: number }).votes),
+    [15000, 15000],
+  );
+  await assert.rejects(web.read("https://source.example/large.html"), /MiB/);
+});
+
 test("invalid data pointers expose observed field paths and root syntax without returning source values", () => {
   const source = {
     records: [{ name: "Example", votes: 12 }],

@@ -7,6 +7,7 @@ import {
   currentComputerResourceScope,
   reconcileComputerAudit,
 } from "../apps/server/src/audited-computer.ts";
+import { computerTools } from "../apps/server/src/computer-tools.ts";
 import { createStore } from "../apps/server/src/db.ts";
 import { ResourceLeases } from "../apps/server/src/engine/resource-leases.ts";
 import { ExecutorRegistry } from "../apps/server/src/executors/registry.ts";
@@ -19,6 +20,84 @@ import {
   registration,
   request,
 } from "./helpers/executors.ts";
+
+test("a failed foreground native command returns its exit receipt and permits a repaired command", async () => {
+  const db = await createStore();
+  try {
+    const registry = new ExecutorRegistry(db, {
+      registrations: [registration],
+      authority: authority(db),
+    });
+    const { epoch } = await registry.register(hello);
+    await registry.reconcile("lenovo-okami", {
+      epoch,
+      bootId: "boot-a",
+      operations: [],
+      contained: true,
+    });
+    const resources = new ResourceLeases(db);
+    const native = new RemoteComputerBackend(registry, {
+      executorId: "lenovo-okami",
+      context: async () => context,
+      pollMs: 1,
+    });
+    const computer = auditedComputer(native, new ActionLog(db), "native", resources, "lenovo");
+    const run = async (command: string, exitCode: number) => {
+      const pending = computer.execute(
+        "owner",
+        { command, timeoutMs: 1000 },
+        {
+          idempotencyKey: command,
+        },
+      );
+      const [operation] = (await registry.claimOperations("lenovo-okami", epoch, { waitMs: 1000 }))
+        .operations;
+      assert.ok(operation);
+      await registry.submitReceipt("lenovo-okami", epoch, operation.id, 1, {
+        status: exitCode ? "failed" : "succeeded",
+        data: {
+          id: operation.id,
+          kind: "command",
+          command,
+          cwd: "/workspace",
+          timeoutMs: 1000,
+          background: false,
+          status: exitCode ? "failed" : "succeeded",
+          exitCode,
+          stdout: exitCode ? "" : "27 states",
+          stderr: exitCode ? "KeyError: 'top'" : "",
+          truncated: false,
+          cleanupConfirmed: true,
+          startedAt: operation.createdAt,
+          completedAt: new Date().toISOString(),
+        },
+      });
+      const result = await pending;
+      assert.equal((await resources.listForTask(result.id)).length, 0);
+      return result;
+    };
+    const failed = await run("python broken.py", 1);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.exitCode, 1);
+    assert.match(failed.stderr, /KeyError/);
+    assert.equal((await db.get("owner", "computer-commands", failed.id))?.status, "failed");
+    const repaired = await run("python repaired.py", 0);
+    assert.equal(repaired.status, "succeeded");
+    assert.equal(repaired.stdout, "27 states");
+    assert.equal((await registry.deliveries("owner", "lenovo-okami")).length, 2);
+
+    const status = computerTools(computer, {} as never, "owner", "new-task").find(
+      (tool) => tool.name === "computer_status",
+    );
+    assert.ok(status);
+    const value = await (status.execute as (args: unknown) => Promise<unknown>)({});
+    assert.doesNotMatch(JSON.stringify(value), /broken\.py|repaired\.py|27 states|KeyError/);
+    assert.deepEqual((value as { commands: unknown[] }).commands, []);
+    assert.equal((await computer.command?.("owner", failed.id))?.stderr, "KeyError: 'top'");
+  } finally {
+    await db.close();
+  }
+});
 
 test("native delivery requires authoritative dispatch authorization, reconciliation and concrete readiness", async () => {
   const db = await createStore();

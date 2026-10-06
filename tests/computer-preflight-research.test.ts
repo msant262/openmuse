@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ComputerBackend } from "../apps/server/src/computer-contract.ts";
+import { reconcileWaitingComputerTasks } from "../apps/server/src/engine/computer-jobs.ts";
 import {
   authorizeTaskEffect,
   type JournalOperation,
@@ -8,6 +10,77 @@ import { TaskWorker } from "../apps/server/src/engine/worker.ts";
 import { fixture, ok } from "./helpers/computer.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
+
+test("confirmed failed physical receipts reconcile the blocked intention without replaying it", async (t) => {
+  const f = await taskRuntime(t);
+  const task = await f.agent.createTask("owner", { prompt: "Compute the published values" });
+  const now = new Date().toISOString();
+  const receipt = {
+    id: "physical-job",
+    command: "python broken.py",
+    cwd: "/workspace",
+    status: "failed" as const,
+    exitCode: 1,
+    stderr: "KeyError: 'top'",
+    stdout: "",
+    truncated: false,
+    startedAt: now,
+    completedAt: now,
+    cleanupConfirmed: true,
+  };
+  const base = {
+    taskId: task.id,
+    revision: 0,
+    executorId: "vps",
+    executorEpoch: 1,
+    resourceFence: 0,
+    runToken: "old-run",
+    resourceLeaseIds: [],
+    createdAt: now,
+    bindingHash: "a".repeat(64),
+    args: { command: receipt.command },
+    effect: true,
+    status: "outcome_unknown" as const,
+    receipt: { id: receipt.id, outcomeUnknown: true },
+  };
+  await f.agent.journal.prepare("owner", { ...base, id: "call", toolName: "run_computer_command" });
+  await f.agent.journal.prepare("owner", {
+    ...base,
+    id: "primitive",
+    toolName: "primitive.run_computer_command",
+    parentOperationId: "call",
+    physicalOperationId: receipt.id,
+  });
+  await f.db.put("owner", "tasks", {
+    ...task,
+    status: "waiting_input",
+    state: {
+      ...task.state,
+      reconcilingOperationIds: ["call"],
+      completedComputerJob: receipt,
+      waitingComputerCommandId: null,
+      computerCleanupPendingId: null,
+    },
+  });
+  let polls = 0;
+  await reconcileWaitingComputerTasks(
+    f.db,
+    {
+      command: async (_owner: string, id: string) => {
+        assert.equal(id, receipt.id);
+        polls++;
+        return receipt;
+      },
+      execute: async () => assert.fail("Reconciliation must not replay the failed command"),
+    } as unknown as ComputerBackend,
+    f.agent.workAdmission,
+    f.agent.resourceLeases,
+    f.agent.journal,
+  );
+  const records = await f.agent.journal.operations("owner", task.id);
+  assert.ok(records.every((op) => op.status === "failed"));
+  assert.equal(polls, 1);
+});
 
 test("a confirmed computer start completes its journal and permits the next authorized command", async (t) => {
   await modelFixture(

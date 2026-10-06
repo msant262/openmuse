@@ -16,6 +16,54 @@ from .job_runtime import HostBudget, JobRuntime
 
 
 class CorrectionContracts(unittest.TestCase):
+    def test_completed_command_is_published_before_the_next_idle_long_poll(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);workspace=Workspace(root/"workspace",root/"state")
+            self.addCleanup(workspace.close)
+            calls=[]
+            def request(route,body):
+                calls.append((route,body))
+                if route=="claim":
+                    return {"pause":{"paused":False,"revision":0},"operations":[]}
+                return {"sequence":body.get("sequence",1)}
+            supervisor,_=self.supervisor(root,workspace,transport=SimpleNamespace(request=request))
+            operation=self.operation("finished-command","command",{"command":"python compute.py"})
+            supervisor.journal.receive(operation)
+            supervisor.journal.receipt(operation["id"],{"status":"running"})
+            active={operation["id"]:operation}
+            supervisor.runtime=SimpleNamespace(active=active,
+                inspect=lambda _: {"status":"failed","exitCode":1,"cleanupConfirmed":True},
+                output=lambda _: {"stderr":"KeyError: 'top'"},
+                release=lambda id:active.pop(id))
+            supervisor.tick()
+            completed=[i for i,(route,body) in enumerate(calls)
+                if route=="receipt" and body["receipt"]["status"]=="failed"]
+            claim=next(i for i,(route,_) in enumerate(calls) if route=="claim")
+            self.assertEqual(len(completed),1)
+            self.assertLess(completed[0],claim)
+            self.assertEqual(calls[claim][1]["waitMs"],15000)
+            self.assertEqual(active,{})
+
+    def test_a_running_command_is_polled_without_the_idle_queue_delay(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);workspace=Workspace(root/"workspace",root/"state")
+            self.addCleanup(workspace.close)
+            calls=[]
+            def request(route,body):
+                calls.append((route,body))
+                if route=="claim":return {"pause":{"paused":False,"revision":0},"operations":[]}
+                return {"sequence":body.get("sequence",1)}
+            supervisor,_=self.supervisor(root,workspace,transport=SimpleNamespace(request=request))
+            operation=self.operation("running-command","command",{"command":"python compute.py"})
+            supervisor.journal.receive(operation)
+            supervisor.journal.receipt(operation["id"],{"status":"running"})
+            supervisor.runtime=SimpleNamespace(active={operation["id"]:operation},
+                inspect=lambda _: {"status":"running"})
+            supervisor.tick()
+            claim=next(body for route,body in calls if route=="claim")
+            self.assertEqual(claim["waitMs"],1000)
+            self.assertEqual(supervisor.journal.get(operation["id"])["receipt"]["status"],"running")
+
     def operation(self, operation_id, kind="file", args=None, executor_id="node"):
         return {"id":operation_id,"executorId":executor_id,"kind":kind,"args":args or {},
                 "taskId":"task","bindingHash":hashlib.sha256(operation_id.encode()).hexdigest(),

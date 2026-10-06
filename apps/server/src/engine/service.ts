@@ -434,6 +434,7 @@ export class AgentService {
           this.computer,
           this.workAdmission,
           this.resourceLeases,
+          this.journal,
         );
       }
       await new ActionLog(this.db).reconcile();

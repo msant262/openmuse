@@ -10,6 +10,121 @@ const png = Buffer.from(
   "base64",
 );
 
+test("a prose response after a draft cannot certify an incomplete image request", async (t) => {
+  let finalId = "";
+  await modelFixture(
+    t,
+    (i) =>
+      [
+        {
+          name: "generate_image",
+          arguments: { operationId: "draft", prompt: "National summary only." },
+        },
+        undefined,
+        { name: "web_fetch", arguments: { url: "https://results.example/states" } },
+        {
+          name: "generate_image",
+          arguments: {
+            operationId: "complete-map",
+            prompt: "State A: 52/48. State B: 48/52. Complete map.",
+          },
+        },
+        {
+          name: "finish_task",
+          arguments: {
+            outcome: "completed",
+            summary: "Complete state comparison attached.",
+            artifactIds: [finalId],
+          },
+        },
+      ][i],
+    {
+      text: (i) =>
+        i === 1 ? "Here is the national summary. State percentages were not confirmed." : undefined,
+    },
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "<article>State A: 52/48. State B: 48/52.</article>",
+  }));
+  let generations = 0;
+  t.mock.method(f.agent.media, "generatedImage", async () => {
+    generations++;
+    const file = await f.files.importAttachment(
+      "owner",
+      `map-${generations}.png`,
+      png,
+      "Map",
+      "image/png",
+    );
+    finalId = file.id;
+    return f.files.reference("owner", file.id);
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Create a map infographic comparing percentages for every state.",
+  });
+  await f.agent.worker.tick();
+  const draft = await f.agent.detail("owner", task.id);
+  assert.equal(draft.task.status, "queued");
+  assert.equal(draft.files.length, 0, "an unfinished draft must not be delivered as success");
+  assert.equal(draft.task.artifactIds.length, 1);
+  await f.agent.worker.tick();
+  const result = await f.agent.detail("owner", task.id);
+  assert.equal(result.task.status, "succeeded", result.task.error ?? result.task.question);
+  assert.equal(generations, 2);
+  assert.deepEqual(
+    result.files.map((file) => file.id),
+    [finalId],
+  );
+});
+
+test("a misplaced data expansion is rejected instead of silently returning incomplete rows", async (t) => {
+  const url = "https://results.example/records.json";
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "read_web_data", arguments: { url, expand: "/items" } },
+        {
+          name: "read_web_data",
+          arguments: {
+            url,
+            aggregate: {
+              expand: "/items",
+              groupBy: [{ name: "candidate", pointer: "/item/name" }],
+              sum: [{ name: "votes", pointer: "/item/votes" }],
+            },
+          },
+        },
+        { name: "finish_task", arguments: { summary: "Candidate A received 12 votes." } },
+      ][i],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  let reads = 0;
+  t.mock.method(f.agent.web, "readData", async () => {
+    reads++;
+    return {
+      url,
+      observedAt: new Date().toISOString(),
+      rows: [{ candidate: "A", votes: 12 }],
+      total: 1,
+      offset: 0,
+      nextOffset: null,
+      truncated: false,
+    };
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Count the published candidate votes.",
+  });
+  await f.agent.worker.tick();
+  const result = await f.agent.detail("owner", task.id);
+  assert.equal(result.task.status, "succeeded", result.task.error ?? result.task.question);
+  assert.equal(reads, 1, "the malformed query must not fetch or appear as successful evidence");
+  assert.match(fixture.requests[1].body, /[Uu]nrecognized|expand/);
+});
+
 for (const ending of ["plain clarification", "premature finish"] as const) {
   test(`an image task recovers from ${ending} before any image exists`, async (t) => {
     const clarification =
@@ -129,14 +244,9 @@ test("a partial image finish continues from an observed unread result link witho
   await f.agent.worker.tick();
   const result = await f.agent.detail("owner", task.id);
   assert.equal(result.task.status, "succeeded", result.task.error ?? result.task.question);
-  assert.equal(
-    (
-      result.operations.find((op) => op.toolName === "finish_task")?.receipt as {
-        repairable?: boolean;
-      }
-    ).repairable,
-    true,
-  );
+  const finish = result.operations.find((op) => op.toolName === "finish_task");
+  assert.ok(finish);
+  assert.equal((finish.receipt as { repairable?: boolean }).repairable, true);
   assert.equal(result.files.length, 1);
   assert.equal(fixture.reviewRequests.length, 0);
   assert.equal(fixture.imageBriefRequests.length, 0);

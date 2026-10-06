@@ -34,6 +34,22 @@ export function computerTools(
 ) {
   const recovery = computer.recovery,
     artifact = computer.artifact?.bind(computer);
+  const readiness = (state: Awaited<ReturnType<ComputerBackend["snapshot"]>>) => {
+    const { commands, ...current } = state;
+    // Status is readiness, not a transcript of other tasks' scripts and data.
+    // Exact durable outputs remain available through computer_command_status.
+    return {
+      ...current,
+      commands: commands
+        .filter((receipt) => !computerCommandCleanupConfirmed(receipt))
+        .map(({ id, status, outcomeUnknown, cleanupConfirmed }) => ({
+          id,
+          status,
+          outcomeUnknown,
+          cleanupConfirmed,
+        })),
+    };
+  };
   const tool = <T extends z.ZodType>(
     name: string,
     description: string,
@@ -106,9 +122,9 @@ export function computerTools(
   return [
     tool(
       "computer_status",
-      "Inspect the configured computer readiness, trust mode and durable command receipts",
+      "Inspect computer readiness, trust mode and pending command IDs; use computer_command_status for a command's output",
       z.object({}),
-      async () => computer.snapshot(owner),
+      async () => readiness(await computer.snapshot(owner)),
     ),
     tool(
       "start_computer",
@@ -119,10 +135,10 @@ export function computerTools(
         // "running" describes the computer, not an unfinished start operation.
         // Keep subject state separate from the durable operation receipt.
         return state.status === "running"
-          ? { status: "succeeded", computer: state }
+          ? { status: "succeeded", computer: readiness(state) }
           : {
               status: "failed",
-              computer: state,
+              computer: readiness(state),
               error: state.message ?? "The computer did not become ready.",
             };
       },

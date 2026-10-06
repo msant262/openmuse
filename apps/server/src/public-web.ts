@@ -6,6 +6,7 @@ import { type Resolver, validatePublicUrl } from "../../worker/src/network.ts";
 import { type PublicDataQuery, selectPublicData } from "./public-data.ts";
 
 const maxBytes = 2 * 1024 * 1024;
+const maxDataBytes = 16 * 1024 * 1024;
 const maxText = 30000;
 const compactJson = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 /** Some public feeds use compact JWS despite an application/json header.
@@ -388,7 +389,7 @@ export class PublicWeb {
     } = {},
   ) {}
   async readData(url: string, query: PublicDataQuery = {}, signal?: AbortSignal) {
-    const document = await this.document(url, signal, 16 * 1024 * 1024);
+    const document = await this.document(url, signal, maxDataBytes);
     let source: ReturnType<typeof publicJson>;
     try {
       source = publicJson(document.body);
@@ -559,7 +560,14 @@ export class PublicWeb {
     };
   }
   private async readHttp(url: string, signal?: AbortSignal) {
-    const document = await this.document(url, signal);
+    const target = new URL(url);
+    const publishedData =
+      /\.(?:json|jws)$/i.test(target.pathname) ||
+      target.searchParams.get("format")?.toLowerCase() === "json";
+    // Published datasets use the same bounded transfer as readData. A model
+    // should receive their values/shape and paging guidance, not a page-size
+    // error that makes an accessible dataset look unavailable.
+    const document = await this.document(url, signal, publishedData ? maxDataBytes : maxBytes);
     if (
       (/json/.test(document.contentType) && document.body.length > maxText) ||
       compactJson.test(document.body.trim())

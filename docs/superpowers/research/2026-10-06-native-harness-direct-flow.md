@@ -165,10 +165,49 @@ conclusão, dados públicos, objetivo e revisões também passaram.
 
 A publicação é restrita às fronteiras do executor, configuração e entrypoint do
 harness, sobre a base de produção existente. Web e APK não são substituídos.
-Fonte publicada: `d98f9082f157b1b4b82abc1d498d2540f3fa445a`.
-Imagem: `sha256:df2edeff4ba63084c263e923b4c12618136479576722749f05969ace1e26e8a9`.
+Fonte publicada: `32eb3f0a4391e75d75aad92550c0078d5d1ff3bc`.
+Imagem: `sha256:ffef3e405bb1924ccdc12fbf5c7201444729f96e58ecb114499643225dd9262e`.
 Luna permanece como executor de produção, com contexto de 1.050.000 tokens.
 DeepSeek, MiMo e MiniMax não foram validados ao vivo nesta sessão.
 
 A validação final de pesquisa, geração e entrega ainda deve registrar resultado,
 tempo e conferência dos pixels, sem apresentar os testes anteriores como sucesso.
+
+
+## Recuperação de comandos, leituras grandes e conclusão de rascunhos
+
+A décima primeira reprodução parou com resultado desconhecido apesar de o
+comando ter terminado com `KeyError: top`, exit code 1 e limpeza confirmada.
+O adaptador remoto lançava uma exceção antes de persistir o recibo final.
+Agora devolve o recibo vinculado, com saída e código de retorno, permitindo
+corrigir o script. A manutenção reconcilia também a intenção e seu primitivo,
+sem repetir a execução. Os dois registros dessa reprodução ficaram `failed`;
+os 21 registros históricos e dois recursos retidos permaneceram preservados.
+
+As ferramentas de status do computador mostram prontidão e IDs de comandos
+pendentes. Saídas e scripts de outras tarefas não são injetados na nova conversa;
+os recibos completos continuam disponíveis por consulta explícita do comando.
+A consulta `read_web_data` rejeita campos desconhecidos na raiz, em vez de
+descartar silenciosamente um `expand` colocado fora de `aggregate`.
+
+A décima segunda reprodução encontrou o JSON correto de municípios, mas a
+leitura comum recusou seu tamanho. Gerou uma imagem apenas nacional e foi
+marcada como concluída em 317,4 segundos. Isso é uma falha, não uma aprovação.
+URLs de datasets JSON/JWS usam agora os mesmos 16 MiB de transferência do leitor
+estruturado, preservando a prévia e a estrutura para consulta do conjunto inteiro.
+HTML mantém seu orçamento separado. Uma resposta textual após criar um rascunho
+recebe uma continuação para o próprio executor selecionar a entrega e registrar
+se o pedido original foi cumprido. Outra resposta sem decisão explícita não
+certifica o rascunho como entrega completa.
+
+O supervisor nativo publicava resultados somente depois da próxima espera de
+até 15 segundos por novos comandos. Publica agora antes dessa espera e verifica
+comandos ativos a cada segundo, mantendo a espera longa quando ocioso. A mudança
+foi aplicada somente com fila e jobs vazios; o executor voltou conectado no
+mesmo serviço registrado, epoch 31. Hash do supervisor publicado:
+`0dbba0c64ad33f3cfe503d0cd53c980ad87c3aebdbd8c0aec44f9fc6a3cfd5d4`.
+
+Passaram 28 testes de comandos e recuperação, 21 de conclusão e entrega,
+14 de pesquisa e dados, e 60 contratos nativos. Compilação e checagem de tipos
+passaram; lint sem erros. A décima terceira reprodução está em observação e
+precisa conferir a cobertura estadual e os pixels, além do tempo real.

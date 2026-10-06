@@ -1495,8 +1495,8 @@ export async function executeModelTask(
     ),
     tool(
       "read_web_data",
-      "Read and analyze a published public JSON dataset up to 16 MiB. entries=true turns object keys into {key,value} rows. aggregate processes the COMPLETE dataset before paging: groupBy named pointers (optional prefix), sum numeric pointers with explicit numberFormat, and share percentages within groups. expand exposes nested array elements as /item and source rows as /parent. Example: entries=true, expand=/value/items, groupBy [{name:region,pointer:/parent/key,prefix:2},{name:category,pointer:/item/name}], sum [{name:total,pointer:/item/amount,numberFormat:pt-BR}], share {of:total,within:[region],name:percent}. where filters final rows AFTER share calculation, preserving all categories in the denominator. For transformations better expressed in code, discover run_computer_command and compute in the authorized computer workspace. Do not invent source endpoints.",
-      z.object({
+      'Read and analyze a published public JSON dataset up to 16 MiB. entries=true turns object keys into {key,value} rows. aggregate processes the COMPLETE dataset before paging. Put expand, groupBy, sum and share INSIDE aggregate. aggregate.expand exposes nested array elements as /item and source rows as /parent. Example query: {entries:true,aggregate:{expand:"/value/items",groupBy:[{name:"region",pointer:"/parent/key",prefix:2},{name:"category",pointer:"/item/name"}],sum:[{name:"total",pointer:"/item/amount",numberFormat:"pt-BR"}],share:{of:"total",within:["region"],name:"percent"}}}. where filters final rows AFTER share calculation, preserving all categories in the denominator. For transformations better expressed in code, use run_computer_command in the authorized computer workspace. Do not invent source endpoints.',
+      z.strictObject({
         url: z.url().max(4096),
         pointer: z.string().max(1000).default(""),
         entries: z.boolean().default(false),
@@ -2092,6 +2092,9 @@ export async function executeModelTask(
     providers: config.modelProviders ?? modelProviderConfig(config.dataDir),
     promptContext: async (selectedTools) =>
       (task.state.planCompletionFollowup ? `${PLAN_COMPLETION_FOLLOWUP}\n` : "") +
+      (task.state.artifactSelectionFollowup
+        ? "A draft file exists, but its existence alone does not complete the original request. Compare the generation brief and actual deliverable with every requested entity, value and visual form. Continue research and correct omissions using available sources; do not substitute a national summary or blank template for requested detailed data. Call finish_task with the final artifactIds and an explicit outcome: completed only when the original request is fulfilled, partial if concrete blockers remain. Reuse satisfactory files; do not repeat completed generation automatically.\n"
+        : "") +
       (task.state.completionFollowup
         ? `The last response ended before the requested file existed. Continue the authorized work from saved receipts; do not repeat completed effects. Missing requirements: ${JSON.stringify(task.state.completionFollowup)}. Resolve dates and facts through the current date, conversation and authorized sources first. If necessary input is still missing, call ask_user to pause; a plain-text question does not pause a task.\n`
         : "") +
@@ -2306,6 +2309,24 @@ export async function executeModelTask(
       };
   }
   if (!outcome && text.trim()) text = await voiceReply(text);
+  if (
+    !outcome &&
+    text.trim() &&
+    task.artifactIds.length &&
+    task.criteria?.some((criterion) => criterion.kind === "file") &&
+    task.state.artifactSelectionFollowupRevision !== Number(task.state.appliedRevision ?? 0)
+  )
+    return {
+      status: "queued",
+      state: {
+        ...task.state,
+        artifactSelectionFollowup: true,
+        artifactSelectionFollowupRevision: Number(task.state.appliedRevision ?? 0),
+        lastUpdate: text,
+        continuation: true,
+        providerCheckpoint: null,
+      },
+    };
   // A complete text response can itself be the requested plan delivery. Use
   // the same owned artifact and evidence checks as an explicit finish call.
   if (!outcome && textPlanDelivery(task, text))
@@ -2313,7 +2334,13 @@ export async function executeModelTask(
   if (outcome)
     return { ...outcome, state: { ...task.state, ...outcome.state, providerCheckpoint: null } };
   if (text.trim()) {
-    await deliver(text, "completed");
+    // A second unqualified prose ending cannot silently certify a draft.
+    // The explicit finish tool is the executor's owned delivery decision.
+    await deliver(
+      text,
+      task.state.artifactSelectionFollowup ? "partial" : "completed",
+      task.state.artifactSelectionFollowup ? [] : task.artifactIds,
+    );
     const delivered = outcome as Partial<AgentTask> | undefined;
     if (delivered)
       return {
