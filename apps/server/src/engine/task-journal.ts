@@ -281,6 +281,68 @@ export class TaskJournal {
       await this.recordReceipt(owner, op.id, receipt, status, (op.sequence ?? 0) + 1);
     }
   }
+  private async reconcileConfirmedComputerStarts(owner: string, operations: JournalOperation[]) {
+    const completed = new Set<string>();
+    for (const start of operations) {
+      const state = start.receipt as
+        | { status?: string; enabled?: boolean; error?: unknown; outcomeUnknown?: boolean }
+        | undefined;
+      if (
+        start.toolName !== "start_computer" ||
+        start.status !== "running" ||
+        !start.effect ||
+        state?.status !== "running" ||
+        state.enabled !== true ||
+        state.error ||
+        state.outcomeUnknown
+      )
+        continue;
+      const children = operations.filter((op) => op.parentOperationId === start.id);
+      const primitive = children[0];
+      if (
+        children.length !== 1 ||
+        primitive?.toolName !== "primitive.start_computer" ||
+        primitive.status !== "running" ||
+        primitive.revision !== start.revision ||
+        primitive.bindingHash !== start.bindingHash
+      )
+        continue;
+      const deliveries = operations.filter((op) => op.parentOperationId === primitive.id);
+      const delivery = deliveries[0];
+      const receipt = delivery?.receipt as
+        | { status?: string; data?: { started?: boolean } }
+        | undefined;
+      if (
+        deliveries.length !== 1 ||
+        delivery?.nativeEnvelope?.kind !== "session" ||
+        (delivery.args as { operation?: string })?.operation !== "start" ||
+        delivery.status !== "succeeded" ||
+        delivery.revision !== start.revision ||
+        receipt?.status !== "succeeded" ||
+        receipt.data?.started !== true ||
+        operations.some((op) => op.parentOperationId === delivery.id)
+      )
+        continue;
+      // An independently confirmed native start already finished. Older host
+      // receipts confused the running subject with the operation; do not replay it.
+      for (const op of [primitive, start]) {
+        await this.recordReceipt(
+          owner,
+          op.id,
+          {
+            status: "succeeded",
+            computer: op.receipt,
+            reconciled: true,
+            nativeOperationId: delivery.id,
+          },
+          "succeeded",
+          (op.sequence ?? 0) + 1,
+        );
+        completed.add(op.id);
+      }
+    }
+    return completed;
+  }
   async prepare(owner: string, intent: JournalOperation): Promise<JournalOperation> {
     const value = journalOperationSchema.parse({
       ...intent,
@@ -549,9 +611,12 @@ export class TaskJournal {
     if (terminal.has(op.status)) return op.receipt ?? { skipped: true, status: op.status };
     if (op.status !== "queued") throw new TaskOutcomeUnknownError([op.id]);
     if (effect) {
-      const pending = (await this.operations(owner, task.id)).filter(
+      const operations = await this.operations(owner, task.id);
+      const confirmedStarts = await this.reconcileConfirmedComputerStarts(owner, operations);
+      const pending = operations.filter(
         (other) =>
           other.id !== op.id &&
+          !confirmedStarts.has(other.id) &&
           other.effect &&
           ["dispatching", "running", "outcome_unknown"].includes(other.status),
       );
