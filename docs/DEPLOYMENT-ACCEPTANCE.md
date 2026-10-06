@@ -529,8 +529,10 @@ Na implantação técnica anterior, passaram 867/867 testes Node, os três proje
 TypeScript, 92/92 testes Python do computador e 49/49 testes de scripts, incluindo
 criptografia age real. A fonte instalada na Lenovo continua `985b51d`; esses
 resultados são do aceite anterior e não equivalem a uma nova execução nesta retomada.
-O limite operacional de contexto em ChatGPT/Grok é 131072: orçamento de admissão
-do app, não medição da janela máxima do modelo.
+Naquela implantação, a declaração de contexto em ChatGPT/Grok era 131072:
+orçamento de admissão do app, não medição da janela máxima do modelo. Em
+2026-10-06, a declaração do Luna foi corrigida para sua janela documentada de
+1.050.000 tokens; veja [HARNESS-RELIABILITY-20261005.md](HARNESS-RELIABILITY-20261005.md).
 
 ## Instalação observada
 

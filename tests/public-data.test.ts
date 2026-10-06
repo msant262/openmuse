@@ -3,6 +3,54 @@ import test from "node:test";
 import { selectPublicData } from "../apps/server/src/public-data.ts";
 import { PublicWeb } from "../apps/server/src/public-web.ts";
 
+test("invalid data pointers expose observed field paths and root syntax without returning source values", () => {
+  const source = {
+    records: [{ name: "Example", votes: 12 }],
+    "source/name": "This source value must not appear in a pointer diagnostic",
+  };
+  for (const path of ["/", "/invented"]) {
+    assert.throws(
+      () => selectPublicData(source, { pointer: path }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /pointer=""/);
+        assert.match(error.message, /\/records \(array\)/);
+        assert.match(error.message, /\/source~1name \(string\)/);
+        assert.doesNotMatch(error.message, /This source value/);
+        return true;
+      },
+    );
+  }
+  assert.throws(
+    () => selectPublicData(source, { pointer: "/records", select: ["votes"] }),
+    /Use \/votes/,
+  );
+  assert.deepEqual(selectPublicData(source, { pointer: "/records", select: ["/votes"] }).rows, [
+    { "/votes": 12 },
+  ]);
+});
+
+test("object-key aggregation identifies the missing entries mode and observed fields", () => {
+  const source = { north: { votes: 12 }, south: { votes: 8 } };
+  const aggregate = {
+    groupBy: [{ name: "region", pointer: "/key" }],
+    sum: [{ name: "votes", pointer: "/value/votes" }],
+  };
+  assert.throws(
+    () => selectPublicData(source, { aggregate }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /entries=true/);
+      assert.match(error.message, /\/north \(object\)/);
+      return true;
+    },
+  );
+  assert.deepEqual(selectPublicData(source, { entries: true, aggregate }).rows, [
+    { region: "north", count: 1, votes: 12 },
+    { region: "south", count: 1, votes: 8 },
+  ]);
+});
+
 test("an expanded dataset explains how to repair a grouping pointer without returning partial totals", () => {
   const source = {
     regionA: {

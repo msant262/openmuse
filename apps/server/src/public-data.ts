@@ -13,12 +13,22 @@ export type PublicDataQuery = {
     share?: { of: string; within: string[]; name: string };
   };
 };
+function availableFields(value: unknown) {
+  if (!value || typeof value !== "object") return `This scope is ${typeof value}.`;
+  const keys = Object.keys(value);
+  const fields = keys.slice(0, 40).map((key) => {
+    const item = (value as Record<string, unknown>)[key];
+    const type = Array.isArray(item) ? "array" : item === null ? "null" : typeof item;
+    return `/${key.replaceAll("~", "~0").replaceAll("/", "~1")} (${type})`;
+  });
+  return `Available fields at this scope: ${fields.join(", ") || "none"}.${keys.length > fields.length ? " Additional fields omitted; inspect the root structure to select them." : ""}`;
+}
 function pointer(value: unknown, path: string): unknown {
   if (!path) return value;
   if (!path.startsWith("/"))
     throw new WebReadError(
       "INVALID_POINTER",
-      "Use a JSON pointer starting with /, or an empty pointer for the root.",
+      `Use a JSON pointer starting with /, or pointer="" for the root. ${Object.hasOwn(Object(value), path) ? `Use /${path.replaceAll("~", "~0").replaceAll("/", "~1")} for the requested field. ` : ""}${availableFields(value)}`,
     );
   for (const part of path
     .slice(1)
@@ -52,7 +62,7 @@ export function selectPublicData(value: unknown, query: PublicDataQuery = {}) {
   if (chosen === undefined)
     throw new WebReadError(
       "POINTER_NOT_FOUND",
-      "This JSON pointer does not exist. Inspect the returned root structure before selecting fields.",
+      `This JSON pointer does not exist. Use pointer="" for the root, then select an observed field path. ${availableFields(value)}`,
     );
   const source =
     query.entries && chosen && typeof chosen === "object" && !Array.isArray(chosen)
@@ -148,7 +158,7 @@ function aggregateData(source: unknown[], query: NonNullable<PublicDataQuery["ag
         )
           throw new WebReadError(
             "INVALID_AGGREGATION",
-            `Group field ${field.pointer} must exist and be a scalar.${pointerHint(field.pointer)}`,
+            `Group field ${field.pointer} must exist and be a scalar.${pointerHint(field.pointer)} ${availableFields(input)}${field.pointer === "/key" && !query.expand ? " To group source object keys, set entries=true on the data read; each row then has /key and /value." : ""}`,
           );
         return field.prefix
           ? String(value).slice(0, field.prefix)

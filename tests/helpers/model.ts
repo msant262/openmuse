@@ -49,6 +49,17 @@ export async function modelFixture(
   reply: (index: number) => ModelCall | undefined | Promise<ModelCall | undefined>,
   options: {
     errorStatus?: (index: number) => number | undefined;
+    reviewErrorStatus?: (index: number) => number | undefined;
+    imageBriefErrorStatus?: (index: number) => number | undefined;
+    imageBriefReview?: (
+      body: string,
+      index: number,
+    ) => {
+      complete: boolean;
+      missing: string[];
+      nextSteps: string[];
+      needsMoreResearch?: boolean;
+    };
     dropAfterStart?: (index: number) => boolean;
     dropAfterText?: (index: number) => boolean;
     errorPart?: (index: number) => boolean;
@@ -88,16 +99,25 @@ export async function modelFixture(
   } = options;
   const requests: { path: string; body: string }[] = [];
   const reviewRequests: { path: string; body: string }[] = [];
+  const imageBriefRequests: { path: string; body: string }[] = [];
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
     const index = requests.length;
     const isReview = body.includes("PUBLIC_RESEARCH_DELIVERY_REVIEW");
-    (isReview ? reviewRequests : requests).push({ path: request.url ?? "", body });
+    const isBrief = isReview && JSON.parse(body).instructions.includes("IMAGE_BRIEF_REVIEW");
+    (isBrief ? imageBriefRequests : isReview ? reviewRequests : requests).push({
+      path: request.url ?? "",
+      body,
+    });
     const contentType =
       options.streamContentType === undefined ? "text/event-stream" : options.streamContentType;
     const streamHeaders = contentType === null ? {} : { "Content-Type": contentType };
-    const status = errorStatus?.(index);
+    const status = isBrief
+      ? options.imageBriefErrorStatus?.(imageBriefRequests.length - 1)
+      : isReview
+        ? (options.reviewErrorStatus?.(reviewRequests.length - 1) ?? errorStatus?.(index))
+        : errorStatus?.(index);
     if (status !== undefined) {
       const retryAfter = options.retryAfter?.(index);
       response.writeHead(status, {
@@ -211,7 +231,9 @@ export async function modelFixture(
     // Existing tests isolate the execution loop. Dedicated review tests supply
     // rejection/repair decisions at this external model boundary.
     const review = isReview
-      ? (options.researchReview?.(body, reviewRequests.length - 1) ?? {
+      ? ((isBrief
+          ? options.imageBriefReview?.(body, imageBriefRequests.length - 1)
+          : options.researchReview?.(body, reviewRequests.length - 1)) ?? {
           complete: true,
           missing: [],
           nextSteps: [],
@@ -400,7 +422,7 @@ export async function modelFixture(
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
-  return { requests };
+  return { requests, reviewRequests, imageBriefRequests };
 }
 
 /** Capabilities advertised by the current native harness surface, including

@@ -6,10 +6,16 @@ import { join } from "node:path";
 import test from "node:test";
 import { EventType } from "@ag-ui/core";
 import { defineTool } from "@copilotkit/runtime/v2";
+import { resolveDebugOption } from "@tanstack/ai/adapter-internals";
 import { lastValueFrom, toArray } from "rxjs";
 import { z } from "zod";
-import { openclawAgent } from "../apps/server/src/engine/openclaw-agent.ts";
+import {
+  nativeContextOverflow,
+  openclawAgent,
+  openclawContextEstimator,
+} from "../apps/server/src/engine/openclaw-agent.ts";
 import { completedMessages } from "../apps/server/src/engine/task-history.ts";
+import type { ProviderContinuationCheckpoint } from "../apps/server/src/providers/models.ts";
 import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
@@ -250,6 +256,210 @@ test("host instructions that fit the native context reach the provider without b
       (event) =>
         event.type === EventType.TEXT_MESSAGE_CONTENT && event.delta === "Verified answer.",
     ),
+  );
+});
+
+test("host context admission lets the original harness compact and retry rather than report missing capabilities", async (t) => {
+  const f = await taskRuntime(t);
+  const fixture = await modelFixture(t, () => undefined, {
+    text: () => "Retained verified result: Source A reports 52%. Completed the request.",
+  });
+  const providers = richChatFixtureProviders(f.directory);
+  providers.routing!.capabilities["openai/fixture"].contextTokens = 100000;
+  providers.routing!.maxAttempts = 1;
+  const interruptions: unknown[] = [];
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    compaction: { db: f.db, owner: "owner", scope: "context-recovery" },
+    model: "openai/fixture",
+    providers,
+    contextModel: () => ({ id: "fixture", contextTokens: 131072, outputReserveTokens: 8192 }),
+    prompt: "Use the recorded sources to answer the current request. Preserve verified facts.",
+    tools: [],
+    onProviderInterrupted: (checkpoint) => {
+      interruptions.push(checkpoint);
+    },
+  });
+  const messages = Array.from({ length: 40 }, (_, i) => ({
+    id: randomUUID(),
+    role: i % 2 ? ("assistant" as const) : ("user" as const),
+    content:
+      `Historical record ${i}. Source A reports 52%. ` +
+      "Detailed observation from the source. ".repeat(220),
+  }));
+  messages.push({ id: randomUUID(), role: "user", content: "Complete the recorded research." });
+  const events = await lastValueFrom(
+    agent
+      .run({
+        threadId: "context-recovery",
+        runId: randomUUID(),
+        messages,
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.deepEqual(
+    events.filter((event) => event.type === EventType.RUN_ERROR),
+    [],
+    "an oversized host request must reach the copied context-overflow recovery",
+  );
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === EventType.TEXT_MESSAGE_CONTENT && String(event.delta).includes("52%"),
+    ),
+  );
+  assert.ok(
+    fixture.requests.length >= 2,
+    "the original compaction summary and recovered execution both reach the provider",
+  );
+  assert.equal(interruptions.length, 0, "recoverable context admission is not a provider outage");
+  const saved = (await f.db.list<{ entries: { type: string }[] }>("owner", "harness-sessions"))[0];
+  assert.ok(
+    saved.entries.some((entry) => entry.type === "compaction"),
+    "the recovered native tree is persisted",
+  );
+});
+
+test("the native executor uses a declared 1.05M window without a hidden 128k ceiling", async (t) => {
+  const f = await taskRuntime(t);
+  const fixture = await modelFixture(t, () => undefined, {
+    text: () => "Retained the full context.",
+  });
+  const providers = richChatFixtureProviders(f.directory);
+  providers.routing!.capabilities["openai/fixture"].contextTokens = 1050000;
+  const messages = Array.from({ length: 90 }, (_, i) => ({
+    id: randomUUID(),
+    role: i % 2 ? ("assistant" as const) : ("user" as const),
+    content: `HISTORICAL_MARKER_${i}. ` + "Detailed observation from the source. ".repeat(300),
+  }));
+  messages.push({ id: randomUUID(), role: "user", content: "Answer using all retained records." });
+  const estimate = await openclawContextEstimator(f.directory);
+  const cost = estimate({
+    logger: resolveDebugOption(false),
+    model: "openai/fixture",
+    messages,
+    tools: [],
+    systemPrompts: ["Answer directly."],
+  });
+  assert.ok(cost > 200000 && cost < 1050000, `expected a request above 200k, observed ${cost}`);
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers,
+    prompt: "Answer directly.",
+    tools: [],
+    compaction: { db: f.db, owner: "owner", scope: "large-window" },
+  });
+  const events = await lastValueFrom(
+    agent
+      .run({
+        threadId: "large-window",
+        runId: randomUUID(),
+        messages,
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.deepEqual(
+    events.filter((event) => event.type === EventType.RUN_ERROR),
+    [],
+  );
+  assert.equal(
+    fixture.requests.length,
+    1,
+    "do not prematurely compact a request that fits the model",
+  );
+  for (const i of [0, 44, 89])
+    assert.ok(fixture.requests[0].body.includes(`HISTORICAL_MARKER_${i}.`));
+  const offered = JSON.parse(fixture.requests[0].body).tools.flatMap(
+    (tool: { tools?: unknown[] }) => tool.tools ?? [tool],
+  );
+  const reader = offered.find((tool: { name?: string; function?: { name?: string } }) =>
+    ["okami_read_tool_output", "read_tool_output"].includes((tool.function ?? tool).name ?? ""),
+  );
+  assert.ok(reader, "canonical tool receipts remain recoverable");
+  assert.ok(
+    (reader.function ?? reader).parameters.properties.limit.maximum >= 50000,
+    "large-window source recovery must not retain the 128k profile's smaller read limit",
+  );
+  const saved = (await f.db.list<{ entries: { type: string }[] }>("owner", "harness-sessions"))[0];
+  assert.ok(!saved.entries.some((entry) => entry.type === "compaction"));
+});
+
+test("context recovery preserves genuine capability, authentication and explicit floor failures", () => {
+  const providers = richChatFixtureProviders("/var/tmp/context-admission");
+  const checkpoint: ProviderContinuationCheckpoint = {
+    version: 1,
+    messages: [],
+    partialText: "",
+    rejectedModel: "local/fixture",
+    accepted: false,
+    code: "MODEL_CAPABILITY_UNAVAILABLE",
+    admission: {
+      stage: "provider_dispatch",
+      requirements: { tools: true, vision: true, structuredOutput: false, contextTokens: 150000 },
+      candidates: [
+        {
+          model: "local/fixture",
+          capabilities: {
+            tools: true,
+            vision: true,
+            structuredOutput: true,
+            contextTokens: 131072,
+          },
+          capabilitySource: "declared",
+          eligible: false,
+          considered: false,
+          cooldownUntil: 0,
+        },
+      ],
+    },
+  };
+  assert.equal(
+    nativeContextOverflow(checkpoint, providers),
+    "prompt is too long: 150000 tokens > 131072 maximum",
+  );
+  assert.equal(nativeContextOverflow({ ...checkpoint, accepted: true }, providers), undefined);
+  assert.equal(
+    nativeContextOverflow({ ...checkpoint, code: "MODEL_PROVIDER_INTERRUPTED" }, providers),
+    undefined,
+  );
+  assert.equal(nativeContextOverflow(checkpoint, providers, 150000), undefined);
+  assert.equal(nativeContextOverflow(checkpoint, providers, 140000), undefined);
+  const candidate = checkpoint.admission!.candidates[0];
+  for (const changes of [{ vision: false }, { tools: false }, { contextTokens: 200000 }]) {
+    assert.equal(
+      nativeContextOverflow(
+        {
+          ...checkpoint,
+          admission: {
+            ...checkpoint.admission!,
+            candidates: [{ ...candidate, capabilities: { ...candidate.capabilities, ...changes } }],
+          },
+        },
+        providers,
+      ),
+      undefined,
+    );
+  }
+  assert.equal(
+    nativeContextOverflow(
+      {
+        ...checkpoint,
+        admission: {
+          ...checkpoint.admission!,
+          candidates: [{ ...candidate, model: "mimo/not-configured" }],
+        },
+      },
+      providers,
+    ),
+    undefined,
+    "compaction cannot supply absent provider credentials",
   );
 });
 

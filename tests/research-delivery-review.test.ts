@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
@@ -708,4 +709,563 @@ test("a revised request restores research tools after an older delivery-only rev
   assert.ok(firstRequest);
   const tools = offeredHostTools(firstRequest.body);
   assert.ok(tools.includes("web_fetch"), "A new revision must be allowed to acquire new facts");
+});
+
+test("review admits escaped source data using the harness token estimate, preserving facts that fit", async (t) => {
+  let observed = "";
+  await modelFixture(t, () => undefined, {
+    researchReview: (body) => {
+      observed = JSON.parse(JSON.parse(body).input[0].content[0].text).observations[0].text;
+      return { complete: true, missing: [], nextSteps: [] };
+    },
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Compare A and B in each region." });
+  const source = '"\\\n'.repeat(15000) + "Region 27: A 52%, B 48%." + '"\\\n'.repeat(15000);
+  const { reviewResearchDelivery } = await import(
+    "../apps/server/src/engine/research-delivery-review.ts"
+  );
+  const decision = await reviewResearchDelivery({
+    task,
+    summary: "A 52%; B 48%.",
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url: "https://news.example/data" },
+        receipt: { url: "https://news.example/data", text: source },
+      },
+    ] as Parameters<typeof reviewResearchDelivery>[0]["operations"],
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    signal: new AbortController().signal,
+  });
+  assert.equal(decision.complete, true, "a review that fits must actually reach the provider");
+  assert.equal(
+    observed,
+    source,
+    "JSON escaping must not invent token pressure or discard the requested facts",
+  );
+});
+
+test("a review provider outage pauses only the review and resumes without regenerating the image", async (t) => {
+  let unavailable = true;
+  const calls = [
+    { name: "web_fetch", arguments: { url: "https://news.example/results" } },
+    {
+      name: "generate_image",
+      arguments: { prompt: "Geographic map: A 52%, B 48%", operationId: "map" },
+    },
+    {
+      name: "finish_task",
+      arguments: { summary: "Geographic map with A 52%, B 48% and source.", outcome: "completed" },
+    },
+  ];
+  const fixture = await modelFixture(t, (i) => calls[i], {
+    reviewErrorStatus: () => (unavailable ? 503 : undefined),
+    researchReview: () => ({ complete: true, missing: [], nextSteps: [] }),
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  f.agent.config.modelProviders!.routing!.maxAttempts = 1;
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "<main>A 52%, B 48%.</main>",
+  }));
+  let generations = 0;
+  t.mock.method(f.agent.media, "generatedImage", async () => {
+    generations++;
+    const file = await f.files.importAttachment(
+      "owner",
+      "map.png",
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1sAAAAASUVORK5CYII=",
+        "base64",
+      ),
+      "Generated image",
+      "image/png",
+    );
+    return f.files.reference("owner", file.id);
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Create an infographic with a geographic map showing A and B percentages.",
+  });
+  await f.agent.worker.tick();
+  let saved = await f.agent.getTask("owner", task.id);
+  assert.equal(
+    saved.status,
+    "waiting_provider",
+    "review outages must not become semantic repair instructions or task failures",
+  );
+  assert.equal(generations, 1);
+  assert.equal(saved.completion?.status, undefined);
+  assert.equal(
+    (await f.agent.detail("owner", task.id)).files.length,
+    0,
+    "unreviewed images must stay out of the chat delivery",
+  );
+  const executionRequests = fixture.requests.length;
+  unavailable = false;
+  const { sharedModelRouter } = await import("../apps/server/src/providers/model-router.ts");
+  const cooldown = sharedModelRouter(f.agent.config.modelProviders!).health.get(
+    "openai/fixture",
+  ).cooldownUntil;
+  await new Promise((resolve) => setTimeout(resolve, Math.max(0, cooldown - Date.now() + 5)));
+  await f.db.put("owner", "tasks", { ...saved, nextRunAt: new Date(0).toISOString() });
+  await f.agent.worker.tick();
+  saved = await f.agent.getTask("owner", task.id);
+  assert.equal(
+    saved.status,
+    "succeeded",
+    JSON.stringify({
+      error: saved.error,
+      completion: saved.completion,
+      review: saved.state.researchDeliveryReview,
+    }),
+  );
+  assert.equal(generations, 1, "resuming the review must not call the generator again");
+  assert.equal(
+    fixture.requests.length,
+    executionRequests,
+    "resume the saved delivery before invoking the executor",
+  );
+  assert.equal((await f.agent.detail("owner", task.id)).files.length, 1);
+});
+
+test("a short follow-up repairs the original geographic map and publishes only the reviewed revision", async (t) => {
+  const ids: string[] = [];
+  let f: Awaited<ReturnType<typeof taskRuntime>>;
+  let taskId = "";
+  const calls = [
+    { name: "web_fetch", arguments: { url: "https://news.example/results" } },
+    {
+      name: "generate_image",
+      arguments: { prompt: "Grid of region cards, A 52%, B 48%", operationId: "draft" },
+    },
+    { name: "finish_task", arguments: { summary: "Grid of regions", outcome: "completed" } },
+    {
+      name: "generate_image",
+      arguments: {
+        prompt: "Geographic map with real outlines, A 52%, B 48%",
+        operationId: "corrected",
+      },
+    },
+  ];
+  const fixture = await modelFixture(
+    t,
+    async (i) => {
+      if (i === 3) assert.equal((await f.agent.detail("owner", taskId)).files.length, 0);
+      return i === 4
+        ? {
+            name: "finish_task",
+            arguments: {
+              summary: "Geographic map with A 52%, B 48%",
+              outcome: "completed",
+              artifactIds: [ids[1]],
+            },
+          }
+        : calls[i];
+    },
+    {
+      researchReview: (body, index) => {
+        const payload = JSON.parse(JSON.parse(body).input[0].content[0].text);
+        assert.equal(payload.originalRequest, "faz um novo por gentileza eu apaguei o anterior");
+        assert.match(JSON.stringify(payload.conversationContext), /mapa do Brasil/);
+        if (index === 1) {
+          assert.deepEqual(
+            payload.reviewedImageIds,
+            [ids[1]],
+            "the rejected revision must not be certified as part of the final delivery",
+          );
+          return { complete: true, missing: [], nextSteps: [], needsMoreResearch: false };
+        }
+        return {
+          complete: false,
+          missing: ["The requested geographic map is a grid"],
+          nextSteps: ["Replace the grid with real geographic outlines using the observed facts"],
+          needsMoreResearch: false,
+          requestAudit: [
+            {
+              requirement: "Geographic map of Brazil",
+              satisfied: false,
+              evidence: "The image is a grid of cards",
+            },
+          ],
+        };
+      },
+    },
+  );
+  f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  const urls: string[] = [];
+  t.mock.method(f.agent.web, "document", async (url: string) => {
+    urls.push(url);
+    return { url, contentType: "text/html", body: "<main>A 52%, B 48%.</main>" };
+  });
+  t.mock.method(f.agent.media, "generatedImage", async () => {
+    const file = await f.files.importAttachment(
+      "owner",
+      `map-${ids.length}.png`,
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1sAAAAASUVORK5CYII=",
+        "base64",
+      ),
+      "Generated image",
+      "image/png",
+    );
+    ids.push(file.id);
+    return f.files.reference("owner", file.id);
+  });
+  const prompt = "faz um novo por gentileza eu apaguei o anterior";
+  const task = await f.agent.createTask(
+    "owner",
+    { prompt, originThreadId: "map-chat" },
+    undefined,
+    false,
+    undefined,
+    prompt,
+    [
+      {
+        id: "original",
+        role: "user",
+        content:
+          "Quero um infográfico: mapa do Brasil mostrando os percentuais de A e B por estado.",
+      },
+    ],
+  );
+  taskId = task.id;
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", JSON.stringify(saved.completion));
+  assert.deepEqual(
+    urls,
+    ["https://news.example/results"],
+    "a format repair must reuse sufficient observed facts",
+  );
+  assert.equal(ids.length, 2);
+  assert.deepEqual(saved.artifactIds, ids, "both files remain in the task's audit history");
+  assert.deepEqual(
+    (await f.agent.detail("owner", task.id)).files.map((file) => file.id),
+    [ids[1]],
+  );
+  assert.ok(fixture.requests.length >= 5);
+});
+
+test("incomplete image facts are repaired before dispatching an expensive generator", async (t) => {
+  const briefDecisions: string[] = [];
+  const calls = [
+    { name: "web_fetch", arguments: { url: "https://news.example/partial" } },
+    {
+      name: "generate_image",
+      arguments: { prompt: "Map: North A 52%, B 48%; South unknown", operationId: "partial-map" },
+    },
+    { name: "web_fetch", arguments: { url: "https://news.example/complete" } },
+    {
+      name: "generate_image",
+      arguments: {
+        prompt: "Map: North A 52%, B 48%; South A 41%, B 59%",
+        operationId: "complete-map",
+      },
+    },
+    {
+      name: "finish_task",
+      arguments: { summary: "Complete geographic map of both regions and candidates." },
+    },
+  ];
+  await modelFixture(t, (i) => calls[i], {
+    imageBriefReview: (body) => {
+      const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
+      assert.equal(input.stage, "image_brief");
+      briefDecisions.push(input.proposedAnswer);
+      const complete = input.proposedAnswer.includes("South A 41%");
+      return {
+        complete,
+        needsMoreResearch: !complete,
+        missing: complete ? [] : ["South has no values for A and B"],
+        nextSteps: complete ? [] : ["Read the observed complete source before generating"],
+      };
+    },
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: url.endsWith("complete")
+      ? "North A 52%, B 48%; South A 41%, B 59%."
+      : "North A 52%, B 48%. https://news.example/complete",
+  }));
+  const generated: string[] = [];
+  t.mock.method(
+    f.agent.media,
+    "generatedImage",
+    async (_owner: string, _model: string | undefined, args: unknown) => {
+      generated.push((args as { prompt: string }).prompt);
+      const file = await f.files.importAttachment(
+        "owner",
+        "map.png",
+        Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1sAAAAASUVORK5CYII=",
+          "base64",
+        ),
+        "Generated image",
+        "image/png",
+      );
+      return f.files.reference("owner", file.id);
+    },
+  );
+  const task = await f.agent.createTask("owner", {
+    prompt:
+      "Create an infographic with a geographic map of North and South showing A and B percentages.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", JSON.stringify(saved.completion));
+  assert.equal(briefDecisions.length, 2);
+  assert.deepEqual(generated, [calls[3].arguments.prompt]);
+  assert.equal(
+    saved.artifactIds.length,
+    1,
+    "a rejected brief must not create a draft or image receipt",
+  );
+});
+
+for (const legacyApproved of [false, true])
+  test(`an unavailable image brief review resumes the saved generation before another executor inference${legacyApproved ? " from a legacy approved task" : ""}`, async (t) => {
+    let unavailable = true;
+    let generations = 0;
+    const calls = [
+      { name: "web_fetch", arguments: { url: "https://news.example/results" } },
+      {
+        name: "generate_image",
+        arguments: { prompt: "Geographic map: A 52%, B 48%", operationId: "map" },
+      },
+      { name: "finish_task", arguments: { summary: "Geographic map: A 52%, B 48% with source." } },
+    ];
+    const fixture = await modelFixture(
+      t,
+      (i) => {
+        if (i === 2) {
+          assert.equal(
+            generations,
+            1,
+            "the host resumes the approved image before asking the executor",
+          );
+          assert.ok(
+            fixture.requests[i].body.includes('"type":"input_image"'),
+            "the resumed executor must see the actual new image, not historical drafts",
+          );
+        }
+        return calls[i];
+      },
+      {
+        imageBriefErrorStatus: () => (unavailable ? 503 : undefined),
+      },
+    );
+    const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+    f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+    f.agent.config.modelProviders!.routing!.maxAttempts = 1;
+    const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
+      url,
+      contentType: "text/html",
+      body: "A 52%, B 48%.",
+    }));
+    t.mock.method(f.agent.media, "generatedImage", async () => {
+      generations++;
+      const file = await f.files.importAttachment(
+        "owner",
+        "map.png",
+        Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1sAAAAASUVORK5CYII=",
+          "base64",
+        ),
+        "Generated image",
+        "image/png",
+      );
+      return f.files.reference("owner", file.id);
+    });
+    const task = await f.agent.createTask("owner", {
+      prompt: "Create an infographic with a geographic map showing A and B percentages.",
+    });
+    await f.agent.worker.tick();
+    let saved = await f.agent.getTask("owner", task.id);
+    assert.equal(saved.status, "waiting_provider");
+    assert.equal(
+      generations,
+      0,
+      "no generator is dispatched while the brief review is unavailable",
+    );
+    assert.equal(saved.artifactIds.length, 0);
+    assert.equal(read.mock.callCount(), 1);
+    assert.equal(fixture.requests.length, 2);
+    assert.ok(saved.state.pendingImageBrief);
+    assert.deepEqual(
+      (saved.state.pendingImageGeneration as { args: unknown }).args,
+      { ...calls[1].arguments, provider: "auto" },
+      "retain the exact image request, not only its prompt",
+    );
+    unavailable = false;
+    if (legacyApproved) {
+      const { researchObservations } = await import(
+        "../apps/server/src/engine/research-delivery-review.ts"
+      );
+      const operations = await f.agent.journal.operations("owner", task.id);
+      saved.state = {
+        ...saved.state,
+        pendingImageBrief: null,
+        pendingImageGeneration: null,
+        researchReviewFailure: null,
+        imageBriefReview: {
+          key: createHash("sha256")
+            .update(
+              JSON.stringify({
+                prompt: calls[1].arguments.prompt,
+                revision: 0,
+                observations: researchObservations(operations).map((op) => op.receipt),
+              }),
+            )
+            .digest("hex"),
+          revision: 0,
+          complete: true,
+        },
+      };
+    }
+    const { sharedModelRouter } = await import("../apps/server/src/providers/model-router.ts");
+    const cooldown = sharedModelRouter(f.agent.config.modelProviders!).health.get(
+      "openai/fixture",
+    ).cooldownUntil;
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, cooldown - Date.now() + 5)));
+    await f.db.put("owner", "tasks", { ...saved, nextRunAt: new Date(0).toISOString() });
+    await f.agent.worker.tick();
+    saved = await f.agent.getTask("owner", task.id);
+    assert.equal(
+      saved.status,
+      "succeeded",
+      JSON.stringify({ error: saved.error, state: saved.state, completion: saved.completion }),
+    );
+    assert.equal(read.mock.callCount(), 1);
+    assert.equal(generations, 1);
+    assert.equal(fixture.requests.length, 3, "no inference is needed to resubmit the saved image");
+    assert.equal(saved.state.pendingImageGeneration, null);
+    assert.equal(
+      fixture.imageBriefRequests.length,
+      legacyApproved ? 1 : 2,
+      "resume the saved brief, then reuse its approval for generation",
+    );
+    assert.equal((await f.agent.detail("owner", task.id)).files.length, 1);
+  });
+
+test("saved evidence recovers complete canonical source data beyond its excerpt without another network read", async (t) => {
+  const source =
+    "Context. ".repeat(900) + "Verified region Z: A 52%, B 48%." + "Tail. ".repeat(500);
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://news.example/canonical" } },
+        { name: "read_task_evidence", arguments: { offset: 0, limit: 1, includeSourceData: true } },
+        {
+          name: "finish_task",
+          arguments: { summary: "Region Z: A 52%, B 48%, from the observed source." },
+        },
+      ][i],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: `<main>${source}</main>`,
+  }));
+  const task = await f.agent.createTask("owner", {
+    prompt: "Compare the two percentages in region Z.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.result);
+  const output = JSON.parse(fixture.requests[2].body)
+    .input.filter((item: { type: string }) => item.type === "function_call_output")
+    .at(-1);
+  assert.ok(output, "the evidence read must return a canonical receipt to the model");
+  const receipt = JSON.parse(output.output);
+  assert.doesNotMatch(receipt.items[0].excerpt, /Verified region Z/);
+  assert.match(JSON.stringify(receipt.sourceData), /Verified region Z: A 52%, B 48%/);
+  assert.equal(receipt.sourceData[0].url, "https://news.example/canonical");
+  assert.equal(read.mock.callCount(), 1, "recovering archived evidence makes no network request");
+});
+
+test("a 32k model completes research and image delivery without any larger model fallback", async (t) => {
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://news.example/results" } },
+        {
+          name: "generate_image",
+          arguments: {
+            prompt: "Geographic map: North A 52%, B 48%; South A 49%, B 51%",
+            operationId: "small-model-map",
+          },
+        },
+        {
+          name: "finish_task",
+          arguments: { summary: "Map with both candidates in both regions and the source." },
+        },
+      ][i],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const providers = f.agent.config.modelProviders;
+  assert.ok(providers?.routing);
+  providers.routing.capabilities["openai/fixture"] = {
+    contextTokens: 32768,
+    tools: true,
+    structuredOutput: true,
+    vision: true,
+  };
+  f.agent.config.modelFallbacks = [];
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "North A 52%, B 48%; South A 49%, B 51%.",
+  }));
+  let generations = 0;
+  t.mock.method(f.agent.media, "generatedImage", async () => {
+    generations++;
+    const file = await f.files.importAttachment(
+      "owner",
+      "map.png",
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1sAAAAASUVORK5CYII=",
+        "base64",
+      ),
+      "Generated image",
+      "image/png",
+    );
+    return f.files.reference("owner", file.id);
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt:
+      "Research both candidates' percentages in North and South and generate a geographic infographic.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(
+    saved.status,
+    "succeeded",
+    JSON.stringify({ error: saved.error, state: saved.state }),
+  );
+  assert.equal(generations, 1);
+  assert.equal(fixture.requests.length, 3);
+  for (const request of [
+    ...fixture.requests,
+    ...fixture.imageBriefRequests,
+    ...fixture.reviewRequests,
+  ])
+    assert.equal(
+      JSON.parse(request.body).model,
+      "fixture",
+      "every text phase uses the same 32k model",
+    );
+  assert.equal((await f.agent.detail("owner", task.id)).files.length, 1);
 });

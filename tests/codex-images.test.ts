@@ -254,6 +254,32 @@ test("GPT Image dispatch uses only Codex subscription credentials and produces a
     "image-test",
   );
   assert.ok("fileId" in ref);
+  assert.deepEqual((ref as typeof ref & { generation?: unknown }).generation, {
+    provider: "codex",
+    model: "gpt-image-2",
+  });
+  const [receipt] = await server.db.list<{ id: string; provider?: string; model?: string }>(
+    "owner",
+    "image-generations",
+  );
+  assert.equal(receipt.provider, "codex");
+  assert.equal(receipt.model, "gpt-image-2");
+  const replay = await media.generatedImage(
+    "owner",
+    "grok/grok-4.6",
+    {
+      prompt: "A garden infographic",
+      aspectRatio: "3:4",
+      operationId: "gpt-image",
+      name: "Garden",
+    },
+    "image-test",
+  );
+  assert.deepEqual(
+    replay,
+    ref,
+    "replay must retain the generator originally used despite another conversation model",
+  );
   assert.deepEqual(await server.files.bytes("owner", ref.fileId), png);
   assert.equal(calls, 1);
   assert.equal((await media.imageCapabilities("chatgpt/gpt-6-sol")).chatgpt?.imageGeneration, true);

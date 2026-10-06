@@ -558,7 +558,9 @@ export class TaskVerification {
               )
               .map((artifact) => artifact.id);
           else if (criterion.kind === "file")
-            for (const id of task.artifactIds) {
+            for (const id of Array.isArray(task.state.deliveryCandidateArtifactIds)
+              ? (task.state.deliveryCandidateArtifactIds as string[])
+              : task.artifactIds) {
               if (criterion.referenceId && id !== criterion.referenceId) continue;
               const file = await this.db.get<Artifact>(owner, "files", id);
               if (
