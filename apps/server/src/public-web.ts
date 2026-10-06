@@ -56,6 +56,33 @@ export type RenderedPublicPage = {
   links?: { title: string; url: string }[];
   extraction?: { status: "readable" | "partial"; reason?: string };
 };
+/** Keep observed anchor destinations beside their rendered labels, as in the
+ * native HTTP Markdown reader. Ambiguous labels never acquire a guessed URL. */
+export function renderedPublicText(page: RenderedPublicPage) {
+  const links = new Map<string, string | null>();
+  for (const link of page.links ?? []) {
+    const title = link.title.trim();
+    try {
+      const url = new URL(link.url, page.url);
+      if (!title || !/^https?:$/.test(url.protocol) || url.username || url.password) continue;
+      const previous = links.get(title);
+      links.set(title, previous === undefined || previous === url.href ? url.href : null);
+    } catch {
+      // Invalid observed metadata cannot create a link.
+    }
+  }
+  return page.text
+    .split("\n")
+    .map((line) => {
+      const title = line.trim(),
+        url = links.get(title);
+      return url
+        ? `[${title.replace(/[[\]\\]/g, "\\$&")}](${url.replace(/[()]/g, (c) => (c === "(" ? "%28" : "%29"))})`
+        : line;
+    })
+    .join("\n");
+}
+
 export const publicReadDescription =
   "Read public HTML/JSON and discovered data URLs. Default auto uses HTTP; mode=headless renders JavaScript on the VPS. mode=browser is a legacy alias for headless. Inspect dataSources for published datasets. Truncated content does not establish that unread fields are absent.";
 
@@ -548,12 +575,13 @@ export class PublicWeb {
       }
       throw error;
     }
+    const text = renderedPublicText(rendered);
     return {
       ...rendered,
-      text: rendered.text.slice(0, maxText),
+      text: text.slice(0, maxText),
       links: rendered.links ?? [],
       dataSources: rendered.dataSources ?? [],
-      truncated: rendered.truncated || rendered.text.length > maxText,
+      truncated: rendered.truncated || text.length > maxText,
       extraction: rendered.extraction ?? { status: "readable" as const },
       observedAt: new Date().toISOString(),
       provenance: { backend: "browser" as const, mode: "headless" as const },

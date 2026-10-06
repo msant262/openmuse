@@ -21,6 +21,32 @@ test("the production reader keeps native Markdown links with their context and f
   assert.equal(page.provenance.backend, "http");
 });
 
+test("headless public reading retains the observed link beside its label without guessing ambiguous links", async () => {
+  const { PublicWeb } = await import("../apps/server/src/public-web.ts");
+  const web = new PublicWeb({ resolve });
+  const page = await web.read("https://news.example/overview", undefined, {
+    mode: "headless",
+    render: async (url) => ({
+      url,
+      title: "Results",
+      text: "Regional overview\nPresidential results\nOther results\nMore\nUnsafe",
+      truncated: false,
+      links: [
+        { title: "Presidential results", url: "https://news.example/presidential" },
+        { title: "More", url: "https://news.example/one" },
+        { title: "More", url: "https://news.example/two" },
+        { title: "Unsafe", url: "javascript:alert(1)" },
+      ],
+    }),
+  });
+  assert.match(
+    page.text,
+    /Regional overview\n\[Presidential results\]\(https:\/\/news\.example\/presidential\)/,
+  );
+  assert.match(page.text, /Other results\nMore\nUnsafe/);
+  assert.doesNotMatch(page.text, /javascript:|news\.example\/(?:one|two)/);
+});
+
 test("public reading identifies pending content and explicitly renders it before returning evidence", async () => {
   const { PublicWeb, readablePage } = await import("../apps/server/src/public-web.ts");
   const web = new PublicWeb({

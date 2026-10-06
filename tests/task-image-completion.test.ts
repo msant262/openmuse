@@ -248,6 +248,9 @@ test("a partial image finish continues from an observed unread result link witho
   const finish = result.operations.find((op) => op.toolName === "finish_task");
   assert.ok(finish);
   assert.equal((finish.receipt as { repairable?: boolean }).repairable, true);
+  assert.deepEqual((finish.receipt as { unreadSourceLinks?: unknown[] }).unreadSourceLinks, [
+    { title: "Read current results", url: "https://results.example/results" },
+  ]);
   assert.equal(result.files.length, 1);
   assert.equal(fixture.reviewRequests.length, 0);
   assert.equal(fixture.imageBriefRequests.length, 0);
@@ -369,6 +372,13 @@ for (const vision of [true, false]) {
     );
     const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
     f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = vision;
+    await f.agent.profiles.update("owner", {
+      scope: { kind: "global" },
+      patch: { personality: "Warm and clear; preserve factual precision." },
+      expectedRevision: 0,
+      requestId: "single-executor-image",
+      origin: { kind: "settings" },
+    });
     t.mock.method(f.agent.web, "document", async (url: string) => ({
       url,
       contentType: "text/html",

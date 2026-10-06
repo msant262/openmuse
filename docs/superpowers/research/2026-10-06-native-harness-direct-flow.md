@@ -165,8 +165,8 @@ conclusão, dados públicos, objetivo e revisões também passaram.
 
 A publicação é restrita às fronteiras do executor, configuração e entrypoint do
 harness, sobre a base de produção existente. Web e APK não são substituídos.
-Fonte publicada: `cce477e7e2efe6bedc3a6f2787f94760c9121e03`.
-Imagem: `sha256:fa1e95852ee6b5f19a79a1334ba45ebb68977a9c9f4d25fddbb965d448f28b06`.
+Fonte publicada: `056c9810abd67cbfc605982fe30b418f68f45a7f`.
+Imagem: `sha256:545bd7af4d1f5e65e073a25ee7103ccf517595fd9fd4ccf132b915a5260bf3ef`.
 Luna permanece como executor de produção, com contexto de 1.050.000 tokens.
 DeepSeek, MiMo e MiniMax não foram validados ao vivo nesta sessão.
 
@@ -260,4 +260,33 @@ verificação da superfície efetivamente enviada ao provedor, passaram os dez
 testes de conclusão de imagem: orientações de imagem presentes e instruções de
 Office/PDF ausentes. Tipos e compilação passaram; lint sem erros. A décima quinta
 reprodução usa o pedido original com o ano, sem URLs ou números fornecidos pelo
-operador; ainda está em observação. Nenhuma reprodução nova foi aprovada.
+operador. Terminou parcial em 143,6 segundos, sem imagem: reconheceu a diferença
+entre governadores e presidente, mas não abriu o link presidencial que já estava
+na página lida. Não é uma aprovação da tarefa.
+
+
+## Links contextuais e entrega pelo próprio executor
+
+Na extração headless, destinos e rótulos chegavam separados do texto. O adaptador
+passa a apresentar os links observados ao lado de seus rótulos de linha, como no
+Markdown HTTP. Rótulos ambíguos ou URLs inválidas não recebem destinos supostos.
+O recibo da continuação já existente inclui os links exatos observados ainda não
+lidos, excluindo tentativas anteriores e deduplicando âncoras e parâmetros de
+rastreamento. Essas entradas são pistas de navegação; não viram fatos, não fazem
+fetch automático e cada leitura continua validada no backend público.
+
+Havia também uma segunda inferência TASK_REPLY_VOICE em cada finish_task e
+encerramento em texto quando a personalidade estava configurada. O executor
+nativo já recebe SOUL e humanizer. Essa reescrita foi removida: a entrega conserva
+a resposta original, sem chamada extra nem alterações posteriores de fatos.
+A personalidade continua no prompt de execução. O teste com SOUL personalizado
+confirma pesquisa e geração com as três chamadas necessárias, sem revisões ou
+reescrita adicional, tanto com visão quanto sem ela.
+
+Passaram 33 testes de leitura e conclusão, incluindo links headless contextuais
+e pistas exatas no recibo de continuação. Os dez testes de conclusão de imagem
+passaram com personalidade configurada; os três de humanizer/SOUL passaram
+após ajustar uma fixture para fazer a leitura real da fonte exigida pelo
+verificador. Tipos e compilação passaram; lint sem erros. A décima sexta
+reprodução roda em produção com Luna e somente o pedido original mais o ano.
+Ainda exige conferência da fonte, dos 54 valores e dos pixels antes de aprovação.
