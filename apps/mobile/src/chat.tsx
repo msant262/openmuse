@@ -484,11 +484,21 @@ export function ChatScreen({
   const followLatest = useRef(new ChatScrollFollow());
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const scrollFrame = useRef<number | undefined>(undefined);
+  const contentHeight = useRef(0);
+  const viewportHeight = useRef(0);
   const followEnd = useCallback(() => {
     if (!active || !followLatest.current.following || scrollFrame.current !== undefined) return;
     scrollFrame.current = requestAnimationFrame(() => {
       scrollFrame.current = undefined;
-      if (followLatest.current.following) list.current?.scrollToEnd({ animated: false });
+      if (!followLatest.current.following) return;
+      const node: unknown = Platform.OS === "web" ? list.current?.getScrollableNode() : undefined;
+      if (Platform.OS === "web" && node instanceof HTMLElement) node.scrollTop = node.scrollHeight;
+      else if (contentHeight.current && viewportHeight.current)
+        list.current?.scrollToOffset({
+          offset: Math.max(0, contentHeight.current - viewportHeight.current),
+          animated: false,
+        });
+      else list.current?.scrollToEnd({ animated: false });
     });
   }, [active]);
   useEffect(() => {
@@ -1252,8 +1262,14 @@ export function ChatScreen({
           setAwayFromLatest(visible.length > 0 && away);
         }}
         scrollEventThrottle={100}
-        onContentSizeChange={followEnd}
-        onLayout={followEnd}
+        onContentSizeChange={(_, height) => {
+          contentHeight.current = height;
+          followEnd();
+        }}
+        onLayout={({ nativeEvent }) => {
+          viewportHeight.current = nativeEvent.layout.height;
+          followEnd();
+        }}
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <View style={{ gap: wide ? 18 : 15 }}>
@@ -1733,7 +1749,7 @@ export function ChatScreen({
           onPress={() => {
             followLatest.current.latest();
             setAwayFromLatest(false);
-            list.current?.scrollToEnd({ animated: true });
+            followEnd();
           }}
         >
           {t("Latest messages")}

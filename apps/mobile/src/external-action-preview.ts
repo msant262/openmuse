@@ -122,7 +122,7 @@ function text(value: unknown) {
 }
 
 export function googleOperationLabel(operation: string, preparing = false) {
-  const [service, resource] = operation.split(".");
+  const [service] = operation.split(".");
   const method = operation.split(".").at(-1);
   if (service === "calendar") {
     if (method === "delete") return preparing ? "Prepare event removal" : "Remove event";
@@ -134,7 +134,7 @@ export function googleOperationLabel(operation: string, preparing = false) {
   if (service === "gmail") {
     if (operation.includes(".drafts.") && method === "delete") return "Delete email draft";
     if (method === "send") return "Send email";
-    if (resource === "drafts" && ["create", "update"].includes(method ?? ""))
+    if (operation.includes(".drafts.") && ["create", "update"].includes(method ?? ""))
       return "Save email draft";
     if (method === "trash") return "Move email to trash";
     if (["delete", "batchDelete"].includes(method ?? "")) return "Delete email";

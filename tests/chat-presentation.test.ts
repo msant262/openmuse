@@ -108,13 +108,13 @@ test("cancelled tasks do not imply delivery checks or unfinished work and native
   const rows = taskTimeline(events, [
     {
       id: "read",
-      toolName: "google_workspace_execute",
+      toolName: "execute_google_workspace_tool",
       status: "succeeded",
       args: { toolId: "calendar.events.list" },
     },
     {
       id: "delete",
-      toolName: "google_workspace_execute",
+      toolName: "execute_google_workspace_tool",
       status: "succeeded",
       args: { toolId: "calendar.events.delete" },
       receipt: { status: "awaiting_review" },
@@ -167,4 +167,37 @@ test("an update reuses the exact document name across actions without mixing Goo
     ).item,
     undefined,
   );
+});
+
+test("real Gmail draft tool IDs and saved native calendar proposals retain meaningful names and their time zone", () => {
+  for (const method of ["create", "update"])
+    assert.equal(
+      googleActionPresentation({
+        title: "Internal draft name",
+        kind: "external.action",
+        status: "succeeded",
+        data: {
+          tool: "google.workspace",
+          operation: `gmail.users.drafts.${method}`,
+          subject: "Reunião",
+          account: "msant262@gmail.com",
+        },
+      }).verb,
+      "Save email draft",
+    );
+  const view = googleActionPresentation({
+    title: "Create Okami agenda verificada",
+    kind: "calendar.create",
+    status: "succeeded",
+    account: "msant262@gmail.com",
+    data: {
+      title: "Okami agenda verificada",
+      start: "2026-10-07T15:00:00+02:00",
+      end: "2026-10-07T15:15:00+02:00",
+      timeZone: "Europe/Berlin",
+    },
+  });
+  assert.equal(view.verb, "Create event");
+  assert.equal(view.item, "Okami agenda verificada");
+  assert.match(view.fields[0].value, /15:00.*Europe\/Berlin/);
 });

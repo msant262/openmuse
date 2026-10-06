@@ -32,6 +32,7 @@ function object(value: unknown): Record<string, unknown> {
 }
 function operationTitle(operation: TaskOperationDetail) {
   const args = object(operation.args);
+  if (operation.toolName === "describe_google_workspace_tool") return "Check tool requirements";
   if (typeof args.toolId === "string")
     return googleOperationLabel(
       args.toolId,
