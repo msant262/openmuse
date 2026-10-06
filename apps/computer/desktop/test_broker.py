@@ -88,6 +88,28 @@ class BrokerTests(unittest.TestCase):
         self.assertTrue(failure.exception.dispatched)
         self.assertFalse(failure.exception.cleanup_confirmed)
 
+    def test_human_frame_survives_polling_but_control_grant_still_fences_input(self):
+        grant = str(uuid.uuid4())
+        reset = self.operation({"operation":"reset","control":"human","grantId":grant})
+        reset["args"]["controlRevision"] = 1
+        self.broker.perform(reset)
+        shown = self.observe()
+        self.observe()
+        action = self.operation({"operation":"act","actor":"human","grantId":grant,
+            "binding":shown,"action":{"action":"click","x":10,"y":10}},
+            "desktop:lenovo-bot:"+self.session["id"])
+        result = self.broker.perform(action)
+        self.assertTrue(result["inputDelivered"])
+        self.assertEqual(result["observedFrameId"], shown["frameId"])
+        shown = self.observe()
+        action["args"]["binding"] = shown
+        action["args"]["grantId"] = str(uuid.uuid4())
+        before = list(self.device.events)
+        with self.assertRaises(DesktopOperationError) as failure:
+            self.broker.perform(action)
+        self.assertFalse(failure.exception.dispatched)
+        self.assertEqual(self.device.events, before)
+
 
 class BrowserRestartTests(unittest.TestCase):
     def test_control_changes_survive_a_browser_worker_restart(self):

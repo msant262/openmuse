@@ -50,7 +50,6 @@ import type {
   Monitor,
   RunEvent,
 } from "../../../packages/domain/src/agent";
-import { attachmentLabel } from "../../../packages/domain/src/attachments";
 import type { FileRecoverySnapshot } from "../../../packages/domain/src/file-versions";
 import type { InteractionRequest } from "../../../packages/domain/src/runtime";
 import { useAgentWorkspace } from "./agent-workspace";
@@ -76,7 +75,7 @@ import { ProfileSettings } from "./profile-settings";
 import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
 import type { TaskOperationDetail } from "./task-operation-details";
-import { TaskOperationViewer } from "./task-operation-viewer";
+import { TaskOperationViewer, TaskResultViewer } from "./task-operation-viewer";
 import { ClearFinishedTasksButton, TaskRemoveButton } from "./task-removal";
 import { TaskBudgetControls, TaskCompletion, TaskTimingControls } from "./task-runtime-controls";
 import { TaskStatusBadge } from "./task-status";
@@ -1092,26 +1091,22 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                     </Button>
                   </Card>
                 ))}
-                {detail?.files?.map((file) => (
-                  <LinkRow
-                    key={file.id}
-                    title={file.name}
-                    detail={attachmentLabel(file)}
-                    icon={FileText}
-                    onPress={() => open({ type: "file", file })}
-                  />
-                ))}
-                {(
-                  data?.artifacts.filter((artifact) => artifact.taskId === taskId) ||
-                  detail?.artifacts ||
-                  []
-                ).map((artifact) => (
-                  <ArtifactCard key={artifact.id} artifact={artifact} />
-                ))}
-                {!!task.evidence.length && (
+                <TaskResultViewer
+                  files={detail?.files ?? []}
+                  artifacts={
+                    data?.artifacts.filter((artifact) => artifact.taskId === taskId) ??
+                    detail?.artifacts ??
+                    []
+                  }
+                  evidence={task.evidence}
+                  operations={detail?.operations ?? []}
+                  completion={task.completion}
+                  criteria={task.criteria}
+                />
+                {task.evidence.some((item) => item.kind !== "web") && (
                   <View style={{ gap: 14 }}>
-                    <Text style={s.heading}>Sources</Text>
-                    <EvidenceList items={task.evidence} />
+                    <Text style={s.heading}>{t("Other references")}</Text>
+                    <EvidenceList items={task.evidence.filter((item) => item.kind !== "web")} />
                   </View>
                 )}
                 <Pressable

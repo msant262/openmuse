@@ -100,6 +100,9 @@ class DesktopDriver:
         self.max_frame_age = max_frame_age
         self.lock = threading.RLock()
         self.frame = None
+        # A human gesture can arrive while a newer background capture is in
+        # flight. Retain a bounded set of displayed observations, never pixels.
+        self.human_frames = {}
 
     def capture(self):
         width, height, pixels = self.device.capture()
@@ -140,18 +143,27 @@ class DesktopDriver:
                           "image": base64.b64encode(png(width, height, bytes(masked))).decode("ascii")}
             authorize()  # Encoding can outlive a control grant too.
             self.frame = (frame, captured_at, raw_hash, rectangles)
+            self.human_frames = {key: value for key, value in self.human_frames.items()
+                                 if captured_at - value[1] < self.max_frame_age}
+            while len(self.human_frames) >= 16:
+                self.human_frames.pop(next(iter(self.human_frames)))
+            self.human_frames[frame["frameId"]] = self.frame
             return result
 
     def invalidate(self):
         with self.lock:
             self.frame = None
+            self.human_frames.clear()
             self.device.reset()
 
-    def act(self, binding, action, *, authorize, allow_sensitive=False, before_event=lambda:None, after_reset=lambda:None):
+    def act(self, binding, action, *, authorize, human=False, allow_sensitive=False, before_event=lambda:None, after_reset=lambda:None):
         with self.lock:
-            if not self.frame or not isinstance(binding, dict):
+            if not isinstance(binding, dict):
                 raise ValueError("Observe a fresh desktop frame first")
-            frame, captured_at, expected_pixels, masks = self.frame
+            observation = self.human_frames.get(binding.get("frameId")) if human else self.frame
+            if not observation:
+                raise ValueError("Observe a fresh desktop frame first")
+            frame, captured_at, expected_pixels, masks = observation
             if any(binding.get(key) != frame[key]
                    for key in ("frameId", "sessionGeneration", "width", "height")):
                 raise ValueError("Desktop frame or session generation is stale")
@@ -167,13 +179,17 @@ class DesktopDriver:
             authorize()
             width, height, pixels = self.capture()
             if ((width, height) != (frame["width"], frame["height"])
-                    or hashlib.sha256(pixels).hexdigest() != expected_pixels):
+                    or not human and hashlib.sha256(pixels).hexdigest() != expected_pixels):
                 self.frame = None
+                self.human_frames.clear()
                 raise ValueError("Desktop changed; observe before acting")
             authorize()
+            # Human control is a live display: blinking cursors and repaints
+            # must not reject input. Agents still require identical pixels.
             # One observation permits at most one action. An interrupted action
             # needs journal reconciliation and a new observation, never replay.
             self.frame = None
+            self.human_frames.clear()
 
             def event(*args):
                 authorize()

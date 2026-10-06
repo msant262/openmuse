@@ -305,9 +305,15 @@ export function DesktopViewer({ embedded = false }: { embedded?: boolean } = {})
       if (name === "import-downloads" || name === "open-browser") void refresh().catch(() => {});
     } catch (failure) {
       if (active.current && viewer.current?.id === current.id) {
-        setError(failure instanceof Error ? failure.message : String(failure));
         const denied = failure instanceof ApiError && [401, 403].includes(failure.status);
         const staleFrame = failure instanceof ApiError && failure.code === "STALE_FRAME";
+        setError(
+          staleFrame
+            ? "This action was not sent because its desktop image expired. Refresh the image before trying again."
+            : failure instanceof Error
+              ? failure.message
+              : String(failure),
+        );
         // A fresh screenshot cannot restore authority after denied or uncertain
         // input. Require an explicit takeover; never replay the failed gesture.
         if (denied || (name === "input" && !staleFrame)) {

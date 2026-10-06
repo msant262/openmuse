@@ -1,4 +1,11 @@
 export const museInterfacePTBR: Record<string, string> = {
+  "Delivery checks": "Verificações da entrega",
+  "Other references": "Outras referências",
+  "Consulted by the agent": "Consultada pelo agente",
+  "This action was not sent because its desktop image expired. Refresh the image before trying again.":
+    "Esta ação não foi enviada porque a imagem do desktop expirou. Atualize a imagem antes de tentar novamente.",
+  "Native graphical operation could not be confirmed; inspect before repeating input":
+    "Não foi possível confirmar esta ação no desktop. Confira a tela antes de repetir a ação.",
   "What was requested": "O que foi pedido",
   "Result of this step": "Resultado desta etapa",
   "Technical details (JSON)": "Detalhes técnicos (JSON)",

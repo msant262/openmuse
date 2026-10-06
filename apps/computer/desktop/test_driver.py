@@ -54,6 +54,54 @@ class DriverContracts(unittest.TestCase):
             self.input(first, {"action": "click", "x": 1, "y": 1})
         self.assertEqual(self.device.events, [])
 
+    def test_human_can_act_on_displayed_frame_after_an_identical_background_capture(self):
+        shown = self.driver.observe(authorize=self.guard)
+        self.driver.observe(authorize=self.guard, previous_image=shown["imageHash"])
+        result = self.driver.act(shown, {"action": "click", "x": 1, "y": 1},
+                                 authorize=self.guard, human=True)
+        self.assertTrue(result["inputDelivered"])
+        self.assertEqual(result["observedFrameId"], shown["frameId"])
+        before = list(self.device.events)
+        with self.assertRaises(ValueError):
+            self.driver.act(shown, {"action": "click", "x": 1, "y": 1},
+                            authorize=self.guard, human=True)
+        self.assertEqual(self.device.events, before)
+
+    def test_human_control_tolerates_live_pixels_but_still_binds_session_age_and_authority(self):
+        shown = self.driver.observe(authorize=self.guard)
+        self.device.pixels = bytes([0, 1, 2]) * 12
+        with self.assertRaisesRegex(ValueError, "changed"):
+            self.input(shown, {"action": "click", "x": 1, "y": 1})
+        # A human is controlling a live display, which may blink or repaint.
+        shown = self.driver.observe(authorize=self.guard)
+        self.device.pixels = bytes([3, 4, 5]) * 12
+        self.driver.act(shown, {"action": "click", "x": 1, "y": 1},
+                        authorize=self.guard, human=True)
+        self.device.events.clear()
+        for change in ("session", "expiry", "revoked", "reset"):
+            shown = self.driver.observe(authorize=self.guard)
+            if change == "session": shown = {**shown, "sessionGeneration": "another-session"}
+            if change == "expiry": self.now += 31
+            if change == "revoked": self.authorized = False
+            if change == "reset": self.driver.invalidate(); self.device.events.clear()
+            with self.assertRaises((ValueError, PermissionError)):
+                self.driver.act(shown, {"action": "click", "x": 1, "y": 1},
+                                authorize=self.guard, human=True)
+            self.assertEqual(self.device.events, [])
+            self.authorized = True
+
+    def test_human_observation_history_is_bounded_and_unknown_frames_never_dispatch(self):
+        first = self.driver.observe(authorize=self.guard)
+        for _ in range(40): self.driver.observe(authorize=self.guard)
+        with self.assertRaises(ValueError):
+            self.driver.act(first, {"action": "click", "x": 1, "y": 1},
+                            authorize=self.guard, human=True)
+        last = self.driver.observe(authorize=self.guard)
+        with self.assertRaises(ValueError):
+            self.driver.act({**last, "frameId": "unknown"}, {"action": "click", "x": 1, "y": 1},
+                            authorize=self.guard, human=True)
+        self.assertEqual(self.device.events, [])
+
     def test_changed_pixels_expiry_generation_and_coordinates_block_input(self):
         frame = self.driver.observe(authorize=self.guard)
         self.device.pixels = bytes([0, 1, 2]) * 12

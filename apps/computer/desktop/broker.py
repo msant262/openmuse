@@ -161,7 +161,8 @@ class DesktopBroker:
                 self.sequence+=1
                 return {**frame,"sequence":self.sequence}
         if kind=="act" and operation.get("kind")=="desktop":
-            return {**self.driver.act(args["binding"],args["action"],authorize=lambda:self.authorize(operation),allow_sensitive=args.get("actor")=="human",before_event=dispatched,after_reset=cleaned),"cleanupConfirmed":True}
+            human=args.get("actor")=="human"
+            return {**self.driver.act(args["binding"],args["action"],authorize=lambda:self.authorize(operation),human=human,allow_sensitive=human,before_event=dispatched,after_reset=cleaned),"cleanupConfirmed":True}
         if operation.get("kind")=="browser" and self.browser:
             if args.get("browserSessionId")!=self.session["browserSessionId"]:
                 raise ValueError("Native browser profile belongs to another session")

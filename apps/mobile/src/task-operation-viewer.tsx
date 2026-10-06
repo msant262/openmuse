@@ -9,17 +9,19 @@ import {
 import { useState } from "react";
 import { Image, Linking, Platform, ScrollView, Text, View } from "react-native";
 import type { Artifact } from "../../../packages/domain/src";
-import type { AgentArtifact } from "../../../packages/domain/src/agent";
+import type { AgentArtifact, Evidence } from "../../../packages/domain/src/agent";
 import type { CompletionCriterion } from "../../../packages/domain/src/runtime";
 import { ArtifactResultCard } from "./artifact-result-card";
 import { AssistantResponse } from "./assistant-response";
 import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { useI18n } from "./i18n";
 import {
+  completionPresentation,
   type OperationNode,
   operationPresentation,
   type TaskOperationDetail,
   taskOperationValue,
+  taskSourcesPresentation,
 } from "./task-operation-details";
 import { Button, Card, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -48,6 +50,9 @@ function OperationContent({
             {new URL(node.url).hostname.replace(/^www\./, "")}
           </Text>
         </View>
+        {node.consulted && (
+          <Text style={[s.small, { color: colors.success }]}>{t("Consulted by the agent")}</Text>
+        )}
         <Text selectable style={[s.heading, { fontSize: 16, lineHeight: 23 }]}>
           {node.title}
         </Text>
@@ -142,6 +147,86 @@ function OperationContent({
     <View style={{ gap: 5 }}>
       {!!node.label && <Text style={[s.small, { fontWeight: "600" }]}>{t(node.label)}</Text>}
       <AssistantResponse content={value} />
+    </View>
+  );
+}
+
+/** The completed tab uses the same cards as steps, including complete source receipts. */
+export function TaskResultViewer({
+  files,
+  artifacts,
+  evidence,
+  operations,
+  completion,
+  criteria,
+}: {
+  files: Artifact[];
+  artifacts: AgentArtifact[];
+  evidence: Evidence[];
+  operations: TaskOperationDetail[];
+  completion?: unknown;
+  criteria?: readonly Pick<CompletionCriterion, "id" | "description">[];
+}) {
+  const { colors, s } = useUI();
+  const { t } = useI18n();
+  const [technical, setTechnical] = useState(false);
+  const sources = taskSourcesPresentation(evidence, operations);
+  const checks = completionPresentation(completion, criteria);
+  return (
+    <View style={{ gap: 24 }}>
+      {!!files.length && (
+        <View style={{ gap: 12 }}>
+          <Text style={s.heading}>{t("Files")}</Text>
+          <OperationContentList
+            nodes={files.map((file) => ({ kind: "file", fileId: file.id, name: file.name }))}
+            files={files}
+            artifacts={artifacts}
+          />
+        </View>
+      )}
+      {artifacts.map((artifact) => (
+        <ArtifactResultCard key={artifact.id} artifact={artifact} />
+      ))}
+      {!!checks.length && (
+        <View style={{ gap: 12 }}>
+          <Text style={s.heading}>{t("Delivery checks")}</Text>
+          <OperationContentList nodes={checks} files={files} artifacts={artifacts} />
+        </View>
+      )}
+      {!!sources.length && (
+        <View style={{ gap: 12 }}>
+          <Text style={s.heading}>{t("Sources")}</Text>
+          <OperationContentList nodes={sources} files={files} artifacts={artifacts} />
+        </View>
+      )}
+      <View style={{ gap: 10, paddingTop: 14, borderTopWidth: 1, borderTopColor: colors.line }}>
+        <Button
+          small
+          expanded={technical}
+          icon={technical ? ChevronDown : ChevronRight}
+          style={{ alignSelf: "flex-start" }}
+          onPress={() => setTechnical(!technical)}
+        >
+          {t("Technical details (JSON)")}
+        </Button>
+        {technical && (
+          <ScrollView
+            nestedScrollEnabled
+            style={{ maxHeight: 360, backgroundColor: colors.subtle, borderRadius: 12 }}
+            contentContainerStyle={{ padding: 14 }}
+          >
+            <Text
+              selectable
+              style={[
+                s.small,
+                { fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", lineHeight: 19 },
+              ]}
+            >
+              {taskOperationValue({ completion, evidence })}
+            </Text>
+          </ScrollView>
+        )}
+      </View>
     </View>
   );
 }

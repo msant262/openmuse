@@ -1,3 +1,4 @@
+import type { Evidence } from "../../../packages/domain/src/agent";
 import type { CompletionCriterion } from "../../../packages/domain/src/runtime";
 import { presentationRecord, resultSourceUrl } from "./artifact-presentation";
 
@@ -13,7 +14,7 @@ export type TaskOperationDetail = {
 export type OperationNode =
   | { kind: "text"; label?: string; value: string | number | boolean; localized?: boolean }
   | { kind: "group"; label?: string; children: OperationNode[] }
-  | { kind: "source"; title: string; url: string; excerpt?: string }
+  | { kind: "source"; title: string; url: string; excerpt?: string; consulted?: boolean }
   | { kind: "file"; fileId: string; name: string; mimeType?: string; size?: number }
   | { kind: "check"; label: string; passed: boolean };
 
@@ -212,29 +213,16 @@ export function operationPresentation(
       });
   } else if (tool === "finish_task") {
     input = readable({ summary: args.summary });
-    const completion = presentationRecord(receipt?.completion);
-    output = readable({ outcome: completion?.status, summary: receipt?.summary });
-    if (Array.isArray(completion?.checks)) {
-      for (const value of completion.checks) {
-        const check = presentationRecord(value);
-        if (!check || typeof check.passed !== "boolean") continue;
-        output.push({
-          kind: "check",
-          label:
-            check.criterionId === "requested-image"
-              ? "Requested image delivered"
-              : (criteria.find((c) => c.id === check.criterionId)?.description ?? "Delivery check"),
-          passed: check.passed,
-        });
-      }
-    }
+    output = [
+      ...readable({ summary: receipt?.summary }),
+      ...completionPresentation(receipt?.completion, criteria),
+    ];
     const ids = Array.isArray(args.artifactIds) ? args.artifactIds : [];
     output.push(
       ...ids
         .filter((id): id is string => typeof id === "string")
         .map((fileId) => ({ kind: "file" as const, fileId, name: "Attachment" })),
     );
-    output.push(...readable({ remaining: completion?.remaining }));
     if (!output.length) output = readable(result);
   }
   if (operation.error)
@@ -246,4 +234,102 @@ export function taskOperationValue(value: unknown): string {
   if (value === undefined) return "";
   const parsed = savedValue(value);
   return typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2);
+}
+
+/** Completion is the recorded assessment, not inferred from the presence of a file. */
+export function completionPresentation(
+  value: unknown,
+  criteria: readonly Pick<CompletionCriterion, "id" | "description">[] = [],
+): OperationNode[] {
+  const completion = presentationRecord(value);
+  if (!completion) return [];
+  const nodes = readable({ outcome: completion.status });
+  if (Array.isArray(completion.checks)) {
+    for (const entry of completion.checks) {
+      const check = presentationRecord(entry);
+      if (!check || typeof check.passed !== "boolean") continue;
+      nodes.push({
+        kind: "check",
+        label:
+          check.criterionId === "requested-image"
+            ? "Requested image delivered"
+            : (criteria.find((c) => c.id === check.criterionId)?.description ?? "Delivery check"),
+        passed: check.passed,
+      });
+    }
+  }
+  nodes.push(...readable({ remaining: completion.remaining }));
+  return nodes;
+}
+
+function sourceExcerpt(value: unknown) {
+  const content = string(value);
+  if (!content || /^[\s]*[[{]/.test(content)) return undefined;
+  // Page navigation is not a useful summary of its contents. Preserve Markdown
+  // in the first actual paragraph; the complete saved receipt stays available.
+  const paragraph = content
+    .split(/\n\s*\n/)
+    .map((s) => s.trim())
+    .find(
+      (s) =>
+        s &&
+        !/^(?:Breadcrumb$|Share$|Read AI-generated summary$|In this article$|#+\s|[-*]\s|\||!\[|\[[^\]]+\]\([^)]+\)$)/i.test(
+          s,
+        ),
+    );
+  return (
+    paragraph && (paragraph.length > 600 ? `${paragraph.slice(0, 600).trimEnd()}…` : paragraph)
+  );
+}
+
+/** Recover source cards from complete receipts, not guessed repairs to clipped JSON evidence. */
+export function taskSourcesPresentation(
+  evidence: readonly Evidence[],
+  operations: readonly TaskOperationDetail[],
+) {
+  type Source = Extract<OperationNode, { kind: "source" }> & { consulted: boolean };
+  const sources = new Map<string, Source>();
+  function add(value: unknown, consulted = false) {
+    const row = presentationRecord(value);
+    const url = resultSourceUrl(row?.url);
+    if (!row || !url) return;
+    const source: Source = {
+      kind: "source",
+      url,
+      title: string(row.title) ?? new URL(url).hostname,
+      excerpt: sourceExcerpt(row.snippet ?? row.excerpt ?? row.text),
+      consulted,
+    };
+    const previous = sources.get(url);
+    sources.set(
+      url,
+      previous
+        ? {
+            ...source,
+            title: consulted ? source.title : previous.title,
+            excerpt: previous.excerpt ?? source.excerpt,
+            consulted: previous.consulted || consulted,
+          }
+        : source,
+    );
+  }
+  for (const operation of operations) {
+    if (operation.status !== "succeeded") continue;
+    const receipt = presentationRecord(savedValue(operation.receipt));
+    const tool = operation.toolName.replace(/^primitive\./, "");
+    if (tool === "search_web" && Array.isArray(receipt?.sources))
+      for (const entry of receipt.sources) add(entry);
+    if (tool === "web_fetch" && !receipt?.error && string(receipt?.text)) add(receipt, true);
+  }
+  for (const entry of evidence) {
+    if (entry.kind !== "web") continue;
+    if (/^Search index:/i.test(entry.title) || /^Index entries only;/i.test(entry.excerpt)) {
+      const start = entry.excerpt.indexOf("[{");
+      const values = start >= 0 ? savedValue(entry.excerpt.slice(start)) : undefined;
+      if (Array.isArray(values)) for (const value of values) add(value);
+      continue;
+    }
+    add(entry);
+  }
+  return [...sources.values()].sort((a, b) => Number(b.consulted) - Number(a.consulted));
 }
