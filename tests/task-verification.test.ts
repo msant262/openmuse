@@ -60,6 +60,100 @@ const validDocx = {
     '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Requested agenda and useful result</w:t></w:r></w:p></w:body></w:document>',
 };
 
+test("native Google reads prove observations while discovery, writes and stale or invalid receipts do not", async (t) => {
+  const server = await taskRuntime(t);
+  const valid = {
+    status: "succeeded",
+    toolId: "gmail.users.messages.list",
+    account: "owner@example.test",
+    connectionId: "google-owner",
+    data: { messages: [{ id: "mail-1" }] },
+  };
+  const cases = [
+    { name: "confirmed-read", receipt: valid, expected: true },
+    { name: "empty-read", receipt: { ...valid, data: {} }, expected: true },
+    {
+      name: "download-read",
+      toolId: "drive.files.export",
+      receipt: {
+        ...valid,
+        toolId: "drive.files.export",
+        data: undefined,
+        artifact: { id: "downloaded-file" },
+      },
+      expected: true,
+    },
+    {
+      name: "read-post",
+      toolId: "calendar.freebusy.query",
+      receipt: { ...valid, toolId: "calendar.freebusy.query", data: { calendars: {} } },
+      expected: true,
+    },
+    { name: "discovery", tool: "search_google_workspace_tools", receipt: valid, expected: false },
+    {
+      name: "description",
+      tool: "describe_google_workspace_tool",
+      receipt: valid,
+      expected: false,
+    },
+    {
+      name: "write",
+      toolId: "gmail.users.messages.send",
+      receipt: { ...valid, toolId: "gmail.users.messages.send" },
+      expected: false,
+    },
+    { name: "mismatch", receipt: { ...valid, toolId: "calendar.events.list" }, expected: false },
+    { name: "error", receipt: { ...valid, error: "Google unavailable" }, expected: false },
+    {
+      name: "pending",
+      receipt: { ...valid, status: "pending", approvalRequired: true },
+      expected: false,
+    },
+    { name: "missing-data", receipt: { ...valid, data: undefined }, expected: false },
+    { name: "missing-account", receipt: { ...valid, account: "" }, expected: false },
+    {
+      name: "unknown-method",
+      toolId: "google.invented.get",
+      receipt: { ...valid, toolId: "google.invented.get" },
+      expected: false,
+    },
+    { name: "stale", receipt: valid, revision: 1, expected: false },
+  ];
+  for (const entry of cases) {
+    const task = await server.agent.createTask("owner", {
+      prompt: "Check my Gmail and Calendar with native Google reads.",
+      criteria: [
+        {
+          id: "native-observation",
+          kind: "observation",
+          description: "A confirmed native Google read",
+          referenceId: entry.name,
+          requiredItems: [],
+        },
+      ],
+    });
+    await server.agent.journal.prepare("owner", {
+      taskId: task.id,
+      id: entry.name,
+      revision: entry.revision ?? 0,
+      executorId: "vps",
+      executorEpoch: 1,
+      resourceFence: 0,
+      runToken: "test",
+      resourceLeaseIds: [],
+      createdAt: new Date().toISOString(),
+      status: "succeeded",
+      toolName: entry.tool ?? "execute_google_workspace_tool",
+      bindingHash: "a".repeat(64),
+      args: { toolId: entry.toolId ?? valid.toolId },
+      effect: true,
+      receipt: entry.receipt,
+    });
+    const assessment = await server.agent.verification.assess("owner", task.id, 0);
+    assert.equal(assessment.status === "verified", entry.expected, entry.name);
+  }
+});
+
 test("file and email obligations require their own relevant evidence", async (t) => {
   const server = await taskRuntime(t);
   const task = await server.agent.createTask("owner", {

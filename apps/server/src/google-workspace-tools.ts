@@ -10,7 +10,7 @@ import {
 import type { ActionService } from "./actions.ts";
 import { bindingHash } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
-import { authorizeTaskEffect, taskOperationId } from "./engine/task-journal.ts";
+import { authorizeTaskEffect } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 import type { WorkspaceService } from "./workspace.ts";
@@ -71,6 +71,42 @@ let pinnedCatalog: GoogleWorkspaceCatalog | undefined;
 function catalog() {
   pinnedCatalog ??= new GoogleWorkspaceCatalog();
   return pinnedCatalog;
+}
+
+/** Only a completed provider read can satisfy an observed-result criterion. */
+export function googleWorkspaceReadObservation(args: unknown, receipt: unknown): boolean {
+  if (!args || typeof args !== "object" || !receipt || typeof receipt !== "object") return false;
+  const input = args as { toolId?: unknown };
+  const result = receipt as {
+    status?: unknown;
+    toolId?: unknown;
+    account?: unknown;
+    data?: unknown;
+    artifact?: { id?: unknown };
+    error?: unknown;
+    outcomeUnknown?: unknown;
+    approvalRequired?: unknown;
+  };
+  if (
+    typeof input.toolId !== "string" ||
+    result.toolId !== input.toolId ||
+    result.status !== "succeeded" ||
+    typeof result.account !== "string" ||
+    !result.account ||
+    result.error ||
+    result.outcomeUnknown ||
+    result.approvalRequired
+  )
+    return false;
+  try {
+    return (
+      catalog().effect(input.toolId) === "read" &&
+      ((result.data !== null && typeof result.data === "object") ||
+        (typeof result.artifact?.id === "string" && Boolean(result.artifact.id)))
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Shared by HTTP, chat and durable workers; every write uses the existing action executor. */
