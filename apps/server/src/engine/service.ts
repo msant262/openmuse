@@ -1811,6 +1811,30 @@ export class AgentService {
           state: { ...task.state, approvalResult: action.result },
           actionId: null,
         });
+      } else if (action.status === "denied") {
+        const language = (await this.profiles.get(owner, task.originThreadId)).fields.language;
+        const item =
+          typeof action.data.resourceName === "string" ? action.data.resourceName : task.title;
+        const account =
+          action.account ??
+          (typeof action.data.account === "string" ? action.data.account : undefined);
+        const result = language.startsWith("pt")
+          ? `Você recusou a ação para “${item}”${account ? ` na conta ${account}` : ""}. Essa ação não foi executada.`
+          : language.startsWith("de")
+            ? `Du hast die Aktion für „${item}“${account ? ` im Konto ${account}` : ""} abgelehnt. Diese Aktion wurde nicht ausgeführt.`
+            : `You declined the action for “${item}”${account ? ` in ${account}` : ""}. This action was not executed.`;
+        await context.event(
+          "result",
+          language.startsWith("pt") ? "Ação recusada" : "Action declined",
+          result,
+        );
+        return {
+          status: "cancelled",
+          result,
+          question: "",
+          error: null,
+          state: { ...task.state, declinedActionId: action.id, lastUpdate: result },
+        };
       } else if (action.status !== "awaiting_review" && action.status !== "executing") {
         if (
           action.status === "failed" &&
@@ -2252,6 +2276,18 @@ export class AgentService {
           )
             break;
         }
+      }
+    } else if (task.status === "cancelled" && task.state.declinedActionId && task.result) {
+      if (task.originThreadId) {
+        await this.db.insertIfAbsent(owner, "thread-publications", {
+          id: `declined-action:${task.id}:${task.state.declinedActionId}`,
+          threadId: task.originThreadId,
+          taskId: task.id,
+          title: task.title,
+          text: task.result,
+          status: this.localThreads ? "pending" : "unsupported_cloud_mode",
+        });
+        await this.flushPublications();
       }
     } else if (task.status === "failed") {
       if (task.originThreadId) {

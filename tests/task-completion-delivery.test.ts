@@ -8,6 +8,50 @@ import type { ComputerSnapshot } from "../packages/domain/src/computer.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+for (const language of ["pt-BR", "en"])
+  test(`declining a reviewed action cancels it with concrete ${language} feedback instead of an internal failure`, async (t) => {
+    const server = await taskRuntime(t);
+    await server.agent.profiles.update("owner", {
+      scope: { kind: "global" },
+      expectedRevision: 0,
+      requestId: "denial-language",
+      origin: { kind: "settings" },
+      patch: { language },
+    });
+    const task = await server.agent.createTask("owner", {
+      prompt: "Delete the calendar event",
+      originThreadId: "declined-chat",
+    });
+    await server.db.put("owner", "actions", {
+      id: "declined-event",
+      kind: "external.action",
+      status: "denied",
+      taskId: task.id,
+      data: { resourceName: "Own test event", account: "alex@example.com" },
+    });
+    await server.db.put("owner", "tasks", { ...task, actionId: "declined-event" });
+    await server.agent.worker.tick();
+    const saved = await server.agent.getTask("owner", task.id);
+    assert.equal(saved.status, "cancelled");
+    assert.equal(saved.error, null);
+    assert.equal(saved.question, "");
+    assert.match(saved.result ?? "", /Own test event/);
+    assert.match(saved.result ?? "", /alex@example.com/);
+    assert.match(saved.result ?? "", language.startsWith("pt") ? /Você recusou/ : /You declined/);
+    assert.doesNotMatch(saved.result ?? "", /Reviewed action|No further action was taken/);
+    assert.equal((await server.agent.journal.operations("owner", task.id)).length, 0);
+    assert.equal((await server.db.list("owner", "interaction-requests")).length, 0);
+    const notices = await server.db.list<{ title: string; body: string }>("owner", "notifications");
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].body, saved.result);
+    assert.notEqual(notices[0].title, "Task needs attention");
+    const publications = await server.db.list<{ text: string }>("owner", "thread-publications");
+    assert.deepEqual(
+      publications.map((publication) => publication.text),
+      [saved.result],
+    );
+  });
+
 test("a timed-out Gmail search remains a failed read and the agent retries without asking the user", async (t) => {
   await modelFixture(
     t,
