@@ -55,10 +55,11 @@ import type { InteractionRequest } from "../../../packages/domain/src/runtime";
 import { useAgentWorkspace } from "./agent-workspace";
 import { ArtifactResultCard } from "./artifact-result-card";
 import { AssistantResponse } from "./assistant-response";
-import { t as translate, useI18n } from "./i18n";
-import { InteractionCard } from "./interaction-card";
-import { GoogleMailDraftCard } from "./google-workspace-cards";
+import { googleActionPresentation, withGoogleActionContext } from "./external-action-preview";
 import { GoogleActionsScreen } from "./google-actions-screen";
+import { GoogleMailDraftCard } from "./google-workspace-cards";
+import { currentLocale, t as translate, useI18n } from "./i18n";
+import { InteractionCard } from "./interaction-card";
 import { MemorySettings } from "./memory-settings";
 import { SubjectIllustration } from "./muse-surfaces-illustration";
 import {
@@ -79,6 +80,7 @@ import { RoutinesPanel } from "./routines";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
 import type { TaskOperationDetail } from "./task-operation-details";
 import { TaskOperationViewer, TaskResultViewer } from "./task-operation-viewer";
+import { showTaskDeliveryChecks, taskOutcomeHeading, taskTimeline } from "./task-presentation";
 import { ClearFinishedTasksButton, TaskRemoveButton } from "./task-removal";
 import { TaskBudgetControls, TaskCompletion, TaskTimingControls } from "./task-runtime-controls";
 import { TaskStatusBadge } from "./task-status";
@@ -106,7 +108,7 @@ export function statusLabel(value: string) {
 }
 function stamp(value?: string) {
   return value
-    ? new Date(value).toLocaleString(undefined, {
+    ? new Date(value).toLocaleString(currentLocale(), {
         month: "short",
         day: "numeric",
         hour: "numeric",
@@ -498,11 +500,12 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
   const { colors, s } = useUI();
 
   const previewVisible = useInlinePreview();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { width, height } = useWindowDimensions();
   const wide = width >= 780;
   const [selected, setSelected] = useState("summary");
   const [manage, setManage] = useState(false);
+  const [expandedStages, setExpandedStages] = useState<Record<string, boolean>>({});
   const { api, workspace, close, open, refresh: refreshWorkspace } = useWorkspace();
   const { data, mutate } = useAgentWorkspace();
   const [detail, setDetail] = useState<{
@@ -618,7 +621,17 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
     )
     .filter(Boolean);
   const events = orderedTaskEvents(detail?.events || []);
+  const timeline = taskTimeline(events, detail?.operations ?? []);
+  const relatedAction = workspace.actions.find(
+    (action) => action.id === task?.actionId || action.id === task?.state.declinedActionId,
+  );
+  const actionView = relatedAction
+    ? googleActionPresentation(withGoogleActionContext(relatedAction, workspace.actions), locale)
+    : undefined;
   const selectedEvent = events.find((event) => `event:${event.id}` === selected);
+  const selectedTitle = timeline.find((row) =>
+    row.events.some((event) => event.id === selectedEvent?.id),
+  )?.title;
   const selectedStep = task?.plan.find((step) => `step:${step.id}` === selected);
   const selectedOperation = detail?.operations?.find(
     (operation) =>
@@ -658,7 +671,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
               width: wide ? 300 : "100%",
               flexGrow: 0,
               flexShrink: wide ? 0 : 1,
-              maxHeight: wide ? undefined : Math.min(220, height * 0.26),
+              maxHeight: wide ? undefined : Math.min(150, height * 0.2),
               backgroundColor: colors.subtle,
               borderRightWidth: wide ? 1 : 0,
               borderBottomWidth: wide ? 0 : 1,
@@ -666,6 +679,23 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
             }}
             contentContainerStyle={{ padding: wide ? 17 : 14, gap: 3 }}
           >
+            <Pressable
+              accessibilityRole="button"
+              aria-selected={selected === "summary"}
+              onPress={() => setSelected("summary")}
+              style={{
+                padding: 12,
+                borderRadius: 11,
+                gap: 10,
+                flexDirection: "row",
+                backgroundColor: selected === "summary" ? colors.subtle : "transparent",
+              }}
+            >
+              <CheckCircle2 size={16} color={colors.text} style={{ marginTop: 2 }} />
+              <Text style={[s.text, { flex: 1, fontSize: 13, fontWeight: "500" }]}>
+                {t(task.status === "succeeded" ? "Completed" : "Summary")}
+              </Text>
+            </Pressable>
             <Pressable
               accessibilityRole="button"
               aria-selected={selected === "request"}
@@ -702,36 +732,73 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
               </Pressable>
             )}
             {events.length
-              ? events.map((event) => (
-                  <Pressable
-                    key={event.id}
-                    accessibilityRole="button"
-                    aria-selected={selected === `event:${event.id}`}
-                    onPress={() => setSelected(`event:${event.id}`)}
-                    style={{
-                      paddingHorizontal: 12,
-                      paddingVertical: 12,
-                      borderRadius: 11,
-                      gap: 10,
-                      flexDirection: "row",
-                      backgroundColor:
-                        selected === `event:${event.id}` ? colors.subtle : "transparent",
-                    }}
-                  >
-                    <View style={{ paddingTop: 3 }}>
-                      {event.kind === "result" ? (
-                        <CheckCircle2 size={15} color={colors.muted} />
-                      ) : event.kind === "observation" ? (
-                        <Globe2 size={15} color={colors.muted} />
-                      ) : (
-                        <FileText size={15} color={colors.muted} />
-                      )}
+              ? timeline.map((row) => {
+                  const grouped = row.events.length > 1;
+                  const selectedHere = row.events.some((event) => selected === `event:${event.id}`);
+                  const expanded = expandedStages[row.id];
+                  return (
+                    <View key={row.id} style={{ gap: 3 }}>
+                      <Pressable
+                        accessibilityRole="button"
+                        aria-selected={selectedHere}
+                        aria-expanded={grouped ? !!expanded : undefined}
+                        onPress={() => {
+                          setSelected(`event:${row.events[0].id}`);
+                          if (grouped)
+                            setExpandedStages((before) => ({ ...before, [row.id]: !expanded }));
+                        }}
+                        style={{
+                          padding: 12,
+                          borderRadius: 11,
+                          gap: 10,
+                          flexDirection: "row",
+                          backgroundColor: selectedHere ? colors.hover : "transparent",
+                        }}
+                      >
+                        <FileText size={15} color={colors.muted} style={{ marginTop: 3 }} />
+                        <View style={{ flex: 1, gap: 3 }}>
+                          <Text style={[s.text, { fontSize: 13, lineHeight: 20 }]}>
+                            {t(row.title)}
+                          </Text>
+                          {grouped && (
+                            <Text style={s.small}>
+                              {t("{count} steps", { count: row.events.length })}
+                            </Text>
+                          )}
+                        </View>
+                        {grouped &&
+                          (expanded ? (
+                            <ChevronDown size={14} color={colors.muted} />
+                          ) : (
+                            <ChevronRight size={14} color={colors.muted} />
+                          ))}
+                      </Pressable>
+                      {grouped &&
+                        expanded &&
+                        row.events.map((event, index) => (
+                          <Pressable
+                            key={event.id}
+                            accessibilityRole="button"
+                            aria-selected={selected === `event:${event.id}`}
+                            onPress={() => setSelected(`event:${event.id}`)}
+                            style={{
+                              paddingVertical: 9,
+                              paddingHorizontal: 14,
+                              marginLeft: 22,
+                              borderLeftWidth: 1,
+                              borderColor: colors.line,
+                              backgroundColor:
+                                selected === `event:${event.id}` ? colors.hover : "transparent",
+                              gap: 3,
+                            }}
+                          >
+                            <Text style={s.text}>{t("Step {number}", { number: index + 1 })}</Text>
+                            <Text style={s.small}>{stamp(event.date)}</Text>
+                          </Pressable>
+                        ))}
                     </View>
-                    <Text style={[s.text, { flex: 1, fontSize: 13, lineHeight: 20 }]}>
-                      {t(event.title)}
-                    </Text>
-                  </Pressable>
-                ))
+                  );
+                })
               : task.plan.map((step) => (
                   <Pressable
                     key={step.id}
@@ -763,23 +830,6 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                     </Text>
                   </Pressable>
                 ))}
-            <Pressable
-              accessibilityRole="button"
-              aria-selected={selected === "summary"}
-              onPress={() => setSelected("summary")}
-              style={{
-                padding: 12,
-                borderRadius: 11,
-                gap: 10,
-                flexDirection: "row",
-                backgroundColor: selected === "summary" ? colors.subtle : "transparent",
-              }}
-            >
-              <CheckCircle2 size={16} color={colors.text} style={{ marginTop: 2 }} />
-              <Text style={[s.text, { flex: 1, fontSize: 13, fontWeight: "500" }]}>
-                {t(task.status === "succeeded" ? "Completed" : "Summary")}
-              </Text>
-            </Pressable>
           </ScrollView>
           <ScrollView
             style={{ flex: 1, minHeight: 0, backgroundColor: colors.card }}
@@ -870,7 +920,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
             ) : selected !== "summary" ? (
               <View style={{ gap: 14 }}>
                 <Text style={s.heading}>
-                  {t(selectedEvent?.title || selectedStep?.title || "Your request")}
+                  {t(selectedTitle || selectedStep?.title || "Your request")}
                 </Text>
                 {selectedEvent && (
                   <Text style={s.small}>
@@ -910,13 +960,64 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
             ) : (
               <>
                 <View style={{ gap: 13 }}>
-                  <Text style={s.heading}>{t("Summary")}</Text>
+                  <Text style={s.heading}>
+                    {t(taskOutcomeHeading(task.status, relatedAction?.status))}
+                  </Text>
                   <AssistantResponse
-                    content={t(
-                      resultSummary(task.result || task.question || task.error || task.prompt),
+                    content={resultSummary(
+                      task.result || task.question || task.error || task.prompt,
                     )}
                   />
                   <Text style={s.small}>{stamp(task.updatedAt)}</Text>
+                </View>
+                {actionView && (
+                  <View
+                    style={{
+                      gap: 14,
+                      padding: 18,
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor: colors.line,
+                    }}
+                  >
+                    <Text style={[s.small, { fontWeight: "600" }]}>{t(actionView.verb)}</Text>
+                    <Text selectable style={s.heading}>
+                      {actionView.item ?? t(actionView.service)}
+                    </Text>
+                    {!!actionView.account && (
+                      <View style={{ gap: 3 }}>
+                        <Text style={s.small}>{t("Account")}</Text>
+                        <Text selectable style={s.text}>
+                          {actionView.account}
+                        </Text>
+                      </View>
+                    )}
+                    {actionView.fields.map((field) => (
+                      <View key={field.label} style={{ gap: 3 }}>
+                        <Text style={s.small}>{t(field.label)}</Text>
+                        <Text selectable style={s.text}>
+                          {field.value}
+                        </Text>
+                      </View>
+                    ))}
+                    <Button
+                      small
+                      style={{ alignSelf: "flex-start" }}
+                      onPress={() =>
+                        relatedAction && open({ type: "review", action: relatedAction })
+                      }
+                    >
+                      {t("View action details")}
+                    </Button>
+                  </View>
+                )}
+                <View
+                  style={{ gap: 7, paddingTop: 14, borderTopWidth: 1, borderColor: colors.line }}
+                >
+                  <Text style={s.small}>{t("What you asked")}</Text>
+                  <Text selectable style={s.muted}>
+                    {task.prompt}
+                  </Text>
                 </View>
                 <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
                   {[
@@ -968,7 +1069,6 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                     </Button>
                   )}
                 </View>
-                {task.completion?.status !== "verified" && <TaskCompletion task={task} />}
                 {task.status === "waiting_approval" && (
                   <Card style={{ backgroundColor: colors.lavender, gap: 12 }}>
                     <Text style={s.heading}>Ready for your review</Text>
@@ -1108,6 +1208,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                   operations={detail?.operations ?? []}
                   completion={task.completion}
                   criteria={task.criteria}
+                  showChecks={false}
                 />
                 {task.evidence.some((item) => item.kind !== "web") && (
                   <View style={{ gap: 14 }}>
@@ -1140,7 +1241,7 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
                   <View style={{ gap: 14 }}>
                     <TaskTimingControls task={task} />
                     <TaskBudgetControls task={task} />
-                    {task.completion?.status === "verified" && <TaskCompletion task={task} />}
+                    {showTaskDeliveryChecks(task.status) && <TaskCompletion task={task} />}
                   </View>
                 )}
               </>

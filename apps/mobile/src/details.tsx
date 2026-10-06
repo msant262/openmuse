@@ -49,10 +49,10 @@ import { browserAddress, browserSite } from "./browser-address";
 import { ComputerSheet } from "./computer";
 import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
-import { connectorReviewLines } from "./external-action-preview";
+import { connectorReviewLines, googleActionPresentation } from "./external-action-preview";
 import { FileContentPreview, hasFileContentPreview } from "./file-content-preview";
-import { GoogleApprovalCard, GoogleMailDraftCard } from "./google-workspace-cards";
 import { GoogleActionsScreen } from "./google-actions-screen";
+import { GoogleApprovalCard, GoogleMailDraftCard } from "./google-workspace-cards";
 import { useI18n } from "./i18n";
 import PdfReader from "./PdfReader";
 import {
@@ -695,14 +695,23 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
   }
   const email = action.kind === "email.send";
   const external = action.kind === "external.action";
-  if (d.tool === "google.workspace" || action.kind === "calendar.delete")
+  if (d.tool === "google.workspace" || action.kind.startsWith("calendar."))
     return (
       <Sheet
-        title={t("Review action")}
+        title={t(googleActionPresentation(action, locale).verb)}
         onClose={close}
-        footer={<Button onPress={close}>{t("Done")}</Button>}
+        footer={
+          <View style={{ gap: 10 }}>
+            {pending && action.kind !== "external.action" && action.kind !== "calendar.delete" && (
+              <Button small onPress={() => void edit()}>
+                {t("Edit details")}
+              </Button>
+            )}
+            <Button onPress={close}>{t("Close")}</Button>
+          </View>
+        }
       >
-        <GoogleApprovalCard action={action} />
+        <GoogleApprovalCard action={action} presentation="detail" />
       </Sheet>
     );
   return (

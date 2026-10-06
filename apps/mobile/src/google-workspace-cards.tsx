@@ -1,9 +1,10 @@
 import * as Crypto from "expo-crypto";
+import { CheckCircle2, CircleX, Clock3, ShieldCheck } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Clipboard, Platform, Text, View } from "react-native";
 import type { ActionProposal } from "../../../packages/domain/src";
 import type { GoogleMailDraft } from "../../../packages/domain/src/google-mail-draft";
-import { connectorReviewLines } from "./external-action-preview";
+import { googleActionPresentation, withGoogleActionContext } from "./external-action-preview";
 import { useI18n } from "./i18n";
 import { Button, Card, ErrorNotice, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -32,12 +33,14 @@ export function googleActionStatus(status: string) {
 export function GoogleApprovalCard({
   action,
   onAnswered,
+  presentation = "inline",
 }: {
   action: ActionProposal;
   onAnswered?: () => Promise<void>;
+  presentation?: "inline" | "detail";
 }) {
   const { api, refresh, open, workspace } = useWorkspace();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { s, colors } = useUI();
   const [answer, setAnswer] = useState<ActionProposal>();
   const [busy, setBusy] = useState(false);
@@ -52,9 +55,26 @@ export function GoogleApprovalCard({
       : answer?.id === action.id
         ? answer
         : action;
-  const deletion =
-    current.data.requiresHumanApproval === true || current.kind === "calendar.delete";
+  const view = googleActionPresentation(
+    withGoogleActionContext(current, workspace?.actions ?? []),
+    locale,
+  );
+  const deletion = view.deletion;
   const pending = current.status === "awaiting_review";
+  const color = pending
+    ? colors.warning
+    : current.status === "succeeded"
+      ? colors.success
+      : current.status === "failed"
+        ? colors.danger
+        : colors.muted;
+  const StatusIcon = pending
+    ? ShieldCheck
+    : current.status === "succeeded"
+      ? CheckCircle2
+      : ["executing", "outcome_unknown"].includes(current.status)
+        ? Clock3
+        : CircleX;
   async function decide(decision: "approve" | "deny") {
     if (lock.current || !pending) return;
     lock.current = true;
@@ -77,13 +97,15 @@ export function GoogleApprovalCard({
       setBusy(false);
     }
   }
-  if (!pending && !expanded && !error)
+  if (presentation === "inline" && !pending && !expanded && !error)
     return (
       <Card style={{ gap: 6, paddingVertical: 12 }}>
         <Text numberOfLines={1} style={s.heading}>
-          {String(current.data.subject ?? current.data.resourceName ?? current.title)}
+          {view.item ?? t(view.verb)}
         </Text>
-        <Text style={s.small}>{t(googleActionStatus(current.status))}</Text>
+        <Text style={s.small}>
+          {t(view.verb)} · {t(googleActionStatus(current.status))}
+        </Text>
         <ErrorNotice error={current.error} />
         <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
           <Button small onPress={() => setExpanded(true)}>
@@ -96,34 +118,77 @@ export function GoogleApprovalCard({
       </Card>
     );
   return (
-    <Card style={{ gap: 14, borderWidth: 1, borderColor: deletion ? colors.danger : colors.line }}>
-      <Text style={s.heading}>{t(deletion ? "Confirm deletion" : "Review action")}</Text>
-      <Text style={s.small}>{t(googleActionStatus(current.status))}</Text>
-      {connectorReviewLines(current.data).map((line) => (
-        <View key={line.label} style={{ gap: 4 }}>
-          <Text style={s.small}>{t(line.label)}</Text>
-          <Text selectable style={s.text}>
-            {t(line.value)}
+    <Card
+      style={{
+        gap: 20,
+        padding: presentation === "detail" ? 0 : 20,
+        borderWidth: presentation === "detail" ? 0 : 1,
+        borderColor: pending && deletion ? colors.danger : colors.line,
+      }}
+    >
+      <View style={{ gap: 12 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <StatusIcon size={18} color={color} />
+          <Text style={[s.text, { color, fontWeight: "600" }]}>
+            {t(googleActionStatus(current.status))}
           </Text>
         </View>
-      ))}
-      {current.kind === "calendar.delete" && (
-        <>
-          <Text selectable style={s.text}>
-            {current.account}
+        {presentation === "inline" && <Text style={s.heading}>{t(view.verb)}</Text>}
+        <Text selectable style={[s.title, { fontSize: 22 }]}>
+          {view.item ?? t(view.service)}
+        </Text>
+        <View style={{ gap: 3 }}>
+          <Text style={s.small}>
+            {t(view.service)} · {t("Account")}
           </Text>
           <Text selectable style={s.text}>
-            {String(current.data.title ?? current.title)}
+            {view.account || t("Account not specified")}
           </Text>
-        </>
+        </View>
+      </View>
+      {!!view.outcome && (
+        <View
+          style={{
+            backgroundColor: pending
+              ? colors.orange
+              : current.status === "succeeded"
+                ? colors.green
+                : colors.subtle,
+            padding: 14,
+            borderRadius: 12,
+          }}
+        >
+          <Text style={s.text}>{t(view.outcome)}</Text>
+        </View>
       )}
-      <Text style={s.small}>
-        {t(
-          deletion
-            ? "This removes the selected item from the account shown above. Nothing is deleted until you approve."
-            : "Your approval applies only to the details shown above.",
-        )}
-      </Text>
+      {!!view.fields.length && (
+        <View
+          style={{
+            gap: 14,
+            paddingVertical: 14,
+            borderTopWidth: 1,
+            borderBottomWidth: 1,
+            borderColor: colors.line,
+          }}
+        >
+          {view.fields.map((line) => (
+            <View key={line.label} style={{ gap: 4 }}>
+              <Text style={s.small}>{t(line.label)}</Text>
+              <Text selectable style={s.text}>
+                {line.value}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+      {!!view.preview && (
+        <View style={{ gap: 7 }}>
+          <Text style={s.small}>{t("Content")}</Text>
+          <Text selectable style={s.text}>
+            {view.preview}
+          </Text>
+        </View>
+      )}
       {pending && (
         <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
           <Button small disabled={busy} onPress={() => void decide("deny")}>
@@ -149,7 +214,7 @@ export function GoogleApprovalCard({
         </Text>
       )}
       <ErrorNotice error={error || current.error} />
-      {!pending && (
+      {presentation === "inline" && !pending && (
         <Button
           small
           onPress={() => {

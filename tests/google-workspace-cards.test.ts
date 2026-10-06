@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { connectorReviewLines } from "../apps/mobile/src/external-action-preview.ts";
-import { componentHarness } from "./helpers/component.ts";
 import { delegatedToolResult } from "../apps/mobile/src/delegated-tool-result.ts";
+import {
+  connectorReviewLines,
+  googleActionPresentation,
+  withGoogleActionContext,
+} from "../apps/mobile/src/external-action-preview.ts";
+import { componentHarness } from "./helpers/component.ts";
 
 test("native Google handoffs are recognized independently of the foreground tool name", () => {
   const receipt = { delegated: true, taskId: "owned-task", title: "Write an email" };
@@ -64,10 +68,20 @@ function view(
     {
       "react-native": { Text: "Text", View: "View", Platform: { OS: "web" }, Clipboard: {} },
       "expo-crypto": { randomUUID: () => "stable-click-id" },
+      "lucide-react-native": {
+        CheckCircle2: "CheckCircle2",
+        CircleX: "CircleX",
+        Clock3: "Clock3",
+        ShieldCheck: "ShieldCheck",
+      },
       "./i18n": { useI18n: () => ({ t: (key: string) => key }) },
       "./ui": { Button: "Button", Card: "Card", ErrorNotice: "ErrorNotice" },
       "./workspace": { useWorkspace: () => ({ api, refresh: async () => {} }) },
-      "./external-action-preview": { connectorReviewLines },
+      "./external-action-preview": {
+        connectorReviewLines,
+        googleActionPresentation,
+        withGoogleActionContext,
+      },
     },
     props,
     {
@@ -173,7 +187,7 @@ test("approval shows readable account and target, hides JSON, and submits only t
   });
   try {
     await h.flush();
-    assert.match(h.text(), /Confirm deletion.*work@example.com.*Visible subject/s);
+    assert.match(h.text(), /Delete email draft.*Visible subject.*work@example.com/s);
     assert.doesNotMatch(h.text(), /"id"|gmail.users.drafts.delete/);
     assert.equal(calls.length, 0);
     h.button("Show technical details").onPress();
@@ -192,6 +206,25 @@ test("approval shows readable account and target, hides JSON, and submits only t
         .nodes()
         .some((node) => node.type === "Button" && node.props.children === "Approve deletion"),
     );
+  } finally {
+    h.close();
+  }
+});
+
+test("opening a declined action from history shows the full context immediately without reopening or approving it", async () => {
+  const calls: string[] = [];
+  const h = view(
+    "GoogleApprovalCard",
+    { action: { ...action, status: "denied" }, presentation: "detail" },
+    async (path) => {
+      calls.push(path);
+    },
+  );
+  try {
+    await h.flush();
+    assert.match(h.text(), /Visible subject.*work@example.com.*Deletion was declined/s);
+    assert.doesNotMatch(h.text(), /View details|Approve deletion|gmail.users.drafts.delete/);
+    assert.deepEqual(calls, []);
   } finally {
     h.close();
   }
@@ -300,7 +333,20 @@ test("the Actions tab fetches one summary page and reopens a selected draft with
           open: (detail: any) => opened.push(detail),
         }),
       },
-      "./external-action-preview": { connectorReviewLines },
+      "./external-action-preview": {
+        connectorReviewLines,
+        googleActionPresentation,
+        withGoogleActionContext,
+      },
+      "lucide-react-native": {
+        CheckCircle2: "CheckCircle2",
+        ChevronRight: "ChevronRight",
+        CircleAlert: "CircleAlert",
+        CircleX: "CircleX",
+        Clock3: "Clock3",
+        FileText: "FileText",
+        ShieldCheck: "ShieldCheck",
+      },
       "./google-workspace-cards": { googleActionStatus: (status: string) => status },
     },
   );
@@ -312,7 +358,9 @@ test("the Actions tab fetches one summary page and reopens a selected draft with
     const row = h
       .nodes()
       .find(
-        (node) => node.type === "Pressable" && node.props.accessibilityLabel === "Saved subject",
+        (node) =>
+          node.type === "Pressable" &&
+          node.props.accessibilityLabel === "Email draft · Saved subject",
       );
     assert.ok(row);
     (row.props.onPress as () => void)();

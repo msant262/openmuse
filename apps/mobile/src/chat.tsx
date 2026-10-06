@@ -73,6 +73,7 @@ import { useAvatarPresentation } from "./avatar-presentation";
 import { BackgroundUpdates } from "./background-updates";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
 import { ChatAttachments } from "./chat-attachments";
+import { ChatScrollFollow } from "./chat-scroll-follow";
 import {
   CompanionGif,
   CompanionSticker,
@@ -91,6 +92,7 @@ import {
   ConversationResourceLibrary,
 } from "./conversation-resources";
 import { runConversationTurn } from "./conversation-run";
+import { delegatedToolResult } from "./delegated-tool-result";
 import { FileToolCard, mediaResult } from "./file-tool-card";
 import { useI18n } from "./i18n";
 import { InteractionList } from "./interaction-list";
@@ -110,9 +112,7 @@ import { messageStorage } from "./message-storage";
 import { modelSelectionNotice, modelUsageUrl } from "./model-errors";
 import { ProactivityAlerts } from "./proactivity-card";
 import { suggestionsFromRequests } from "./proactivity-state";
-
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
-import { delegatedToolResult } from "./delegated-tool-result";
 import { type Selection, useMuseThread } from "./threads";
 import { Button, Card, CheckRow, ErrorNotice, Sheet, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -481,8 +481,63 @@ export function ChatScreen({
     running: boolean;
     paused: boolean;
   }>(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
-  const followLatest = useRef(true);
+  const followLatest = useRef(new ChatScrollFollow());
   const [awayFromLatest, setAwayFromLatest] = useState(false);
+  const scrollFrame = useRef<number | undefined>(undefined);
+  const followEnd = useCallback(() => {
+    if (!active || !followLatest.current.following || scrollFrame.current !== undefined) return;
+    scrollFrame.current = requestAnimationFrame(() => {
+      scrollFrame.current = undefined;
+      if (followLatest.current.following) list.current?.scrollToEnd({ animated: false });
+    });
+  }, [active]);
+  useEffect(() => {
+    if (active) followEnd();
+    return () => {
+      if (scrollFrame.current !== undefined) cancelAnimationFrame(scrollFrame.current);
+      scrollFrame.current = undefined;
+    };
+  }, [active, followEnd]);
+  useEffect(() => {
+    if (Platform.OS !== "web" || !active) return;
+    const node: unknown = list.current?.getScrollableNode();
+    if (!(node instanceof HTMLElement)) return;
+    // RN Web does not emit native onScrollBeginDrag. Observe reader intent on
+    // the list itself; layout changes, incoming tokens and card clicks don't pause it.
+    const pause = () => {
+      followLatest.current.pause();
+      setAwayFromLatest(true);
+    };
+    const wheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) pause();
+    };
+    let touchY = 0;
+    const start = (event: TouchEvent) => {
+      touchY = event.touches[0]?.clientY ?? 0;
+    };
+    const move = (event: TouchEvent) => {
+      if ((event.touches[0]?.clientY ?? touchY) > touchY + 8) pause();
+    };
+    const keys = (event: KeyboardEvent) => {
+      if (["ArrowUp", "PageUp", "Home"].includes(event.key)) pause();
+    };
+    const drag = () => followLatest.current.beginUserScroll();
+    const end = () => followLatest.current.endUserScroll();
+    node.addEventListener("wheel", wheel, { passive: true });
+    node.addEventListener("touchstart", start, { passive: true });
+    node.addEventListener("touchmove", move, { passive: true });
+    node.addEventListener("keydown", keys);
+    node.addEventListener("pointerdown", drag);
+    window.addEventListener("pointerup", end);
+    return () => {
+      node.removeEventListener("wheel", wheel);
+      node.removeEventListener("touchstart", start);
+      node.removeEventListener("touchmove", move);
+      node.removeEventListener("keydown", keys);
+      node.removeEventListener("pointerdown", drag);
+      window.removeEventListener("pointerup", end);
+    };
+  }, [active]);
   const runLock = useRef(false);
   const [saveError, setSaveError] = useState("");
   const [historyError, setHistoryError] = useState("");
@@ -835,11 +890,12 @@ export function ChatScreen({
       await queue.enqueue(message);
       if (queue instanceof MessageOutbox && !agent.messages.some((item) => item.id === message.id))
         agent.addMessage({ id: message.id, role: "user", content: text });
-      followLatest.current = true;
+      followLatest.current.latest();
       setAwayFromLatest(false);
+      followEnd();
       flush();
     },
-    [queue, flush, directionTarget, agent],
+    [queue, flush, directionTarget, agent, followEnd],
   );
   const sendChoice = useCallback(
     (text: string, retry = false): Promise<void> => {
@@ -861,12 +917,13 @@ export function ChatScreen({
           choiceCompletions.current.get(id)?.reject(cause);
           choiceCompletions.current.delete(id);
         });
-      followLatest.current = true;
+      followLatest.current.latest();
       setAwayFromLatest(false);
+      followEnd();
       flush();
       return completion;
     },
-    [agent.isRunning, flush, isReady, loaded, queue, saveError],
+    [agent.isRunning, flush, isReady, loaded, queue, saveError, followEnd],
   );
   useEffect(() => {
     if ((queue instanceof MessageOutbox || (!busy && !agent.isRunning)) && outbox.pending.length)
@@ -1063,7 +1120,8 @@ export function ChatScreen({
     olderLock.current = true;
     setLoadingOlder(true);
     setOlderError("");
-    followLatest.current = false;
+    followLatest.current.pause();
+    setAwayFromLatest(true);
     try {
       const page = await api.request<RecentChatPage>(
         `/api/copilotkit/threads/${threadId}/messages?direction=backward&limit=${CHAT_HISTORY_PAGE_SIZE}&cursor=${encodeURIComponent(historyCursor)}`,
@@ -1137,7 +1195,8 @@ export function ChatScreen({
   function jumpToMessage(id: string) {
     const index = visible.findIndex((message) => message.id === id);
     if (index >= 0) {
-      followLatest.current = false;
+      followLatest.current.pause();
+      setAwayFromLatest(true);
       list.current?.scrollToIndex({ index, viewPosition: 0.2, animated: true });
     }
   }
@@ -1171,7 +1230,7 @@ export function ChatScreen({
         initialNumToRender={12}
         maxToRenderPerBatch={8}
         windowSize={7}
-        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        maintainVisibleContentPosition={awayFromLatest ? { minIndexForVisible: 0 } : undefined}
         onScrollToIndexFailed={({ index, averageItemLength }) => {
           list.current?.scrollToOffset({ offset: index * averageItemLength, animated: false });
         }}
@@ -1182,16 +1241,19 @@ export function ChatScreen({
           paddingBottom: 22,
           flexGrow: 1,
         }}
+        onScrollBeginDrag={() => followLatest.current.beginUserScroll()}
+        onScrollEndDrag={() => followLatest.current.endUserScroll()}
         onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
-          const nearEnd = contentSize.height - contentOffset.y - layoutMeasurement.height < 100;
-          followLatest.current = nearEnd;
-          setAwayFromLatest(visible.length > 0 && !nearEnd);
+          const away = followLatest.current.scroll(
+            contentOffset.y,
+            contentSize.height,
+            layoutMeasurement.height,
+          );
+          setAwayFromLatest(visible.length > 0 && away);
         }}
         scrollEventThrottle={100}
-        onContentSizeChange={() => {
-          if (active && visible.length > 0 && followLatest.current)
-            list.current?.scrollToEnd({ animated: false });
-        }}
+        onContentSizeChange={followEnd}
+        onLayout={followEnd}
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <View style={{ gap: wide ? 18 : 15 }}>
@@ -1669,7 +1731,7 @@ export function ChatScreen({
           icon={ArrowDown}
           style={{ alignSelf: "center", marginBottom: 10 }}
           onPress={() => {
-            followLatest.current = true;
+            followLatest.current.latest();
             setAwayFromLatest(false);
             list.current?.scrollToEnd({ animated: true });
           }}

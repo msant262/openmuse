@@ -1,5 +1,6 @@
 import { avatarCharacterPtBR } from "./avatar-character-copy";
 import { avatarPTBR } from "./avatar-copy";
+import { chatPresentationPtBR } from "./chat-presentation-copy";
 import { companionChatPtBR } from "./companion-chat-copy";
 import { connectionsPtBR } from "./connections-copy";
 import { interfaceRefreshPtBR } from "./interface-refresh-copy";
@@ -1105,4 +1106,5 @@ export const ptBR: Record<string, string> = {
   "Reload task results.": "Recarregar resultados da tarefa.",
   "Reload task results": "Recarregar resultados da tarefa",
   ...interfaceRefreshPtBR,
+  ...chatPresentationPtBR,
 };

@@ -159,6 +159,7 @@ export function TaskResultViewer({
   operations,
   completion,
   criteria,
+  showChecks = true,
 }: {
   files: Artifact[];
   artifacts: AgentArtifact[];
@@ -166,6 +167,7 @@ export function TaskResultViewer({
   operations: TaskOperationDetail[];
   completion?: unknown;
   criteria?: readonly Pick<CompletionCriterion, "id" | "description">[];
+  showChecks?: boolean;
 }) {
   const { colors, s } = useUI();
   const { t } = useI18n();
@@ -187,7 +189,7 @@ export function TaskResultViewer({
       {artifacts.map((artifact) => (
         <ArtifactResultCard key={artifact.id} artifact={artifact} />
       ))}
-      {!!checks.length && (
+      {showChecks && !!checks.length && (
         <View style={{ gap: 12 }}>
           <Text style={s.heading}>{t("Delivery checks")}</Text>
           <OperationContentList nodes={checks} files={files} artifacts={artifacts} />

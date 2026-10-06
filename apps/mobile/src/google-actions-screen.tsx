@@ -1,7 +1,16 @@
+import {
+  CheckCircle2,
+  ChevronRight,
+  CircleAlert,
+  CircleX,
+  Clock3,
+  FileText,
+  ShieldCheck,
+} from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { GoogleMailDraftSummary } from "../../../packages/domain/src/google-mail-draft";
-import { connectorReviewLines } from "./external-action-preview";
+import { googleActionPresentation, withGoogleActionContext } from "./external-action-preview";
 import { googleActionStatus } from "./google-workspace-cards";
 import { useI18n } from "./i18n";
 import { Button, Card, ErrorNotice, useUI } from "./ui";
@@ -10,7 +19,7 @@ import { useWorkspace } from "./workspace";
 /** Fetch only a page of summaries. Full email contents load when an item is opened. */
 export function GoogleActionsScreen({ onOpen }: { onOpen?: () => void } = {}) {
   const { api, workspace, open } = useWorkspace();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { s, colors } = useUI();
   const [page, setPage] = useState<{
     owner: string;
@@ -73,11 +82,12 @@ export function GoogleActionsScreen({ onOpen }: { onOpen?: () => void } = {}) {
     }
   }
   const linked = new Set(visible?.entries.map((draft) => draft.actionId));
-  const rows = [
+  const allRows = [
     ...(visible?.entries ?? []).map((draft) => ({
       id: `draft:${draft.id}`,
       date: draft.updatedAt,
       title: draft.subject,
+      verb: "Email draft",
       account: draft.account,
       status: draft.status,
       detail: draft.to.join(", "),
@@ -86,26 +96,32 @@ export function GoogleActionsScreen({ onOpen }: { onOpen?: () => void } = {}) {
     ...workspace.actions
       .filter((action) => !linked.has(action.id))
       .map((action) => {
-        const lines = connectorReviewLines(action.data);
-        const target = lines.find((line) => ["Subject", "Item"].includes(line.label))?.value;
-        const verb = lines.find((line) => line.label === "Action")?.value;
-        const service = lines.find((line) => line.label === "Service")?.value;
+        const view = googleActionPresentation(
+          withGoogleActionContext(action, workspace.actions),
+          locale,
+        );
         return {
           id: `action:${action.id}`,
           date: action.createdAt,
-          title: target
-            ? `${t(verb ?? "Review action")} · ${target}`
-            : service
-              ? `${t(service)} · ${t(verb ?? "Review action")}`
-              : action.title,
-          account: String(action.data.account ?? action.account ?? ""),
+          title: view.item ?? t(view.service),
+          verb: view.verb,
+          account: view.account,
           status: action.status,
-          detail: "",
+          detail:
+            view.fields.find((field) => field.label === "Starts")?.value ?? view.preview ?? "",
           show: () => open({ type: "review", action }),
         };
       }),
-  ]
-    .filter((row) => filter === "all" || row.status === "awaiting_review")
+  ];
+  const pendingCount = allRows.filter((row) => row.status === "awaiting_review").length;
+  const rows = allRows
+    .filter(
+      (row) =>
+        filter === "all" ||
+        (filter === "pending"
+          ? row.status === "awaiting_review"
+          : !["awaiting_review", "executing"].includes(row.status)),
+    )
     .sort((a, b) => b.date.localeCompare(a.date));
   return (
     <View style={{ gap: 12 }}>
@@ -118,7 +134,10 @@ export function GoogleActionsScreen({ onOpen }: { onOpen?: () => void } = {}) {
           {t("All")}
         </Button>
         <Button small primary={filter === "pending"} onPress={() => setFilter("pending")}>
-          {t("Needs review")}
+          {t("Needs review")} ({pendingCount})
+        </Button>
+        <Button small primary={filter === "history"} onPress={() => setFilter("history")}>
+          {t("History")}
         </Button>
         <Button small disabled={busy} onPress={() => setAttempt((value) => value + 1)}>
           {t("Refresh")}
@@ -126,39 +145,81 @@ export function GoogleActionsScreen({ onOpen }: { onOpen?: () => void } = {}) {
       </View>
       <ErrorNotice error={error} />
       {busy && !visible && <Text style={s.small}>{t("Loading actions…")}</Text>}
-      {rows.map((row) => (
-        <Pressable
-          key={row.id}
-          accessibilityRole="button"
-          accessibilityLabel={row.title}
-          onPress={() => {
-            onOpen?.();
-            row.show();
-          }}
-        >
-          <Card
-            style={{
-              padding: 12,
-              gap: 5,
-              borderWidth: 1,
-              borderColor: row.status === "awaiting_review" ? colors.accent : colors.line,
+      {rows.map((row) => {
+        const pending = row.status === "awaiting_review";
+        const succeeded = ["succeeded", "saved", "sent"].includes(row.status);
+        const failed = ["failed", "outcome_unknown"].includes(row.status);
+        const color = pending
+          ? colors.warning
+          : succeeded
+            ? colors.success
+            : failed
+              ? colors.danger
+              : colors.muted;
+        const StatusIcon = pending
+          ? ShieldCheck
+          : succeeded
+            ? CheckCircle2
+            : failed
+              ? CircleAlert
+              : row.status === "executing"
+                ? Clock3
+                : ["denied", "cancelled"].includes(row.status)
+                  ? CircleX
+                  : FileText;
+        return (
+          <Pressable
+            key={row.id}
+            accessibilityRole="button"
+            accessibilityLabel={`${t(row.verb)} · ${row.title}`}
+            onPress={() => {
+              onOpen?.();
+              row.show();
             }}
           >
-            <Text numberOfLines={2} style={s.heading}>
-              {row.title}
-            </Text>
-            <Text numberOfLines={1} style={s.small}>
-              {row.account}
-            </Text>
-            {!!row.detail && (
-              <Text numberOfLines={1} style={s.small}>
-                {t("To")}: {row.detail}
+            <Card
+              style={{
+                padding: 14,
+                gap: 9,
+                borderRadius: 15,
+                borderWidth: 1,
+                borderColor: row.status === "awaiting_review" ? colors.accent : colors.line,
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+                <StatusIcon size={15} color={color} />
+                <Text style={[s.small, { color, fontWeight: "600", flex: 1 }]}>
+                  {t(googleActionStatus(row.status))}
+                </Text>
+                <ChevronRight size={14} color={colors.muted} />
+              </View>
+              <View style={{ gap: 4 }}>
+                <Text style={[s.small, { fontWeight: "600" }]}>{t(row.verb)}</Text>
+                <Text numberOfLines={2} style={[s.heading, { fontSize: 14, lineHeight: 20 }]}>
+                  {row.title}
+                </Text>
+              </View>
+              <Text numberOfLines={1} style={[s.small, { fontSize: 12 }]}>
+                {row.account}
               </Text>
-            )}
-            <Text style={s.small}>{t(googleActionStatus(row.status))}</Text>
-          </Card>
-        </Pressable>
-      ))}
+              {!!row.detail && (
+                <Text numberOfLines={1} style={s.small}>
+                  {row.id.startsWith("draft:") ? `${t("To")}: ` : ""}
+                  {row.detail}
+                </Text>
+              )}
+              <Text style={s.small}>
+                {new Date(row.date).toLocaleString(locale, {
+                  day: "2-digit",
+                  month: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </Text>
+            </Card>
+          </Pressable>
+        );
+      })}
       {!busy && !rows.length && <Text style={s.small}>{t("No actions here yet.")}</Text>}
       {!!visible?.cursor && (
         <Button small busy={busy} onPress={() => void more()}>

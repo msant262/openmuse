@@ -6,6 +6,9 @@ import { messageStorage } from "./message-storage";
 export type { Locale } from "./i18n-core";
 
 const localeStore = new LocaleStore(messageStorage);
+export function currentLocale() {
+  return localeStore.get();
+}
 export function t(key: string, values?: Record<string, string | number>) {
   return translate(localeStore.get(), ptBR, key, values);
 }
