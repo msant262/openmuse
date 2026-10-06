@@ -75,7 +75,9 @@ export function completedMessages(raw: unknown): Message[] {
       id: parsed.id,
       role: parsed.role,
       content:
-        typeof content === "string" && !structuredReceipt ? publicJournalValue(content) : content,
+        typeof content === "string" && !structuredReceipt
+          ? publicJournalValue(content, parsed.role === "tool" ? 32000 : content.length)
+          : content,
       ...(parsed.role === "assistant" && parsed.toolCalls
         ? {
             toolCalls: parsed.toolCalls.map((call) => {

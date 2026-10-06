@@ -3,6 +3,7 @@ import type { ComputerCommand } from "../../../../packages/domain/src/computer.t
 import { type ComputerBackend, computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Store } from "../db.ts";
 import { ResourceLeases } from "./resource-leases.ts";
+import type { TaskJournal } from "./task-journal.ts";
 import type { WorkAdmission } from "./work-admission.ts";
 
 export async function readComputerCommand(
@@ -20,6 +21,7 @@ export async function reconcileWaitingComputerTasks(
   computer: ComputerBackend,
   admission: WorkAdmission,
   resources = new ResourceLeases(db),
+  journal?: Pick<TaskJournal, "reconcileComputerReceipt">,
 ) {
   const resumable = new Set([
     "running",
@@ -34,7 +36,13 @@ export async function reconcileWaitingComputerTasks(
     const id =
       typeof task.state.computerCleanupPendingId === "string"
         ? task.state.computerCleanupPendingId
-        : task.state.waitingComputerCommandId;
+        : typeof task.state.waitingComputerCommandId === "string"
+          ? task.state.waitingComputerCommandId
+          : Array.isArray(task.state.reconcilingOperationIds) &&
+              task.state.completedComputerJob &&
+              typeof task.state.completedComputerJob === "object"
+            ? (task.state.completedComputerJob as { id?: unknown }).id
+            : undefined;
     if (typeof id !== "string" || resumable.has(task.status)) continue;
     let receipt: ComputerCommand | undefined;
     try {
@@ -44,6 +52,9 @@ export async function reconcileWaitingComputerTasks(
       continue;
     }
     if (!receipt || !computerCommandCleanupConfirmed(receipt)) continue;
+    // Reconcile the SDK intention and its physical primitive as well as the
+    // resource hold; otherwise a confirmed failed command blocks every later effect.
+    await journal?.reconcileComputerReceipt(owner, task.id, receipt);
     const selector =
       typeof task.state.computerCleanupPendingId === "string"
         ? { computerCleanupPendingId: id }

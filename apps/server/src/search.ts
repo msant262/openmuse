@@ -91,6 +91,7 @@ export class BrowserSearchBackend implements SearchBackend {
 
 /** Public discovery does not acquire a graphical desktop or browser profile. */
 export class HttpSearchBackend implements SearchBackend {
+  private preferredProvider?: SearchResult["provenance"]["provider"];
   constructor(private readonly web: PublicWeb) {}
   async search(input: SearchInput, context: SearchContext): Promise<SearchResult> {
     const signal = AbortSignal.any([
@@ -98,14 +99,18 @@ export class HttpSearchBackend implements SearchBackend {
       AbortSignal.timeout(30000),
     ]);
     const endpoints = [
+      { url: "https://www.bing.com/search?format=rss", provider: "bing-rss" as const },
       { url: "https://lite.duckduckgo.com/lite/", provider: "duckduckgo-lite" as const },
       { url: defaultSearchEndpoint, provider: "duckduckgo-html" as const },
-      { url: "https://www.bing.com/search?format=rss", provider: "bing-rss" as const },
-    ];
+    ].sort(
+      (a, b) =>
+        Number(b.provider === this.preferredProvider) -
+        Number(a.provider === this.preferredProvider),
+    );
     let code = "SEARCH_UNAVAILABLE";
     let provenance: SearchResult["provenance"] = {
       backend: "http",
-      provider: "duckduckgo-lite",
+      provider: endpoints[0].provider,
       searchUrl: endpoints[0].url,
       fullPagesRead: false,
     };
@@ -286,6 +291,7 @@ export class HttpSearchBackend implements SearchBackend {
         }
         attempt.throwIfAborted();
         provenance = { ...provenance, searchUrl: page.url };
+        this.preferredProvider = endpoint.provider;
         return result(sources.length ? "ok" : "no_results", sources, entries.length > input.limit);
       } catch (error) {
         code =
