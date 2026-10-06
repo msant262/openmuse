@@ -48,6 +48,7 @@ import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { ConnectedSearchBackend, type IntegrationService } from "../integrations.ts";
 import { InteractionRequests } from "../interaction-requests.ts";
+import { ProcedureMaintenance } from "../learning/procedure-maintenance.ts";
 import { PersonalLearning } from "../learning/service.ts";
 import { backgroundFailure } from "../log.ts";
 import { McpService } from "../mcp.ts";
@@ -78,6 +79,8 @@ import { nativeWebMarkdown, stopOpenclawHarness } from "./openclaw-agent.ts";
 import { ResourceLeases } from "./resource-leases.ts";
 import { RuntimePause } from "./runtime-pause.ts";
 import { TaskActor, TaskBudgetExhaustedError } from "./task-actor.ts";
+import { taskEventOperations } from "./task-event-operations.ts";
+import { publicJournalValue, publicToolArguments } from "./task-history.ts";
 import { TaskJournal, validateTaskEffect } from "./task-journal.ts";
 import { TaskMailbox } from "./task-mailbox.ts";
 import { executionSteps, liveTaskPlan } from "./task-progress.ts";
@@ -146,6 +149,7 @@ export class AgentService {
     this.desktop = desktop;
   }
   readonly playbooks: Playbooks;
+  readonly procedureMaintenance: ProcedureMaintenance;
   readonly profiles: AgentProfile;
   readonly avatars: AvatarService;
   readonly interactions: InteractionRequests;
@@ -280,6 +284,7 @@ export class AgentService {
     this.verification = new TaskVerification(db, files, this.journal);
     this.profiles = new AgentProfile(db);
     this.playbooks = new Playbooks(this);
+    this.procedureMaintenance = new ProcedureMaintenance(this);
     this.interactions = new InteractionRequests(db);
     this.runtimePause = new RuntimePause(db);
     this.resourceLeases = new ResourceLeases(db);
@@ -466,6 +471,8 @@ export class AgentService {
           if (value.id !== "identity") continue;
           if (this.config.mode === "live") {
             await this.learning.scheduleDue(owner);
+            await this.procedureMaintenance.scheduleDue(owner);
+            await this.proactivity.pollSources(owner);
             await this.proactivity.scheduleDue(owner);
             continue;
           }
@@ -624,14 +631,21 @@ export class AgentService {
       ),
       files: files.map((file) => this.files.signed(owner, file)),
       browsers: browsers.map((browser) => this.browser.decorate(owner, browser)),
-      events: (await this.db.list<RunEvent>(owner, "run-events"))
-        .filter((e) => e.taskId === id)
-        .sort((a, b) => a.date.localeCompare(b.date)),
+      events: taskEventOperations(
+        (await this.db.list<RunEvent>(owner, "run-events"))
+          .filter((e) => e.taskId === id)
+          .sort((a, b) => a.date.localeCompare(b.date)),
+        operations,
+      ),
       artifacts: (await this.db.list<AgentArtifact>(owner, "agent-artifacts")).filter(
         (a) => a.taskId === id,
       ),
       directives: await this.mailbox.list(owner, id),
-      operations,
+      operations: operations.map((operation) => ({
+        ...operation,
+        args: publicToolArguments(operation.toolName, operation.args),
+        receipt: publicJournalValue(operation.receipt),
+      })),
     };
   }
   async createTask(
@@ -1080,6 +1094,12 @@ export class AgentService {
       },
     );
     if (!saved) throw new AppError("Goal changed; refresh its revision before updating", 409);
+    await this.proactivity.events.enqueue(owner, {
+      source: "goal",
+      key: id,
+      revision: String(saved.revision ?? 0),
+      observedAt: saved.updatedAt,
+    });
     if (patch.status === "paused")
       for (const task of await this.db.list<AgentTask>(owner, "tasks"))
         if (task.goalId === id && !terminal.has(task.status) && task.status !== "paused")
@@ -1544,6 +1564,8 @@ export class AgentService {
   ): Promise<Partial<AgentTask>> {
     task = await this.actor.apply(owner, task, context);
     if (task.input.memoryReview === true) return this.learning.review(owner, task, context);
+    if (task.input.procedureMaintenance === true)
+      return this.procedureMaintenance.run(owner, task, context);
     if (typeof task.input.proactivityCycleId === "string") {
       try {
         return await this.proactivity.review(owner, task.input.proactivityCycleId, task, context);
@@ -1978,9 +2000,14 @@ export class AgentService {
     };
   }
   private async publishOutcome(owner: string, saved: AgentTask) {
-    const task = await this.getTask(owner, saved.id);
+    // Historical scans include logically removed work. Removal racing this
+    // scan must not stop every owner's learning and heartbeat with a 404.
+    const task = await this.db.get<AgentTask>(owner, "tasks", saved.id);
+    if (!task || task.deletedAt) return;
     if (typeof task.input.proactivityCycleId === "string" || task.input.internalActivity === true)
       return;
+    await this.playbooks.recordOutcome(owner, task.id);
+    await this.proactivity.events.task(owner, task);
     if (terminal.has(task.status) && typeof task.state.parentTaskId === "string") {
       const parent = await this.db.get<AgentTask>(owner, "tasks", task.state.parentTaskId);
       const children = (await this.db.list<AgentTask>(owner, "tasks")).filter(

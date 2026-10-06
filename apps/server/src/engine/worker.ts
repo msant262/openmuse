@@ -33,7 +33,12 @@ export interface TaskContext {
   signal: AbortSignal;
   guard(): Promise<void>;
   checkpoint(patch: Partial<AgentTask>): Promise<AgentTask>;
-  event(kind: RunEvent["kind"], title: string, detail?: string): Promise<void>;
+  event(
+    kind: RunEvent["kind"],
+    title: string,
+    detail?: string,
+    operationId?: string,
+  ): Promise<void>;
   acquireResources(requests: ResourceRequest[]): Promise<ResourceLease[]>;
   trackResourceLeases(leases: ResourceLease[]): void;
   holdAdmission(): Promise<void>;
@@ -336,7 +341,12 @@ export class TaskWorker {
       task = next;
       return next;
     };
-    const event = async (kind: RunEvent["kind"], title: string, detail = "") => {
+    const event = async (
+      kind: RunEvent["kind"],
+      title: string,
+      detail = "",
+      operationId?: string,
+    ) => {
       await guard();
       await this.db.put(owner, "run-events", {
         id: randomUUID(),
@@ -345,6 +355,7 @@ export class TaskWorker {
         kind,
         title,
         detail,
+        ...(operationId ? { operationId } : {}),
       });
     };
     const startedAt = new Date(this.now()).toISOString();

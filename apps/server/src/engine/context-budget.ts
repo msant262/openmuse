@@ -181,6 +181,10 @@ export class ContextBudget {
   static limit<T extends Message | ModelMessage>(messages: T[], options: ContextOptions): T[] {
     return ContextBudget.project(messages, options);
   }
+  /** Complete mandatory groups, without filling spare capacity with optional history. */
+  static required<T extends Message | ModelMessage>(messages: T[], options: ContextOptions): T[] {
+    return ContextBudget.project(messages, options, true);
+  }
   static minimumTokens<T extends Message | ModelMessage>(
     messages: T[],
     options: Omit<ContextOptions, "model"> & { imageContextTokens?: number },

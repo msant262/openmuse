@@ -52,8 +52,24 @@ export type ProcedureVersion = Omit<ProcedureInput, "expectedVersion"> & {
   binding: string;
   learned?: boolean;
   sourceOperationIds?: string[];
+  lifecycle?: "active" | "stale" | "archived";
+  pinned?: boolean;
+  contentSavedAt?: string;
+  maintenance?: {
+    action: string;
+    actor: "user" | "curator";
+    reason: string;
+    previousVersion: number;
+    restoredFrom?: number;
+    replacedBy?: { id: string; version: number };
+  };
 };
-export type Procedure = { id: string; version: number; versions: ProcedureVersion[] };
+export type Procedure = {
+  id: string;
+  version: number;
+  versions: ProcedureVersion[];
+  historyVersion?: 1;
+};
 export const procedureRunSchema = z
   .object({
     version: z.number().int().positive(),
@@ -61,3 +77,38 @@ export const procedureRunSchema = z
     inputs: z.record(z.string(), z.string().max(1000)).default({}),
   })
   .strict();
+
+export const procedureCatalogSchema = z
+  .object({
+    query: z.string().trim().max(300).default(""),
+    cursor: z.string().max(256).optional(),
+    limit: z.number().int().min(1).max(30).default(20),
+    includeArchived: z.boolean().default(false),
+  })
+  .strict();
+export const procedureReadSchema = z
+  .object({ id: text.max(128), version: z.number().int().positive().optional() })
+  .strict();
+export const procedureManageSchema = z
+  .object({
+    action: z.enum([
+      "archive",
+      "restore",
+      "rollback",
+      "pin",
+      "unpin",
+      "mark_stale",
+      "reactivate",
+      "consolidate",
+    ]),
+    expectedVersion: z.number().int().positive(),
+    requestId: text.max(256),
+    reason: text.max(500),
+    version: z.number().int().positive().optional(),
+    replacementId: text.max(128).optional(),
+  })
+  .strict();
+export type ProcedureCatalogEntry = Pick<
+  ProcedureVersion,
+  "id" | "title" | "version" | "requiredTools" | "learned" | "pinned" | "lifecycle" | "savedAt"
+>;

@@ -24,6 +24,7 @@ import type { AgentService } from "../engine/service.ts";
 import { TaskBudgetExhaustedError } from "../engine/task-actor.ts";
 import type { TaskContext } from "../engine/worker.ts";
 import { AppError } from "../errors.ts";
+import { ProactivityEvents, type WakeEvent } from "./events.ts";
 import {
   ProactivityEvidenceChangedError,
   ProactivitySourceUnavailableError,
@@ -31,8 +32,10 @@ import {
   unansweredRequest,
   unattendedMail,
 } from "./evidence.ts";
+import { isWithinActiveHours } from "./openclaw/active-hours.ts";
 import { type HeartbeatCandidate, reasonAboutHeartbeat } from "./reasoning.ts";
 import { ProactivitySettings } from "./settings.ts";
+import { ProactivitySourceEvents } from "./source-events.ts";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 type Mutation = Parameters<Store["durableMutation"]>[3][number];
@@ -42,7 +45,13 @@ type Heartbeat = {
   activeCycleId: string | null;
   lastReviewedAt?: string;
   watermark?: string;
-  cursors?: { goals?: string; tasks?: string; memories?: string; mail?: number };
+  cursors?: {
+    goals?: string;
+    tasks?: string;
+    memories?: string;
+    mail?: number;
+    calendar?: { version: string; reviewedIds: string[] };
+  };
 };
 export type ProactivityDecision = {
   suggestion: ProactivitySuggestion;
@@ -54,10 +63,14 @@ const terminal = new Set(["succeeded", "failed", "cancelled"]);
 /** Adapter over the existing task scheduler and interaction journal; no separate runner. */
 export class ProactivityService {
   readonly settings: ProactivitySettings;
+  readonly events: ProactivityEvents;
+  private readonly sourceEvents: ProactivitySourceEvents;
   constructor(
     private readonly service: AgentService,
     private readonly now = () => Date.now(),
   ) {
+    this.events = new ProactivityEvents(service.db, () => this.now());
+    this.sourceEvents = new ProactivitySourceEvents(service, this.events);
     this.settings = new ProactivitySettings(service.db, {
       enabled: service.config.proactivityEnabled ?? true,
       intervalHours: service.config.proactivityIntervalHours ?? 4,
@@ -66,12 +79,16 @@ export class ProactivityService {
   private get db() {
     return this.service.db;
   }
+  pollSources(owner: string, now = this.now()) {
+    return this.sourceEvents.poll(owner, now);
+  }
   async list(owner: string, threadId?: string) {
     return (
       await this.db.listPage<ProactivitySuggestion>(owner, "proactivity-suggestions", 100)
     ).values.filter((s) => !threadId || s.threadId === threadId);
   }
   async reconcileMemorySuggestions(owner: string) {
+    await this.db.retireInvalidProactivityEvents(owner, new Date(this.now()).toISOString());
     for (const s of await this.list(owner)) {
       if (s.target.kind !== "memory" || !["pending", "snoozed"].includes(s.status)) continue;
       const memory = await this.db.get<AgentMemory>(owner, "memories", s.target.memoryId);
@@ -107,6 +124,25 @@ export class ProactivityService {
             ).toISOString()
           : null,
       latestCycle: cycles.entries[0] ?? null,
+      nextWakeAt: await this.db.nextProactivityWakeAt(owner),
+      sourceChecks: {
+        mail:
+          (
+            await this.db.get<{ coverage: SourceCoverage }>(
+              owner,
+              "proactivity-source-state",
+              "mail",
+            )
+          )?.coverage ?? null,
+        calendar:
+          (
+            await this.db.get<{ coverage: SourceCoverage }>(
+              owner,
+              "proactivity-source-state",
+              "calendar",
+            )
+          )?.coverage ?? null,
+      },
       learning: await this.service.learning.status(owner),
     };
   }
@@ -115,6 +151,7 @@ export class ProactivityService {
       return;
     const settings = await this.settings.get(owner);
     if (!settings.enabled) return;
+    await this.events.reconcile(owner, now);
     await this.db.insertIfAbsent(owner, "proactivity-state", {
       id: "heartbeat",
       generation: 0,
@@ -164,10 +201,20 @@ export class ProactivityService {
       state = (await this.db.get<Heartbeat>(owner, "proactivity-state", "heartbeat"))!;
       if (state.activeCycleId) return state.activeCycleId;
     }
+    const periodicDue =
+      force ||
+      !state.lastReviewedAt ||
+      now >= Date.parse(state.lastReviewedAt) + settings.intervalHours * 3600000;
+    const wakes = await this.events.due(owner, now, periodicDue);
+    if (!periodicDue && !wakes.length) return;
     if (
       !force &&
-      state.lastReviewedAt &&
-      now < Date.parse(state.lastReviewedAt) + settings.intervalHours * 3600000
+      !isWithinActiveHours(
+        { agents: { defaults: { userTimezone: this.service.routines.timezone } } },
+        settings,
+        now,
+      ) &&
+      !wakes.some((event) => event.intent === "immediate")
     )
       return;
     const cycleId = hash(`review:${owner}:${state.generation + 1}`);
@@ -180,6 +227,7 @@ export class ProactivityService {
       createdAt,
       coverage: {},
       watermark: state.watermark,
+      wakeEvents: wakes.map((event) => event.id),
     };
     const task = await this.service.taskRecord(
       owner,
@@ -189,7 +237,10 @@ export class ProactivityService {
           "Review current authorized mail, human goals and pending plans. Propose concrete next steps without starting new goals.",
         kind: "agent",
         input: { proactivityCycleId: cycleId },
-        timing: { priority: "low", timezone: this.service.routines.timezone },
+        timing: {
+          priority: wakes.length ? "normal" : "low",
+          timezone: this.service.routines.timezone,
+        },
       },
       taskId,
     );
@@ -205,6 +256,7 @@ export class ProactivityService {
           expected: { generation: state.generation, activeCycleId: null },
           value: { generation: state.generation + 1, activeCycleId: cycleId },
         },
+        ...this.events.claims(wakes, cycleId),
         { kind: "proactivity-cycles", id: cycleId, mode: "insert", value: { ...cycle } },
         { kind: "tasks", id: taskId, mode: "insert", value: { ...task } },
         {
@@ -436,6 +488,33 @@ export class ProactivityService {
         );
       }
     };
+    const wakes = (
+      await this.db.recordPage<WakeEvent>(owner, "proactivity-events", {
+        field: "cycleId",
+        value: cycleId,
+        limit: 100,
+      })
+    ).entries;
+    const prioritized = async <T extends { id: string }>(
+      kind: string,
+      sources: WakeEvent["source"][],
+      values: T[],
+    ) => {
+      const targets = await Promise.all(
+        wakes
+          .filter((event) => sources.includes(event.source))
+          .map((event) => this.db.get<T>(owner, kind, event.key)),
+      );
+      return [
+        ...new Map(
+          [...(targets.filter((value) => value !== null) as T[]), ...values].map((value) => [
+            value.id,
+            value,
+          ]),
+        ).values(),
+      ];
+    };
+    const reviewedWakeEvents = new Set<string>();
     const common = { cycleId, threadId };
     await this.reconcileMemorySuggestions(owner);
     const semantic =
@@ -444,6 +523,7 @@ export class ProactivityService {
     const reasoningCandidates: HeartbeatCandidate[] = [];
     let mailCursor = 0;
     let calendarContext: unknown;
+    let calendarCursor: NonNullable<Heartbeat["cursors"]>["calendar"];
     try {
       const candidates = await read("mail-candidates", {}, () =>
         this.service.workspace.proactivityMailCandidates(owner, ctx.signal),
@@ -609,9 +689,47 @@ export class ProactivityService {
       };
       calendarContext = calendar;
       if (semantic && calendar.metadata.complete && "connectionId" in calendar.metadata) {
-        for (const event of calendar.events.slice(0, 12)) {
-          if (Date.parse(event.start) <= now) continue;
-          const connectionId = String(calendar.metadata.connectionId);
+        const connectionId = String(calendar.metadata.connectionId);
+        const version = bindingHash({ connectionId, events: calendar.events });
+        const reviewed = new Set(
+          state.cursors?.calendar?.version === version ? state.cursors.calendar.reviewedIds : [],
+        );
+        const dueIds = new Set(
+          wakes.filter((wake) => wake.source === "calendar").map((wake) => wake.key),
+        );
+        const upcoming = calendar.events.filter((event) => Date.parse(event.start) > now);
+        const selected = upcoming
+          .filter(
+            (event) => dueIds.has(`event:${connectionId}:${event.id}`) || !reviewed.has(event.id),
+          )
+          .sort(
+            (a, b) =>
+              Number(dueIds.has(`event:${connectionId}:${b.id}`)) -
+              Number(dueIds.has(`event:${connectionId}:${a.id}`)),
+          )
+          .slice(0, 12);
+        for (const event of selected) reviewed.add(event.id);
+        const complete = upcoming.every((event) => reviewed.has(event.id));
+        coverage.calendar = this.coverage(
+          complete,
+          calendar.metadata.observedAt,
+          complete
+            ? "Primary calendar reviewed, including any completed continuation pages"
+            : "Primary calendar fetched; omitted targets remain pending for the next review",
+        );
+        if (!complete) calendarCursor = { version, reviewedIds: [...reviewed] };
+        for (const wake of wakes) {
+          if (wake.source !== "calendar") continue;
+          const event = calendar.events.find(
+            (item) => wake.key === `event:${connectionId}:${item.id}`,
+          );
+          if (
+            wake.key.startsWith(`event:${connectionId}:`) &&
+            (!event || Date.parse(event.start) <= now || reviewed.has(event.id))
+          )
+            reviewedWakeEvents.add(wake.id);
+        }
+        for (const event of selected) {
           reasoningCandidates.push({
             semanticKey: `calendar:${connectionId}:${event.id}`,
             target: {
@@ -653,6 +771,7 @@ export class ProactivityService {
     const goals = await read("goals", { after: state.cursors?.goals }, () =>
       this.db.listPage<Goal>(owner, "goals", 50, state.cursors?.goals),
     );
+    goals.values = await prioritized("goals", ["goal"], goals.values);
     coverage.goals = this.coverage(
       goals.complete && !state.cursors?.goals,
       new Date(this.now()).toISOString(),
@@ -664,6 +783,7 @@ export class ProactivityService {
     const tasks = await read("tasks", { after: state.cursors?.tasks }, () =>
       this.db.listPage<AgentTask>(owner, "tasks", 50, state.cursors?.tasks),
     );
+    tasks.values = await prioritized("tasks", ["task", "deadline"], tasks.values);
     coverage.tasks = this.coverage(
       tasks.complete && !state.cursors?.tasks,
       new Date(this.now()).toISOString(),
@@ -672,6 +792,10 @@ export class ProactivityService {
         : undefined,
       tasks.cursor,
     );
+    for (const event of wakes) {
+      if (event.source === "goal" || event.source === "task" || event.source === "deadline")
+        reviewedWakeEvents.add(event.id);
+    }
     for (const original of goals.values) {
       const goal = await this.service.getGoal(owner, original.id);
       if (goal.status !== "active") continue;
@@ -783,8 +907,20 @@ export class ProactivityService {
         limit: 30,
         cursor: state.cursors?.memories,
       });
+      const memoryTargets = await Promise.all(
+        wakes
+          .filter((event) => event.source === "memory")
+          .map((event) => this.service.memory.recall(owner, event.key)),
+      );
+      memories.entries = [
+        ...new Map(
+          [...memoryTargets.flat(), ...memories.entries].map((value) => [value.id, value]),
+        ).values(),
+      ];
       memoryCursor = memories.nextCursor;
       const memorySettled = await this.service.learning.settled(owner);
+      if (memorySettled)
+        for (const event of wakes) if (event.source === "memory") reviewedWakeEvents.add(event.id);
       coverage.memories = this.coverage(
         !memoryCursor && !state.cursors?.memories,
         new Date(this.now()).toISOString(),
@@ -931,7 +1067,13 @@ export class ProactivityService {
           id: cycleId,
           mode: "merge",
           expected: { status: "reviewing" },
-          value: { status: "completed", completedAt: observedAt, watermark: observedAt, coverage },
+          value: {
+            status: "completed",
+            completedAt: observedAt,
+            watermark: observedAt,
+            coverage,
+            reviewedWakeEvents: [...reviewedWakeEvents],
+          },
         },
         {
           kind: "proactivity-state",
@@ -947,6 +1089,10 @@ export class ProactivityService {
               tasks: tasks.cursor ?? null,
               memories: memoryCursor ?? null,
               mail: mailCursor,
+              calendar:
+                coverage.reasoning?.complete === false
+                  ? (state.cursors?.calendar ?? null)
+                  : (calendarCursor ?? null),
             },
           },
         },
@@ -956,6 +1102,11 @@ export class ProactivityService {
     );
     if (result.status === "paused")
       throw new RuntimePausedError(await this.service.runtimePause.get(owner));
+    await this.events.settle(
+      owner,
+      { ...cycle, status: "completed", coverage, reviewedWakeEvents: [...reviewedWakeEvents] },
+      this.now(),
+    );
     await this.flushPublications();
     return {
       status: "succeeded",
@@ -1021,6 +1172,7 @@ export class ProactivityService {
       throw new RuntimePausedError(await this.service.runtimePause.get(owner));
     if (result.status === "revision_conflict")
       throw new AppError("The review cycle changed before saving partial coverage", 409);
+    await this.events.settle(owner, { ...cycle, status: "completed", coverage }, this.now());
     await this.flushPublications();
     return {
       status: "succeeded",

@@ -16,9 +16,11 @@ import {
   type SchemaInput,
   toolDefinition,
 } from "@tanstack/ai";
+import { resolveDebugOption } from "@tanstack/ai/adapter-internals";
 import { finalize, map, mergeMap, type Observable } from "rxjs";
 import { z } from "zod";
 import type { ModelRequirements, WorkClass } from "../../../../packages/domain/src/runtime.ts";
+import type { Store } from "../db.ts";
 import { modelAdmission } from "../providers/admission-diagnostics.ts";
 import type { BrowserImageLoader } from "../providers/browser-images.ts";
 import type { ModelProviderConfig } from "../providers/config.ts";
@@ -26,7 +28,8 @@ import { ModelUnavailableError } from "../providers/errors.ts";
 import { type ModelRouter, sharedModelRouter } from "../providers/model-router.ts";
 import type { ModelSelection, ProviderContinuationCheckpoint } from "../providers/models.ts";
 import { continuationMessages, modelAdapter } from "../providers/models.ts";
-import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
+import { ContextBudget, type ContextModelResolver, type ContextOptions } from "./context-budget.ts";
+import { ContextCompaction, type SummaryGenerator } from "./context-compaction.ts";
 import { harnessToolCatalog } from "./harness-tool-catalog.ts";
 import { ToolDiscovery } from "./tool-discovery.ts";
 import { ToolOutputStore } from "./tool-output.ts";
@@ -93,6 +96,8 @@ export function tanstackAgent(options: {
   /** M5 supplies actual compatible/fallback capacity; never choose another provider here. */
   contextModel?: ContextModelResolver;
   requiredOperationIds?: () => Promise<readonly string[]>;
+  /** Owner-scoped semantic summary cache; canonical transcripts remain authoritative. */
+  compaction?: { db: Store; owner: string; scope: string; generate?: SummaryGenerator };
   /** The process owner joins tool receipts after an observable is canceled. */
   trackTool?: (execute: () => Promise<unknown>) => Promise<unknown>;
   executeTool?: (
@@ -124,6 +129,50 @@ export function tanstackAgent(options: {
       const discovery = new ToolDiscovery(options.tools);
       const discoveryTools = discovery.tools();
       let canonicalMessages = converted.messages;
+      const compactor = options.compaction
+        ? new ContextCompaction(
+            options.compaction.db,
+            options.compaction.owner,
+            options.compaction.scope,
+            options.compaction.generate ??
+              (async (request, signal) => {
+                const adapter = modelAdapter(
+                  options.model,
+                  options.fallbacks,
+                  options.providers,
+                  undefined,
+                  undefined,
+                  undefined,
+                  { workClass: options.workClass, router: options.modelRouter },
+                );
+                let result = "";
+                for await (const event of adapter.chatStream({
+                  model: options.model,
+                  tools: [],
+                  systemPrompts: [request.instructions],
+                  messages: [
+                    {
+                      role: "user",
+                      content: JSON.stringify({
+                        previousSummary: request.previousSummary,
+                        transcript: request.messages,
+                      }),
+                    },
+                  ],
+                  request: { signal },
+                  logger: resolveDebugOption(false),
+                })) {
+                  signal.throwIfAborted();
+                  if (event.type === "TEXT_MESSAGE_CONTENT") result += event.delta;
+                  if (Buffer.byteLength(result) > request.maxBytes)
+                    throw new Error(
+                      "CONTEXT_COMPACTION_INVALID: summary exceeded its output budget",
+                    );
+                }
+                return result;
+              }),
+          )
+        : undefined;
       const outputStore = new ToolOutputStore();
       const progress = new ToolProgress();
       const progressWarnings = new Set<string>();
@@ -294,20 +343,21 @@ export function tanstackAgent(options: {
                   });
                 throw error;
               }
-              return {
-                systemPrompts,
-                tools: dispatchTools,
-                providerMessages: model
-                  ? ContextBudget.limit(projected, {
-                      model,
-                      systemPrompts,
-                      tools,
-                      requiredOperationIds,
-                      toolDependencies,
-                      observations,
-                    })
-                  : projected,
-              };
+              let providerMessages = projected;
+              if (model) {
+                const budget: ContextOptions = {
+                  model,
+                  systemPrompts,
+                  tools,
+                  requiredOperationIds,
+                  toolDependencies,
+                  observations,
+                };
+                providerMessages = compactor
+                  ? await compactor.project(projected, budget, abortController.signal)
+                  : ContextBudget.limit(projected, budget);
+              }
+              return { systemPrompts, tools: dispatchTools, providerMessages };
             },
           },
         ] as ChatMiddleware[],

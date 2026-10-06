@@ -1050,6 +1050,7 @@ export async function executeModelTask(
     ),
     ...withInstructions(
       personalTools(service, owner, `task:${task.id}`, {
+        memoryTaskId: task.id,
         queue: serial,
         before: async () => {
           if (outcome) throw new Error("Task is waiting or finished");
@@ -1936,7 +1937,7 @@ export async function executeModelTask(
       designReferenceInstructions,
     ),
     ...withInstructions(
-      skillTools(new SkillCatalog(config), owner, {
+      skillTools(new SkillCatalog(config, service.playbooks), owner, {
         tools: () => tools,
         queue: serial,
         before: async () => {
@@ -2162,7 +2163,7 @@ export async function executeModelTask(
     executeTool: async (call, execute) => {
       try {
         const title = taskActivity(call.name);
-        await ctx.event("step", title);
+        await ctx.event("step", title, "", `tool:${task.id}:${call.id}`);
         task = await ctx.checkpoint({
           state: { ...task.state, currentActivity: { title, startedAt: new Date().toISOString() } },
         });

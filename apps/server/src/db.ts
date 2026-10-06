@@ -18,6 +18,7 @@ import type {
 import { initializeDurableConversations } from "./durable-schema.ts";
 import { initializeTaskRuntime } from "./engine/task-schema.ts";
 import { AppError } from "./errors.ts";
+import { initializeHistoryRetrieval, type ThreadWindow } from "./history-retrieval.ts";
 import { backgroundFailure } from "./log.ts";
 import { memoryFingerprintFields } from "./memory-fingerprint.ts";
 import { initializeThreadCompaction, type ThreadMessagePage } from "./thread-compaction.ts";
@@ -39,6 +40,127 @@ export class Store {
       [owner, source.messageId, source.threadId, source.runId],
     );
     return (result.rows[0]?.data as T) ?? null;
+  }
+  async nextProactivityWakeAt(owner: string): Promise<string | null> {
+    const result = await this.db.query(
+      "SELECT jsonb_build_object('at',min((data->>'readyAt')::timestamptz)) AS data FROM records WHERE owner=$1 AND kind='proactivity-events' AND data->>'status'='pending'",
+      [owner],
+    );
+    const at = result.rows[0]?.data.at as string | null;
+    return at ? new Date(at).toISOString() : null;
+  }
+  async dueProactivityEvents<T>(
+    owner: string,
+    now: string,
+    includeCoalescing: boolean,
+  ): Promise<T[]> {
+    const result = await this.db.query(
+      `SELECT data FROM records WHERE owner=$1 AND kind='proactivity-events'
+      AND data->>'status'='pending' AND (data->>'dueAt')::timestamptz<=$2::timestamptz AND ($3::boolean OR (data->>'readyAt')::timestamptz<=$2::timestamptz)
+      AND (data->>'expiresAt' IS NULL OR (data->>'expiresAt')::timestamptz>$2::timestamptz)
+      ORDER BY CASE data->>'intent' WHEN 'immediate' THEN 0 WHEN 'event' THEN 1 ELSE 2 END,(data->>'readyAt')::timestamptz,id LIMIT 50`,
+      [owner, now, includeCoalescing],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  async retireInvalidProactivityEvents(owner: string, now: string) {
+    await this.write(
+      `UPDATE records event SET data=data || '{"status":"settled","reason":"Source expired or changed"}'::jsonb,updated_at=now()
+      WHERE owner=$1 AND kind='proactivity-events' AND data->>'status'='pending' AND (
+        (data->>'expiresAt')::timestamptz<=$2::timestamptz OR (data->>'source'='memory' AND NOT EXISTS(SELECT 1 FROM records memory
+          WHERE memory.owner=$1 AND memory.kind='memories' AND memory.id=event.data->>'key' AND memory.data->>'status'='active'
+          AND memory.data->>'category'='plan' AND memory.data->'followUp'->>'state'='open' AND COALESCE(memory.data->>'revision','0')=event.data->>'revision'
+          AND (memory.data->>'validUntil' IS NULL OR (memory.data->>'validUntil')::timestamptz>$2::timestamptz)))
+        OR (data->>'source'='deadline' AND NOT EXISTS(SELECT 1 FROM records task WHERE task.owner=$1 AND task.kind='tasks'
+          AND task.id=event.data->>'key' AND task.data->>'status' NOT IN ('succeeded','failed','cancelled','paused')
+          AND task.data->'timing'->>'dueAt' IS NOT NULL AND COALESCE(task.data->'state'->>'timingRevision','0')=event.data->>'revision'))
+      )`,
+      [owner, now],
+    );
+  }
+  async proactivityDeadlineCandidates<T>(
+    owner: string,
+    before: string,
+  ): Promise<{ source: "memory" | "deadline"; value: T }[]> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('source',CASE WHEN source.kind='memories' THEN 'memory' ELSE 'deadline' END,'value',source.data) AS data
+      FROM records source WHERE source.owner=$1 AND (
+        (kind='memories' AND data->>'status'='active' AND data->>'category'='plan' AND data->'followUp'->>'state'='open' AND (data->'followUp'->>'after')::timestamptz<=$2::timestamptz AND (data->>'validUntil' IS NULL OR (data->>'validUntil')::timestamptz>$3::timestamptz))
+        OR (kind='tasks' AND data->>'status' NOT IN ('succeeded','failed','cancelled','paused') AND (data->'timing'->>'dueAt')::timestamptz<=$2::timestamptz AND data->'input'->>'internalActivity' IS DISTINCT FROM 'true' AND NOT (data->'input' ? 'proactivityCycleId') AND (data->'timing'->>'validUntil' IS NULL OR (data->'timing'->>'validUntil')::timestamptz>$3::timestamptz)))
+      AND NOT EXISTS(SELECT 1 FROM records event WHERE event.owner=$1 AND event.kind='proactivity-events'
+        AND event.data->>'source'=CASE WHEN source.kind='memories' THEN 'memory' ELSE 'deadline' END
+        AND event.data->>'key'=source.id AND event.data->>'revision'=CASE WHEN source.kind='memories' THEN COALESCE(source.data->>'revision','0') ELSE COALESCE(source.data->'state'->>'timingRevision','0') END)
+      ORDER BY COALESCE(data->'followUp'->>'after',data->'timing'->>'dueAt')::timestamptz,id LIMIT 100`,
+      [owner, before, new Date(Date.parse(before) - 4 * 3600000).toISOString()],
+    );
+    return result.rows.map(
+      (row) => row.data as unknown as { source: "memory" | "deadline"; value: T },
+    );
+  }
+  async procedureCatalog(
+    owner: string,
+    options: { query: string; cursor?: string; limit: number; includeArchived: boolean },
+  ) {
+    const result = await this.db.query(
+      `WITH candidates AS (
+      SELECT id,data->'versions'->-1 AS value FROM records WHERE owner=$1 AND kind='playbooks'
+    ), ranked AS (SELECT *,row_number() OVER (ORDER BY id) AS position FROM candidates
+      WHERE ($3::boolean OR COALESCE(value->>'lifecycle','active')<>'archived')
+      AND ($2='' OR id=$2 OR openmuse_search_vector(value->>'title' || ' ' || (value->'steps')::text) @@ openmuse_search_query($2)))
+    SELECT jsonb_build_object('id',id,'title',value->>'title','version',value->'version','learned',COALESCE(value->'learned','false'::jsonb),
+      'pinned',COALESCE(value->'pinned','false'::jsonb),'lifecycle',COALESCE(value->>'lifecycle','active'),'requiredTools',value->'requiredTools','savedAt',value->>'savedAt') AS data
+    FROM ranked WHERE ($4::text IS NULL OR position>COALESCE((SELECT position FROM ranked WHERE id=$4),0)) ORDER BY position LIMIT $5`,
+      [owner, options.query, options.includeArchived, options.cursor ?? null, options.limit + 1],
+    );
+    const entries = result.rows
+      .slice(0, options.limit)
+      .map(
+        (row) =>
+          row.data as unknown as import("../../../packages/domain/src/playbooks.ts").ProcedureCatalogEntry,
+      );
+    return {
+      entries,
+      ...(result.rows.length > options.limit ? { nextCursor: entries.at(-1)?.id } : {}),
+    };
+  }
+  async procedureUsage(owner: string, id: string, version?: number) {
+    const result = await this.db.query(
+      `WITH runs AS (SELECT data FROM records WHERE owner=$1 AND kind='playbook-runs' AND data->>'procedureId'=$2 AND ($3::text IS NULL OR data->>'procedureVersion'=$3)),
+      outcomes AS (SELECT data FROM records WHERE owner=$1 AND kind='procedure-outcomes' AND data->>'procedureId'=$2 AND ($3::text IS NULL OR data->>'procedureVersion'=$3)),
+      views AS (SELECT data FROM records WHERE owner=$1 AND kind='procedure-views' AND data->>'procedureId'=$2 AND ($3::text IS NULL OR data->>'procedureVersion'=$3))
+      SELECT jsonb_build_object('runs',(SELECT count(*) FROM runs),'views',(SELECT count(*) FROM views),
+       'verified',(SELECT count(*) FROM outcomes WHERE data->>'outcome'='verified'),'failed',(SELECT count(*) FROM outcomes WHERE data->>'outcome'='failed'),
+       'partial',(SELECT count(*) FROM outcomes WHERE data->>'outcome'='partial'),'cancelled',(SELECT count(*) FROM outcomes WHERE data->>'outcome'='cancelled'),
+       'lastUsedAt',(SELECT max(at) FROM (SELECT data->>'createdAt' AS at FROM runs UNION ALL SELECT data->>'finishedAt' FROM outcomes) activity),
+       'lastViewedAt',(SELECT max(data->>'viewedAt') FROM views)) AS data`,
+      [owner, id, version === undefined ? null : String(version)],
+    );
+    return result.rows[0].data as unknown as {
+      runs: number;
+      views: number;
+      verified: number;
+      failed: number;
+      partial: number;
+      cancelled: number;
+      lastUsedAt: string | null;
+      lastViewedAt: string | null;
+    };
+  }
+  async procedureRunForTask<T>(owner: string, taskId: string): Promise<T | null> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='playbook-runs' AND data->>'taskId'=$2 LIMIT 1",
+      [owner, taskId],
+    );
+    return (result.rows[0]?.data as T) ?? null;
+  }
+  async procedureInUse(owner: string, id: string, title: string): Promise<boolean> {
+    const result = await this.db.query(
+      `SELECT 1 FROM records WHERE owner=$1 AND (
+      (kind='tasks' AND data->'input'->'procedure'->>'id'=$2 AND data->>'status' NOT IN ('succeeded','failed','cancelled'))
+      OR (kind='routines' AND data->>'deleted' IS DISTINCT FROM 'true' AND data->>'enabled'='true' AND (strpos(data->>'prompt',$2)>0 OR strpos(lower(data->>'prompt'),lower($3))>0))) LIMIT 1`,
+      [owner, id, title],
+    );
+    return result.rows.length > 0;
   }
   async proactivityBindings<T>(owner: string, taskId: string): Promise<T[]> {
     const result = await this.db.query(
@@ -468,6 +590,18 @@ export class Store {
   }
   async remove(owner: string, kind: string, id: string): Promise<void> {
     await this.write("DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3", [owner, kind, id]);
+  }
+  async removeIf(
+    owner: string,
+    kind: string,
+    id: string,
+    expected: Record<string, unknown>,
+  ): Promise<boolean> {
+    const result = await this.write(
+      "DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3 AND data @> $4::jsonb RETURNING data",
+      [owner, kind, id, JSON.stringify(expected)],
+    );
+    return result.rows.length === 1;
   }
   async compareAndSwap<T>(
     owner: string,
@@ -951,7 +1085,9 @@ export class Store {
   ): Promise<AgentMemory[]> {
     await this.repairMemoryFingerprints(owner);
     const result = await this.db.query(
-      `SELECT data FROM records fact WHERE owner=$1 AND kind='memories'
+      `WITH matched AS (SELECT data,id,updated_at,
+       CASE WHEN $2='' THEN 0 ELSE ts_rank_cd(openmuse_search_vector(data->>'text'),openmuse_search_query($2)) END AS score
+       FROM records fact WHERE owner=$1 AND kind='memories'
        AND ($6::boolean OR (openmuse_memory_fingerprint_valid(data) AND COALESCE(data->>'status','active')='active'
        AND (data->>'validUntil' IS NULL OR (data->>'validUntil')::timestamptz>$4::timestamptz)
        AND NOT EXISTS(SELECT 1 FROM records suppression WHERE suppression.owner=fact.owner
@@ -962,10 +1098,19 @@ export class Store {
          ($7='forgotten' AND data->>'status'='forgotten') OR
          ($7='active' AND COALESCE(data->>'status','active')='active' AND (data->>'validUntil' IS NULL OR (data->>'validUntil')::timestamptz>$4::timestamptz)) OR
          ($7='expired' AND COALESCE(data->>'status','active')='active' AND (data->>'validUntil')::timestamptz<=$4::timestamptz))
-       AND strpos(lower(data->>'text'),lower($2))>0
-       AND ($5::text IS NULL OR (updated_at,id)<(SELECT updated_at,id FROM records WHERE owner=$1 AND kind='memories' AND id=$5))
-       ORDER BY updated_at DESC,id DESC LIMIT $3`,
-      [owner, query, Math.min(101, Math.max(1, limit)), now, cursor ?? null, includeInactive, status ?? null],
+       AND ($2='' OR openmuse_search_vector(data->>'text') @@ openmuse_search_query($2) OR id=$2)),
+       ranked AS (SELECT data,id,row_number() OVER (ORDER BY score DESC,updated_at DESC,id DESC) AS position FROM matched)
+       SELECT data FROM ranked WHERE ($5::text IS NULL OR position>(SELECT position FROM ranked WHERE id=$5))
+       ORDER BY position LIMIT $3`,
+      [
+        owner,
+        query,
+        Math.min(101, Math.max(1, limit)),
+        now,
+        cursor ?? null,
+        includeInactive,
+        status ?? null,
+      ],
     );
     return result.rows.map((row) => row.data as unknown as AgentMemory);
   }
@@ -988,6 +1133,7 @@ export class Store {
       `SELECT jsonb_build_object('kind',source.kind,'value',source.data) AS data FROM records source WHERE source.owner=$1
        AND ((source.kind='conversation-inbox' AND source.data->>'status' IN ('finished','interrupted'))
          OR (source.kind='tasks' AND source.data->>'status'='succeeded'
+           AND source.data->>'deletedAt' IS NULL
            AND source.data->'completion'->>'status'='verified'
            AND source.data->'input'->>'internalActivity' IS DISTINCT FROM 'true'
            AND NOT (source.data->'input' ? 'proactivityCycleId')))
@@ -1038,26 +1184,93 @@ export class Store {
     return result.rows.length > 0;
   }
   /** Latest canonical transcript per thread, filtered in SQL; never load cumulative run copies. */
-  async searchThreads(owner: string, query: string, limit: number, archived: boolean) {
+  async searchThreads(
+    owner: string,
+    query: string,
+    limit: number,
+    archived: boolean,
+    time: { before?: string; after?: string } = {},
+  ): Promise<Record<string, unknown>[]> {
     const result = await this.db.query(
       `WITH latest AS (
-      SELECT DISTINCT ON (data->>'threadId') data FROM records
-      WHERE owner=$1 AND kind='thread-runs' AND data->>'status'<>'running'
-      ORDER BY data->>'threadId',data->>'createdAt' DESC,id DESC
-    ), transcript AS (
-      SELECT thread_id, data AS message, acquired_at AS date FROM thread_messages WHERE owner=$1
-      UNION ALL SELECT latest.data->>'threadId', message, latest.data->>'createdAt' FROM latest,
-        jsonb_array_elements(COALESCE(latest.data->'messages','[]'::jsonb)) message
-        WHERE NOT EXISTS(SELECT 1 FROM thread_messages canonical WHERE canonical.owner=$1 AND canonical.thread_id=latest.data->>'threadId')
-    ) SELECT jsonb_build_object('threadId',thread.id,'name',thread.data->>'name',
-      'messageId',message->>'id','role',message->>'role','excerpt',substring(message->>'content' FROM greatest(1,strpos(lower(message->>'content'),lower($2))-80) FOR 500),'date',transcript.date) AS data
-      FROM transcript JOIN records thread ON thread.owner=$1 AND thread.kind='threads' AND thread.id=transcript.thread_id
-      WHERE ($4::boolean OR thread.data->>'archived'='false') AND message->>'role' IN ('user','assistant')
-      AND jsonb_typeof(message->'content')='string' AND strpos(lower(message->>'content'),lower($2))>0
-      ORDER BY transcript.date DESC,message->>'id' LIMIT $3`,
-      [owner, query, Math.min(30, Math.max(1, limit)), archived],
+        SELECT DISTINCT ON (data->>'threadId') data FROM records WHERE owner=$1 AND kind='thread-runs' AND data->>'status'<>'running'
+        ORDER BY data->>'threadId',data->>'createdAt' DESC,id DESC
+      ), transcript AS (
+        SELECT thread_id,data AS message,acquired_at AS date FROM thread_messages WHERE owner=$1
+        UNION ALL SELECT latest.data->>'threadId',message,latest.data->>'createdAt' FROM latest,
+          jsonb_array_elements(COALESCE(latest.data->'messages','[]'::jsonb)) message
+          WHERE NOT EXISTS(SELECT 1 FROM thread_messages canonical WHERE canonical.owner=$1
+            AND canonical.thread_id=latest.data->>'threadId' AND canonical.id=message->>'id')
+      ), hits AS (
+        SELECT thread.id AS thread_id,thread.data->>'name' AS name,message,date,
+          CASE WHEN message->>'id' LIKE 'publication-%' THEN 2 WHEN message->>'role'='user' THEN 0 ELSE 1 END AS source_priority,
+          ts_rank_cd(openmuse_search_vector(message->>'content'),openmuse_search_query($2)) AS score
+        FROM transcript JOIN records thread ON thread.owner=$1 AND thread.kind='threads' AND thread.id=transcript.thread_id
+        WHERE ($4::boolean OR COALESCE(thread.data->>'archived','false')='false') AND thread.data->>'deletedAt' IS NULL
+          AND message->>'role' IN ('user','assistant') AND jsonb_typeof(message->'content')='string'
+          AND (openmuse_search_vector(message->>'content') @@ openmuse_search_query($2) OR message->>'id'=$2)
+          AND ($5::text IS NULL OR date<$5) AND ($6::text IS NULL OR date>$6)
+      ), ranked AS (SELECT *, row_number() OVER (PARTITION BY thread_id ORDER BY source_priority,score DESC,date DESC,message->>'id') AS per_thread FROM hits)
+      SELECT jsonb_build_object('threadId',thread_id,'name',name,'messageId',message->>'id','role',message->>'role',
+        'excerpt',ts_headline('simple',message->>'content',openmuse_search_query($2),'StartSel="", StopSel="", MaxWords=70, MinWords=20'),
+        'date',date,'source',CASE WHEN source_priority=2 THEN 'automation' ELSE 'conversation' END,'score',score) AS data
+      FROM ranked WHERE per_thread<=3 ORDER BY source_priority,score DESC,date DESC,message->>'id' LIMIT $3`,
+      [
+        owner,
+        query,
+        Math.min(30, Math.max(1, limit)),
+        archived,
+        time.before ? new Date(time.before).toISOString() : null,
+        time.after ? new Date(time.after).toISOString() : null,
+      ],
     );
-    return result.rows.map((row) => row.data);
+    return result.rows.map((row) => ({
+      ...row.data,
+      excerpt: String(row.data.excerpt ?? "").slice(0, 500),
+    }));
+  }
+  async readThreadWindow(
+    owner: string,
+    threadId: string,
+    messageId: string,
+    before = 3,
+    after = 5,
+  ): Promise<ThreadWindow> {
+    const result = await this.db.query(
+      `WITH latest AS (SELECT data FROM records WHERE owner=$1 AND kind='thread-runs' AND data->>'threadId'=$2 AND data->>'status'<>'running'
+         ORDER BY data->>'createdAt' DESC,id DESC LIMIT 1), transcript AS (
+        SELECT position,data,acquired_at AS date FROM thread_messages WHERE owner=$1 AND thread_id=$2
+        UNION ALL SELECT n AS position,message AS data,latest.data->>'createdAt' AS date FROM latest,
+          jsonb_array_elements(COALESCE(latest.data->'messages','[]'::jsonb)) WITH ORDINALITY AS m(message,n)
+          WHERE NOT EXISTS(SELECT 1 FROM thread_messages canonical WHERE canonical.owner=$1 AND canonical.thread_id=$2 AND canonical.id=message->>'id')
+      ), anchor AS (SELECT position FROM transcript WHERE data->>'id'=$3), visible AS (
+        SELECT data || jsonb_build_object('position',position,'date',date) AS data,position FROM transcript
+        WHERE position BETWEEN (SELECT position FROM anchor)-$4 AND (SELECT position FROM anchor)+$5
+      ), updates AS (
+        SELECT data || jsonb_build_object('position',position,'date',date) AS data,position FROM transcript
+        WHERE data->>'role'='user' AND position>(SELECT position FROM anchor) ORDER BY position DESC LIMIT 5
+      ) SELECT jsonb_build_object(
+        'messages',COALESCE((SELECT jsonb_agg(data ORDER BY position) FROM visible),'[]'::jsonb),
+        'recentUserUpdates',COALESCE((SELECT jsonb_agg(data ORDER BY position) FROM updates),'[]'::jsonb),
+        'hasOlder',EXISTS(SELECT 1 FROM transcript WHERE position<(SELECT min(position) FROM visible)),
+        'hasNewer',EXISTS(SELECT 1 FROM transcript WHERE position>(SELECT max(position) FROM visible))) AS data
+      FROM records thread WHERE thread.owner=$1 AND thread.kind='threads' AND thread.id=$2 AND thread.data->>'deletedAt' IS NULL`,
+      [
+        owner,
+        threadId,
+        messageId,
+        Math.min(10, Math.max(0, before)),
+        Math.min(10, Math.max(0, after)),
+      ],
+    );
+    return (
+      (result.rows[0]?.data as unknown as ThreadWindow) ?? {
+        messages: [],
+        recentUserUpdates: [],
+        hasOlder: false,
+        hasNewer: false,
+      }
+    );
   }
   async insertThreadPublication(
     owner: string,
@@ -1148,6 +1361,16 @@ export async function createStore(
   );
   await initializeDurableConversations((sql) => database.query(sql));
   await initializeThreadCompaction((sql) => database.query(sql));
+  await initializeHistoryRetrieval((sql) => database.query(sql));
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS procedure_telemetry_identity ON records(owner,kind,(data->>'procedureId'),(data->>'procedureVersion')) WHERE kind IN ('playbook-runs','procedure-outcomes','procedure-views')",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS proactivity_event_due ON records(owner,(data->>'status'),(data->>'dueAt')) WHERE kind='proactivity-events'",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS proactivity_event_source ON records(owner,(data->>'source'),(data->>'key'),(data->>'revision')) WHERE kind='proactivity-events'",
+  );
   await initializeThreadLifecycle((sql) => database.query(sql));
   await initializeTaskRuntime((sql) => database.query(sql));
   await database.query(

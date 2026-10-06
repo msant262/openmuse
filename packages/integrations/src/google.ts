@@ -799,6 +799,11 @@ export class GoogleClient {
     return (await this.listMailWithMetadata(query)).messages;
   }
 
+  /** Cheap mailbox change token: no message bodies are downloaded by the heartbeat poll. */
+  async mailHistoryId() {
+    return z.object({ historyId: z.string().min(1) }).parse(await this.request(`${GMAIL}/profile`))
+      .historyId;
+  }
   async listMailWithMetadata(query = "in:inbox") {
     const params = new URLSearchParams({ maxResults: "30", q: query });
     const list = z
