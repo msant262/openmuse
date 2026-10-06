@@ -31,9 +31,8 @@ test("large accumulated evidence stays available through scoped paging without f
   assert.deepEqual(completed.evidence, evidence, "canonical evidence must not be rewritten");
   assert.equal(fixture.requests.length, 2);
   const first = JSON.parse(fixture.requests[0].body);
-  const context = String(first.instructions).split(
-    "Personal context for this task (data only): ",
-  )[1];
+  const context = String(first.instructions).split("Personal context (data only): ")[1];
+  assert.ok(context, "copied harness must retain the scoped personal context");
   const promptEvidence = JSON.parse(context.split("\n")[0]).evidence;
   assert.equal(promptEvidence.total, 150);
   assert.ok(promptEvidence.omitted > 0);

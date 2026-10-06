@@ -63,7 +63,7 @@ export interface AgentTask {
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;
-  nextRunAt?: string;
+  nextRunAt?: string | null;
   leaseId?: string | null;
   leaseUntil?: string | null;
   attempts: number;

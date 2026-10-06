@@ -42,7 +42,7 @@ import {
   genericCredentialInstructions,
   genericCredentialTools,
 } from "../generic-credential-tools.ts";
-import { googleAgentContext } from "../google-agent-context.ts";
+import { googleAgentContext, googleTaskTools } from "../google-agent-context.ts";
 import { imageArgs, mediaInstructionGroups, mediaTools } from "../media-tools.ts";
 import { buildProfileContext } from "../profile-context.ts";
 import { modelProviderConfig } from "../providers/config.ts";
@@ -2218,15 +2218,18 @@ export async function executeModelTask(
   };
   const agent = openclawAgent({
     dataDir: config.dataDir,
-    directToolNames: config.computerEnabled
-      ? [
-          "computer_status",
-          "start_computer",
-          "run_computer_command",
-          "computer_command_status",
-          "import_computer_file",
-        ]
-      : [],
+    directToolNames: [
+      ...googleTaskTools(task.prompt),
+      ...(config.computerEnabled
+        ? [
+            "computer_status",
+            "start_computer",
+            "run_computer_command",
+            "computer_command_status",
+            "import_computer_file",
+          ]
+        : []),
+    ],
     compaction: { db: service.db, owner, scope: `task:${task.id}` },
     contextModel: selectionContextModel(config, selection) ?? service.contextModel,
     requiredOperationIds: () => service.journal.requiredHistoryIds(owner, task.id),
@@ -2489,7 +2492,7 @@ export async function executeModelTask(
       error: null,
       question: runError ?? "Provider unavailable; saved progress retained",
       state: { ...task.state, lastUpdate: text || providerCheckpoint.partialText },
-      ...(providerCheckpoint.retryAt ? { nextRunAt: providerCheckpoint.retryAt } : {}),
+      nextRunAt: providerCheckpoint.retryAt ?? null,
     };
   if (runError && !outcome) throw new Error(runError);
   if (!outcome) {

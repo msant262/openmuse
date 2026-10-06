@@ -28,7 +28,7 @@ export class TaskActor {
   async wake(
     owner: string,
     taskId: string,
-    _reason: "directive" | "job" | "resource" | "provider" | "children" | "routine",
+    reason: "directive" | "job" | "resource" | "provider" | "children" | "routine",
   ) {
     const task = await this.db.get<AgentTask>(owner, "tasks", taskId);
     if (!task || ["succeeded", "failed", "cancelled", "paused", "running"].includes(task.status))
@@ -44,6 +44,7 @@ export class TaskActor {
     }
     if (
       task.status === "waiting_provider" &&
+      reason !== "provider" &&
       task.nextRunAt &&
       Date.parse(task.nextRunAt) > Date.now()
     )
@@ -52,7 +53,7 @@ export class TaskActor {
       owner,
       taskId,
       { status: task.status },
-      { status: "queued", error: null },
+      { status: "queued", error: null, ...(reason === "provider" ? { nextRunAt: null } : {}) },
     );
   }
   async apply(owner: string, task: AgentTask, ctx: TaskContext) {

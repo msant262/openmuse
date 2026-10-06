@@ -42,10 +42,11 @@ function requiredContent(prompt: string): string[] {
       .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "").split(/[.!?](?:\s|$)/)[0])
       .join(",");
   }
-  const literal =
-    /\b(?:containing|contendo)\s+(?:(?:the\s+)?text\s+|(?:o\s+)?texto\s+)?(?:[“"`'])([\s\S]*?)(?:[”"`'])/i.exec(
+  const quoted =
+    /\b(?:containing|contendo)\s+(?:(?:the\s+)?text\s+|(?:o\s+)?texto\s+)?(?:“([\s\S]*?)”|‘([\s\S]*?)’|(["'`])([\s\S]*?)\3)/i.exec(
       prompt,
-    )?.[1];
+    );
+  const literal = quoted?.[1] ?? quoted?.[2] ?? quoted?.[4];
   // Quoted text is one literal obligation; punctuation/conjunctions inside it
   // are content, not list separators or the end of the user's instruction.
   if (!list && literal !== undefined) return literal.trim() ? [literal.trim()] : [];

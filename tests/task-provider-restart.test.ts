@@ -100,6 +100,9 @@ test("a completed HTTP file effect resumes after provider interruption and disk 
   const checkpoint = providerContinuationCheckpointSchema.parse(
     interrupted.state.providerCheckpoint,
   );
+  assert.ok(checkpoint.retryAt, "a transient interruption must schedule autonomous continuation");
+  const retryAt = Date.parse(checkpoint.retryAt);
+  assert.equal(interrupted.nextRunAt, checkpoint.retryAt);
   assert.ok(
     checkpoint.messages.some(
       (message) => message.role === "tool" && message.toolCallId.includes("call-0"),
@@ -114,7 +117,7 @@ test("a completed HTTP file effect resumes after provider interruption and disk 
   app = await createApp(db, config);
   open = true;
   assert.equal((await app.agent.getTask("owner", task.id)).status, "waiting_provider");
-  await app.agent.actor.wake("owner", task.id, "provider");
+  await new Promise((resolve) => setTimeout(resolve, Math.max(0, retryAt - Date.now()) + 100));
   await app.agent.worker.tick();
   const saved = await app.agent.getTask("owner", task.id);
   assert.equal(saved.status, "succeeded", saved.error ?? saved.question);

@@ -151,6 +151,10 @@ export const providerContinuationCheckpointSchema = z
     rejectedModel: z.string().min(1),
     accepted: z.boolean(),
     code: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
+    failureCode: z
+      .string()
+      .regex(/^[A-Za-z0-9_.-]{1,100}$/)
+      .optional(),
     retryAt: z.iso.datetime().optional(),
     admission: modelAdmissionSchema.optional(),
   })

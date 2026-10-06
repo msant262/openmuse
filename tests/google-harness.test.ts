@@ -20,15 +20,8 @@ test("a worker discovers native Gmail and reads the requested account without a 
       return { name: "list_google_accounts", arguments: {} };
     }
     if (index === 1)
-      return { name: "tool_search", arguments: { query: "Gmail search emails inbox" } };
-    if (index === 2) {
-      assert.match(fixture.requests[index].body, /okami_search_mail/);
-      return { name: "tool_describe", arguments: { id: "okami_search_mail" } };
-    }
-    if (index === 3)
       return { name: "search_mail", arguments: { query: "in:inbox", account: "work@example.com" } };
-    if (index === 4) return { name: "tool_describe", arguments: { id: "okami_read_mail_thread" } };
-    if (index === 5)
+    if (index === 2)
       return {
         name: "read_mail_thread",
         arguments: { threadId: "work-thread", account: "work@example.com" },
@@ -92,6 +85,19 @@ test("a worker discovers native Gmail and reads the requested account without a 
   });
   await server.agent.worker.tick();
   const finished = await server.agent.getTask("owner", task.id);
+  const direct = JSON.parse(fixture.requests[0].body).tools.map(
+    (tool: { name: string }) => tool.name,
+  );
+  for (const name of [
+    "search_google_workspace_tools",
+    "describe_google_workspace_tool",
+    "execute_google_workspace_tool",
+  ])
+    assert.ok(direct.includes(name), `${name} is available directly for Google work`);
+  assert.ok(
+    !direct.includes("docs.documents.create"),
+    "the full 206-method catalog remains deferred",
+  );
   assert.equal(
     finished.status,
     "succeeded",
@@ -115,15 +121,11 @@ test("a worker discovers native Gmail and reads the requested account without a 
 
 test("the copied worker discovers Google Workspace, creates and edits a remote Doc and verifies its native receipts", async (t) => {
   const steps = [
-    { name: "tool_search", arguments: { query: "Google Workspace Docs create edit" } },
-    { name: "tool_describe", arguments: { id: "okami_search_google_workspace_tools" } },
     {
       name: "search_google_workspace_tools",
       arguments: { query: "docs.documents.create", service: "docs" },
     },
-    { name: "tool_describe", arguments: { id: "okami_describe_google_workspace_tool" } },
     { name: "describe_google_workspace_tool", arguments: { toolId: "docs.documents.create" } },
-    { name: "tool_describe", arguments: { id: "okami_execute_google_workspace_tool" } },
     {
       name: "execute_google_workspace_tool",
       arguments: {

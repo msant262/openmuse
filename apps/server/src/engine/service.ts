@@ -401,8 +401,10 @@ export class AgentService {
     try {
       const globallyPaused = (await this.runtimePause.get("__runtime__")).paused;
       if (!globallyPaused)
-        for (const { owner, value } of await this.db.scan<AgentTask>("tasks"))
+        for (const { owner, value } of await this.db.scan<AgentTask>("tasks")) {
           await this.recoverGoogleRead(owner, value);
+          await this.recoverInterruptedProvider(owner, value);
+        }
       // Confirmed native cleanup must free occupancy even when a separate
       // connector or audit repair fails later in this maintenance cycle.
       for (const { owner, value } of await this.db.scan<AgentTask>("tasks")) {
@@ -562,6 +564,41 @@ export class AgentService {
           { status: "superseded" },
         );
     return true;
+  }
+  /** Backfill scheduling for older interrupted streams. Completed tool receipts
+   * stay authoritative; this schedules inference, never replays a write. */
+  async recoverInterruptedProvider(owner: string, task: AgentTask) {
+    const checkpoint = task.state.providerCheckpoint as
+      | { code?: string; failureCode?: string; accepted?: boolean }
+      | undefined;
+    if (
+      task.status !== "waiting_provider" ||
+      task.nextRunAt ||
+      checkpoint?.code !== "MODEL_PROVIDER_INTERRUPTED" ||
+      !checkpoint.accepted
+    )
+      return false;
+    if (
+      checkpoint.failureCode &&
+      ![
+        "provider_stream_incomplete",
+        "provider_network_error",
+        "provider_timeout",
+        "subscription_sharing_usage_unavailable",
+      ].includes(checkpoint.failureCode)
+    )
+      return false;
+    if (
+      task.originThreadId &&
+      (await this.db.get<{ deletedAt?: string }>(owner, "threads", task.originThreadId))?.deletedAt
+    )
+      return false;
+    return !!(await this.db.compareAndSwapTask(
+      owner,
+      task.id,
+      { status: "waiting_provider", nextRunAt: task.nextRunAt ?? null },
+      { nextRunAt: new Date(Date.now() + 5000).toISOString() },
+    ));
   }
   async ensure(owner: string) {
     await this.db.insertIfAbsent(owner, "agent-settings", {

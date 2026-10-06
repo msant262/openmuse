@@ -1,14 +1,24 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { type TestContext, test } from "node:test";
-import { TaskWorker } from "../apps/server/src/engine/worker.ts";
 import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
+import { TaskWorker } from "../apps/server/src/engine/worker.ts";
 import { googleWorkspaceVerificationBinding } from "../apps/server/src/google-workspace-tools.ts";
 import type { ActionProposal } from "../packages/domain/src/index.ts";
 import { GoogleClient } from "../packages/integrations/src/google.ts";
 import { encryptSecret } from "../packages/integrations/src/vault.ts";
-import { taskRuntime } from "./helpers/task-runtime.ts";
 import { modelFixture } from "./helpers/model.ts";
+import { taskRuntime } from "./helpers/task-runtime.ts";
+
+test("literal cloud contents preserve punctuation and quoted apostrophes without instruction scaffolding", () => {
+  for (const prompt of [
+    `Cria no Google Docs um documento contendo o texto “Don't split, and don't remove e nem 'aspas'.”`,
+    `Create a Google Docs document containing the text "Don't split, and don't remove e nem 'aspas'."`,
+  ])
+    assert.deepEqual(taskCriteria({ kind: "agent", prompt })[0].requiredItems, [
+      "Don't split, and don't remove e nem 'aspas'.",
+    ]);
+});
 
 async function fixture(
   t: TestContext,
@@ -48,6 +58,54 @@ async function fixture(
     });
   return server;
 }
+
+test("an uncertain Google write gives a concrete status without manufacturing a text question", async (t) => {
+  await modelFixture(t, () => ({
+    name: "execute_google_workspace_tool",
+    arguments: {
+      toolId: "docs.documents.create",
+      account: "work@example.com",
+      parameters: {},
+      body: { title: "Own uncertain Doc" },
+      operationId: "uncertain-doc",
+    },
+  }));
+  const server = await fixture(t, "money", { agentBackend: "model", model: "openai/fixture" });
+  let dispatched = 0;
+  t.mock.method(
+    server.workspace,
+    "google",
+    (
+      _owner: string,
+      _connection?: string,
+      signal?: AbortSignal,
+      beforeWrite?: () => Promise<void>,
+    ) =>
+      new GoogleClient({
+        signal,
+        beforeWrite,
+        getAccessToken: async () => "fixture",
+        fetch: async () => {
+          dispatched++;
+          throw new Error("Connection closed after dispatch");
+        },
+      }),
+  );
+  const task = await server.agent.createTask("owner", {
+    title: "Criar documento",
+    prompt: "Cria na conta work@example.com um documento no Google Docs chamado Own uncertain Doc",
+  });
+  await server.agent.worker.tick();
+  const saved = await server.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "paused");
+  assert.equal(dispatched, 1);
+  assert.match(saved.question ?? "", /Criar documento/);
+  assert.match(saved.question ?? "", /work@example\.com/);
+  assert.doesNotMatch(saved.question ?? "", /requires reconciliation/);
+  assert.equal((await server.db.list("owner", "interaction-requests")).length, 0);
+  await server.agent.worker.tick();
+  assert.equal(dispatched, 1);
+});
 
 test("the copied worker prepares an ordinary email as a real unsent Gmail draft and attaches its card", async (t) => {
   const sequence = [

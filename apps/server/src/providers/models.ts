@@ -100,6 +100,10 @@ export const providerContinuationCheckpointSchema = z
     rejectedModel: z.string().min(1),
     accepted: z.boolean(),
     code: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
+    failureCode: z
+      .string()
+      .regex(/^[A-Za-z0-9_.-]{1,100}$/)
+      .optional(),
     retryAt: z.iso.datetime().optional(),
     admission: modelAdmissionSchema.optional(),
   })
@@ -679,6 +683,25 @@ class OrderedModelAdapter implements AnyTextAdapter {
           }
         }
         const code = accepted || visible ? "MODEL_PROVIDER_INTERRUPTED" : failure.code;
+        const retryable =
+          failure.code !== "subscription_sharing_usage_limit_exceeded" &&
+          ([
+            "provider_stream_incomplete",
+            "provider_network_error",
+            "provider_timeout",
+            "subscription_sharing_usage_unavailable",
+          ].includes(failure.code) ||
+            [408, 409, 429].includes(failure.status ?? 0) ||
+            (failure.status ?? 0) >= 500);
+        const retryAt =
+          failure instanceof ModelUnavailableError && failure.retryAt
+            ? failure.retryAt
+            : retryable
+              ? Math.max(
+                  Date.now() + 5000,
+                  lease ? this.router.health.get(lease.model).cooldownUntil : 0,
+                )
+              : undefined;
         const checkpoint = providerContinuationCheckpointSchema.parse({
           version: 1,
           messages: continuationMessages(originalMessages),
@@ -686,6 +709,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
           rejectedModel: lease?.model ?? this.models[this.selected],
           accepted,
           code,
+          failureCode: failure.code,
           admission: modelAdmission(
             "provider_dispatch",
             requirements,
@@ -693,9 +717,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
             this.router,
             this.candidates(requirements),
           ),
-          ...(failure instanceof ModelUnavailableError && failure.retryAt
-            ? { retryAt: new Date(failure.retryAt).toISOString() }
-            : {}),
+          ...(retryAt ? { retryAt: new Date(retryAt).toISOString() } : {}),
         });
         await this.runtime.onInterrupted?.(checkpoint);
         for (const start of pending) if (!visible) yield start;
