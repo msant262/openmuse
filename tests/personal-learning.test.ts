@@ -25,6 +25,36 @@ async function source(server: Awaited<ReturnType<typeof taskRuntime>>, id: strin
   });
 }
 
+test("learning retains authenticated evidence beyond the former fixed 32k character cap", async (t) => {
+  const quote = "Prefiro hotéis tranquilos";
+  const fixture = await modelFixture(t, (i) =>
+    i === 0
+      ? {
+          name: "learn_memory",
+          arguments: {
+            text: "The user prefers quiet hotels.",
+            category: "preference",
+            evidence: [{ messageId: "long-source", quote }],
+          },
+        }
+      : { name: "finish_learning", arguments: { summary: "Saved sourced preference." } },
+  );
+  const f = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    memoryLearningEnabled: true,
+  });
+  const text = `Authenticated long conversation: ${"background ".repeat(3500)}${quote}.`;
+  await source(f, "long-source", text);
+  await f.agent.learning.scheduleDue("owner");
+  await f.agent.worker.tick();
+  assert.ok(
+    fixture.requests.some((r) => r.body.includes(text)),
+    "the model must see the whole selected source before marking it reviewed",
+  );
+  assert.equal((await f.agent.memory.recall("owner"))[0]?.evidence?.[0].messageId, "long-source");
+});
+
 test("saved personal context survives a differently worded question in a new conversation", async () => {
   const db = await createStore();
   try {
