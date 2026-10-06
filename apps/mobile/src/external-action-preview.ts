@@ -121,6 +121,63 @@ function text(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+/** Build links from the exact reviewed/returned resource, never a guessed document title. */
+function googleResourceLink(
+  service: string,
+  data: Record<string, unknown>,
+  parameters: Record<string, unknown>,
+  result: Record<string, unknown>,
+  account: string,
+) {
+  const reference = (key: string) => text(data[key] ?? parameters[key] ?? result[key]);
+  const id =
+    service === "docs"
+      ? reference("documentId")
+      : service === "sheets"
+        ? reference("spreadsheetId")
+        : service === "slides"
+          ? reference("presentationId")
+          : service === "drive"
+            ? (reference("fileId") ?? text(result.id))
+            : undefined;
+  let url: URL | undefined;
+  if (id && /^[\w-]+$/.test(id)) {
+    const paths: Record<string, string> = {
+      docs: `https://docs.google.com/document/d/${id}/edit`,
+      sheets: `https://docs.google.com/spreadsheets/d/${id}/edit`,
+      slides: `https://docs.google.com/presentation/d/${id}/edit`,
+      drive: `https://drive.google.com/file/d/${id}/view`,
+    };
+    url = new URL(paths[service]);
+  } else {
+    const receiptLink = text(result.webViewLink ?? result.htmlLink ?? result.spreadsheetUrl);
+    if (receiptLink) {
+      try {
+        const candidate = new URL(receiptLink);
+        if (
+          candidate.protocol === "https:" &&
+          !candidate.username &&
+          !candidate.password &&
+          !candidate.port &&
+          [
+            "docs.google.com",
+            "drive.google.com",
+            "calendar.google.com",
+            "mail.google.com",
+            "www.google.com",
+          ].includes(candidate.hostname)
+        )
+          url = candidate;
+      } catch {
+        // An invalid provider link stays in technical details; it is never opened.
+      }
+    }
+  }
+  if (!url) return undefined;
+  if (account) url.searchParams.set("authuser", account);
+  return url.toString();
+}
+
 export function googleOperationLabel(operation: string, preparing = false) {
   const [service] = operation.split(".");
   const method = operation.split(".").at(-1);
@@ -186,6 +243,7 @@ export function googleActionPresentation(
     data: Record<string, unknown>;
     account?: string;
     result?: unknown;
+    target?: unknown;
   },
   locale = "pt-BR",
 ) {
@@ -233,6 +291,14 @@ export function googleActionPresentation(
     (action.kind.startsWith("calendar.") ? text(data.title) : undefined) ??
     (data.tool !== "google.workspace" ? text(action.title) : undefined);
   const account = text(data.account) ?? action.account ?? "";
+  const target = record(action.target);
+  const resourceUrl = googleResourceLink(
+    service,
+    data,
+    parameters,
+    { ...target, ...result },
+    account,
+  );
   const start = record(body.start ?? result.start);
   const end = record(body.end ?? result.end);
   const zone = data.timeZone ?? start.timeZone;
@@ -263,6 +329,7 @@ export function googleActionPresentation(
     .join("\n");
   const preview =
     text(inserted) ??
+    text(data.body) ??
     text(body.description) ??
     (Array.isArray(body.values)
       ? body.values
@@ -271,13 +338,76 @@ export function googleActionPresentation(
           .filter(Boolean)
           .join("\n")
       : undefined);
+  const changes: { label: string; value?: string }[] = [];
+  if (inserted) changes.push({ label: "Text added", value: inserted });
+  for (const request of requests) {
+    const entry = record(request);
+    const replace = record(entry.replaceAllText);
+    if (text(record(replace.containsText).text) || text(replace.text ?? replace.replaceText))
+      changes.push({
+        label: "Text replaced",
+        value: `${text(record(replace.containsText).text) ?? ""} → ${text(replace.text ?? replace.replaceText) ?? ""}`,
+      });
+    if (entry.deleteContentRange) changes.push({ label: "Text removed" });
+    if (entry.createSlide) changes.push({ label: "Slide added" });
+    if (entry.deleteObject) changes.push({ label: "Element removed" });
+    if (entry.updateTextStyle || entry.updateParagraphStyle || entry.updateDocumentStyle)
+      changes.push({ label: "Formatting updated" });
+  }
+  if (Array.isArray(body.values)) changes.push({ label: "Values written", value: preview });
+  for (const entry of Array.isArray(body.data) ? body.data : []) {
+    const values = record(entry);
+    if (Array.isArray(values.values))
+      changes.push({
+        label: "Values written",
+        value: [
+          text(values.range),
+          ...values.values.slice(0, 3).map((row) => (Array.isArray(row) ? row.join(" · ") : "")),
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      });
+  }
+  if (text(body.name)) changes.push({ label: "File name", value: text(body.name) });
+  const method = operation.split(".").at(-1);
+  const confirmedOutcomes: Record<string, string> = {
+    docs:
+      method === "create"
+        ? "Document created in Google Drive."
+        : inserted
+          ? "Text added to the document."
+          : changes.some((change) => change.label === "Text replaced")
+            ? "Text replaced in the document."
+            : "Document updated in Google Docs.",
+    sheets:
+      method === "create"
+        ? "Spreadsheet created in Google Drive."
+        : "Spreadsheet values or formatting updated.",
+    slides:
+      method === "create"
+        ? "Presentation created in Google Drive."
+        : "Presentation updated in Google Slides.",
+    drive: method === "create" ? "File saved in Google Drive." : "File updated in Google Drive.",
+    calendar:
+      method === "insert" || method === "quickAdd"
+        ? "Event created in this account's calendar."
+        : "Event updated in this account's calendar.",
+    gmail:
+      method === "send"
+        ? "Email sent to the recipients shown below."
+        : operation.includes(".drafts.")
+          ? "Draft saved in this account's Gmail."
+          : "Email updated in this account's Gmail.",
+  };
   const outcomes: Record<string, string> = {
     denied: deletion
       ? "Deletion was declined. This item was not removed."
       : "You declined this action. It was not executed.",
     cancelled: "This action was cancelled.",
     expired: "This approval expired. A new review is required before making changes.",
-    succeeded: deletion ? "Removal confirmed." : "Change completed.",
+    succeeded: deletion
+      ? "Removal confirmed."
+      : (confirmedOutcomes[service] ?? "Change completed."),
     failed: "This action could not be completed. See the error below.",
     outcome_unknown: "The result has not been confirmed. Do not repeat this action yet.",
     executing: "The approved action is being executed.",
@@ -292,6 +422,29 @@ export function googleActionPresentation(
     service: services[service] ?? "Connected account",
     fields,
     preview: preview?.slice(0, 1600),
+    changes: [
+      ...new Map(
+        changes.map((change) => {
+          const projected = { ...change, value: change.value?.slice(0, 1600) };
+          return [`${projected.label}:${projected.value ?? ""}`, projected];
+        }),
+      ).values(),
+    ].slice(0, 20),
+    resourceUrl,
+    openLabel:
+      (
+        {
+          docs: "Open document",
+          sheets: "Open spreadsheet",
+          slides: "Open presentation",
+          drive: "Open file",
+          calendar: "Open event",
+          gmail: "Open email",
+        } as Record<string, string>
+      )[service] ?? "Open item",
+    storage: ["docs", "sheets", "slides", "drive"].includes(service)
+      ? "Google Drive"
+      : (services[service] ?? "Connected account"),
     deletion,
     outcome: outcomes[action.status] ?? "",
   };

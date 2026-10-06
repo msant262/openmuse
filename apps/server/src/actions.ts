@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentTask } from "../../../packages/domain/src/agent.ts";
 import {
+  type ActionDetails,
+  type ActionOrigin,
   type ActionProposal,
   type CalendarEvent,
   type ProposalInput,
@@ -103,7 +105,7 @@ export class ActionService {
       id,
       hash,
       taskId,
-      ...(await this.proposalAuthority(owner, taskId)),
+      ...(await this.proposalAuthority(owner, taskId, id)),
       kind: "external.action",
       title: input.summary,
       data: {
@@ -178,7 +180,7 @@ export class ActionService {
       id,
       requestHash,
       taskId,
-      ...(await this.proposalAuthority(owner, taskId)),
+      ...(await this.proposalAuthority(owner, taskId, id)),
       title,
       kind: input.kind,
       data: {
@@ -451,13 +453,45 @@ export class ActionService {
     if (code === "expired") throw new TaskValidityExpiredError();
     if (code !== "authorized") throw new AppError("Action authority was lost before dispatch", 409);
   }
-  private async proposalAuthority(owner: string, taskId?: string) {
+  /** Opening history is a bounded, owner-scoped read and cannot dispatch an action. */
+  async detail(owner: string, id: string): Promise<ActionDetails> {
+    const action = await this.db.get<ActionProposal>(owner, "actions", id);
+    if (!action) throw new AppError("Action not found", 404);
+    const saved = await this.db.get<ActionOrigin>(owner, "action-origins", id);
+    const task = action.taskId ? await this.db.get<AgentTask>(owner, "tasks", action.taskId) : null;
+    // Older proposals predate origin snapshots. Soft removal retains their owned task record.
+    const origin = saved
+      ? {
+          request: saved.request,
+          taskTitle: saved.taskTitle,
+          taskId: saved.taskId,
+          ...(saved.threadId ? { threadId: saved.threadId } : {}),
+        }
+      : task
+        ? this.taskOrigin(task)
+        : undefined;
+    return { action, origin, taskAvailable: Boolean(task && !task.deletedAt) };
+  }
+  private taskOrigin(task: AgentTask): ActionOrigin {
+    return {
+      request: task.prompt,
+      taskTitle: task.title,
+      taskId: task.id,
+      ...(task.originThreadId ? { threadId: task.originThreadId } : {}),
+    };
+  }
+  private async proposalAuthority(owner: string, taskId?: string, actionId?: string) {
     if (!taskId) return {};
     const task = await this.db.get<AgentTask>(owner, "tasks", taskId);
     if (!task) throw new AppError("Task not found", 404);
     const preparedRevision = Number(task.state?.appliedRevision ?? 0);
     if (preparedRevision !== Number(task.state?.desiredRevision ?? 0))
       throw new TaskSupersededError();
+    if (actionId)
+      await this.db.insertIfAbsent(owner, "action-origins", {
+        id: actionId,
+        ...this.taskOrigin(task),
+      });
     return { preparedRevision, operationId: taskOperationId() };
   }
   private async record(owner: string, action: ActionProposal, detail: string) {

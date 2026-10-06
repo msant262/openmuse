@@ -179,6 +179,18 @@ export const proposalSchema = z.discriminatedUnion("kind", [
 export type EmailDraft = z.infer<typeof emailDraftSchema>;
 export type EventDraft = z.infer<typeof eventDraftSchema>;
 export type ProposalInput = z.infer<typeof proposalSchema>;
+/** Public provenance only. Credentials, executor state and bindings never belong here. */
+export interface ActionOrigin {
+  request: string;
+  taskTitle: string;
+  taskId: string;
+  threadId?: string;
+}
+export interface ActionDetails {
+  action: ActionProposal;
+  origin?: ActionOrigin;
+  taskAvailable: boolean;
+}
 export interface ActionProposal {
   requestHash?: string;
   target?: CalendarEvent;

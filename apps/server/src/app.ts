@@ -896,6 +896,9 @@ export async function createApp(
     if (!action) throw new AppError("Action not found", 404);
     return c.json(action);
   });
+  app.get("/api/actions/:id/details", async (c) =>
+    c.json(await actions.detail(c.get("owner"), c.req.param("id"))),
+  );
   app.post("/api/actions/:id/decide", async (c) => {
     const body = z
       .object({ hash: z.string(), decision: z.enum(["approve", "deny"]) })

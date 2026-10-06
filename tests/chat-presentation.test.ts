@@ -73,6 +73,7 @@ test("document changes are presented as an operation on a named document with re
         tool: "google.workspace",
         operation: "docs.documents.batchUpdate",
         account: "msant262@gmail.com",
+        documentId: "verified-document-id",
         request: JSON.stringify({
           body: {
             requests: [{ insertText: { text: "Documento criado e salvo pelo aplicativo." } }],
@@ -86,6 +87,45 @@ test("document changes are presented as an operation on a named document with re
   assert.equal(view.verb, "Edit document");
   assert.equal(view.item, "Okami confirmação final");
   assert.equal(view.preview, "Documento criado e salvo pelo aplicativo.");
+  assert.equal(view.outcome, "Text added to the document.");
+  assert.deepEqual(view.changes, [
+    { label: "Text added", value: "Documento criado e salvo pelo aplicativo." },
+  ]);
+  assert.equal(view.storage, "Google Drive");
+  assert.equal(
+    view.resourceUrl,
+    "https://docs.google.com/document/d/verified-document-id/edit?authuser=msant262%40gmail.com",
+  );
+});
+test("resource links reject unrelated hosts and invalid references; replacements retain the before and after text", () => {
+  const edit = {
+    title: "Edit",
+    kind: "external.action",
+    status: "succeeded",
+    data: {
+      tool: "google.workspace",
+      operation: "docs.documents.batchUpdate",
+      request: JSON.stringify({
+        body: {
+          requests: [
+            { replaceAllText: { containsText: { text: "Old date" }, replaceText: "New date" } },
+          ],
+        },
+      }),
+    },
+    result: { data: { webViewLink: "https://docs.google.com.evil.example/document" } },
+  };
+  const view = googleActionPresentation(edit);
+  assert.equal(view.resourceUrl, undefined);
+  assert.equal(view.outcome, "Text replaced in the document.");
+  assert.equal(view.changes[0].value, "Old date → New date");
+  assert.equal(
+    googleActionPresentation({
+      ...edit,
+      data: { ...edit.data, documentId: "../another-resource?token=bad" },
+    }).resourceUrl,
+    undefined,
+  );
 });
 test("cancelled tasks do not imply delivery checks or unfinished work and native stages have meaningful labels", () => {
   assert.equal(taskOutcomeHeading("cancelled", "denied"), "Action declined");

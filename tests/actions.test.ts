@@ -32,6 +32,79 @@ const email = {
     attachmentIds: [],
   },
 };
+test("action history retains the original request across task changes without executing or exposing task internals", async () => {
+  const owner = "action-origin";
+  const task = {
+    id: "original-task",
+    title: "Write to Sam",
+    prompt: "Write an email to Sam about tomorrow's visit.",
+    status: "running",
+    originThreadId: "original-thread",
+    state: { appliedRevision: 0, desiredRevision: 0, privateToken: "never-public" },
+    input: { secret: "never-public" },
+  };
+  await db.put(owner, "tasks", task);
+  let writes = 0;
+  const service = new ActionService(db, {
+    connected: async () => true,
+    execute: async () => {
+      writes++;
+      return "sent";
+    },
+  });
+  const proposal = await service.propose(owner, email, "origin-key", task.id);
+  await db.put(owner, "tasks", {
+    ...task,
+    prompt: "A later, different request",
+    deletedAt: new Date().toISOString(),
+  });
+  const detail = await service.detail(owner, proposal.id);
+  assert.equal(detail.origin?.request, task.prompt);
+  assert.equal(detail.origin?.threadId, task.originThreadId);
+  assert.equal(detail.taskAvailable, false);
+  assert.equal(detail.action.hash, proposal.hash);
+  assert.equal(detail.action.status, "awaiting_review");
+  assert.equal(writes, 0);
+  assert.doesNotMatch(
+    JSON.stringify(detail),
+    /never-public|privateToken|secret|preparedRevision.*input/,
+  );
+  await assert.rejects(service.detail("other-owner", proposal.id), /not found/i);
+});
+test("old Google proposals recover the request from an owned removed task without restoring history", async () => {
+  const owner = "old-action-origin";
+  const task = {
+    id: "old-task",
+    title: "Create a document",
+    prompt: "Create my meeting notes in Google Docs.",
+    deletedAt: "2026-10-06T10:00:00Z",
+    state: { credential: "never-public" },
+  };
+  await db.put(owner, "tasks", task);
+  const proposal = {
+    id: "old-action",
+    title: "Google Docs",
+    taskId: task.id,
+    kind: "external.action",
+    status: "succeeded",
+    hash: "preserved",
+    data: { tool: "google.workspace", documentId: "doc-id" },
+  };
+  await db.put(owner, "actions", proposal);
+  const service = new ActionService(db, {
+    connected: async () => true,
+    execute: async () => {
+      throw new Error("Opening history must not execute");
+    },
+  });
+  const detail = await service.detail(owner, proposal.id);
+  assert.equal(detail.origin?.request, task.prompt);
+  assert.equal(detail.taskAvailable, false);
+  assert.equal((await db.get(owner, "tasks", task.id))?.deletedAt, task.deletedAt);
+  assert.doesNotMatch(JSON.stringify(detail), /credential|never-public/);
+  await db.put(owner, "actions", { ...proposal, id: "unrelated", taskId: "missing" });
+  assert.equal((await service.detail(owner, "unrelated")).origin, undefined);
+});
 test("denying a persisted proposal never calls its adapter", async () => {
   let calls = 0;
   const service = new ActionService(db, {

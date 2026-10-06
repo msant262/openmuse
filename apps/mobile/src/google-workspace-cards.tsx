@@ -1,8 +1,8 @@
 import * as Crypto from "expo-crypto";
 import { CheckCircle2, CircleX, Clock3, ShieldCheck } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Clipboard, Platform, Text, View } from "react-native";
-import type { ActionProposal } from "../../../packages/domain/src";
+import { Clipboard, Linking, Platform, Text, View } from "react-native";
+import type { ActionDetails, ActionProposal } from "../../../packages/domain/src";
 import type { GoogleMailDraft } from "../../../packages/domain/src/google-mail-draft";
 import { googleActionPresentation, withGoogleActionContext } from "./external-action-preview";
 import { useI18n } from "./i18n";
@@ -47,6 +47,9 @@ export function GoogleApprovalCard({
   const [error, setError] = useState("");
   const [technical, setTechnical] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [details, setDetails] = useState<{ owner: string; id: string; value: ActionDetails }>();
+  const [contextError, setContextError] = useState("");
+  const [contextAttempt, setContextAttempt] = useState(0);
   const lock = useRef(false);
   const observed = workspace?.actions.find((item) => item.id === action.id);
   const current =
@@ -55,6 +58,28 @@ export function GoogleApprovalCard({
       : answer?.id === action.id
         ? answer
         : action;
+  const showDetails = presentation === "detail" || expanded || current.status === "awaiting_review";
+  const loaded =
+    details?.owner === api.identityKey && details.id === current.id ? details.value : undefined;
+  const origin = loaded?.origin;
+  useEffect(() => {
+    if (!showDetails) return;
+    let active = true;
+    const owner = api.identityKey;
+    const id = current.id;
+    setContextError("");
+    void api
+      .request<ActionDetails>(`/api/actions/${encodeURIComponent(id)}/details`)
+      .then((value) => {
+        if (active) setDetails({ owner, id, value });
+      })
+      .catch(() => {
+        if (active) setContextError("Could not load the original request.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, api.identityKey, current.id, current.status, showDetails, contextAttempt]);
   const view = googleActionPresentation(
     withGoogleActionContext(current, workspace?.actions ?? []),
     locale,
@@ -138,13 +163,31 @@ export function GoogleApprovalCard({
           {view.item ?? t(view.service)}
         </Text>
         <View style={{ gap: 3 }}>
-          <Text style={s.small}>
-            {t(view.service)} · {t("Account")}
+          <Text style={s.small}>{t("Where")}</Text>
+          <Text style={s.text}>
+            {t(view.storage)}
+            {view.storage !== view.service ? ` · ${t(view.service)}` : ""}
           </Text>
           <Text selectable style={s.text}>
             {view.account || t("Account not specified")}
           </Text>
+          <Text style={s.small}>
+            {t("Recorded at")} {new Date(current.createdAt).toLocaleString(locale)}
+          </Text>
         </View>
+        {!!view.resourceUrl && !(view.deletion && current.status === "succeeded") && (
+          <Button
+            primary
+            onPress={() => {
+              if (!view.resourceUrl) return;
+              void Linking.openURL(view.resourceUrl).catch(() =>
+                setError(t("Could not open this item. Try again.")),
+              );
+            }}
+          >
+            {t(view.openLabel)}
+          </Button>
+        )}
       </View>
       {!!view.outcome && (
         <View
@@ -181,12 +224,60 @@ export function GoogleApprovalCard({
           ))}
         </View>
       )}
-      {!!view.preview && (
+      {!!view.changes.length && (
+        <View style={{ gap: 12 }}>
+          <Text style={s.heading}>
+            {t(current.status === "succeeded" ? "Recorded changes" : "Proposed changes")}
+          </Text>
+          {view.changes.map((change) => (
+            <View key={`${change.label}:${change.value ?? ""}`} style={{ gap: 5 }}>
+              <Text style={s.small}>{t(change.label)}</Text>
+              {!!change.value && (
+                <Text selectable style={s.text}>
+                  {change.value}
+                </Text>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
+      {!!view.preview && !view.changes.some((change) => change.value === view.preview) && (
         <View style={{ gap: 7 }}>
           <Text style={s.small}>{t("Content")}</Text>
           <Text selectable style={s.text}>
             {view.preview}
           </Text>
+        </View>
+      )}
+      {showDetails && (
+        <View style={{ gap: 9, paddingTop: 16, borderTopWidth: 1, borderColor: colors.line }}>
+          <Text style={s.heading}>{t("Why this action was prepared")}</Text>
+          {origin ? (
+            <>
+              <Text style={s.small}>{t("Your request")}</Text>
+              <Text selectable style={s.text}>
+                {origin.request}
+              </Text>
+              {loaded.taskAvailable && (
+                <Button small onPress={() => open({ type: "task", taskId: origin.taskId })}>
+                  {t("View original task")}
+                </Button>
+              )}
+            </>
+          ) : loaded ? (
+            <Text style={s.muted}>
+              {t("The original request was not recorded for this action.")}
+            </Text>
+          ) : contextError ? (
+            <>
+              <Text style={s.muted}>{t(contextError)}</Text>
+              <Button small onPress={() => setContextAttempt((value) => value + 1)}>
+                {t("Try again")}
+              </Button>
+            </>
+          ) : (
+            <Text style={s.muted}>{t("Loading original request…")}</Text>
+          )}
         </View>
       )}
       {pending && (

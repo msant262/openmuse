@@ -66,7 +66,17 @@ function view(
     new URL("../apps/mobile/src/google-workspace-cards.tsx", import.meta.url),
     name,
     {
-      "react-native": { Text: "Text", View: "View", Platform: { OS: "web" }, Clipboard: {} },
+      "react-native": {
+        Text: "Text",
+        View: "View",
+        Platform: { OS: "web" },
+        Clipboard: {},
+        Linking: {
+          openURL: async (url: string) => {
+            copied.push(url);
+          },
+        },
+      },
       "expo-crypto": { randomUUID: () => "stable-click-id" },
       "lucide-react-native": {
         CheckCircle2: "CheckCircle2",
@@ -182,6 +192,7 @@ test("deleting from the draft card only prepares a visible approval and disables
 test("approval shows readable account and target, hides JSON, and submits only the clicked exact decision", async () => {
   const calls: any[] = [];
   const h = view("GoogleApprovalCard", { action }, async (path, body) => {
+    if (path.endsWith("/details")) return { action, taskAvailable: false };
     calls.push({ path, body });
     return { ...action, status: "denied" };
   });
@@ -218,13 +229,14 @@ test("opening a declined action from history shows the full context immediately 
     { action: { ...action, status: "denied" }, presentation: "detail" },
     async (path) => {
       calls.push(path);
+      return { action, taskAvailable: false };
     },
   );
   try {
     await h.flush();
     assert.match(h.text(), /Visible subject.*work@example.com.*Deletion was declined/s);
     assert.doesNotMatch(h.text(), /View details|Approve deletion|gmail.users.drafts.delete/);
-    assert.deepEqual(calls, []);
+    assert.deepEqual(calls, [`/api/actions/${action.id}/details`]);
   } finally {
     h.close();
   }
@@ -249,6 +261,58 @@ test("handled drafts remain compact after remount and can be reopened without pe
     } finally {
       h.close();
     }
+  }
+});
+test("document history explains the real edit and original request and opens the exact Google document without a write", async () => {
+  const calls: { path: string; body?: unknown }[] = [],
+    opened: string[] = [];
+  const doc = {
+    ...action,
+    title: "Edit document",
+    status: "succeeded",
+    data: {
+      tool: "google.workspace",
+      operation: "docs.documents.batchUpdate",
+      account: "work@example.com",
+      documentId: "actual-doc-id",
+      resourceName: "Meeting notes",
+      request: JSON.stringify({
+        body: { requests: [{ insertText: { text: "Agenda for tomorrow" } }] },
+      }),
+    },
+  };
+  const h = view(
+    "GoogleApprovalCard",
+    { action: doc, presentation: "detail" },
+    async (path, body) => {
+      calls.push({ path, body });
+      return {
+        action: doc,
+        origin: {
+          request: "Create my meeting notes for tomorrow.",
+          taskId: "original-task",
+          taskTitle: "Meeting notes",
+        },
+        taskAvailable: false,
+      };
+    },
+    opened,
+  );
+  try {
+    await h.flush();
+    assert.match(
+      h.text(),
+      /Meeting notes.*Where.*Google Drive.*Google Docs.*work@example.com.*Open document.*Text added to the document.*Text added.*Agenda for tomorrow.*Create my meeting notes for tomorrow/s,
+    );
+    assert.doesNotMatch(h.text(), /Change completed|Show technical details.*\{/);
+    h.button("Open document").onPress();
+    await h.flush();
+    assert.deepEqual(opened, [
+      "https://docs.google.com/document/d/actual-doc-id/edit?authuser=work%40example.com",
+    ]);
+    assert.deepEqual(calls, [{ path: `/api/actions/${doc.id}/details`, body: undefined }]);
+  } finally {
+    h.close();
   }
 });
 

@@ -108,7 +108,10 @@ export function GoogleActionsScreen({ onOpen }: { onOpen?: () => void } = {}) {
           account: view.account,
           status: action.status,
           detail:
-            view.fields.find((field) => field.label === "Starts")?.value ?? view.preview ?? "",
+            view.fields.find((field) => field.label === "Starts")?.value ??
+            (view.changes[0]
+              ? `${t(view.changes[0].label)}${view.changes[0].value ? `: ${view.changes[0].value}` : ""}`
+              : (view.preview ?? t(view.outcome))),
           show: () => open({ type: "review", action }),
         };
       }),
