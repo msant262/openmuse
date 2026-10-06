@@ -11,6 +11,19 @@ export type ExtractedPage = RenderedPublicPage & {
   observedAt?: string;
 };
 
+/** Recover exact discovered links after a model rewrites a slug and gets 404.
+ * These are unread leads, not an automatic fetch or verified source content. */
+export function observedSourceAlternatives(failedUrl: string, observed: string[]) {
+  const origin = new URL(failedUrl).origin;
+  return [...new Set(observed)].filter((url) => {
+    try {
+      return url !== failedUrl && new URL(url).origin === origin;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /** Port of Hermes tools/web_tools_extract.py::_merge_in_order (MIT).
  * Source 1298c8e74baa73e1a2b90124228d017261ac6bc4; see third_party/hermes-learning.
  * Successful entries keep their source identity when only failed positions are rescued. */

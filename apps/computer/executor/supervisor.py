@@ -707,7 +707,11 @@ class Supervisor:
                         self.release(operation_id)
                     elif state["status"] == "outcome_unknown":
                         self.gate.close("job-cleanup")
-        response = self.transport.request("claim", {"epoch":self.gate.epoch, "waitMs":15000})
+        # Publish completed output before waiting for more work. A queue long
+        # poll must not add fifteen seconds to an already finished command.
+        self.flush()
+        response = self.transport.request("claim", {"epoch":self.gate.epoch,
+            "waitMs":1000 if self.runtime.active else 15000})
         pause = response["pause"]
         self.pause_ack = self.gate.pause(pause)
         if self.gate.needs_reconciliation:
