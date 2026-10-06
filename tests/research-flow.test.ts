@@ -50,7 +50,7 @@ test("a worker's 404 receipt exposes the exact discovered URL and preserves the 
   const task = await f.agent.createTask("owner", { prompt: "Read the published results" });
   await f.agent.worker.tick();
   const result = await f.agent.detail("owner", task.id);
-  assert.equal(result.task.status, "succeeded", result.task.error);
+  assert.equal(result.task.status, "succeeded", result.task.error ?? undefined);
   const failed = result.operations.find((op) => op.toolName === "web_extract");
   assert.ok(failed);
   const page = (failed.receipt as { pages: { observedAlternatives: string[]; error: string }[] })

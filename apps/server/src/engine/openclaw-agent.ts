@@ -346,6 +346,7 @@ const directTools = new Set([
   "web_extract",
   "generate_image",
   "image_generation_status",
+  "view_file",
   "finish_task",
   "todo_list",
   "read_tool_output",

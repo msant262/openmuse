@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { computerInstructions } from "../apps/server/src/computer-tools.ts";
+import { documentInstructions, imageInstructions } from "../apps/server/src/media-tools.ts";
 import { personalInstructions } from "../apps/server/src/personal-tools.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
@@ -392,6 +393,14 @@ for (const vision of [true, false]) {
     assert.equal(fixture.imageBriefRequests.length, 0);
     assert.equal(fixture.reviewRequests.length, 0);
     const instructions = JSON.parse(fixture.requests[0].body).instructions;
+    assert.ok(
+      instructions.includes(imageInstructions),
+      "image instructions accompany visible image tools",
+    );
+    assert.ok(
+      !instructions.includes(documentInstructions),
+      "image research does not load PDF and Office authoring instructions",
+    );
     assert.ok(
       !instructions.includes(computerInstructions),
       "deferred computer instructions stay unloaded",

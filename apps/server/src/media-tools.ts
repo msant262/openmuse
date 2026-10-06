@@ -628,8 +628,42 @@ export class MediaService {
   }
 }
 
-export const mediaInstructions =
-  "For PDF, DOCX and PPTX, read the document-design skill and the format skill before composing. Use design_references recommend/read to compare suitable directions. Apply the chosen reference with explicit design.layout, display, palette and rationale; all catalog references are usable, not only the legacy presets. Critique the rendered composition against that intent, not only overflow. create_document accepts complete Markdown with headings, emphasis, lists, tables, quotes, owned file: images and chart/metrics/steps JSON blocks; it creates designed PDF or native editable DOCX/PPTX without a computer or source form. Choose design.reference, subtitle, eyebrow, footer and cover when useful. Do not substitute unformatted prose for an authored document. After creating a draft, call inspect_document in batches, examine the returned page pixels, then confirm_document_review in the next model turn. Review every page before finish_task. Correct problems by creating a fresh operation with replaceFileId for the current task draft and inspecting the new bytes. Internal previews are not deliverables. Text and Markdown formats preserve exact UTF-8. Use fill_pdf only for existing forms. For an image, illustration, poster or infographic, use generate_image to create the actual downloadable image. For an infographic about current facts, first obtain and verify every requested entity and category; a paginated sample is not the complete dataset. Before generating, check that the visual brief contains all requested labels and values, preserves the user's requested form (a geographic map needs geographic boundaries), and includes exact verified dates and source names in the user's language. Resolve coverage gaps before spending an image generation; do not stop at a text outline. The image generator is independent of the chat model: image_generation_status lists connected image capabilities, including subscriptions. Auto selection prefers separately connected GPT Image through ChatGPT/Codex authorization, then Grok Imagine, independently of the chat model. For an explicit ChatGPT/GPT Image request use provider chatgpt; for Grok use provider grok. If the requested provider is not connected, show its Settings connection rather than substitute a different provider. Never add a billed API implicitly. No email or PDF attachment is needed to create an image. Give the image a descriptive name. Generated images are drafts until checked against the original request and their actual pixels. Select only the final intended image IDs with finish_task.artifactIds; rejected drafts remain saved without being delivered. Refer to delivered attachments naturally without exposing internal IDs. Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before a completed file receipt or repeat a pending/uncertain generation automatically.";
+export const documentInstructions =
+  "For PDF, DOCX and PPTX, read the document-design skill and the format skill before composing. Use design_references recommend/read to compare suitable directions. Apply the chosen reference with explicit design.layout, display, palette and rationale; all catalog references are usable, not only the legacy presets. Critique the rendered composition against that intent, not only overflow. create_document accepts complete Markdown with headings, emphasis, lists, tables, quotes, owned file: images and chart/metrics/steps JSON blocks; it creates designed PDF or native editable DOCX/PPTX without a computer or source form. Choose design.reference, subtitle, eyebrow, footer and cover when useful. Do not substitute unformatted prose for an authored document. After creating a draft, call inspect_document in batches, examine the returned page pixels, then confirm_document_review in the next model turn. Review every page before finish_task. Correct problems by creating a fresh operation with replaceFileId for the current task draft and inspecting the new bytes. Internal previews are not deliverables. Text and Markdown formats preserve exact UTF-8. Use fill_pdf only for existing forms.";
+
+export const imageInstructions =
+  "For an image, illustration, poster or infographic, use generate_image to create the actual downloadable image. For factual comparisons, first read or compute the complete requested data. Match each source record to the requested subject, metric, category and date; records about other subjects do not supply missing values. Every value in the image brief must come from those reads or computations. Never fill a missing value from memory or a plausible estimate. A paginated sample is incomplete; follow nextOffset or compute the whole dataset. Before generating, check that the visual brief contains all requested labels and values, preserves the user's requested form (a geographic map needs geographic boundaries), and includes exact verified dates and source names in the user's language. Resolve coverage gaps before spending an image generation; do not stop at a text outline. The image generator is independent of the chat model: image_generation_status lists connected image capabilities, including subscriptions. Auto selection prefers separately connected GPT Image through ChatGPT/Codex authorization, then Grok Imagine, independently of the chat model. For an explicit ChatGPT/GPT Image request use provider chatgpt; for Grok use provider grok. If the requested provider is not connected, show its Settings connection rather than substitute a different provider. Never add a billed API implicitly. No email or PDF attachment is needed to create an image. Give the image a descriptive name. Generated images are drafts until checked against the original request. Use view_file to inspect pixels when image input is supported. Do not claim visual inspection if you only received a file receipt. Select only the final intended image IDs with finish_task.artifactIds; rejected drafts remain saved without being delivered. Refer to delivered attachments naturally without exposing internal IDs.";
+
+export const audioInstructions =
+  "Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before a completed file receipt or repeat a pending/uncertain generation automatically.";
+
+// Foreground chat may describe the full catalog. Task execution loads only the selected family.
+export const mediaInstructions = [documentInstructions, imageInstructions, audioInstructions].join(
+  " ",
+);
+
+export function mediaInstructionGroups() {
+  return [
+    {
+      names: new Set([
+        "create_document",
+        "inspect_document",
+        "confirm_document_review",
+        "fill_pdf",
+        "preview_computer_file",
+      ]),
+      text: documentInstructions,
+    },
+    {
+      names: new Set(["generate_image", "image_generation_status", "view_file"]),
+      text: imageInstructions,
+    },
+    {
+      names: new Set(["transcribe", "computer_command_status", "cancel_computer_command"]),
+      text: audioInstructions,
+    },
+  ];
+}
 
 export function mediaTools(
   media: MediaService,

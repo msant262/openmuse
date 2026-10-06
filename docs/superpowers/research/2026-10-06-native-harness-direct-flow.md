@@ -165,8 +165,8 @@ conclusão, dados públicos, objetivo e revisões também passaram.
 
 A publicação é restrita às fronteiras do executor, configuração e entrypoint do
 harness, sobre a base de produção existente. Web e APK não são substituídos.
-Fonte publicada: `5a6bee053879a28fbd71dd2fd312557c4f0dde47`.
-Imagem: `sha256:b3a0fbadc477b1a599ee5c1d72961a20fcb5efa744a02efc49abaa2f358fc5f5`.
+Fonte publicada: `cce477e7e2efe6bedc3a6f2787f94760c9121e03`.
+Imagem: `sha256:fa1e95852ee6b5f19a79a1334ba45ebb68977a9c9f4d25fddbb965d448f28b06`.
 Luna permanece como executor de produção, com contexto de 1.050.000 tokens.
 DeepSeek, MiMo e MiniMax não foram validados ao vivo nesta sessão.
 
@@ -209,8 +209,8 @@ mesmo serviço registrado, epoch 31. Hash do supervisor publicado:
 
 Passaram 28 testes de comandos e recuperação, 21 de conclusão e entrega,
 14 de pesquisa e dados, e 60 contratos nativos. Compilação e checagem de tipos
-passaram; lint sem erros. A décima terceira reprodução está em observação e
-precisa conferir a cobertura estadual e os pixels, além do tempo real.
+passaram; lint sem erros. A décima terceira reprodução está descrita abaixo; a aprovação exige cobertura
+estadual e pixels conferidos, além do tempo real.
 
 
 ## Links exatos e latência da descoberta
@@ -235,4 +235,29 @@ pesquisas seguintes. Mantém alternativas se ela falhar, valida cada link e
 faz uma leitura nova para cada query. Passaram os 32 testes de extração e fluxo,
 os dois de busca e os 11 de mídia; tipos, compilação e lint sem erros.
 A décima quarta reprodução começou sem URLs nem percentuais fornecidos pelo
-operador e ainda precisa concluir a conferência da entrega.
+operador. Terminou em 296,6 segundos usando Codex/GPT Image 2, mas é incorreta:
+os 54 percentuais estaduais do briefing diferem da soma independente dos dados
+municipais. O executor leu o panorama de governadores e inventou os percentuais
+presidenciais. A inspeção dos pixels confirma que o gerador reproduziu o briefing;
+a falha está na preparação factual. O servidor marcou conclusão porque havia
+arquivo e finish_task explícito; essa checagem mecânica não certificou os fatos.
+
+
+## Instruções menores por família de ferramenta
+
+Pedidos de imagem carregavam também as instruções completas de PDF, DOCX e PPTX.
+A execução passa a carregar somente as famílias de mídia selecionadas: imagem,
+documento ou áudio. A política de autoria e inspeção dos documentos permanece
+disponível quando essas ferramentas são escolhidas. O comando central foi
+encurtado, preservando recibos, credenciais, efeitos, decisões e a data nativa.
+A pesquisa exige correspondência entre sujeito, métrica, categoria e data do
+registro e do pedido, além de cobertura completa antes de compor números.
+view_file está disponível diretamente; um recibo de arquivo não autoriza alegar
+inspeção visual. Não há novo revisor, nova chamada de modelo ou troca do Luna.
+
+Passaram os 30 testes de composição nativa e fluxo de mídia. Após ampliar a
+verificação da superfície efetivamente enviada ao provedor, passaram os dez
+testes de conclusão de imagem: orientações de imagem presentes e instruções de
+Office/PDF ausentes. Tipos e compilação passaram; lint sem erros. A décima quinta
+reprodução usa o pedido original com o ano, sem URLs ou números fornecidos pelo
+operador; ainda está em observação. Nenhuma reprodução nova foi aprovada.
