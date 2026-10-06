@@ -74,7 +74,7 @@ export class WorkspaceService {
             ),
     });
   }
-  async connection(owner: string) {
+  async connection(owner: string, account?: string) {
     if (this.config.mode === "sample") {
       const value = await this.db.get<{ enabled: boolean; connectionId?: string }>(
         owner,
@@ -85,7 +85,7 @@ export class WorkspaceService {
         ? null
         : { id: value?.connectionId ?? "sample-google", account: "alex@example.com" };
     }
-    const tokens = await this.googleAuth.tokens(owner);
+    const tokens = await this.googleAuth.tokens(owner, account);
     return tokens ? { id: tokens.connectionId, account: tokens.account } : null;
   }
   async connected(owner: string) {
@@ -272,12 +272,19 @@ export class WorkspaceService {
       ),
     }));
     const cachedAt = new Date().toISOString();
+    const legacy = await this.db.get<{ connectionId?: string }>(owner, "credentials", "google");
     for (const message of result)
-      await this.db.put(owner, "mail", { ...message, connectionId, cachedAt });
+      await this.db.put(owner, "mail", {
+        ...message,
+        id: legacy?.connectionId === connectionId ? message.id : `${connectionId}:${message.id}`,
+        providerMessageId: message.id,
+        connectionId,
+        cachedAt,
+      });
     return result.map((message) => ({ ...message, cachedAt }));
   }
-  async thread(owner: string, id: string) {
-    const connection = await this.connection(owner);
+  async thread(owner: string, id: string, account?: string) {
+    const connection = await this.connection(owner, account);
     if (!connection) throw new AppError("Google is disconnected", 409);
     const mail =
       this.config.mode === "sample"
@@ -296,8 +303,8 @@ export class WorkspaceService {
       )
       .sort((a, b) => a.date.localeCompare(b.date));
   }
-  async searchMail(owner: string, query: string) {
-    const connection = await this.connection(owner);
+  async searchMail(owner: string, query: string, account?: string) {
+    const connection = await this.connection(owner, account);
     if (!connection) throw new AppError("Google is disconnected", 409);
     if (this.config.mode === "live")
       return this.cacheMail(
@@ -451,9 +458,13 @@ export class WorkspaceService {
     signal?: AbortSignal,
   ): Promise<WorkspaceSnapshot> {
     let tokens: Awaited<ReturnType<GoogleAuth["tokens"]>> = null;
+    let accounts: Awaited<ReturnType<GoogleAuth["accounts"]>> = [];
     let googleStatus: "connected" | "disconnected" | "sample" | "unavailable" = "disconnected";
     try {
-      if (this.config.mode === "live") tokens = await this.googleAuth.tokens(owner);
+      if (this.config.mode === "live") {
+        tokens = await this.googleAuth.tokens(owner);
+        accounts = await this.googleAuth.accounts(owner);
+      }
     } catch {
       googleStatus = "unavailable";
     }
@@ -474,6 +485,10 @@ export class WorkspaceService {
         )
         .map((row) => ({
           ...row,
+          ...(typeof (row as CachedRow<T> & { providerMessageId?: string }).providerMessageId ===
+          "string"
+            ? { id: (row as CachedRow<T> & { providerMessageId: string }).providerMessageId }
+            : {}),
           cache: {
             provenance:
               this.config.mode === "sample" || row.connectionId
@@ -595,6 +610,10 @@ export class WorkspaceService {
         });
         return rows.map((row) => ({
           ...row,
+          ...(typeof (row as CachedRow<T> & { providerMessageId?: string }).providerMessageId ===
+          "string"
+            ? { id: (row as CachedRow<T> & { providerMessageId: string }).providerMessageId }
+            : {}),
           cache: { provenance: "verified", freshness: "fresh", cachedAt },
         })) as T[];
       };
@@ -620,6 +639,9 @@ export class WorkspaceService {
       connections: [
         {
           id: "google",
+          provider: "google",
+          connectionId: tokens?.connectionId,
+          isDefault: true,
           name: "Google",
           status: googleStatus,
           account:
@@ -627,6 +649,18 @@ export class WorkspaceService {
           capabilities:
             this.config.mode === "sample" ? ["Gmail", "Calendar"] : (tokens?.scopes ?? []),
         },
+        ...accounts
+          .filter((account) => !account.isDefault)
+          .map((account) => ({
+            id: `google:${account.connectionId}`,
+            provider: "google" as const,
+            connectionId: account.connectionId,
+            isDefault: false,
+            name: "Google",
+            account: account.account,
+            capabilities: account.capabilities,
+            status: "connected" as const,
+          })),
         {
           id: "browser",
           name: "Browser",
@@ -721,7 +755,7 @@ export class WorkspaceService {
       await this.db.put(owner, "events", { ...input.data, id });
       return `Saved to local calendar · ${id}`;
     }
-    const tokens = await this.googleAuth.tokens(owner);
+    const tokens = await this.googleAuth.tokens(owner, connectionId);
     if (!tokens) throw new AppError("Google is disconnected", 409);
     const capability = input.kind === "email.send" ? "gmail.send" : "calendar.events";
     if (!tokens.scopes.includes(`https://www.googleapis.com/auth/${capability}`))
@@ -764,8 +798,8 @@ export class WorkspaceService {
     });
     return `Google Calendar event · ${event.id}`;
   }
-  async importAttachment(owner: string, reference: string): Promise<Artifact> {
-    const connection = await this.connection(owner);
+  async importAttachment(owner: string, reference: string, account?: string): Promise<Artifact> {
+    const connection = await this.connection(owner, account);
     if (!connection) throw new AppError("Google is disconnected", 409);
     const operationId = taskOperationId();
     const importId = operationId ? `intent:${operationId}:${reference}` : reference;
@@ -779,7 +813,12 @@ export class WorkspaceService {
     const [messageId, attachmentId, filename] = reference.split(":");
     if (!messageId || !attachmentId || !filename)
       throw new AppError("Attachment reference is invalid");
-    const message = await this.db.get<Mail & { connectionId?: string }>(owner, "mail", messageId);
+    const message =
+      (await this.db.get<Mail & { connectionId?: string }>(
+        owner,
+        "mail",
+        `${connection.id}:${messageId}`,
+      )) ?? (await this.db.get<Mail & { connectionId?: string }>(owner, "mail", messageId));
     if (!message?.attachments.includes(reference) || message.connectionId !== connection.id)
       throw new AppError("Attachment not found. Refresh the current account's inbox.", 404);
     const file = await this.files.import(

@@ -33,6 +33,7 @@ import {
 } from "react";
 import {
   AppState,
+  FlatList,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -52,6 +53,11 @@ import {
   type StickerId,
   socialToolMessage,
 } from "../../../packages/domain/src/conversation-social";
+import {
+  CHAT_HISTORY_PAGE_SIZE,
+  mergeChatHistory,
+  type RecentChatPage,
+} from "../../../packages/domain/src/conversation-window";
 import type { ProactivitySuggestion } from "../../../packages/domain/src/proactivity";
 import type {
   AcceptedMessageInput,
@@ -408,7 +414,11 @@ export function ChatScreen({
   const [showExpressions, setShowExpressions] = useState(false);
   const [receivedMessage, setReceivedMessage] = useState<string>();
   const composerInput = useRef<TextInput>(null);
-  const messagePositions = useRef(new Map<string, number>());
+  const [olderMessages, setOlderMessages] = useState<Message[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string>();
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState("");
+  const olderLock = useRef(false);
   const [annotations, setAnnotations] = useState<AcceptedMessageInput["annotations"]>([]);
   const [annotationSource, setAnnotationSource] = useState<AnnotationSource>();
   const [showResourceLibrary, setShowResourceLibrary] = useState(false);
@@ -446,7 +456,7 @@ export function ChatScreen({
       composerMounted.current = false;
     };
   }, []);
-  const list = useRef<ScrollView>(null);
+  const list = useRef<FlatList<Message>>(null);
   const [queue] = useState(() =>
     durableChat
       ? new MessageOutbox(messageStorage, `${api.identityKey}\n${threadId}`, threadId)
@@ -456,7 +466,7 @@ export function ChatScreen({
     threadId,
     durableChat && active && (selection.existing || agent.messages.length > 0),
     queue instanceof MessageOutbox ? queue : undefined,
-    agent.messages,
+    mergeChatHistory(olderMessages, agent.messages),
   );
   const [questions, setQuestions] = useState<InteractionRequest[]>([]);
   const [suggestions, setSuggestions] = useState<ProactivitySuggestion[]>([]);
@@ -553,6 +563,12 @@ export function ChatScreen({
           ) {
             runLock.current = true;
             try {
+              if (queue instanceof MessageOutbox) {
+                const checkpoint = await api.request<ConversationReplay>(
+                  `/api/conversations/${threadId}/events?latest=true&summary=true`,
+                );
+                await queue.checkpointReplay(checkpoint);
+              }
               await runConversationTurn(
                 agentId,
                 () => copilotkit.connectAgent({ agent }),
@@ -615,15 +631,17 @@ export function ChatScreen({
     replayLock.current = true;
     try {
       let replay = await api.request<ConversationReplay>(
-        `/api/conversations/${threadId}/events?cursor=${queue.getSnapshot().cursor}`,
+        `/api/conversations/${threadId}/events?summary=true&cursor=${queue.getSnapshot().cursor}`,
       );
+      const needsSnapshot = replay.snapshotRequired;
       if (replay.snapshotRequired) {
-        await queue.applyReplay(replay);
         replay = await api.request<ConversationReplay>(
-          `/api/conversations/${threadId}/events?cursor=0`,
+          `/api/conversations/${threadId}/events?latest=true&summary=true`,
         );
+        await queue.checkpointReplay(replay);
+      } else {
+        await queue.applyReplay(replay);
       }
-      await queue.applyReplay(replay);
       queue.resume();
       setHistoryError("");
       const cards = await api.request<{ requests: InteractionRequest[] }>(
@@ -631,7 +649,7 @@ export function ChatScreen({
       );
       setQuestions(cards.requests.filter((r) => r.kind === "question" || r.kind === "credential"));
       setSuggestions(suggestionsFromRequests(cards.requests));
-      if (replay.events.length && !runLock.current && !agent.isRunning) {
+      if ((needsSnapshot || replay.events.length) && !runLock.current && !agent.isRunning) {
         runLock.current = true;
         // Response streaming may wait for a stored message to retry. Keep journal
         // synchronization available so its durable failure disposition is visible meanwhile.
@@ -1009,18 +1027,57 @@ export function ChatScreen({
       setAnnotationSource(undefined);
   }
   const savedHistory = queue instanceof MessageOutbox ? queue.getSnapshot() : null;
-  const messages = useMemo(() => {
+  const recentMessages = useMemo(() => {
     if (!savedHistory) return agent.messages || [];
-    const acceptedMessageIds = new Set(
-      savedHistory.messageDetails.map((details) => details.messageId),
-    );
+    const acceptedMessageIds = new Set(savedHistory.unconfirmedIds);
     return mergeOutboxMessages(
       agent.messages || [],
       (savedHistory.messages as Message[]).filter((message) =>
         acceptedMessageIds.has(String(message.id)),
       ),
     );
-  }, [agent.messages, savedHistory?.messages, savedHistory?.messageDetails]);
+  }, [agent.messages, savedHistory?.messages, savedHistory?.unconfirmedIds]);
+  const messages = useMemo(
+    () => mergeChatHistory(olderMessages, recentMessages),
+    [olderMessages, recentMessages],
+  );
+  const previousRecent = useRef<Message[]>([]);
+  useEffect(() => {
+    if (!recentMessages.length) return;
+    if (olderMessages.length) {
+      const recentIds = new Set(recentMessages.map((message) => message.id));
+      const dropped = previousRecent.current.filter((message) => !recentIds.has(message.id));
+      if (dropped.length) setOlderMessages((previous) => mergeChatHistory(previous, dropped));
+    }
+    previousRecent.current = recentMessages;
+  }, [recentMessages, olderMessages.length]);
+  useEffect(() => {
+    if (!olderMessages.length && recentMessages.length)
+      setHistoryCursor(
+        recentMessages.length >= CHAT_HISTORY_PAGE_SIZE ? recentMessages[0].id : undefined,
+      );
+  }, [olderMessages.length, recentMessages]);
+  async function loadOlder() {
+    if (!historyCursor || olderLock.current) return;
+    olderLock.current = true;
+    setLoadingOlder(true);
+    setOlderError("");
+    followLatest.current = false;
+    try {
+      const page = await api.request<RecentChatPage>(
+        `/api/copilotkit/threads/${threadId}/messages?direction=backward&limit=${CHAT_HISTORY_PAGE_SIZE}&cursor=${encodeURIComponent(historyCursor)}`,
+      );
+      if (page.snapshotRequired)
+        throw new Error(t("The history changed. Reload the conversation to continue."));
+      setOlderMessages((previous) => mergeChatHistory(page.messages, previous));
+      setHistoryCursor(page.previousCursor);
+    } catch (cause) {
+      setOlderError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      olderLock.current = false;
+      setLoadingOlder(false);
+    }
+  }
   const latestPanelId = useMemo(() => latestJevPanelId(messages, threadId), [messages, threadId]);
   const latestUserIndex = useMemo(
     () => messages.reduce((last, message, index) => (message.role === "user" ? index : last), -1),
@@ -1077,10 +1134,10 @@ export function ChatScreen({
       )
     : t(error);
   function jumpToMessage(id: string) {
-    const y = messagePositions.current.get(id);
-    if (y !== undefined) {
+    const index = visible.findIndex((message) => message.id === id);
+    if (index >= 0) {
       followLatest.current = false;
-      list.current?.scrollTo({ y: Math.max(0, y - 100), animated: true });
+      list.current?.scrollToIndex({ index, viewPosition: 0.2, animated: true });
     }
   }
   const replying = busy || agent.isRunning;
@@ -1106,8 +1163,17 @@ export function ChatScreen({
   );
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView
+      <FlatList
         ref={list}
+        data={visible}
+        keyExtractor={(message) => String(message.id)}
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        onScrollToIndexFailed={({ index, averageItemLength }) => {
+          list.current?.scrollToOffset({ offset: index * averageItemLength, animated: false });
+        }}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           gap: wide ? 18 : 15,
@@ -1126,449 +1192,463 @@ export function ChatScreen({
             list.current?.scrollToEnd({ animated: false });
         }}
         keyboardShouldPersistTaps="handled"
-      >
-        <AgentStatus />
-        {richThreads && selection.id !== mainId && (
-          <Text style={[s.small, { textAlign: "center" }]}>{t("Side chat")}</Text>
-        )}
-        {showResourceLibrary && queue instanceof MessageOutbox && (
-          <View style={{ gap: 10 }}>
-            <Button
-              small
-              onPress={() => setShowResourceLibrary(false)}
-              style={{ alignSelf: "flex-end" }}
-            >
-              {t("Close files and sessions")}
-            </Button>
-            <ConversationResourceLibrary
-              threadId={threadId}
-              onAnnotateFile={annotateFile}
-              onAnnotateFrame={annotateFrame}
-            />
-          </View>
-        )}
-        {queue instanceof MessageOutbox && (
-          <ErrorNotice error={conversationDeliveryError(queue.getSnapshot().events)} />
-        )}
-        {!!historyError && (
-          <>
-            <ErrorNotice error={historyError} />
-            <Button onPress={() => setHistoryAttempt((attempt) => attempt + 1)}>
-              {t("Retry loading conversation")}
-            </Button>
-          </>
-        )}
-        {!visible.length ? (
-          <View
-            style={{
-              flexGrow: 1,
-              flexShrink: 0,
-              justifyContent: "center",
-              alignItems: "center",
-              paddingVertical: wide ? 44 : 26,
-              gap: 14,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: wide ? 26 : 24,
-                fontWeight: "500",
-                letterSpacing: -0.7,
-                color: colors.text,
-                textAlign: "center",
-                maxWidth: wide ? 580 : 350,
-              }}
-            >
-              {t("What would you like to make room for?")}
-            </Text>
-            <Text
-              style={[s.muted, { maxWidth: wide ? 500 : 320, textAlign: "center", lineHeight: 23 }]}
-            >
-              {t("A plan for your day, something to create, or a little help getting it done.")}
-            </Text>
-            <View
-              style={{
-                width: "100%",
-                maxWidth: 390,
-                marginTop: wide ? 22 : 14,
-                gap: 0,
-                flexDirection: "column",
-                flexWrap: "wrap",
-                justifyContent: "center",
-              }}
-            >
-              {[
-                {
-                  text: t("Plan my day"),
-                  detail: t("Find a little breathing room"),
-                  icon: CalendarDays,
-                  tint: colors.green,
-                  action: () => enqueue(t("Help me plan my day. Ask what you need to know.")),
-                },
-                {
-                  text: t("Create a document"),
-                  detail: t("Turn an idea into something real"),
-                  icon: FileText,
-                  tint: colors.lavender,
-                  action: () =>
-                    enqueue(t("Help me create a document. Let's choose its topic and format.")),
-                },
-                {
-                  text: t("Open my computer"),
-                  detail: t("Pick up where we left off"),
-                  icon: Monitor,
-                  tint: colors.sky,
-                  action: () => open({ type: "computer" }),
-                },
-              ].map((item) => (
-                <Pressable
-                  key={item.text}
-                  accessibilityRole="button"
-                  onPress={() => void item.action()}
-                  style={({ pressed }) => ({
-                    paddingVertical: 15,
-                    paddingHorizontal: 10,
-                    borderRadius: 0,
-                    backgroundColor: pressed ? item.tint : "transparent",
-                    borderBottomWidth: 1,
-                    borderBottomColor: colors.line,
-                    gap: 12,
-                    flexDirection: "row",
-                    alignItems: "center",
-                  })}
-                >
-                  <View
-                    style={{
-                      width: 38,
-                      height: 38,
-                      borderRadius: 13,
-                      backgroundColor: item.tint,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <item.icon size={20} strokeWidth={1.6} color={colors.muted} />
-                  </View>
-                  <View style={{ gap: 4, flexShrink: 1 }}>
-                    <Text style={[s.text, { fontWeight: "600", fontSize: 14 }]}>{item.text}</Text>
-                    <Text style={[s.small, { fontSize: 12 }]}>{item.detail}</Text>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        ) : (
-          visible.map((message) => {
-            const user = message.role === "user";
-            const details = messageDetails.get(String(message.id));
-            const messageIndex = messageIndexes.get(message.id) ?? -1;
-            const awaitingDetails = durableChat && user && !details;
-            const text = details
-              ? user
-                ? displayJevUserMessage(details.text, messages, messageIndex)
-                : details.text
-              : awaitingDetails
-                ? ""
-                : typeof message.content === "string"
-                  ? user
-                    ? displayJevUserMessage(message.content, messages, messageIndex)
-                    : message.content
-                  : "";
-            const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];
-            return (
-              <View
-                key={message.id}
-                onLayout={(event) =>
-                  messagePositions.current.set(String(message.id), event.nativeEvent.layout.y)
-                }
-                style={{
-                  alignSelf: user ? "flex-end" : "flex-start",
-                  maxWidth: user ? "85%" : "90%",
-                  width: toolCalls.some(
-                    (call) =>
-                      ![
-                        "react_to_message",
-                        "send_sticker",
-                        "send_gif",
-                        "reply_to_message",
-                        "search_gifs",
-                      ].includes(call.function.name),
-                  )
-                    ? "95%"
-                    : undefined,
-                  gap: 8,
-                }}
-              >
-                {awaitingDetails && (
-                  <Text accessibilityLiveRegion="polite" style={s.small}>
-                    {t("Loading message…")}
-                  </Text>
-                )}
-                {!!text && (
-                  <MessageBubble
-                    text={text}
-                    user={user}
-                    contextual={wide}
-                    reactions={messageReactions.get(String(message.id)) ?? []}
-                    onReact={
-                      durableChat
-                        ? (emoji) => void social.react(String(message.id), emoji)
-                        : undefined
-                    }
-                    onQuote={
-                      durableChat && typeof message.content === "string"
-                        ? () => annotateMessage(message, text)
-                        : undefined
-                    }
-                  >
-                    {details?.replyTo && (
-                      <MessageQuoteView
-                        quote={details.replyTo}
-                        name={agentWorkspace?.identity.name}
-                        onPress={() => details.replyTo && jumpToMessage(details.replyTo.messageId)}
-                      />
-                    )}
-                    {details?.stickerId ? (
-                      <CompanionSticker id={details.stickerId} />
-                    ) : user ? (
-                      <Text selectable style={[s.text, { fontSize: 16, lineHeight: 24 }]}>
-                        {text}
-                      </Text>
-                    ) : (
-                      <AssistantResponse content={text} />
-                    )}
-                  </MessageBubble>
-                )}
-                {user && message.id === receivedMessage && (
-                  <Text
-                    accessibilityLiveRegion="polite"
-                    style={[s.small, { fontSize: 10, alignSelf: "flex-end" }]}
-                  >
-                    {t("Message received")}
-                  </Text>
-                )}
-                <JevInteractionContext.Provider
-                  value={{
-                    threadId,
-                    busy:
-                      busy ||
-                      agent.isRunning ||
-                      !loaded ||
-                      !isReady ||
-                      !!outbox.pending.length ||
-                      outbox.paused ||
-                      !!saveError,
-                    latestPanelId,
-                    latestUserText,
-                    send: sendChoice,
-                    retry: (text) => sendChoice(text, true),
-                    canRetry:
-                      loaded &&
-                      isReady &&
-                      !busy &&
-                      !agent.isRunning &&
-                      !outbox.running &&
-                      !outbox.pending.length &&
-                      !saveError,
-                    confirmedSelection: (panelId) => confirmedJevSelection(messages, panelId),
-                  }}
-                >
-                  <BrowserRunContext
-                    value={{
-                      running: busy || agent.isRunning,
-                      active: (busy || agent.isRunning) && messageIndex > latestUserIndex,
-                    }}
-                  >
-                    {toolCalls.map((toolCall) => {
-                      const toolMessage = toolMessages.get(toolCall.id);
-                      const socialMessage = socialToolMessage(
-                        toolCall.function.name,
-                        toolMessage?.content,
-                      );
-                      if (socialMessage)
-                        return (
-                          <MessageBubble
-                            key={toolCall.id}
-                            text={socialMessage.text}
-                            user={false}
-                            contextual={wide}
-                            reactions={messageReactions.get(toolCall.id) ?? []}
-                            onReact={
-                              durableChat
-                                ? (emoji) => void social.react(toolCall.id, emoji)
-                                : undefined
-                            }
-                            onQuote={
-                              durableChat
-                                ? () =>
-                                    annotateMessage(
-                                      { id: toolCall.id, role: "assistant" },
-                                      socialMessage.text,
-                                    )
-                                : undefined
-                            }
-                          >
-                            {socialMessage.replyTo && (
-                              <MessageQuoteView
-                                quote={socialMessage.replyTo}
-                                name={agentWorkspace?.identity.name}
-                                onPress={() => jumpToMessage(socialMessage.replyTo!.messageId)}
-                              />
-                            )}
-                            {socialMessage.stickerId ? (
-                              <CompanionSticker
-                                id={socialMessage.stickerId}
-                                caption={socialMessage.text}
-                              />
-                            ) : socialMessage.gif ? (
-                              <CompanionGif gif={socialMessage.gif} />
-                            ) : (
-                              <AssistantResponse content={socialMessage.text} />
-                            )}
-                          </MessageBubble>
-                        );
-                      return (
-                        <View key={toolCall.id}>{renderToolCall({ toolCall, toolMessage })}</View>
-                      );
-                    })}
-                  </BrowserRunContext>
-                </JevInteractionContext.Provider>
-              </View>
-            );
-          })
-        )}
-        {!richThreads && (
-          <>
-            {(w.files.some((file) => file.parentId) ||
-              w.browsers.some((browser) => browser.status === "active") ||
-              !!agentWorkspace?.artifacts.length) && (
-              <Button
-                small
-                style={{ alignSelf: "flex-start", marginTop: 6 }}
-                onPress={() => setShowResults(!showResults)}
-              >
-                {showResults ? t("Hide recent results") : t("Recent results")}
+        ListHeaderComponent={
+          <View style={{ gap: wide ? 18 : 15 }}>
+            <AgentStatus />
+            {historyCursor && (
+              <Button small busy={loadingOlder} onPress={() => void loadOlder()}>
+                {t("Load earlier messages")}
               </Button>
             )}
-            {showResults && (
+            <ErrorNotice error={olderError} />
+            {richThreads && selection.id !== mainId && (
+              <Text style={[s.small, { textAlign: "center" }]}>{t("Side chat")}</Text>
+            )}
+            {showResourceLibrary && queue instanceof MessageOutbox && (
+              <View style={{ gap: 10 }}>
+                <Button
+                  small
+                  onPress={() => setShowResourceLibrary(false)}
+                  style={{ alignSelf: "flex-end" }}
+                >
+                  {t("Close files and sessions")}
+                </Button>
+                <ConversationResourceLibrary
+                  threadId={threadId}
+                  onAnnotateFile={annotateFile}
+                  onAnnotateFrame={annotateFrame}
+                />
+              </View>
+            )}
+            {queue instanceof MessageOutbox && (
+              <ErrorNotice error={conversationDeliveryError(queue.getSnapshot().events)} />
+            )}
+            {!!historyError && (
               <>
-                {w.files
-                  .filter((file) => file.parentId)
-                  .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                  .slice(0, 1)
-                  .map((file) => (
-                    <FileThreadCard key={file.id} file={file} />
-                  ))}
-                {w.browsers
-                  .filter((browser) => browser.status === "active")
-                  .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-                  .slice(0, 1)
-                  .map((browser) => (
-                    <BrowserThreadCard key={browser.id} browser={browser} />
-                  ))}
-                {[...(agentWorkspace?.artifacts || [])]
-                  .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                  .filter(
-                    (artifact, index, items) =>
-                      items.findIndex((item) => item.kind === artifact.kind) === index,
-                  )
-                  .slice(0, 2)
-                  .reverse()
-                  .map((artifact) => (
-                    <ArtifactCard key={artifact.id} artifact={artifact} />
-                  ))}
+                <ErrorNotice error={historyError} />
+                <Button onPress={() => setHistoryAttempt((attempt) => attempt + 1)}>
+                  {t("Retry loading conversation")}
+                </Button>
               </>
             )}
-          </>
-        )}
-        {(!richThreads || selection.id === mainId) && <BackgroundUpdates />}
-        <InteractionList
-          requests={questions}
-          onAnswered={() => {
-            void refreshAgent();
-            void syncReplay();
-          }}
-        />
-        {suggestions.map((suggestion) => (
-          <ProactivityCard
-            key={suggestion.id}
-            suggestion={suggestion}
-            onAnswered={() => {
-              void refreshAgent();
-              void syncReplay();
-            }}
-          />
-        ))}
-        {(busy || agent.isRunning) && (
-          <View
-            accessibilityLabel={t("Agent is working")}
-            style={[
-              s.row,
-              {
-                alignSelf: "flex-start",
-                gap: 7,
-                paddingHorizontal: 19,
-                paddingVertical: 18,
-                backgroundColor: colors.subtle,
-                borderRadius: 28,
-              },
-            ]}
-          >
-            {[0.4, 0.75, 0.5].map((opacity) => (
+            {!visible.length ? (
               <View
-                key={opacity}
                 style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: colors.muted,
-                  opacity,
+                  flexGrow: 1,
+                  flexShrink: 0,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  paddingVertical: wide ? 44 : 26,
+                  gap: 14,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: wide ? 26 : 24,
+                    fontWeight: "500",
+                    letterSpacing: -0.7,
+                    color: colors.text,
+                    textAlign: "center",
+                    maxWidth: wide ? 580 : 350,
+                  }}
+                >
+                  {t("What would you like to make room for?")}
+                </Text>
+                <Text
+                  style={[
+                    s.muted,
+                    { maxWidth: wide ? 500 : 320, textAlign: "center", lineHeight: 23 },
+                  ]}
+                >
+                  {t("A plan for your day, something to create, or a little help getting it done.")}
+                </Text>
+                <View
+                  style={{
+                    width: "100%",
+                    maxWidth: 390,
+                    marginTop: wide ? 22 : 14,
+                    gap: 0,
+                    flexDirection: "column",
+                    flexWrap: "wrap",
+                    justifyContent: "center",
+                  }}
+                >
+                  {[
+                    {
+                      text: t("Plan my day"),
+                      detail: t("Find a little breathing room"),
+                      icon: CalendarDays,
+                      tint: colors.green,
+                      action: () => enqueue(t("Help me plan my day. Ask what you need to know.")),
+                    },
+                    {
+                      text: t("Create a document"),
+                      detail: t("Turn an idea into something real"),
+                      icon: FileText,
+                      tint: colors.lavender,
+                      action: () =>
+                        enqueue(t("Help me create a document. Let's choose its topic and format.")),
+                    },
+                    {
+                      text: t("Open my computer"),
+                      detail: t("Pick up where we left off"),
+                      icon: Monitor,
+                      tint: colors.sky,
+                      action: () => open({ type: "computer" }),
+                    },
+                  ].map((item) => (
+                    <Pressable
+                      key={item.text}
+                      accessibilityRole="button"
+                      onPress={() => void item.action()}
+                      style={({ pressed }) => ({
+                        paddingVertical: 15,
+                        paddingHorizontal: 10,
+                        borderRadius: 0,
+                        backgroundColor: pressed ? item.tint : "transparent",
+                        borderBottomWidth: 1,
+                        borderBottomColor: colors.line,
+                        gap: 12,
+                        flexDirection: "row",
+                        alignItems: "center",
+                      })}
+                    >
+                      <View
+                        style={{
+                          width: 38,
+                          height: 38,
+                          borderRadius: 13,
+                          backgroundColor: item.tint,
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <item.icon size={20} strokeWidth={1.6} color={colors.muted} />
+                      </View>
+                      <View style={{ gap: 4, flexShrink: 1 }}>
+                        <Text style={[s.text, { fontWeight: "600", fontSize: 14 }]}>
+                          {item.text}
+                        </Text>
+                        <Text style={[s.small, { fontSize: 12 }]}>{item.detail}</Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+          </View>
+        }
+        renderItem={({ item: message }) => {
+          const user = message.role === "user";
+          const details = messageDetails.get(String(message.id));
+          const messageIndex = messageIndexes.get(message.id) ?? -1;
+          const awaitingDetails = durableChat && user && !details;
+          const text = details
+            ? user
+              ? displayJevUserMessage(details.text, messages, messageIndex)
+              : details.text
+            : awaitingDetails
+              ? ""
+              : typeof message.content === "string"
+                ? user
+                  ? displayJevUserMessage(message.content, messages, messageIndex)
+                  : message.content
+                : "";
+          const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];
+          return (
+            <View
+              key={message.id}
+              style={{
+                alignSelf: user ? "flex-end" : "flex-start",
+                maxWidth: user ? "85%" : "90%",
+                width: toolCalls.some(
+                  (call) =>
+                    ![
+                      "react_to_message",
+                      "send_sticker",
+                      "send_gif",
+                      "reply_to_message",
+                      "search_gifs",
+                    ].includes(call.function.name),
+                )
+                  ? "95%"
+                  : undefined,
+                gap: 8,
+              }}
+            >
+              {awaitingDetails && (
+                <Text accessibilityLiveRegion="polite" style={s.small}>
+                  {t("Loading message…")}
+                </Text>
+              )}
+              {!!text && (
+                <MessageBubble
+                  text={text}
+                  user={user}
+                  contextual={wide}
+                  reactions={messageReactions.get(String(message.id)) ?? []}
+                  onReact={
+                    durableChat
+                      ? (emoji) => void social.react(String(message.id), emoji)
+                      : undefined
+                  }
+                  onQuote={
+                    durableChat && typeof message.content === "string"
+                      ? () => annotateMessage(message, text)
+                      : undefined
+                  }
+                >
+                  {details?.replyTo && (
+                    <MessageQuoteView
+                      quote={details.replyTo}
+                      name={agentWorkspace?.identity.name}
+                      onPress={() => details.replyTo && jumpToMessage(details.replyTo.messageId)}
+                    />
+                  )}
+                  {details?.stickerId ? (
+                    <CompanionSticker id={details.stickerId} />
+                  ) : user ? (
+                    <Text selectable style={[s.text, { fontSize: 16, lineHeight: 24 }]}>
+                      {text}
+                    </Text>
+                  ) : (
+                    <AssistantResponse content={text} />
+                  )}
+                </MessageBubble>
+              )}
+              {user && message.id === receivedMessage && (
+                <Text
+                  accessibilityLiveRegion="polite"
+                  style={[s.small, { fontSize: 10, alignSelf: "flex-end" }]}
+                >
+                  {t("Message received")}
+                </Text>
+              )}
+              <JevInteractionContext.Provider
+                value={{
+                  threadId,
+                  busy:
+                    busy ||
+                    agent.isRunning ||
+                    !loaded ||
+                    !isReady ||
+                    !!outbox.pending.length ||
+                    outbox.paused ||
+                    !!saveError,
+                  latestPanelId,
+                  latestUserText,
+                  send: sendChoice,
+                  retry: (text) => sendChoice(text, true),
+                  canRetry:
+                    loaded &&
+                    isReady &&
+                    !busy &&
+                    !agent.isRunning &&
+                    !outbox.running &&
+                    !outbox.pending.length &&
+                    !saveError,
+                  confirmedSelection: (panelId) => confirmedJevSelection(messages, panelId),
+                }}
+              >
+                <BrowserRunContext
+                  value={{
+                    running: busy || agent.isRunning,
+                    active: (busy || agent.isRunning) && messageIndex > latestUserIndex,
+                  }}
+                >
+                  {toolCalls.map((toolCall) => {
+                    const toolMessage = toolMessages.get(toolCall.id);
+                    const socialMessage = socialToolMessage(
+                      toolCall.function.name,
+                      toolMessage?.content,
+                    );
+                    if (socialMessage)
+                      return (
+                        <MessageBubble
+                          key={toolCall.id}
+                          text={socialMessage.text}
+                          user={false}
+                          contextual={wide}
+                          reactions={messageReactions.get(toolCall.id) ?? []}
+                          onReact={
+                            durableChat
+                              ? (emoji) => void social.react(toolCall.id, emoji)
+                              : undefined
+                          }
+                          onQuote={
+                            durableChat
+                              ? () =>
+                                  annotateMessage(
+                                    { id: toolCall.id, role: "assistant" },
+                                    socialMessage.text,
+                                  )
+                              : undefined
+                          }
+                        >
+                          {socialMessage.replyTo && (
+                            <MessageQuoteView
+                              quote={socialMessage.replyTo}
+                              name={agentWorkspace?.identity.name}
+                              onPress={() => jumpToMessage(socialMessage.replyTo!.messageId)}
+                            />
+                          )}
+                          {socialMessage.stickerId ? (
+                            <CompanionSticker
+                              id={socialMessage.stickerId}
+                              caption={socialMessage.text}
+                            />
+                          ) : socialMessage.gif ? (
+                            <CompanionGif gif={socialMessage.gif} />
+                          ) : (
+                            <AssistantResponse content={socialMessage.text} />
+                          )}
+                        </MessageBubble>
+                      );
+                    return (
+                      <View key={toolCall.id}>{renderToolCall({ toolCall, toolMessage })}</View>
+                    );
+                  })}
+                </BrowserRunContext>
+              </JevInteractionContext.Provider>
+            </View>
+          );
+        }}
+        ListFooterComponent={
+          <View style={{ gap: wide ? 18 : 15 }}>
+            {!richThreads && (
+              <>
+                {(w.files.some((file) => file.parentId) ||
+                  w.browsers.some((browser) => browser.status === "active") ||
+                  !!agentWorkspace?.artifacts.length) && (
+                  <Button
+                    small
+                    style={{ alignSelf: "flex-start", marginTop: 6 }}
+                    onPress={() => setShowResults(!showResults)}
+                  >
+                    {showResults ? t("Hide recent results") : t("Recent results")}
+                  </Button>
+                )}
+                {showResults && (
+                  <>
+                    {w.files
+                      .filter((file) => file.parentId)
+                      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                      .slice(0, 1)
+                      .map((file) => (
+                        <FileThreadCard key={file.id} file={file} />
+                      ))}
+                    {w.browsers
+                      .filter((browser) => browser.status === "active")
+                      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+                      .slice(0, 1)
+                      .map((browser) => (
+                        <BrowserThreadCard key={browser.id} browser={browser} />
+                      ))}
+                    {[...(agentWorkspace?.artifacts || [])]
+                      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                      .filter(
+                        (artifact, index, items) =>
+                          items.findIndex((item) => item.kind === artifact.kind) === index,
+                      )
+                      .slice(0, 2)
+                      .reverse()
+                      .map((artifact) => (
+                        <ArtifactCard key={artifact.id} artifact={artifact} />
+                      ))}
+                  </>
+                )}
+              </>
+            )}
+            {(!richThreads || selection.id === mainId) && <BackgroundUpdates />}
+            <InteractionList
+              requests={questions}
+              onAnswered={() => {
+                void refreshAgent();
+                void syncReplay();
+              }}
+            />
+            {suggestions.map((suggestion) => (
+              <ProactivityCard
+                key={suggestion.id}
+                suggestion={suggestion}
+                onAnswered={() => {
+                  void refreshAgent();
+                  void syncReplay();
                 }}
               />
             ))}
+            {(busy || agent.isRunning) && (
+              <View
+                accessibilityLabel={t("Agent is working")}
+                style={[
+                  s.row,
+                  {
+                    alignSelf: "flex-start",
+                    gap: 7,
+                    paddingHorizontal: 19,
+                    paddingVertical: 18,
+                    backgroundColor: colors.subtle,
+                    borderRadius: 28,
+                  },
+                ]}
+              >
+                {[0.4, 0.75, 0.5].map((opacity) => (
+                  <View
+                    key={opacity}
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: colors.muted,
+                      opacity,
+                    }}
+                  />
+                ))}
+              </View>
+            )}
+            {!!modelNotice && <Text style={s.small}>{modelNotice}</Text>}
+            <ErrorNotice error={displayedError} />
+            {currentTask && (
+              <Text style={s.small}>{t("Working in the background · you can keep chatting")}</Text>
+            )}
+            {modelUsageUrl(error) && (
+              <Button
+                onPress={() => {
+                  const url = modelUsageUrl(error);
+                  if (!url) return;
+                  void Linking.openURL(url).catch(() =>
+                    setError("Could not open ChatGPT Usage settings."),
+                  );
+                }}
+              >
+                {t("View ChatGPT usage")}
+              </Button>
+            )}
+            {!!error && (
+              <Button
+                style={{ alignSelf: "flex-start" }}
+                icon={RotateCcw}
+                disabled={busy || agent.isRunning || !loaded || !isReady}
+                onPress={() => {
+                  void (
+                    interrupted
+                      ? copilotkit.connectAgent({ agent }).then(() => setError(""))
+                      : queue instanceof MessageOutbox
+                        ? enqueue("Continue the previous reply using its saved task receipts.")
+                        : run()
+                  )
+                    .then(() => {
+                      if (!queue.getSnapshot().paused) flush();
+                    })
+                    .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+                }}
+              >
+                {t(interrupted ? "Reconnect to chat" : "Retry response")}
+              </Button>
+            )}
           </View>
-        )}
-        {!!modelNotice && <Text style={s.small}>{modelNotice}</Text>}
-        <ErrorNotice error={displayedError} />
-        {currentTask && (
-          <Text style={s.small}>{t("Working in the background · you can keep chatting")}</Text>
-        )}
-        {modelUsageUrl(error) && (
-          <Button
-            onPress={() => {
-              const url = modelUsageUrl(error);
-              if (!url) return;
-              void Linking.openURL(url).catch(() =>
-                setError("Could not open ChatGPT Usage settings."),
-              );
-            }}
-          >
-            {t("View ChatGPT usage")}
-          </Button>
-        )}
-        {!!error && (
-          <Button
-            style={{ alignSelf: "flex-start" }}
-            icon={RotateCcw}
-            disabled={busy || agent.isRunning || !loaded || !isReady}
-            onPress={() => {
-              void (
-                interrupted
-                  ? copilotkit.connectAgent({ agent }).then(() => setError(""))
-                  : queue instanceof MessageOutbox
-                    ? enqueue("Continue the previous reply using its saved task receipts.")
-                    : run()
-              )
-                .then(() => {
-                  if (!queue.getSnapshot().paused) flush();
-                })
-                .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-            }}
-          >
-            {t(interrupted ? "Reconnect to chat" : "Retry response")}
-          </Button>
-        )}
-      </ScrollView>
+        }
+      />
       {annotationSource && (
         <Sheet title={t("Reply")} onClose={() => setAnnotationSource(undefined)}>
           <ConversationAnnotationComposer

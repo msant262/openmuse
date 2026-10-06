@@ -52,7 +52,7 @@ interface Options {
     targetVersion?: string;
   }>;
   connected: (owner: string) => Promise<boolean>;
-  connection?: (owner: string) => Promise<{ id: string; account: string } | null>;
+  connection?: (owner: string, account?: string) => Promise<{ id: string; account: string } | null>;
   guardEffects?: (owner: string) => Promise<void>;
   now?: () => number;
 }
@@ -152,7 +152,10 @@ export class ActionService {
         return existing;
       }
     }
-    const connection = await this.options.connection?.(owner);
+    const connection = await this.options.connection?.(
+      owner,
+      parsed.kind === "email.send" ? parsed.account : undefined,
+    );
     if (this.options.connection && !connection)
       throw new AppError("Connect Google before preparing an action", 409);
     const prepared = await this.options.prepare?.(owner, parsed, connection?.id);
@@ -264,7 +267,7 @@ export class ActionService {
     )
       throw new AppError("Google is disconnected. Reconnect before approving this action.", 409);
     if (proposal.kind !== "external.action" && decision === "approve" && this.options.connection) {
-      const connection = await this.options.connection(owner);
+      const connection = await this.options.connection(owner, proposal.connectionId);
       if (
         !connection ||
         connection.id !== proposal.connectionId ||

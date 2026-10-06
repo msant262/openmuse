@@ -41,7 +41,7 @@ export class ThreadCompaction {
   async messages(
     owner: string,
     threadId: string,
-    options: { cursor?: string; limit?: number } = {},
+    options: { cursor?: string; limit?: number; direction?: "forward" | "backward" } = {},
   ) {
     await this.resume(owner, threadId);
     const limit = z
@@ -61,6 +61,16 @@ export class ThreadCompaction {
     const position = options.cursor
       ? current.findIndex((message) => message.id === options.cursor)
       : -1;
+    if (options.direction === "backward") {
+      const end = options.cursor && position >= 0 ? position : current.length;
+      const start = Math.max(0, end - limit);
+      const messages = current.slice(start, end);
+      return {
+        messages,
+        snapshotRequired: Boolean(options.cursor && position < 0),
+        ...(start > 0 ? { previousCursor: messages[0]?.id } : {}),
+      };
+    }
     const messages = current.slice(position + 1, position + 1 + limit);
     return {
       messages,
@@ -108,5 +118,6 @@ export async function initializeThreadCompaction(query: (sql: string) => Promise
 export type ThreadMessagePage = {
   messages: Message[];
   nextCursor?: string;
+  previousCursor?: string;
   snapshotRequired: boolean;
 };

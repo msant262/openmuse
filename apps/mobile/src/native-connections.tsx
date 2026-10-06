@@ -12,7 +12,20 @@ import { useI18n } from "./i18n";
 import { Button, Chip, ErrorNotice, Sheet, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
-type GoogleAccount = { connected: boolean; account?: string; connectionId?: string };
+type ConnectedGoogleAccount = {
+  account: string;
+  connectionId: string;
+  capabilities: string[];
+  isDefault: boolean;
+};
+type GoogleAccount = {
+  connected: boolean;
+  account?: string;
+  connectionId?: string;
+  accounts?: ConnectedGoogleAccount[];
+};
+const accountFingerprint = (value: GoogleAccount) =>
+  JSON.stringify([value.connectionId, value.accounts]);
 export function NativeConnections({ query }: { query: string }) {
   const { colors, s } = useUI();
 
@@ -21,11 +34,11 @@ export function NativeConnections({ query }: { query: string }) {
   const lastConnection = useRef<string | undefined>(undefined);
   const [selected, setSelected] = useState<"gmail" | "googlecalendar">();
   const [nativeConfigured, setNativeConfigured] = useState(w.mode === "sample");
+  const [accounts, setAccounts] = useState<ConnectedGoogleAccount[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const google = w.connections.find((c) => c.id === "google");
   const connected = google?.status === "connected" || google?.status === "sample";
-  const hasAccount = connected || Boolean(google?.account);
   async function checkNative() {
     const configured =
       w.mode === "sample" ||
@@ -39,10 +52,11 @@ export function NativeConnections({ query }: { query: string }) {
     setError("");
     try {
       await checkNative();
-      if (w.mode !== "sample")
-        lastConnection.current = (
-          await api.request<GoogleAccount>("/api/google/account")
-        ).connectionId;
+      if (w.mode !== "sample") {
+        const value = await api.request<GoogleAccount>("/api/google/account");
+        lastConnection.current = accountFingerprint(value);
+        setAccounts(value.accounts ?? []);
+      }
       setSelected(toolkit);
     } catch {
       setError(t("Could not check the connection. We will try again."));
@@ -59,9 +73,12 @@ export function NativeConnections({ query }: { query: string }) {
       polling = true;
       try {
         const account = await api.request<GoogleAccount>("/api/google/account");
-        if (active && account.connectionId !== lastConnection.current) {
+        if (active && accountFingerprint(account) !== lastConnection.current) {
           await refresh();
-          if (active) lastConnection.current = account.connectionId;
+          if (active) {
+            lastConnection.current = accountFingerprint(account);
+            setAccounts(account.accounts ?? []);
+          }
         }
       } catch {
         /* A transient read does not discard the pending authorization. */
@@ -79,7 +96,7 @@ export function NativeConnections({ query }: { query: string }) {
       foreground.remove();
     };
   }, [selected, api, refresh, w.mode]);
-  async function connect(capability: "read" | "write") {
+  async function connect(capability: "read" | "write", connectionId?: string) {
     // Open during the tap: awaiting the API first lets mobile browsers block OAuth.
     const popup =
       Platform.OS === "web" && w.mode !== "sample" ? window.open("about:blank", "_blank") : null;
@@ -96,7 +113,7 @@ export function NativeConnections({ query }: { query: string }) {
       }
       const result = await api.request<{ url: string | null; connected?: boolean }>(
         "/api/google/connect",
-        { capability },
+        { capability, add: true, ...(connectionId ? { connectionId } : {}) },
       );
       if (result.url) {
         const authorization = new URL(result.url);
@@ -118,15 +135,31 @@ export function NativeConnections({ query }: { query: string }) {
       setBusy(false);
     }
   }
-  async function disconnect() {
+  async function disconnect(connectionId?: string) {
     setBusy(true);
     setError("");
     try {
-      await api.request("/api/google/disconnect", {});
+      await api.request("/api/google/disconnect", { connectionId });
+      if (w.mode !== "sample")
+        setAccounts((await api.request<GoogleAccount>("/api/google/account")).accounts ?? []);
       await refresh();
       notify(t("Google disconnected."));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function setDefault(connectionId: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await api.request("/api/google/default", { connectionId });
+      setAccounts((await api.request<GoogleAccount>("/api/google/account")).accounts ?? []);
+      await refresh();
+      notify(t("Default Google account updated."));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
@@ -237,21 +270,45 @@ export function NativeConnections({ query }: { query: string }) {
                 "Bring Gmail and Google Calendar into your conversations. Choose read access, then enable sending and editing when you need it.",
               )}
             </Text>
-            <View style={[s.row, { gap: 7, flexWrap: "wrap" }]}>
-              {google?.capabilities.map((cap) => (
-                <Chip key={cap}>{t(capabilityLabel(cap))}</Chip>
-              ))}
-            </View>
             <ErrorNotice error={error} />
-            {nativeConfigured ? (
-              <>
-                <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
-                  {t(connected ? "Switch Google account" : "Connect Google")}
-                </Button>
-                <Button busy={busy} onPress={() => void connect("write")}>
+            {accounts.map((account) => (
+              <View
+                key={account.connectionId}
+                style={{ gap: 12, padding: 16, borderRadius: 16, backgroundColor: colors.subtle }}
+              >
+                <Text style={[s.text, { fontWeight: "600" }]}>{account.account}</Text>
+                {account.isDefault && <Text style={s.small}>{t("Default account")}</Text>}
+                <View style={[s.row, { gap: 7, flexWrap: "wrap" }]}>
+                  {account.capabilities.map((cap) => (
+                    <Chip key={cap}>{t(capabilityLabel(cap))}</Chip>
+                  ))}
+                </View>
+                {!account.isDefault && (
+                  <Button small busy={busy} onPress={() => void setDefault(account.connectionId)}>
+                    {t("Use as default")}
+                  </Button>
+                )}
+                <Button
+                  small
+                  busy={busy}
+                  onPress={() => void connect("write", account.connectionId)}
+                >
                   {t("Enable sending & editing")}
                 </Button>
-              </>
+                <Button
+                  small
+                  danger
+                  busy={busy}
+                  onPress={() => void disconnect(account.connectionId)}
+                >
+                  {t("Disconnect this account")}
+                </Button>
+              </View>
+            ))}
+            {nativeConfigured ? (
+              <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
+                {t(connected ? "Add another Google account" : "Connect Google")}
+              </Button>
             ) : (
               <Text style={s.muted}>
                 {t(
@@ -259,7 +316,7 @@ export function NativeConnections({ query }: { query: string }) {
                 )}
               </Text>
             )}
-            {hasAccount && (
+            {w.mode === "sample" && connected && (
               <Button busy={busy} danger onPress={() => void disconnect()}>
                 {t("Disconnect Google")}
               </Button>

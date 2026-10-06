@@ -32,7 +32,7 @@ function storage() {
   };
   return disk;
 }
-test("stream snapshots coalesce disk writes while preserving the final long transcript", async () => {
+test("stream snapshots coalesce disk writes and persist only the recent display page", async () => {
   const disk = storage();
   let writes = 0;
   const original = disk.update;
@@ -56,7 +56,8 @@ test("stream snapshots coalesce disk writes while preserving the final long tran
   const restored = new MessageOutbox(disk, "stream", "chat");
   await restored.open();
   assert.equal((restored.getSnapshot().messages.at(-1) as { content: string }).content, "Chunk 99");
-  assert.equal(restored.getSnapshot().messages.length, 501);
+  assert.equal(restored.getSnapshot().messages.length, 50);
+  assert.equal((restored.getSnapshot().messages[0] as { id: string }).id, "old-451");
 });
 test("prior lost ACK remains uncertain after later authentication or task rejection", async () => {
   const disk = storage();
@@ -518,4 +519,49 @@ test("accepted replay hydrates clean text and canonical quotes before transcript
       replyTo,
     },
   ]);
+});
+
+test("recent journal checkpoint skips old events, retains offline drafts and does not write on idle polls", async () => {
+  const disk = storage();
+  let writes = 0;
+  const original = disk.update;
+  disk.update = (key, change) => {
+    writes++;
+    return original(key, change);
+  };
+  const outbox = new MessageOutbox(disk, "checkpoint", "chat");
+  await outbox.enqueue({ id: "offline", text: "Keep me" });
+  await outbox.saveDraft("Unfinished", ["file"]);
+  const events = Array.from({ length: 220 }, (_, i) => ({
+    id: `event-${i}`,
+    threadId: "chat",
+    seq: 10000 + i,
+    kind: "agui" as const,
+    origin: "live" as const,
+    payload: { type: "TEXT_MESSAGE_CONTENT" },
+  }));
+  await outbox.checkpointReplay({ events, nextCursor: 10219, snapshotRequired: false });
+  await outbox.saveMessages(
+    Array.from({ length: 300 }, (_, i) => ({
+      id: `server-${i}`,
+      role: "assistant",
+      content: "Saved",
+    })),
+  );
+  assert.equal(outbox.getSnapshot().cursor, 10219);
+  assert.equal(outbox.getSnapshot().events.length, 200);
+  assert.equal(outbox.getSnapshot().pending[0].id, "offline");
+  assert.equal(outbox.getSnapshot().draft.text, "Unfinished");
+  assert.equal(outbox.getSnapshot().messages.length, 50);
+  assert.ok(outbox.getSnapshot().messages.some((m) => (m as { id: string }).id === "offline"));
+  const before = writes;
+  for (let i = 0; i < 20; i++) {
+    await outbox.applyReplay({ events: [], nextCursor: 10219, snapshotRequired: false });
+    outbox.resume();
+  }
+  assert.equal(writes, before, "empty polls must not rewrite the cache");
+  const restored = new MessageOutbox(disk, "checkpoint", "chat");
+  await restored.open();
+  assert.equal(restored.getSnapshot().pending[0].id, "offline");
+  assert.equal(restored.getSnapshot().messages.length, 50);
 });

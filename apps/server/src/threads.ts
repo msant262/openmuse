@@ -19,6 +19,7 @@ import {
 } from "@copilotkit/runtime/v2";
 import { Observable, ReplaySubject } from "rxjs";
 import { z } from "zod";
+import { CHAT_HISTORY_PAGE_SIZE } from "../../../packages/domain/src/conversation-window.ts";
 import { type ConversationInbox, messageContentHash } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
@@ -674,59 +675,126 @@ export class LocalThreads extends AgentRunner {
     return new Observable((subscriber) => {
       let cancelled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const seen = new Map<string, number>();
+      let seen: { id: string; eventCount: number; runId: string; running: boolean } | undefined;
       let first = true;
+      const displayEvent = (event: BaseEvent): BaseEvent => {
+        // RUN_STARTED.input is authoritative model context, not phone history.
+        if (event.type === EventType.RUN_STARTED) {
+          const { input, ...value } = event as BaseEvent & { input?: unknown };
+          return value;
+        }
+        if (event.type === EventType.MESSAGES_SNAPSHOT)
+          return {
+            ...event,
+            messages: (event as BaseEvent & { messages: Message[] }).messages.slice(
+              -CHAT_HISTORY_PAGE_SIZE,
+            ),
+          };
+        return event;
+      };
       const poll = async () => {
         try {
           const thread = await this.get(owner, request.threadId);
-          await this.recover(owner, thread.id);
-          await this.compaction.resume(owner, thread.id);
-          const snapshot = await this.db.threadSnapshot<Run>(owner, request.threadId);
-          const runs = snapshot.runs;
+          if (first || !(await this.db.threadLeaseActive(owner, thread.id))) {
+            await this.recover(owner, thread.id);
+            if (first) await this.compaction.resume(owner, thread.id);
+          }
+          const snapshot = await this.db.threadDisplaySnapshot<Run>(
+            owner,
+            request.threadId,
+            CHAT_HISTORY_PAGE_SIZE,
+            seen,
+          );
+          const run = snapshot.run;
           if (cancelled) return;
-          if (first) {
-            const last = runs.at(-1);
-            const canonical =
-              last?.status === "running"
-                ? await this.replaySnapshot(last)
-                : { messages: last?.messages ?? [], state: last?.state ?? {} };
-            for (const event of this.canonicalEvents(
-              compactEvents(
-                runs.flatMap((run) =>
-                  run.events.flatMap((event): BaseEvent[] =>
-                    event.type === EventType.RUN_ERROR && run.runId !== expectedRunId
-                      ? [
-                          {
-                            type: EventType.CUSTOM,
-                            name: "historical_run_error",
-                            value: {
-                              runId: run.runId,
-                              origin: "history",
-                              message: (event as BaseEvent & { message: string }).message,
-                            },
-                          },
-                          {
-                            // Historical errors stay diagnostic, but must still close their
-                            // replayed RUN_STARTED before another run or canonical snapshots.
-                            type: EventType.RUN_FINISHED,
-                            threadId: run.threadId,
-                            runId: run.runId,
-                          },
-                        ]
-                      : [event],
-                  ),
-                ),
-              ),
-              canonical,
-            ))
-              subscriber.next(event);
-            for (const run of runs) seen.set(run.id, run.events.length);
-            first = false;
-          } else
-            for (const run of runs) {
-              for (const event of run.events.slice(seen.get(run.id) ?? 0)) subscriber.next(event);
-              seen.set(run.id, run.events.length);
+          if (first || (run && run.id !== seen?.id)) {
+            if (first) {
+              const diagnostic = await this.db.latestThreadError(owner, thread.id);
+              if (diagnostic && diagnostic.runId !== run?.runId) {
+                subscriber.next({
+                  type: EventType.RUN_STARTED,
+                  threadId: thread.id,
+                  runId: diagnostic.runId,
+                });
+                subscriber.next({
+                  type: EventType.CUSTOM,
+                  name: "historical_run_error",
+                  value: { ...diagnostic, origin: "history" },
+                });
+                subscriber.next({
+                  type: EventType.RUN_FINISHED,
+                  threadId: thread.id,
+                  runId: diagnostic.runId,
+                });
+              }
             }
+            if (seen?.running)
+              subscriber.next({
+                type: EventType.RUN_FINISHED,
+                threadId: thread.id,
+                runId: seen.runId,
+              });
+            const runId = run?.runId ?? `restore-${thread.id}`;
+            if (run?.status === "running") {
+              // Only the current live run needs event reconstruction. Old completed turns
+              // arrive together in a bounded snapshot and never animate through the UI.
+              const current = await this.replaySnapshot(run);
+              const events = compactEvents(run.events).map(displayEvent);
+              if (!events.some((event) => event.type === EventType.RUN_STARTED))
+                events.unshift({ type: EventType.RUN_STARTED, threadId: thread.id, runId });
+              const start = events.findIndex((event) => event.type === EventType.RUN_STARTED);
+              events.splice(start + 1, 0, {
+                type: EventType.MESSAGES_SNAPSHOT,
+                messages: run.inputMessages ?? [],
+              });
+              for (const event of this.canonicalEvents(events, {
+                ...current,
+                messages: current.messages.slice(-CHAT_HISTORY_PAGE_SIZE),
+              }))
+                subscriber.next(event);
+            } else {
+              const diagnostics = (run?.events ?? [])
+                .flatMap((event): BaseEvent[] => {
+                  if (event.type === EventType.CUSTOM) return [event];
+                  if (event.type !== EventType.RUN_ERROR) return [];
+                  return run?.runId === expectedRunId
+                    ? [event]
+                    : [
+                        {
+                          type: EventType.CUSTOM,
+                          name: "historical_run_error",
+                          value: {
+                            runId,
+                            origin: "history",
+                            message: (event as BaseEvent & { message: string }).message,
+                          },
+                        },
+                      ];
+                })
+                .slice(-32);
+              const error = diagnostics.find((event) => event.type === EventType.RUN_ERROR);
+              const events: BaseEvent[] = [
+                { type: EventType.RUN_STARTED, threadId: thread.id, runId },
+                ...diagnostics.filter((event) => event.type !== EventType.RUN_ERROR),
+                error ?? { type: EventType.RUN_FINISHED, threadId: thread.id, runId },
+              ];
+              for (const event of this.canonicalEvents(events, {
+                messages: run?.messages ?? [],
+                state: run?.state ?? {},
+              }))
+                subscriber.next(event);
+            }
+            first = false;
+          } else if (run) {
+            for (const event of run.events) subscriber.next(displayEvent(event));
+          }
+          if (run)
+            seen = {
+              id: run.id,
+              eventCount: snapshot.eventCount,
+              runId: run.runId,
+              running: run.status === "running",
+            };
           const pendingMessage =
             this.inbox &&
             (
@@ -740,11 +808,7 @@ export class LocalThreads extends AgentRunner {
                 item.threadId === request.threadId &&
                 (!expectedRunId || item.runId === expectedRunId),
             );
-          if (
-            snapshot.activeRunToken ||
-            runs.some((run) => run.status === "running") ||
-            pendingMessage
-          )
+          if (snapshot.activeRunToken || run?.status === "running" || pendingMessage)
             timer = setTimeout(() => void poll(), 150);
           else subscriber.complete();
         } catch (cause) {
@@ -879,6 +943,9 @@ export class LocalThreads extends AgentRunner {
               .max(100)
               .parse(url.searchParams.get("limit") ?? 50),
             cursor: url.searchParams.get("cursor") ?? undefined,
+            direction: z
+              .enum(["forward", "backward"])
+              .parse(url.searchParams.get("direction") ?? "forward"),
           }),
         );
       }

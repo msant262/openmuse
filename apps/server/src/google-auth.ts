@@ -26,6 +26,8 @@ interface OAuthState {
   verifier: string;
   scopes: string[];
   generation: string;
+  add?: boolean;
+  account?: string;
 }
 interface Credential {
   id: string;
@@ -44,8 +46,49 @@ export class GoogleAuth {
       this.config.googleClientId && this.config.googleClientSecret && this.config.encryptionKey,
     );
   }
-  async tokens(owner: string): Promise<Tokens | null> {
-    return this.decodeTokens(await this.db.get<Credential>(owner, "credentials", "google"));
+  private async storedAccounts(owner: string) {
+    const rows = await this.db.list<Credential>(owner, "credentials");
+    return rows
+      .filter((row) => row.id === "google" || /^google:[a-f0-9]{64}$/.test(row.id))
+      .flatMap((row) => {
+        const tokens = this.decodeTokens(row);
+        return tokens ? [{ row, tokens }] : [];
+      });
+  }
+  async tokens(owner: string, account?: string): Promise<Tokens | null> {
+    const accounts = await this.storedAccounts(owner);
+    if (account)
+      return (
+        accounts.find(
+          (a) =>
+            a.tokens.connectionId === account ||
+            a.tokens.account.toLowerCase() === account.toLowerCase(),
+        )?.tokens ?? null
+      );
+    const preferred = await this.db.get<{ account: string }>(owner, "settings", "google-default");
+    return (
+      accounts.find((a) => a.tokens.account.toLowerCase() === preferred?.account)?.tokens ??
+      accounts.find((a) => a.row.id === "google")?.tokens ??
+      accounts[0]?.tokens ??
+      null
+    );
+  }
+  async accounts(owner: string) {
+    const preferred = await this.tokens(owner);
+    return (await this.storedAccounts(owner)).map(({ tokens }) => ({
+      connectionId: tokens.connectionId,
+      account: tokens.account,
+      capabilities: tokens.scopes,
+      isDefault: tokens.connectionId === preferred?.connectionId,
+    }));
+  }
+  async setDefault(owner: string, connectionId: string) {
+    const tokens = await this.tokens(owner, connectionId);
+    if (!tokens) throw new AppError("Google account is disconnected or changed", 409);
+    await this.db.put(owner, "settings", {
+      id: "google-default",
+      account: tokens.account.toLowerCase(),
+    });
   }
   private decodeTokens(stored: Credential | null): Tokens | null {
     if (!stored?.secret) return null;
@@ -53,22 +96,54 @@ export class GoogleAuth {
       throw new AppError("TOKEN_ENCRYPTION_KEY is not configured", 503);
     return JSON.parse(decryptSecret(stored.secret, this.config.encryptionKey));
   }
-  private async save(owner: string, tokens: Tokens, generation: string) {
+  private async save(owner: string, tokens: Tokens, state: OAuthState) {
     if (!this.config.encryptionKey)
       throw new AppError("TOKEN_ENCRYPTION_KEY is not configured", 503);
-    const saved = await this.db.compareAndSwap<Credential>(
-      owner,
-      "credentials",
-      "google",
-      { generation },
-      {
-        generation: randomUUID(),
-        connectionId: tokens.connectionId,
-        secret: encryptSecret(JSON.stringify(tokens), this.config.encryptionKey),
-      },
+    const stored = await this.storedAccounts(owner);
+    const existing = stored.find(
+      (a) => a.tokens.account.toLowerCase() === tokens.account.toLowerCase(),
     );
-    if (!saved)
-      throw new AppError("Google sign-in changed or was disconnected. Connect again.", 409);
+    const id =
+      existing?.row.id ??
+      (state.add && stored.length
+        ? `google:${createHash("sha256").update(tokens.account.toLowerCase()).digest("hex")}`
+        : "google");
+    const value = {
+      generation: randomUUID(),
+      connectionId: tokens.connectionId,
+      secret: encryptSecret(JSON.stringify(tokens), this.config.encryptionKey),
+    };
+    if (id === "google") {
+      const saved = await this.db.compareAndSwap<Credential>(
+        owner,
+        "credentials",
+        id,
+        { generation: state.generation },
+        value,
+      );
+      if (saved) return;
+    } else {
+      const previous = await this.db.get<Credential>(owner, "credentials", id);
+      const receiptId = `google-signin:${state.id}`;
+      const result = await this.db.durableMutation(owner, receiptId, receiptId, [
+        {
+          kind: "credentials",
+          id: "google",
+          expected: { generation: state.generation },
+          mode: "merge",
+          value: { generation: randomUUID() },
+        },
+        {
+          kind: "credentials",
+          id,
+          ...(previous ? { expected: { ...previous } } : {}),
+          mode: previous ? "merge" : "insert",
+          value: { id, ...value },
+        },
+      ]);
+      if (result.status === "applied") return;
+    }
+    throw new AppError("Google sign-in changed or was disconnected. Connect again.", 409);
   }
   private async rotateGeneration(owner: string, disconnect = false) {
     const generation = randomUUID();
@@ -97,7 +172,11 @@ export class GoogleAuth {
       }
     }
   }
-  async connect(owner: string, write: boolean) {
+  async connect(
+    owner: string,
+    write: boolean,
+    options: { add?: boolean; connectionId?: string } = {},
+  ) {
     if (!this.configured())
       throw new AppError(
         "Google sign-in is not enabled on this server yet. The administrator needs to finish the app setup.",
@@ -106,8 +185,11 @@ export class GoogleAuth {
       );
     const state = randomBytes(32).toString("base64url"),
       verifier = randomBytes(48).toString("base64url");
+    const selected = options.connectionId ? await this.tokens(owner, options.connectionId) : null;
+    if (options.connectionId && !selected)
+      throw new AppError("Google account is disconnected or changed", 409);
     const { generation, previous } = await this.rotateGeneration(owner);
-    const existing = this.decodeTokens(previous);
+    const existing = selected ?? (options.add ? null : this.decodeTokens(previous));
     const scopes = Array.from(
       new Set([
         "https://www.googleapis.com/auth/gmail.readonly",
@@ -129,6 +211,8 @@ export class GoogleAuth {
       verifier,
       scopes,
       generation,
+      add: options.add || Boolean(selected),
+      account: selected?.account,
     });
     const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     url.search = new URLSearchParams({
@@ -177,7 +261,9 @@ export class GoogleAuth {
     if (!profile.ok)
       throw new AppError("Google did not grant Gmail read access. Connect again.", 403);
     const { emailAddress } = z.object({ emailAddress: z.email() }).parse(await profile.json());
-    const previous = await this.tokens(state.owner);
+    if (state.account && state.account.toLowerCase() !== emailAddress.toLowerCase())
+      throw new AppError("Choose the same Google account to update its permissions.", 409);
+    const previous = await this.tokens(state.owner, emailAddress);
     await this.save(
       state.owner,
       {
@@ -190,12 +276,12 @@ export class GoogleAuth {
         scopes: token.scope?.split(" ") ?? state.scopes,
         account: emailAddress,
       },
-      state.generation,
+      state,
     );
   }
   async accessToken(owner: string, expectedConnectionId?: string): Promise<string> {
-    const tokens = await this.tokens(owner);
-    if (!tokens) throw new AppError("Google is disconnected", 409);
+    const tokens = await this.tokens(owner, expectedConnectionId);
+    if (!tokens) throw new AppError("Google account or connection changed or is disconnected", 409);
     if (expectedConnectionId && tokens.connectionId !== expectedConnectionId)
       throw new AppError("Google account or connection changed. Prepare a new action.", 409);
     if (tokens.expiresAt > Date.now() + 60000) return tokens.accessToken;
@@ -253,9 +339,45 @@ export class GoogleAuth {
       throw new AppError("Google account changed or was disconnected during refresh", 409);
     return token.access_token;
   }
-  async disconnect(owner: string) {
-    const { previous } = await this.rotateGeneration(owner, true);
-    const tokens = this.decodeTokens(previous);
+  async disconnect(owner: string, connectionId?: string) {
+    const selected = connectionId
+      ? (await this.storedAccounts(owner)).find((a) => a.tokens.connectionId === connectionId)
+      : undefined;
+    if (connectionId && !selected)
+      throw new AppError("Google account is disconnected or changed", 409);
+    let tokens: Tokens | null;
+    if (!selected || selected.row.id === "google") {
+      const { previous } = await this.rotateGeneration(owner, true);
+      tokens = this.decodeTokens(previous);
+    } else {
+      for (;;) {
+        const root = await this.db.get<Credential>(owner, "credentials", "google");
+        const current = await this.db.get<Credential>(owner, "credentials", selected.row.id);
+        if (!root || !current || current.connectionId !== connectionId)
+          throw new AppError("Google account is disconnected or changed", 409);
+        const receiptId = `google-disconnect:${randomUUID()}`;
+        const result = await this.db.durableMutation(owner, receiptId, receiptId, [
+          {
+            kind: "credentials",
+            id: "google",
+            expected: { ...root },
+            mode: "merge",
+            value: { generation: randomUUID() },
+          },
+          {
+            kind: "credentials",
+            id: current.id,
+            expected: { ...current },
+            mode: "merge",
+            value: { generation: randomUUID(), connectionId: null, secret: null },
+          },
+        ]);
+        if (result.status === "applied") {
+          tokens = this.decodeTokens(current);
+          break;
+        }
+      }
+    }
     if (tokens) {
       const response = await fetch("https://oauth2.googleapis.com/revoke", {
         method: "POST",

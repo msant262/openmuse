@@ -1551,11 +1551,38 @@ export async function executeModelTask(
       },
     ),
     tool(
+      "search_mail",
+      "Search a mailbox; account is a connected email address or ID, otherwise uses the default.",
+      z.object({ query: z.string().max(500), account: z.string().min(1).max(320).optional() }),
+      async ({ query, account }) => ({
+        account: (await service.workspace.connection(owner, account))?.account,
+        matches: (await service.workspace.searchMail(owner, query, account)).slice(0, 20),
+      }),
+    ),
+    tool(
+      "list_google_accounts",
+      "List connected Google account email addresses, IDs and default.",
+      z.object({}),
+      async () => {
+        const w = await service.workspace.snapshot(owner, undefined, "essential", signal);
+        return {
+          accounts: w.connections
+            .filter((c) => c.provider === "google" && c.account)
+            .map((c) => ({
+              account: c.account,
+              connectionId: c.connectionId,
+              isDefault: c.isDefault,
+              status: c.status,
+            })),
+        };
+      },
+    ),
+    tool(
       "read_mail_thread",
       "Read the complete selected email thread",
-      z.object({ threadId: z.string() }),
-      async ({ threadId }) => {
-        const mail = await service.workspace.thread(owner, threadId);
+      z.object({ threadId: z.string(), account: z.string().min(1).max(320).optional() }),
+      async ({ threadId, account }) => {
+        const mail = await service.workspace.thread(owner, threadId, account);
         task = await ctx.checkpoint({
           evidence: [
             ...task.evidence,
@@ -1571,10 +1598,14 @@ export async function executeModelTask(
     tool(
       "import_pdf",
       "Import a selected email PDF attachment",
-      z.object({ reference: z.string() }),
+      z.object({ reference: z.string(), account: z.string().min(1).max(320).optional() }),
       async (args) =>
         cached("import_pdf", args, async () => {
-          const file = await service.workspace.importAttachment(owner, args.reference);
+          const file = await service.workspace.importAttachment(
+            owner,
+            args.reference,
+            args.account,
+          );
           return { id: file.id, name: file.name, fields: file.fields };
         }),
     ),
@@ -1761,10 +1792,16 @@ export async function executeModelTask(
     tool(
       "prepare_email",
       "Send the exact email under the configured native action policy",
-      emailDraftSchema,
-      async (data) => {
+      emailDraftSchema.extend({ account: z.string().min(1).max(320).optional() }),
+      async ({ account, ...data }) => {
         const key = taskOperationId() ?? randomUUID();
-        const action = await service.prepare(owner, task, { kind: "email.send", data }, key, ctx);
+        const action = await service.prepare(
+          owner,
+          task,
+          { kind: "email.send", data, account },
+          key,
+          ctx,
+        );
         if (action.status === "succeeded") {
           task = await ctx.checkpoint({
             state: { ...task.state, approvalResult: action.result },

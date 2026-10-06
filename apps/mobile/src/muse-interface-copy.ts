@@ -1,4 +1,12 @@
 export const museInterfacePTBR: Record<string, string> = {
+  "Add another Google account": "Adicionar outra conta Google",
+  "Default account": "Conta padrão",
+  "Use as default": "Usar como padrão",
+  "Disconnect this account": "Desconectar esta conta",
+  "Default Google account updated.": "Conta Google padrão atualizada.",
+  "Load earlier messages": "Carregar mensagens anteriores",
+  "The history changed. Reload the conversation to continue.":
+    "O histórico mudou. Recarregue a conversa para continuar.",
   "Delivery checks": "Verificações da entrega",
   "Other references": "Outras referências",
   "Consulted by the agent": "Consultada pelo agente",

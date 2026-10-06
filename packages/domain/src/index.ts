@@ -135,7 +135,11 @@ export const eventDraftSchema = z
     }
   });
 export const proposalSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("email.send"), data: emailDraftSchema }),
+  z.object({
+    kind: z.literal("email.send"),
+    data: emailDraftSchema,
+    account: z.string().min(1).max(320).optional(),
+  }),
   z.object({ kind: z.literal("calendar.create"), data: eventDraftSchema }),
   z.object({
     kind: z.literal("calendar.update"),
@@ -207,6 +211,9 @@ export interface ActivityEntry {
 }
 export interface Connection {
   id: string;
+  provider?: "google";
+  connectionId?: string;
+  isDefault?: boolean;
   name: string;
   status: "connected" | "disconnected" | "sample" | "unconfigured" | "unavailable";
   account?: string;

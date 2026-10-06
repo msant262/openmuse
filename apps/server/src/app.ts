@@ -112,7 +112,7 @@ export async function createApp(
       workspace.execute(owner, input, connectionId, targetVersion, beforeDispatch),
     prepare: (owner, input, connectionId) => workspace.prepare(owner, input, connectionId),
     connected: (owner) => workspace.connected(owner),
-    connection: (owner) => workspace.connection(owner),
+    connection: (owner, account) => workspace.connection(owner, account),
     guardEffects: async (owner) => {
       const state = await runtimePause.get(owner);
       if (state.paused) throw new RuntimePausedError(state);
@@ -802,6 +802,7 @@ export async function createApp(
           .int()
           .min(0)
           .parse(c.req.query("cursor") ?? 0),
+        { latest: c.req.query("latest") === "true", summary: c.req.query("summary") === "true" },
       ),
     ),
   );
@@ -830,7 +831,13 @@ export async function createApp(
     return c.json(await workspace.events(c.get("owner"), query));
   });
   app.get("/api/mail/threads/:id", async (c) =>
-    c.json(await workspace.thread(c.get("owner"), c.req.param("id"))),
+    c.json(
+      await workspace.thread(
+        c.get("owner"),
+        c.req.param("id"),
+        z.string().min(1).max(320).optional().parse(c.req.query("account")),
+      ),
+    ),
   );
   app.get("/api/action-log", async (c) => {
     const query = z
@@ -1026,12 +1033,23 @@ export async function createApp(
     const tokens = await google.tokens(c.get("owner"));
     return c.json(
       tokens
-        ? { connected: true, account: tokens.account, connectionId: tokens.connectionId }
-        : { connected: false },
+        ? {
+            connected: true,
+            account: tokens.account,
+            connectionId: tokens.connectionId,
+            accounts: await google.accounts(c.get("owner")),
+          }
+        : { connected: false, accounts: [] },
     );
   });
   app.post("/api/google/connect", async (c) => {
-    const body = z.object({ capability: z.enum(["read", "write"]) }).parse(await c.req.json());
+    const body = z
+      .object({
+        capability: z.enum(["read", "write"]),
+        add: z.boolean().optional(),
+        connectionId: z.string().min(1).optional(),
+      })
+      .parse(await c.req.json());
     if (config.mode === "sample") {
       await db.put(c.get("owner"), "settings", {
         id: "google",
@@ -1040,12 +1058,20 @@ export async function createApp(
       });
       return c.json({ url: null, connected: true });
     }
-    return c.json(await google.connect(c.get("owner"), body.capability === "write"));
+    return c.json(await google.connect(c.get("owner"), body.capability === "write", body));
   });
   app.post("/api/google/disconnect", async (c) => {
+    const body = z.object({ connectionId: z.string().min(1).optional() }).parse(await c.req.json());
     if (config.mode === "sample")
       await db.put(c.get("owner"), "settings", { id: "google", enabled: false });
-    else await google.disconnect(c.get("owner"));
+    else await google.disconnect(c.get("owner"), body.connectionId);
+    return c.json({ ok: true });
+  });
+  app.post("/api/google/default", async (c) => {
+    const { connectionId } = z
+      .object({ connectionId: z.string().min(1) })
+      .parse(await c.req.json());
+    if (config.mode !== "sample") await google.setDefault(c.get("owner"), connectionId);
     return c.json({ ok: true });
   });
   app.post("/api/browsers", async (c) => {

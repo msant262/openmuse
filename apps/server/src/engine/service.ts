@@ -1528,13 +1528,25 @@ export class AgentService {
   ) {
     await context.guard();
     await validateTaskEffect();
-    const connection = await this.workspace.connection(owner);
-    if (connection?.id !== task.state.connectionId)
+    const requested = input.kind === "email.send" ? input.account : undefined;
+    const connection = await this.workspace.connection(
+      owner,
+      input.kind === "email.send"
+        ? (requested ??
+            (typeof task.state.connectionId === "string" ? task.state.connectionId : undefined))
+        : undefined,
+    );
+    if (!connection || (!requested && connection.id !== task.state.connectionId))
       throw new AppError(
         "Google connection changed during this task. Start a new task using the current account.",
         409,
       );
-    const proposal = await this.actions.propose(owner, input, `${task.id}:${key}`, task.id);
+    const proposal = await this.actions.propose(
+      owner,
+      input.kind === "email.send" ? { ...input, account: connection.id } : input,
+      `${task.id}:${key}`,
+      task.id,
+    );
     if (proposal.status === "succeeded") return proposal;
     if (proposal.status !== "awaiting_review" && proposal.status !== "executing")
       throw new AppError(

@@ -7,6 +7,10 @@ import {
   stickerIdSchema,
 } from "../../../packages/domain/src/conversation-social";
 import {
+  CHAT_EVENT_CACHE_SIZE,
+  CHAT_HISTORY_PAGE_SIZE,
+} from "../../../packages/domain/src/conversation-window";
+import {
   type AcceptedMessageInput,
   acceptedMessageSchema,
   type ConversationAcceptance,
@@ -36,6 +40,7 @@ type Persisted = {
     replyTo?: MessageQuote;
   };
   messages: unknown[];
+  unconfirmedIds: string[];
   messageDetails: ConversationSocialState["messages"];
 };
 type Snapshot = Persisted & { loaded: boolean; running: boolean; paused: boolean; error: string };
@@ -73,6 +78,7 @@ const empty = (): Snapshot => ({
   events: [],
   draft: { text: "", attachmentIds: [], annotations: [], revision: 0 },
   messages: [],
+  unconfirmedIds: [],
   messageDetails: [],
   loaded: false,
   running: false,
@@ -105,9 +111,31 @@ const savedOutboxSchema = z
       replyTo: messageQuoteSchema.optional(),
     }),
     messages: z.array(z.unknown()),
+    unconfirmedIds: z.array(z.string()).default([]),
     messageDetails: z.array(messageDetailsSchema.strict()).default([]),
   })
   .strict();
+function boundedPersisted(parsed: Persisted): Persisted {
+  const unconfirmedIds = Array.from(
+    new Set([...parsed.unconfirmedIds, ...parsed.pending.map((message) => message.id)]),
+  );
+  const local = new Set(unconfirmedIds);
+  const messages = mergeOutboxMessages(
+    parsed.messages.slice(-CHAT_HISTORY_PAGE_SIZE),
+    parsed.messages.filter((message) => local.has(messageId(message) ?? "")),
+  );
+  const ids = new Set(
+    parsed.messageDetails.slice(-CHAT_EVENT_CACHE_SIZE).map((message) => message.messageId),
+  );
+  for (const id of local) ids.add(id);
+  return {
+    ...parsed,
+    unconfirmedIds,
+    messages,
+    events: parsed.events.slice(-CHAT_EVENT_CACHE_SIZE),
+    messageDetails: parsed.messageDetails.filter((message) => ids.has(message.messageId)),
+  };
+}
 export class MessageOutbox {
   private state = empty();
   private listeners = new Set<() => void>();
@@ -137,16 +165,18 @@ export class MessageOutbox {
       throw new Error(
         "Saved messages belong to a different conversation; preserve the data and retry",
       );
-    const { version, pending, cursor, events, draft, messages, messageDetails } = parsed;
-    return {
+    const { version, pending, cursor, events, draft, messages, unconfirmedIds, messageDetails } =
+      parsed;
+    return boundedPersisted({
       version,
       pending,
       cursor,
       events,
       draft: { ...draft, annotations: draft.annotations ?? [] },
       messages,
+      unconfirmedIds,
       messageDetails,
-    };
+    });
   }
   open() {
     this.opening ??= this.storage
@@ -171,7 +201,7 @@ export class MessageOutbox {
       const raw = await this.storage.update(this.key, (saved) => {
         const current = { ...this.state, ...this.decode(saved) };
         const { loaded, running, paused, error, ...record } = { ...current, ...change(current) };
-        return JSON.stringify(record);
+        return JSON.stringify(boundedPersisted(record));
       });
       const record = this.decode(raw);
       this.update({ ...record, error: "" });
@@ -217,6 +247,7 @@ export class MessageOutbox {
       }
       return {
         pending: [...previous.pending, value],
+        unconfirmedIds: [...previous.unconfirmedIds, value.id],
         messages: mergeOutboxMessages(previous.messages, [
           { id: value.id, role: "user", content: value.text },
         ]),
@@ -260,6 +291,7 @@ export class MessageOutbox {
       removed = true;
       return {
         pending: previous.pending.filter((message) => message.id !== id),
+        unconfirmedIds: previous.unconfirmedIds.filter((value) => value !== id),
         messages: previous.messages.filter((message) => messageId(message) !== id),
         messageDetails: previous.messageDetails.filter((message) => message.messageId !== id),
       };
@@ -272,6 +304,16 @@ export class MessageOutbox {
     annotations?: AcceptedMessageInput["annotations"],
     replyTo?: MessageQuote,
   ) {
+    if (
+      this.state.loaded &&
+      this.state.draft.text === text &&
+      JSON.stringify([
+        this.state.draft.attachmentIds,
+        this.state.draft.annotations,
+        this.state.draft.replyTo,
+      ]) === JSON.stringify([attachmentIds, annotations ?? this.state.draft.annotations, replyTo])
+    )
+      return;
     await this.commit((previous) => ({
       draft: {
         text,
@@ -289,16 +331,20 @@ export class MessageOutbox {
       // Streaming snapshots supersede each other. Drain the latest snapshot
       // rather than queueing a complete disk read/write for every token.
       while (this.pendingMessages) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
         const latest = this.pendingMessages;
         this.pendingMessages = undefined;
         await this.commit((previous) => {
-          const accepted = new Set(previous.messageDetails.map((details) => details.messageId));
+          const confirmed = new Set(latest.map(messageId));
+          const unconfirmedIds = previous.unconfirmedIds.filter((id) => !confirmed.has(id));
+          const unconfirmed = new Set(unconfirmedIds);
           return {
+            unconfirmedIds,
             messages: mergeOutboxMessages(
-              latest,
+              latest.slice(-CHAT_HISTORY_PAGE_SIZE),
               previous.messages.filter((message) => {
                 const id = messageId(message);
-                return id !== undefined && accepted.has(id);
+                return id !== undefined && unconfirmed.has(id);
               }),
             ),
           };
@@ -310,6 +356,13 @@ export class MessageOutbox {
     return this.savingMessages;
   }
   async saveMessageDetails(messages: ConversationSocialState["messages"]) {
+    const wanted = new Map(this.state.messageDetails.map((item) => [item.messageId, item]));
+    for (const message of messages) wanted.set(message.messageId, message);
+    const next = boundedPersisted({
+      ...this.state,
+      messageDetails: [...wanted.values()],
+    }).messageDetails;
+    if (JSON.stringify(next) === JSON.stringify(this.state.messageDetails)) return;
     await this.commit((previous) => {
       const details = new Map(previous.messageDetails.map((item) => [item.messageId, item]));
       for (const message of messages) details.set(message.messageId, message);
@@ -317,6 +370,12 @@ export class MessageOutbox {
     });
   }
   async applyReplay(replay: ConversationReplay) {
+    if (
+      !replay.snapshotRequired &&
+      !replay.events.length &&
+      replay.nextCursor === this.state.cursor
+    )
+      return;
     await this.commit((previous) => {
       const records = new Map(
         (replay.snapshotRequired ? [] : previous.events).map((event) => [event.id, event]),
@@ -334,14 +393,34 @@ export class MessageOutbox {
         const parsed = messageDetailsSchema.safeParse(event.payload);
         if (parsed.success) details.set(parsed.data.messageId, parsed.data);
       }
-      return { events, cursor, messageDetails: [...details.values()] };
+      return {
+        events: events.slice(-CHAT_EVENT_CACHE_SIZE),
+        cursor,
+        messageDetails: [...details.values()],
+      };
+    });
+  }
+  /** An explicit server checkpoint follows a recent canonical transcript restore. */
+  async checkpointReplay(replay: ConversationReplay) {
+    await this.commit((previous) => {
+      const details = new Map(previous.messageDetails.map((item) => [item.messageId, item]));
+      for (const event of replay.events)
+        if (event.kind === "accepted") {
+          const parsed = messageDetailsSchema.safeParse(event.payload);
+          if (parsed.success) details.set(parsed.data.messageId, parsed.data);
+        }
+      return {
+        cursor: replay.nextCursor,
+        events: replay.events.slice(-CHAT_EVENT_CACHE_SIZE),
+        messageDetails: [...details.values()],
+      };
     });
   }
   pause() {
     this.update({ paused: true });
   }
   resume() {
-    this.update({ paused: false });
+    if (this.state.paused) this.update({ paused: false });
   }
   async flush(send: (message: OutboxMessage) => Promise<ConversationAcceptance | void>) {
     await this.open();

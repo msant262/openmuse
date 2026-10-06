@@ -662,7 +662,7 @@ test("long streaming histories persist events without repeated snapshots and ren
       }
     })();
     await reader.runAgent(input("long-chat", "replay"));
-    assert.deepEqual(reader.messages, saved.messages);
+    assert.deepEqual(reader.messages, saved.messages.slice(-50));
     assert.deepEqual(reader.state, saved.state);
     t.diagnostic(
       `${Buffer.byteLength(JSON.stringify(oldMessages))} history bytes; ${committed} durable events; ${snapshots} final snapshot; ${renewals.length} successful renewals`,
@@ -960,7 +960,7 @@ test("active reconnect drains the durable tail when completion follows its captu
     });
     const finished = collect(stream);
     await partialCommitted;
-    const original: Store["threadSnapshot"] = db.threadSnapshot.bind(db);
+    const original: Store["threadDisplaySnapshot"] = db.threadDisplaySnapshot.bind(db);
     let snapshotReads = 0;
     let captured!: () => void;
     let release!: () => void;
@@ -970,15 +970,18 @@ test("active reconnect drains the durable tail when completion follows its captu
     const releaseSnapshot = new Promise<void>((resolve) => {
       release = resolve;
     });
-    t.mock.method(db, "threadSnapshot", async <T>(owner: string, id: string) => {
-      const snapshot = await original<T>(owner, id);
-      // First read checks recovery; the second is the snapshot connect will emit.
-      if (++snapshotReads === 2) {
-        captured();
-        await releaseSnapshot;
-      }
-      return snapshot;
-    });
+    t.mock.method(
+      db,
+      "threadDisplaySnapshot",
+      async <T>(...args: Parameters<Store["threadDisplaySnapshot"]>) => {
+        const snapshot = await original<T>(...args);
+        if (++snapshotReads === 1) {
+          captured();
+          await releaseSnapshot;
+        }
+        return snapshot;
+      },
+    );
     const reconnect = collect(
       threads.withOwner("wife", () => threads.connect({ threadId: "tail" })),
     );
@@ -1183,7 +1186,17 @@ test("expired run leases recover partial receipts and cannot permanently lock a 
     const replay = await collect(
       threads.withOwner("wife", () => threads.connect({ threadId: "interrupted" })),
     );
-    assert.ok(replay.some((event) => event.type === EventType.TEXT_MESSAGE_END));
+    assert.ok(
+      replay.some(
+        (event) =>
+          event.type === EventType.MESSAGES_SNAPSHOT &&
+          JSON.stringify(event).includes("Saved fragment"),
+      ),
+    );
+    assert.equal(
+      replay.some((event) => event.type === EventType.TEXT_MESSAGE_CONTENT),
+      false,
+    );
     assert.equal(
       (
         await collect(
@@ -1592,7 +1605,9 @@ test("1,000 settled turns project cumulative inputs once, preserve chronological
     }
     const reader = new Replay();
     await reader.runAgent(input("scale"));
-    assert.deepEqual(reader.messages, messages);
+    assert.deepEqual(reader.messages, messages.slice(-50));
+    assert.ok(events.length < 10, "settled history restores as one page, without old text events");
+    assert.deepEqual((await threads.history("wife", "scale")).messages, messages);
     assert.deepEqual(reader.state, { ready: true });
     assert.equal((await db.searchThreads("wife", "History turn 0:", 20, false)).length, 1);
     assert.equal((await db.searchThreads("wife", "History turn 999:", 20, false)).length, 1);

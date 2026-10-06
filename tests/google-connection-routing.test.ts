@@ -110,7 +110,7 @@ test("Google app configuration never connects an account; account receipt requir
   assert.equal((await server.app.request("/api/google/account")).status, 401);
   const response = await server.app.request("/api/google/account", { headers: server.headers });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { connected: false });
+  assert.deepEqual(await response.json(), { connected: false, accounts: [] });
   assert.equal(
     (await server.db.get<{ secret?: string }>("local-user", "credentials", "google"))?.secret ??
       null,

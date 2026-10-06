@@ -313,10 +313,22 @@ export class Store {
       values: AgentMemory[];
     };
   }
-  async conversationEvents(owner: string, threadId: string, cursor: number, limit = 500) {
+  async conversationEvents(
+    owner: string,
+    threadId: string,
+    cursor: number,
+    limit = 500,
+    options: { latest?: boolean; summary?: boolean } = {},
+  ) {
+    const projected = options.summary
+      ? `CASE WHEN data->>'kind'='agui' THEN jsonb_set(data,'{payload}',
+          jsonb_build_object('type',data->'payload'->'type') || CASE
+          WHEN data->'payload'->>'name'='conversation_delivery_error' THEN jsonb_build_object('name','conversation_delivery_error','value',jsonb_build_object('message',data->'payload'->'value'->'message'))
+          ELSE '{}'::jsonb END) ELSE data END`
+      : "data";
     const result = await this.db.query(
       `SELECT jsonb_build_object(
-      'events',COALESCE((SELECT jsonb_agg(data ORDER BY seq) FROM (SELECT seq,data FROM conversation_events WHERE owner=$1 AND thread_id=$2 AND seq>$3 ORDER BY seq LIMIT $4) tail),'[]'::jsonb),
+      'events',COALESCE((SELECT jsonb_agg(data ORDER BY seq) FROM (SELECT seq,${projected} AS data FROM conversation_events WHERE owner=$1 AND thread_id=$2 ${options.latest ? "AND $3::bigint >= 0" : "AND seq>$3"} ORDER BY seq ${options.latest ? "DESC" : "ASC"} LIMIT $4) tail),'[]'::jsonb),
       'head',COALESCE((SELECT max(seq) FROM conversation_events WHERE owner=$1 AND thread_id=$2),0)
     ) AS data`,
       [owner, threadId, cursor, limit],
@@ -950,12 +962,64 @@ export class Store {
     );
     return result.rows[0]?.data as unknown as T | undefined;
   }
+  /** UI reconnects read one run and a recent display page, never all historic run events. */
+  async threadDisplaySnapshot<T>(
+    owner: string,
+    threadId: string,
+    limit: number,
+    after?: { id: string; eventCount: number },
+  ): Promise<{ run?: T; eventCount: number; activeRunToken: string | null }> {
+    const result = await this.db.query(
+      `WITH latest AS (
+        SELECT data FROM records WHERE owner=$1 AND kind='thread-runs' AND data->>'threadId'=$2
+          ORDER BY data->>'createdAt' DESC,id DESC LIMIT 1
+      ), recent AS (
+        SELECT position,data FROM thread_messages WHERE owner=$1 AND thread_id=$2 ORDER BY position DESC LIMIT $3
+      ) SELECT jsonb_build_object(
+        'run',(SELECT (data - 'messages' - 'inputMessages' - 'events') || jsonb_build_object(
+          'messages',CASE WHEN data ? 'messages' THEN COALESCE((SELECT jsonb_agg(value ORDER BY n)
+            FROM jsonb_array_elements(data->'messages') WITH ORDINALITY e(value,n)
+            WHERE n>jsonb_array_length(data->'messages')-$3),'[]'::jsonb)
+            ELSE COALESCE((SELECT jsonb_agg(data ORDER BY position) FROM recent),'[]'::jsonb) END,
+          'inputMessages',COALESCE((SELECT jsonb_agg(value ORDER BY n)
+            FROM jsonb_array_elements(COALESCE(data->'inputMessages','[]'::jsonb)) WITH ORDINALITY e(value,n)
+            WHERE n>jsonb_array_length(COALESCE(data->'inputMessages','[]'::jsonb))-$3),'[]'::jsonb),
+          'events',COALESCE((SELECT jsonb_agg(value ORDER BY n)
+            FROM jsonb_array_elements(COALESCE(data->'events','[]'::jsonb)) WITH ORDINALITY e(value,n)
+            WHERE (data->>'id'=$4 AND n>$5) OR (data->>'id' IS DISTINCT FROM $4
+              AND (data->>'status'='running' OR value->>'type' IN ('CUSTOM','RUN_ERROR')))), '[]'::jsonb)) FROM latest),
+        'eventCount',COALESCE((SELECT jsonb_array_length(COALESCE(data->'events','[]'::jsonb)) FROM latest),0),
+        'activeRunToken',CASE WHEN (data->>'leaseUntil')::timestamptz>clock_timestamp() THEN data->>'runToken' ELSE NULL END
+      ) AS data FROM records WHERE owner=$1 AND kind='threads' AND id=$2 AND data->>'deletedAt' IS NULL`,
+      [owner, threadId, limit, after?.id ?? null, after?.eventCount ?? 0],
+    );
+    return (
+      (result.rows[0]?.data as unknown as {
+        run?: T;
+        eventCount: number;
+        activeRunToken: string | null;
+      }) ?? { eventCount: 0, activeRunToken: null }
+    );
+  }
   async compactThread(owner: string, threadId: string): Promise<boolean> {
     const result = await this.write("SELECT openmuse_compact_thread($1,$2) AS data", [
       owner,
       threadId,
     ]);
     return (result.rows[0]?.data as unknown) === true;
+  }
+  async latestThreadError(
+    owner: string,
+    threadId: string,
+  ): Promise<{ runId: string; message: string } | undefined> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('runId',data->>'runId','message',event->>'message') AS data
+      FROM records CROSS JOIN LATERAL jsonb_array_elements(COALESCE(data->'events','[]'::jsonb)) event
+      WHERE owner=$1 AND kind='thread-runs' AND data->>'threadId'=$2 AND data->>'status'='interrupted'
+        AND event->>'type'='RUN_ERROR' ORDER BY data->>'createdAt' DESC,id DESC LIMIT 1`,
+      [owner, threadId],
+    );
+    return result.rows[0]?.data as unknown as { runId: string; message: string } | undefined;
   }
   async threadContextMessages(
     owner: string,
@@ -976,7 +1040,7 @@ export class Store {
   async threadMessagePage(
     owner: string,
     threadId: string,
-    options: { cursor?: string; limit?: number } = {},
+    options: { cursor?: string; limit?: number; direction?: "forward" | "backward" } = {},
   ): Promise<ThreadMessagePage> {
     const limit = Math.min(100, Math.max(1, options.limit ?? 50));
     const cursorValid = options.cursor
@@ -987,19 +1051,25 @@ export class Store {
           )
         ).rows.length > 0
       : true;
+    const backward = options.direction === "backward";
     const result = await this.db.query(
       `SELECT data FROM thread_messages WHERE owner=$1 AND thread_id=$2
-      AND ($3::text IS NULL OR position>(SELECT position FROM thread_messages WHERE owner=$1 AND thread_id=$2 AND id=$3))
-      ORDER BY position LIMIT $4`,
+      AND ($3::text IS NULL OR position${backward ? "<" : ">"}(SELECT position FROM thread_messages WHERE owner=$1 AND thread_id=$2 AND id=$3))
+      ORDER BY position ${backward ? "DESC" : "ASC"} LIMIT $4`,
       [owner, threadId, cursorValid ? (options.cursor ?? null) : null, limit + 1],
     );
     const messages = result.rows
       .slice(0, limit)
       .map((row) => row.data as unknown as ThreadMessagePage["messages"][number]);
+    if (backward) messages.reverse();
     return {
       messages,
       snapshotRequired: !cursorValid,
-      ...(result.rows.length > limit ? { nextCursor: messages.at(-1)?.id } : {}),
+      ...(result.rows.length > limit
+        ? backward
+          ? { previousCursor: messages[0]?.id }
+          : { nextCursor: messages.at(-1)?.id }
+        : {}),
     };
   }
   /** Serialized fixture bytes, not PostgreSQL allocation or host RAM measurements. */
@@ -1326,7 +1396,7 @@ export class Store {
   }
   async updateCredential(owner: string, connectionId: string, secret: string): Promise<boolean> {
     const result = await this.write(
-      "UPDATE records SET data=jsonb_set(data,'{secret}',$3::jsonb),updated_at=now() WHERE owner=$1 AND kind='credentials' AND id='google' AND data->>'connectionId'=$2 RETURNING data",
+      "UPDATE records SET data=jsonb_set(data,'{secret}',$3::jsonb),updated_at=now() WHERE owner=$1 AND kind='credentials' AND (id='google' OR id LIKE 'google:%') AND data->>'connectionId'=$2 RETURNING data",
       [owner, connectionId, JSON.stringify(secret)],
     );
     return result.rows.length === 1;

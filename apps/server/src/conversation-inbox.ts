@@ -235,14 +235,27 @@ export class ConversationInbox {
       duplicate: result.status === "duplicate",
     };
   }
-  async eventsAfter(owner: string, threadId: string, rawCursor = 0): Promise<ConversationReplay> {
+  async eventsAfter(
+    owner: string,
+    threadId: string,
+    rawCursor = 0,
+    options: { latest?: boolean; summary?: boolean } = {},
+  ): Promise<ConversationReplay> {
     const cursor = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(rawCursor);
-    const result = await this.db.conversationEvents(owner, threadId, cursor);
+    const result = await this.db.conversationEvents(
+      owner,
+      threadId,
+      cursor,
+      options.summary ? 200 : 500,
+      options,
+    );
     const events = result.events.map((event) => conversationEventSchema.parse(event));
     return {
       events,
-      nextCursor: events.at(-1)?.seq ?? Math.min(cursor, result.head),
-      snapshotRequired: cursor > result.head,
+      nextCursor: options.latest
+        ? result.head
+        : (events.at(-1)?.seq ?? Math.min(cursor, result.head)),
+      snapshotRequired: !options.latest && cursor > result.head,
     };
   }
   pending() {
