@@ -35,6 +35,35 @@ remain application records. Native session/compaction trees are saved separately
 and restored only when they match the authoritative transcript. The host does
 not replace the upstream agent loop or enable a second owner for external effects.
 
+The host enables the original loop detector. For a dispatched host tool, it keeps
+the native child call and outcome and removes confirmed duplicate `tool_call`
+transport records from the native diagnostic history. Failed wrappers without a
+dispatched child remain visible. This uses the original session-state export in
+the host-owned entrypoint; upstream thresholds and algorithms are unchanged.
+Detailed host instructions follow native tool visibility and discovery receipts,
+so deferred tool modules do not add instructions before they are selected.
+The original `session_status` tool remains allowed. Live clock metadata uses
+upstream's current-time formatter at the model transport boundary, preserving the
+authoritative user transcript and native session tree. Host question forms follow
+the native policy of asking for decisions or private input only when necessary.
+Public HTML reads use upstream's visibility sanitizer and Markdown extractor,
+keeping links beside their source text. The host preserves accessible image
+labels, resolves public links, and retains its existing network and owner guards.
+Core command tools are visible without discovery only for a configured owner
+computer. Structured dataset queries remain discoverable. A completed computer
+start has a succeeded operation receipt even while the computer itself is running.
+Legacy starts are reconciled only against their independently confirmed native
+start receipt; interrupted or uncertain effects remain blocked.
+Known OpenAI reasoning contracts are resolved by the copied provider helper;
+the native effort reaches the actual admitted provider route. Unknown fallbacks
+keep their own defaults. Large JSON excerpts preserve actual source values and
+expose structure instead of replacing a large root with an empty query result.
+Conversation handoffs preserve the canonical transcript through the origin
+message boundary. The former 12-turn/64k-character fork cuts and 32k-character
+user/assistant checkpoint cuts are removed; native model admission and
+compaction own the context budget. Source-derived partial exits before an
+image exists receive one continuation in the same task revision before ending.
+
 Only the embedded source is compiled into this service. No OpenClaw application
 package, CLI, gateway service or onboarding command is installed or started.
 Bundled product plugins are disabled; our existing tools and skills are supplied

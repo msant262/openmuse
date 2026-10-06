@@ -139,7 +139,11 @@ test("a reviewed complete research answer is delivered despite the model labelli
       }),
     },
   );
-  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const server = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: true,
+  });
   t.mock.method(server.agent.web, "document", async (url: string) => ({
     url,
     contentType: "text/html",

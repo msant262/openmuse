@@ -273,7 +273,27 @@ test("object-keyed datasets page as keyed rows and expose values for projection"
   ]);
 });
 
-test("ordinary web reads expose the structure of large JSON instead of cutting through rows", async () => {
+test("an oversized keyed dataset remains recoverable through entries and complete aggregation", async () => {
+  const { selectPublicData } = await import("../apps/server/src/public-data.ts");
+  const data = Object.fromEntries(
+    Array.from({ length: 200 }, (_, i) => [String(i), { amount: i + 1, notes: "x".repeat(150) }]),
+  );
+  const initial = selectPublicData(data);
+  assert.deepEqual(initial.rows, []);
+  assert.equal(initial.truncated, true);
+  assert.match(initial.instruction ?? "", /entries=true/);
+  const sample = selectPublicData(data, { entries: true, limit: 2 });
+  assert.equal(sample.total, 200);
+  assert.equal(sample.rows.length, 2);
+  const totals = selectPublicData(data, {
+    entries: true,
+    aggregate: { groupBy: [], sum: [{ name: "amount", pointer: "/value/amount" }] },
+  });
+  assert.deepEqual(totals.rows, [{ count: 200, amount: 20100 }]);
+  assert.equal(totals.truncated, false);
+});
+
+test("ordinary web reads preserve source JSON values and expose its complete structure", async () => {
   const body = JSON.stringify({
     states: Array.from({ length: 27 }, (_, i) => ({
       uf: `UF${i}`,
@@ -288,9 +308,11 @@ test("ordinary web reads expose the structure of large JSON instead of cutting t
   const result = await web.read("https://news.example/data.json");
   assert.equal(result.extraction.status, "partial");
   assert.match(result.extraction.reason ?? "", /read_web_data/);
-  const preview = JSON.parse(result.text);
-  assert.equal(preview.structure.states.length, 27);
-  assert.deepEqual(preview.rows, []);
+  assert.ok("structure" in result);
+  assert.equal((result.structure as { states: { length: number } }).states.length, 27);
+  assert.match(result.text, /"uf": "UF0"/);
+  assert.match(result.text, /"percent": 51/);
+  assert.equal(result.text.length, 30000);
   const data = await web.readData(result.url, { pointer: "/states", select: ["/uf", "/percent"] });
   assert.equal(data.rows.length, 27);
   assert.equal(data.nextOffset, null);

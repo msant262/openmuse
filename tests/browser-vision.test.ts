@@ -51,6 +51,11 @@ for (const protocol of ["responses", "chat-completions", "chatgpt"] as const) {
       base = fixtureBase;
     } else {
       const server = createServer(async (request, response) => {
+        if (request.method !== "POST") {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "Not found" }));
+          return;
+        }
         let raw = "";
         for await (const chunk of request) raw += chunk;
         requests.push({ path: request.url ?? "", body: raw });

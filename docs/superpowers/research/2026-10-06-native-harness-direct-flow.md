@@ -1,0 +1,174 @@
+# Fluxo nativo de pesquisa e imagem — 6 de outubro de 2026
+
+## Falhas reproduzidas
+
+A tarefa original `d1c6ca4705d3537b0fafb7cc84d602e15157adc3ac332ad05cf65d9c4247534e`
+falhou em oito segundos, sem executar ferramentas. O executor havia respondido
+com uma pergunta sobre o ano; o host tratava qualquer encerramento em texto como
+conclusão e substituía a pergunta por um erro de arquivo inexistente.
+
+A retomada real com Luna produziu um PNG pelo GPT Image 2. Entretanto, as revisões
+extras de briefing confundiam códigos de UF e propunham mudanças contraditórias.
+Pesquisa, revisões e geração levaram 818 segundos depois da resposta sobre o ano.
+Essa execução é a linha de base lenta, não uma aprovação do desempenho. Os 54
+percentuais do PNG foram comparados com os recibos da agregação: nenhuma diferença.
+
+Dez validações novas, sem fornecer números nem URLs ao executor, também falharam.
+A primeira pediu confirmação antes de pesquisar em cerca de 21 segundos. A segunda
+pesquisou e, em 184 segundos, afirmou incorretamente que 4 de outubro estaria no
+futuro em relação a 6 de outubro. A terceira corrigiu a data, mas em 51 segundos
+pediu ao usuário os dados depois de ler apenas duas páginas, embora a reportagem
+retornasse links de apuração não lidos. A quarta pesquisou por 278 segundos, encontrou
+a base municipal, mas descartou os dados do G1 por não conseguir conferência direta
+no TSE; terminou sem imagem. A quinta reconheceu a fragilidade de somar posições
+de candidatos, mas terminou em 165 segundos após obter somente uma de 28 linhas
+agregadas; as demais estavam disponíveis pela própria ferramenta. Nenhuma das
+cinco entregou a imagem solicitada. A sexta chamou GPT Image 2 em 82 segundos e
+recebeu um arquivo em cerca de 194 segundos, mas era um mapa de status sem os
+percentuais estaduais. A tarefa terminou parcial em 214 segundos; esse arquivo
+não é aprovação da tarefa nem do desempenho. A sétima sofreu interrupção do
+provedor, depois um bloqueio falso de reconciliação do computador. Sua retomada
+produziu somente três estados; terminou parcial em 1.074 segundos, incluindo a
+pausa de operação para publicar a correção. A oitava, sem intervenções, terminou
+parcial em 256 segundos com um mapa cinza sem percentuais estaduais. Nenhuma das
+dez cumpre a solicitação. A nona terminou em 62 segundos sem arquivo: leu uma
+prévia JSON truncada e encerrou antes de consultar as linhas ou os links relevantes.
+A décima terminou em 41 segundos sem arquivo após a reportagem de serviço,
+sem ler seus links de apuração. Somente as três
+tarefas de diagnóstico pausadas foram canceladas, preservando seus recibos privados
+e a tarefa do usuário. Não se respondeu à pergunta incorreta para aparentar sucesso.
+
+## Fronteiras corrigidas
+
+O fluxo padrão é o executor nativo pesquisar, gerar e entregar. As chamadas
+independentes de modelo para revisar briefing e entrega são opcionais, habilitadas
+somente com `AGENT_RESEARCH_REVIEW_ENABLED=true`. Conexão de imagem, pertencimento
+dos arquivos, recibos duráveis, critérios de conclusão e revisão de ações externas
+continuam no servidor. Verificação mecânica não certifica a precisão de cada número.
+
+Texto ou `finish_task` prematuro sem o arquivo solicitado retorna requisitos
+pendentes ao executor. `ask_user` está disponível diretamente para entradas que
+realmente bloqueiem a execução. A descrição desse tool deixou de permitir pausar
+por qualquer fato ausente: preserva a política original de decisões do usuário,
+com instrução para pesquisar fatos públicos enquanto houver fontes disponíveis.
+Não se exige plano para toda tarefa com mais de uma ação. Imagens produzidas pelo
+gerador independente podem ser entregues por um
+executor sem visão, sem forçar uma troca para modelo de fronteira. Referências
+visuais explícitas continuam sujeitas à capacidade real do executor.
+
+A descoberta e o dispatcher são os originais `tool_search`, `tool_describe` e
+`tool_call`. Instruções detalhadas dos módulos acompanham a superfície visível e
+os recibos de descoberta, em vez de carregar todos os módulos antecipadamente.
+As ferramentas da aplicação permanecem autenticadas e vinculadas ao proprietário;
+isso não instala os conectores ou canais de outro produto.
+
+A proteção original de repetição está habilitada. O host remove da história nativa
+somente registros de transporte `tool_call` com filhos já efetivamente despachados,
+preservando a chamada filha e seu resultado. Wrappers sem filho executado permanecem.
+Assim, os duplicados não expulsam resultados idênticos antes do veto original.
+Algoritmos, limiares e os 10.664 arquivos de origem registrados em `UPSTREAM.json`
+permanecem inalterados. O entrypoint pertencente ao host expõe o estado nativo usado.
+
+O contexto temporal nativo já chegava ao modelo; ausência total de data não era a
+explicação. A allowlist do host, porém, excluía `session_status`: essa ferramenta
+original agora está habilitada. O adaptador também usa o formatador original
+`appendCronStyleCurrentTimeLine` para enviar hora legível e referência UTC como
+metadados do servidor ao transporte. O pedido e a árvore persistida não são
+reescritos. O teste de continuidade impediu publicar uma integração que recriava
+entradas antigas ao anexar a hora diretamente ao pedido.
+
+As instruções de pesquisa foram simplificadas: removida a orientação conflitante
+de paginar milhares de registros quando a ferramenta já agrega o conjunto inteiro.
+Leituras grandes de objetos explicam `entries=true` quando nenhuma linha cabe na
+saída, sem tratar isso como ausência de dados. Uma fonte secundária legível pode
+fundamentar uma entrega atribuída, com a limitação de acesso à fonte primária;
+isso não equivale a alegar conferência direta na fonte primária.
+
+Um encerramento parcial sem o arquivo não pode declarar dados indisponíveis quando
+o último recibo de agregação informa linhas restantes disponíveis. Nesse caso, o
+servidor devolve a consulta e a paginação ao mesmo executor para continuar. A regra
+usa recibos reais e não chama um revisor. Resultados agregados mostram a estrutura
+do agregado em vez de repetir a amostra extensa da base original. Ausência real de
+dados continua podendo resultar em uma entrega parcial honesta.
+
+O leitor HTTP da aplicação agora usa `extractBasicHtmlContent`, o sanitizador de
+visibilidade e extrator Markdown originais do OpenClaw. URLs acompanham os trechos
+de origem, com rótulos acessíveis preservados e os controles de rede existentes.
+A ferramenta de dados deixa de desencorajar código: o executor pode descobrir
+`run_computer_command` para transformações no computador autorizado. O objetivo
+continua sendo a entrega solicitada, sem substituição por um gráfico de status.
+
+O resultado de `start_computer` separa o estado do computador (`running`) da
+conclusão da operação (`succeeded`). A recuperação de registros antigos exige
+um único recibo nativo independente de início concluído, o mesmo vínculo de
+execução e nenhuma indicação de resultado desconhecido. Sem essa prova, mantém
+o bloqueio. Não repete a ação nem libera recursos históricos à força. Essa
+recuperação foi observada na sétima validação; seus dois registros incorretos
+foram reconciliados e os 21 registros históricos restantes foram preservados.
+
+Se o renderizador falha, o leitor pode tentar o HTTP público com validação própria
+de endereço e de todos os redirects. Cancelamento e URLs privados não ganham
+esse fallback. A execução de comandos fica imediatamente visível somente quando
+o computador está configurado. A consulta complexa `read_web_data` continua
+disponível por descoberta; não compete com leitura e shell na superfície inicial.
+As instruções orientam seguir links relacionados antes de concluir que faltam
+fatos e distinguem datasets relevantes de analytics ou outros assuntos.
+
+O transporte declarava todos os modelos como `reasoning: false` e ignorava
+o nível de raciocínio enviado pelo executor original. Para os modelos OpenAI
+conhecidos, o host agora usa o contrato de esforços do código original e encaminha
+o nível do harness ao provedor. O padrão nativo do Luna passa a chegar como
+`medium`. A projeção é feita por rota efetivamente admitida: um fallback
+desconhecido conserva os próprios defaults e não herda parâmetros incompatíveis.
+Não se muda o modelo principal nem se insere outra revisão de modelo. Rotas de
+DeepSeek, MiMo e MiniMax não recebem suposições de capacidade baseadas no Luna.
+
+A leitura HTTP de JSON passa a manter valores da fonte na prévia, como o
+leitor original, junto à estrutura completa do conjunto. Não substitui um
+objeto grande por `rows: []`. O conteúdo completo continua disponível para
+cálculo no computador ou consultas estruturadas; o limite da prévia não
+representa ausência de fatos nem redução da janela do modelo.
+
+Uma tentativa parcial sem o arquivo, após leituras públicas, recebe uma
+continuação na mesma revisão da tarefa para percorrer caminhos concretos
+restantes. Não chama um revisor nem relança efeitos concluídos. Um bloqueio
+real pode encerrar parcial depois dessa continuação; não se certifica sucesso
+em uma tarefa sem arquivo. A leitura incompleta de uma reportagem de serviço
+não é evidência de inexistência dos resultados que ela própria referencia.
+
+O repasse ao worker ainda cortava a conversa em 12 turnos ou 64 mil
+caracteres, e checkpoints cortavam cada mensagem textual em 32 mil caracteres.
+Esses cortes foram removidos para mensagens do usuário e do assistente. O
+limite do fork permanece a mensagem originadora, preservando a separação entre
+história e pedidos posteriores. A admissão e compactação do executor nativo
+usam a janela real do modelo; redaction de credenciais e referências de
+recibos grandes continuam existentes. Os testes retêm fatos do primeiro
+turno de uma conversa com 40 mensagens e o final de textos com mais de
+200 mil caracteres.
+
+## Verificação e publicação
+
+As 47 regressões de conclusão e revisão e as 22 de continuidade e retomada
+passaram depois dos últimos ajustes. Os 17 testes do executor nativo, os 60 testes de provedores e os 39 testes
+de leitura, dados e imagem passaram no último ajuste. Os 31 testes do ajuste
+anterior passaram, incluindo configuração da superfície
+inicial e recuperação do computador; os 39 testes de leitura e imagem e os 23
+testes de diário e recuperação também passaram. Os testes cobrem conclusão prematura, falta genuína de entrada, geração com e sem
+visão sem revisores extras, instruções progressivas, repetição direta e descoberta,
+rolagem de data, leitura do relógio original com e sem descoberta, preservação da
+árvore e contexto declarado de 1.050.000 tokens. Compilação do servidor e checagem
+de tipos passaram. Fixtures HTTP ignoram probes GET, que não são inferências.
+A suíte ampla concluiu 1.481 de 1.482 testes: a única falha foi uma fixture de visão
+que contava uma sondagem GET como inferência. Depois da correção, seus quatro testes
+passaram; as 36 regressões dos executores e manutenção e as 41 regressões de
+conclusão, dados públicos, objetivo e revisões também passaram.
+
+A publicação é restrita às fronteiras do executor, configuração e entrypoint do
+harness, sobre a base de produção existente. Web e APK não são substituídos.
+Fonte publicada: `d98f9082f157b1b4b82abc1d498d2540f3fa445a`.
+Imagem: `sha256:df2edeff4ba63084c263e923b4c12618136479576722749f05969ace1e26e8a9`.
+Luna permanece como executor de produção, com contexto de 1.050.000 tokens.
+DeepSeek, MiMo e MiniMax não foram validados ao vivo nesta sessão.
+
+A validação final de pesquisa, geração e entrega ainda deve registrar resultado,
+tempo e conferência dos pixels, sem apresentar os testes anteriores como sucesso.

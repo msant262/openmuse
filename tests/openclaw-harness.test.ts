@@ -19,6 +19,136 @@ import type { ProviderContinuationCheckpoint } from "../apps/server/src/provider
 import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("the copied model reasoning contract reaches the actual provider request", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, {
+    text: () => "Ready.",
+    errorStatus: (index) => (index === 2 ? 503 : undefined),
+  });
+  const f = await taskRuntime(t);
+  for (const [index, model] of [
+    "openai/gpt-6-luna",
+    "openai/fixture",
+    "openai/gpt-6-luna",
+  ].entries()) {
+    const agent = openclawAgent({
+      dataDir: f.directory,
+      model,
+      fallbacks: index === 2 ? ["openai/fixture"] : [],
+      providers: richChatFixtureProviders(f.directory, ["openai/gpt-6-luna", "openai/fixture"]),
+      prompt: "Answer the request.",
+      tools: [],
+    });
+    const events = await lastValueFrom(
+      agent
+        .run({
+          threadId: randomUUID(),
+          runId: randomUUID(),
+          messages: [{ id: randomUUID(), role: "user", content: "Ready?" }],
+          tools: [],
+          context: [],
+          state: {},
+        })
+        .pipe(toArray()),
+    );
+    assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR), JSON.stringify(events));
+  }
+  assert.equal(JSON.parse(fixture.requests[0].body).reasoning.effort, "medium");
+  assert.equal(
+    JSON.parse(fixture.requests[1].body).reasoning,
+    undefined,
+    "unknown model routes must keep their own provider defaults",
+  );
+  assert.equal(JSON.parse(fixture.requests[2].body).reasoning.effort, "medium");
+  assert.equal(
+    JSON.parse(fixture.requests[3].body).reasoning,
+    undefined,
+    "a fallback receives its own supported parameters, not the primary model's contract",
+  );
+});
+
+test("the copied temporal context reaches the model and rolls over without a host date prompt", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-05T23:59:00Z") });
+  const fixture = await modelFixture(t, () => undefined, { text: () => "Recorded answer." });
+  const f = await taskRuntime(t);
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers: richChatFixtureProviders(f.directory),
+    prompt: "Answer using the current runtime date.",
+    tools: [],
+  });
+  for (const [index, date] of ["2026-10-05", "2026-10-06"].entries()) {
+    if (index) t.mock.timers.setTime(Date.parse("2026-10-06T00:01:00Z"));
+    const events = await lastValueFrom(
+      agent
+        .run({
+          threadId: randomUUID(),
+          runId: randomUUID(),
+          messages: [{ id: randomUUID(), role: "user", content: "What is today's date?" }],
+          tools: [],
+          context: [],
+          state: {},
+        })
+        .pipe(toArray()),
+    );
+    assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR));
+    const instructions = JSON.parse(fixture.requests[index].body).instructions;
+    assert.match(
+      instructions,
+      new RegExp(`## Temporal Context\\nCurrent date: ${date}\\nTime zone:`),
+    );
+    assert.ok(
+      instructions.includes(`Reference UTC: ${date}`),
+      "the original live-time formatter reaches the model",
+    );
+    assert.ok(
+      !instructions.includes("Current UTC date and time:"),
+      "the native temporal section owns the date",
+    );
+  }
+});
+
+for (const toolSearch of [false, true]) {
+  test(`the original session status reads the live clock in a detached host session with discovery=${toolSearch}`, async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-06T02:15:00Z") });
+    const fixture = await modelFixture(t, (index) =>
+      index === 0
+        ? toolSearch
+          ? { name: "tool_call", arguments: { id: "session_status", args: {} } }
+          : { name: "session_status", arguments: {} }
+        : undefined,
+    );
+    const f = await taskRuntime(t);
+    const agent = openclawAgent({
+      dataDir: f.directory,
+      model: "openai/fixture",
+      providers: richChatFixtureProviders(f.directory),
+      toolSearch,
+      prompt: "Use session_status to resolve the current date.",
+      tools: [],
+    });
+    await lastValueFrom(
+      agent
+        .run({
+          threadId: randomUUID(),
+          runId: randomUUID(),
+          messages: [{ id: randomUUID(), role: "user", content: "Check the current date." }],
+          tools: [],
+          context: [],
+          state: {},
+        })
+        .pipe(toArray()),
+    );
+    assert.equal(fixture.requests.length, 2);
+    const receipt = JSON.parse(fixture.requests[1].body).input.find(
+      (item: { type: string }) => item.type === "function_call_output",
+    );
+    assert.ok(receipt, "the original tool returns a model-visible receipt");
+    assert.match(receipt.output, /Reference UTC: 2026-10-06 02:15 UTC/);
+    assert.doesNotMatch(receipt.output, /Unknown session|not found|sessionKey required/);
+  });
+}
+
 test("ordinary chat follow-ups retain the original native session entries", async (t) => {
   await modelFixture(t, () => undefined, { text: () => "Recorded answer." });
   const f = await taskRuntime(t);
@@ -67,6 +197,53 @@ test("ordinary chat follow-ups retain the original native session entries", asyn
       .every((entry) => ids.has(entry.id)),
     "a follow-up must restore its native session tree rather than migrate all prior entries again",
   );
+});
+
+test("native discovery loads instructions only for the selected tools and dispatches the original call", async (t) => {
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "tool_describe", arguments: { id: "okami_lookup" } },
+        { name: "lookup", arguments: { query: "source" } },
+      ][i],
+  );
+  const f = await taskRuntime(t);
+  let calls = 0;
+  const marker = "SELECTED_LOOKUP_INSTRUCTIONS";
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers: richChatFixtureProviders(f.directory),
+    prompt: "Use native discovery to read the requested source.",
+    promptContext: async (names = []) => (names.includes("lookup") ? marker : ""),
+    tools: [
+      defineTool({
+        name: "lookup",
+        description: "Read a source",
+        parameters: z.object({ query: z.string() }),
+        execute: async ({ query }) => {
+          calls++;
+          return { query, value: 52 };
+        },
+      }),
+    ],
+  });
+  await lastValueFrom(
+    agent
+      .run({
+        threadId: randomUUID(),
+        runId: randomUUID(),
+        messages: [{ id: randomUUID(), role: "user", content: "Read the source." }],
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.ok(!JSON.parse(fixture.requests[0].body).instructions.includes(marker));
+  assert.ok(JSON.parse(fixture.requests[1].body).instructions.includes(marker));
+  assert.equal(calls, 1);
 });
 
 test("the copied OpenClaw executor continues beyond the former per-turn tool limit", async (t) => {
@@ -138,6 +315,99 @@ test("the copied OpenClaw executor continues beyond the former per-turn tool lim
         event.delta.includes("Finished all 25"),
     ),
   );
+});
+
+test("the copied executor blocks identical direct calls while allowing a different approach", async (t) => {
+  const f = await taskRuntime(t);
+  await modelFixture(t, (index) =>
+    index < 21
+      ? { name: "lookup", arguments: { query: "same" } }
+      : index === 21
+        ? { name: "lookup", arguments: { query: "different" } }
+        : undefined,
+  );
+  const dispatched: string[] = [];
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers: richChatFixtureProviders(f.directory),
+    toolSearch: false,
+    prompt: "Use available sources to complete the research.",
+    tools: [
+      defineTool({
+        name: "lookup",
+        description: "Read a source",
+        parameters: z.object({ query: z.string() }),
+        execute: async ({ query }) => {
+          dispatched.push(query);
+          return { result: query };
+        },
+      }),
+    ],
+  });
+  await lastValueFrom(
+    agent
+      .run({
+        threadId: randomUUID(),
+        runId: randomUUID(),
+        messages: [{ id: randomUUID(), role: "user", content: "Research the question." }],
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.ok(
+    dispatched.filter((query) => query === "same").length < 21,
+    "a repeated call must be vetoed before host dispatch",
+  );
+  assert.equal(dispatched.at(-1), "different", "a new source remains available after the veto");
+});
+
+test("the copied executor blocks identical discovered calls while allowing a different approach", async (t) => {
+  const f = await taskRuntime(t);
+  await modelFixture(t, (index) =>
+    index < 21
+      ? { name: "lookup", arguments: { query: "same" } }
+      : index === 21
+        ? { name: "lookup", arguments: { query: "different" } }
+        : undefined,
+  );
+  const dispatched: string[] = [];
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers: richChatFixtureProviders(f.directory),
+    prompt: "Use available sources to complete the research.",
+    tools: [
+      defineTool({
+        name: "lookup",
+        description: "Read a source",
+        parameters: z.object({ query: z.string() }),
+        execute: async ({ query }) => {
+          dispatched.push(query);
+          return { result: query };
+        },
+      }),
+    ],
+  });
+  await lastValueFrom(
+    agent
+      .run({
+        threadId: randomUUID(),
+        runId: randomUUID(),
+        messages: [{ id: randomUUID(), role: "user", content: "Research the question." }],
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.ok(
+    dispatched.filter((query) => query === "same").length < 21,
+    "a repeated call must be vetoed before host dispatch",
+  );
+  assert.equal(dispatched.at(-1), "different", "a new source remains available after the veto");
 });
 
 test("large batched receipts stay valid and recoverable through native discovery and checkpoints", async (t) => {
@@ -520,49 +790,59 @@ test("strict-provider null placeholders omit optional fields while explicit null
   assert.equal(fixture.requests.length, 2);
 });
 
-test("basic research, data and image tools are immediately callable without hiding the rest of the catalog", async (t) => {
-  const dataDir = await mkdtemp(join(tmpdir(), "okami-harness-core-"));
-  t.after(() => rm(dataDir, { recursive: true, force: true }));
-  const fixture = await modelFixture(t, () => undefined, { text: () => "Ready." });
-  const agent = openclawAgent({
-    dataDir,
-    model: "openai/fixture",
-    providers: richChatFixtureProviders(dataDir),
-    prompt: "Use the available tools.",
-    tools: ["search_web", "read_web_data", "generate_image", "remote_operation"].map((name) =>
-      defineTool({
-        name,
-        description: name,
-        parameters: z.object({}),
-        execute: async () => ({ ok: true }),
-      }),
-    ),
+for (const computerConfigured of [false, true]) {
+  test(`core research and image tools stay visible, with configured computer=${computerConfigured}`, async (t) => {
+    const dataDir = await mkdtemp(join(tmpdir(), "okami-harness-core-"));
+    t.after(() => rm(dataDir, { recursive: true, force: true }));
+    const fixture = await modelFixture(t, () => undefined, { text: () => "Ready." });
+    const agent = openclawAgent({
+      dataDir,
+      model: "openai/fixture",
+      providers: richChatFixtureProviders(dataDir),
+      prompt: "Use the available tools.",
+      directToolNames: computerConfigured ? ["run_computer_command"] : [],
+      tools: [
+        "search_web",
+        "read_web_data",
+        "generate_image",
+        "run_computer_command",
+        "remote_operation",
+      ].map((name) =>
+        defineTool({
+          name,
+          description: name,
+          parameters: z.object({}),
+          execute: async () => ({ ok: true }),
+        }),
+      ),
+    });
+    await lastValueFrom(
+      agent
+        .run({
+          threadId: randomUUID(),
+          runId: randomUUID(),
+          messages: [{ id: randomUUID(), role: "user", content: "Research and make an image." }],
+          tools: [],
+          context: [],
+          state: {},
+        })
+        .pipe(toArray()),
+    );
+    const body = JSON.parse(fixture.requests[0].body);
+    const names = body.tools.flatMap(
+      (tool: { name?: string; tools?: { name: string }[] }) =>
+        tool.tools?.map((child) => child.name) ?? [tool.name],
+    );
+    for (const name of [
+      "search_web",
+      "generate_image",
+      "read_tool_output",
+      "tool_search",
+      "tool_call",
+    ])
+      assert.ok(names.includes(name), `${name} is hidden behind a discovery round trip`);
+    assert.ok(!names.includes("remote_operation"));
+    assert.ok(!names.includes("read_web_data"), "complex data queries remain discoverable");
+    assert.equal(names.includes("run_computer_command"), computerConfigured);
   });
-  await lastValueFrom(
-    agent
-      .run({
-        threadId: randomUUID(),
-        runId: randomUUID(),
-        messages: [{ id: randomUUID(), role: "user", content: "Research and make an image." }],
-        tools: [],
-        context: [],
-        state: {},
-      })
-      .pipe(toArray()),
-  );
-  const body = JSON.parse(fixture.requests[0].body);
-  const names = body.tools.flatMap(
-    (tool: { name?: string; tools?: { name: string }[] }) =>
-      tool.tools?.map((child) => child.name) ?? [tool.name],
-  );
-  for (const name of [
-    "search_web",
-    "read_web_data",
-    "generate_image",
-    "read_tool_output",
-    "tool_search",
-    "tool_call",
-  ])
-    assert.ok(names.includes(name), `${name} is hidden behind a discovery round trip`);
-  assert.ok(!names.includes("remote_operation"));
-});
+}

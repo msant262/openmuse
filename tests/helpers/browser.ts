@@ -22,6 +22,12 @@ export async function browserFixture(
     | Promise<{ status?: number; data: unknown; raw?: string }>,
 ) {
   const server = createServer(async (request, response) => {
+    // Local HTTP probes are not browser executor operations.
+    if (request.method === "GET" && request.url === "/") {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "Not found" }));
+      return;
+    }
     const chunks = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};

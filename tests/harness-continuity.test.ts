@@ -3,10 +3,37 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { lastValueFrom, toArray } from "rxjs";
 import { ConversationAgent } from "../apps/server/src/engine/conversation.ts";
+import { delegatedContext } from "../apps/server/src/engine/delegated-context.ts";
 import { needsResearchReview } from "../apps/server/src/engine/research-delivery-review.ts";
+import { completedMessages } from "../apps/server/src/engine/task-history.ts";
 import { LocalThreads } from "../apps/server/src/threads.ts";
 import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
+
+test("handoff preserves early facts beyond the former character and turn cuts", () => {
+  const messages = Array.from({ length: 40 }, (_, i) => ({
+    id: `history-${i}`,
+    role: i % 2 ? ("assistant" as const) : ("user" as const),
+    content: `${i === 0 ? "EARLY_SOURCE https://source.example/results\n" : ""}${"Retained conversation fact. ".repeat(250)}END_${i}`,
+  }));
+  messages.push({ id: "current", role: "user", content: "Generate the infographic." });
+  messages.push({ id: "later", role: "assistant", content: "Later text must not be inherited." });
+  const context = delegatedContext(messages, [], "current");
+  assert.equal(context.messages.length, 40);
+  assert.match(context.messages[0].content as string, /EARLY_SOURCE/);
+  assert.match(context.messages[39].content as string, /END_39$/);
+  assert.ok(!context.messages.some((message) => ["current", "later"].includes(message.id)));
+});
+
+test("task checkpoints preserve the complete long user request and assistant answer", () => {
+  const content = "Detailed source facts. ".repeat(12000) + "LAST_REQUIRED_FACT";
+  const messages = completedMessages([
+    { id: "request", role: "user", content },
+    { id: "answer", role: "assistant", content },
+  ]);
+  assert.ok(content.length > 200000);
+  for (const message of messages) assert.equal(message.content, content);
+});
 
 test("delegated follow-up retains the user's election, source receipt and preceding result in worker context", async (t) => {
   const fixture = await modelFixture(t, (i) =>

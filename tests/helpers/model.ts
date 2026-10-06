@@ -103,6 +103,12 @@ export async function modelFixture(
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
+    // HTTP health probes are not inference; the fixture serves POST requests.
+    if (request.method !== "POST") {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "Fixture model route not found" } }));
+      return;
+    }
     const index = requests.length;
     const isReview = body.includes("PUBLIC_RESEARCH_DELIVERY_REVIEW");
     const isBrief = isReview && JSON.parse(body).instructions.includes("IMAGE_BRIEF_REVIEW");

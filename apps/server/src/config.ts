@@ -74,6 +74,8 @@ export interface Config {
   browserFallbackEnabled?: boolean;
   browserFallbackExecutorId?: string;
   taskWorkerEnabled?: boolean;
+  /** Optional second-model reviews; the native executor owns normal research and delivery. */
+  researchReviewEnabled?: boolean;
   computerEnabled?: boolean;
   computerImage?: string;
   computerDeploymentId?: string;
@@ -260,6 +262,7 @@ export function readConfig(): Config {
     browserFallbackEnabled: process.env.BROWSER_FALLBACK_ENABLED === "true",
     browserFallbackExecutorId: process.env.BROWSER_EXECUTOR_ID?.trim() || "openmuse-server",
     taskWorkerEnabled: process.env.TASK_WORKER_ENABLED !== "false",
+    researchReviewEnabled: process.env.AGENT_RESEARCH_REVIEW_ENABLED === "true",
     apiQuotasEnabled: process.env.API_QUOTAS_ENABLED !== "false",
     deploymentOperatorTokenSha256: z
       .string()

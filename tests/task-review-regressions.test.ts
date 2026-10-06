@@ -69,7 +69,7 @@ test("model criteria cannot replace mandatory user file and send obligations", a
   await server.agent.worker.tick();
   const saved = await server.agent.getTask("owner", tasks[0].id);
   assert.equal(saved.prompt, prompt, "the accepted user request remains the task goal");
-  assert.equal(saved.status, "failed");
+  assert.equal(saved.status, "queued", "missing user obligations must continue rather than pass");
   assert.equal((await server.db.list("owner", "interaction-requests")).length, 0);
   assert.notEqual(saved.completion?.status, "verified");
   assert.ok(

@@ -6,6 +6,21 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const resolve = async () => [{ address: "93.184.216.34", family: 4 }];
 
+test("the production reader keeps native Markdown links with their context and filters hidden content", async (t) => {
+  const f = await taskRuntime(t);
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: '<article><h1>Regional results</h1><p>For the requested category, read <a href="/presidential">Presidential results</a>.</p><p><a href="/votes"><img alt="Candidate votes" src="/photo.png"></a>: 52%</p><p style="display:none">HIDDEN-UNTRUSTED-INSTRUCTION</p><a href="javascript:steal()">Bad link</a></article>',
+  }));
+  const page = await f.agent.web.read("https://results.example/index");
+  assert.match(page.text, /# Regional results/);
+  assert.match(page.text, /\[Presidential results\]\(https:\/\/results\.example\/presidential\)/);
+  assert.match(page.text, /\[Candidate votes\]\(https:\/\/results\.example\/votes\): 52%/);
+  assert.doesNotMatch(page.text, /HIDDEN-UNTRUSTED-INSTRUCTION|javascript:steal/);
+  assert.equal(page.provenance.backend, "http");
+});
+
 test("public reading identifies pending content and explicitly renders it before returning evidence", async () => {
   const { PublicWeb, readablePage } = await import("../apps/server/src/public-web.ts");
   const web = new PublicWeb({
@@ -101,6 +116,54 @@ test("explicit headless reading recovers a blocked source but never retries unsa
     code: "BLOCKED_URL",
   });
   assert.equal(calls, 1);
+});
+
+test("a failed public renderer recovers through guarded HTTP without retrying private redirects or cancellation", async () => {
+  const { PublicWeb } = await import("../apps/server/src/public-web.ts");
+  let requests = 0;
+  const web = new PublicWeb({
+    resolve,
+    request: async (target) => {
+      requests++;
+      return target.url.pathname === "/private-redirect"
+        ? { status: 302, headers: { location: "http://169.254.169.254/" }, body: "" }
+        : {
+            status: 200,
+            headers: { "content-type": "text/html" },
+            body: "<title>Results</title><article>Published votes: 52% and 48%.</article>",
+          };
+    },
+  });
+  const render = async (): Promise<never> => {
+    throw new Error("Renderer failed");
+  };
+  const page = await web.read("https://results.example/current", undefined, {
+    mode: "headless",
+    render,
+  });
+  assert.equal(page.provenance.backend, "http");
+  assert.match(page.text, /52% and 48%/);
+  assert.equal(requests, 1);
+  await assert.rejects(
+    web.read("https://results.example/private-redirect", undefined, { mode: "headless", render }),
+    /Renderer failed/,
+  );
+  assert.equal(requests, 2, "a private redirect is never dispatched");
+  await assert.rejects(web.read("http://127.0.0.1/", undefined, { mode: "headless", render }), {
+    code: "BLOCKED_URL",
+  });
+  const controller = new AbortController();
+  await assert.rejects(
+    web.read("https://results.example/current", controller.signal, {
+      mode: "headless",
+      render: async () => {
+        controller.abort(new Error("Read cancelled"));
+        throw new Error("Renderer failed");
+      },
+    }),
+    /Read cancelled/,
+  );
+  assert.equal(requests, 2, "cancellation never dispatches a fallback");
 });
 
 test("image-only product links retain their accessible name beside the observed price", async () => {

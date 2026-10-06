@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { modelFixture, offeredHostTools } from "./helpers/model.ts";
-import { taskRuntime } from "./helpers/task-runtime.ts";
+import { taskRuntime as baseTaskRuntime } from "./helpers/task-runtime.ts";
+
+// These tests exercise the explicitly enabled optional review mode.
+function taskRuntime(
+  t: Parameters<typeof baseTaskRuntime>[0],
+  config: Parameters<typeof baseTaskRuntime>[1] = {},
+  options: Parameters<typeof baseTaskRuntime>[2] = {},
+) {
+  return baseTaskRuntime(t, { ...config, researchReviewEnabled: true }, options);
+}
 
 test("a review cannot certify a comparison while its request audit identifies missing entities", async (t) => {
   await modelFixture(t, () => undefined, {

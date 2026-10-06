@@ -75,7 +75,7 @@ import { delegatedContext } from "./delegated-context.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
 import { MonitorObservations, type MonitorPage } from "./monitor-observations.ts";
-import { stopOpenclawHarness } from "./openclaw-agent.ts";
+import { nativeWebMarkdown, stopOpenclawHarness } from "./openclaw-agent.ts";
 import { ResourceLeases } from "./resource-leases.ts";
 import { RuntimePause } from "./runtime-pause.ts";
 import { TaskActor, TaskBudgetExhaustedError } from "./task-actor.ts";
@@ -100,7 +100,9 @@ export class AgentService {
   }
   desktop?: DesktopService;
   search: SearchBackend;
-  readonly web = new PublicWeb();
+  readonly web = new PublicWeb({
+    renderHtml: (html) => nativeWebMarkdown(html, this.config.dataDir),
+  });
   integrations?: IntegrationService;
   genericCredentials?: GenericCredentials;
   composio?: ComposioHarness;
