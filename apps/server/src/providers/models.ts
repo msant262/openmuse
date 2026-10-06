@@ -112,6 +112,8 @@ export interface ModelAdapterRuntime {
   harnessDeadlineMs?: number;
   /** Model-visible schemas; the owner retains the complete authorized execution registry. */
   projectTools?: (tools: NonNullable<TextOptions["tools"]>) => NonNullable<TextOptions["tools"]>;
+  /** Resolve harness parameters for the actual admitted route, including fallbacks. */
+  modelOptions?: (spec: string) => Record<string, unknown>;
   /** Reply composition prefers a final answer over a provider's progress preamble. */
   preferFinalText?: () => boolean;
   /** A successful model turn received these owner-verified image pixels. */
@@ -356,6 +358,10 @@ class OrderedModelAdapter implements AnyTextAdapter {
           ...options,
           chatOptions: {
             ...chatOptions,
+            modelOptions: {
+              ...chatOptions.modelOptions,
+              ...this.runtime.modelOptions?.(lease.model),
+            },
             model: current.adapter.model,
             request: this.request(options.chatOptions.request, dispatchSignal),
           },
@@ -575,6 +581,7 @@ class OrderedModelAdapter implements AnyTextAdapter {
         current.state.preferFinalText = this.runtime.preferFinalText?.();
         const prepared = {
           ...options,
+          modelOptions: { ...options.modelOptions, ...this.runtime.modelOptions?.(lease.model) },
           model: current.adapter.model,
           request: this.request(options.request, dispatchSignal),
         };
