@@ -17,7 +17,7 @@ import { z } from "zod";
 import type { ModelRequirements, WorkClass } from "../../../../packages/domain/src/runtime.ts";
 import type { Store } from "../db.ts";
 import type { BrowserImageLoader } from "../providers/browser-images.ts";
-import { type ModelProviderConfig, modelProviderConfig } from "../providers/config.ts";
+import { type ModelProviderConfig, modelProviderConfig, modelSpec } from "../providers/config.ts";
 import { meetsRequirements, routingCapabilities } from "../providers/model-capabilities.ts";
 import type { ModelRouter } from "../providers/model-router.ts";
 import type { ModelSelection, ProviderContinuationCheckpoint } from "../providers/models.ts";
@@ -38,10 +38,12 @@ type Options = {
   tools: ToolDefinition[];
   /** Small foreground conversations need their interaction schemas immediately. */
   toolSearch?: boolean;
+  /** Core tools backed by this owner's configured executor, visible without discovery. */
+  directToolNames?: readonly string[];
   prompt: string;
   /** Startup preflight ends locally before any model transport or host tool. */
   initializeOnly?: boolean;
-  promptContext?: () => Promise<string>;
+  promptContext?: (selectedTools: readonly string[]) => Promise<string>;
   contextModel?: ContextModelResolver;
   /** Storage for the original session tree; the app transcript remains authoritative. */
   compaction?: { db: Store; owner: string; scope: string };
@@ -123,6 +125,22 @@ const messageHash = (message: ModelMessage) =>
     )
     .digest("hex");
 type Runtime = {
+  resolveOpenAIModelReasoningEfforts(model: {
+    id: string;
+    api: string;
+  }): readonly string[] | undefined;
+  resolveOpenAIReasoningEffortForModel(params: {
+    model: { id: string; api: string };
+    effort: string;
+  }): string | undefined;
+  extractBasicHtmlContent(params: {
+    html: string;
+    extractMode: "markdown";
+  }): Promise<{ text: string } | null>;
+  appendCronStyleCurrentTimeLine(text: string, config: unknown, nowMs: number): string;
+  getDiagnosticSessionState(ref: { sessionKey: string; sessionId: string }): {
+    toolCallHistory?: Array<{ toolName: string; toolCallId?: string }>;
+  };
   sanitizeToolCallIdsForCloudCodeAssist(messages: NativeMessage[]): NativeMessage[];
   estimateMessagesTokens(messages: NativeMessage[]): number;
   resolveAgentMaxConcurrent(config?: unknown): number;
@@ -158,7 +176,7 @@ type Host = {
   stream(
     model: Record<string, unknown>,
     context: NativeContext,
-    options: { signal?: AbortSignal },
+    options: { signal?: AbortSignal; reasoning?: string },
   ): NativeStream;
 };
 const runs = new Map<string, Host>();
@@ -218,6 +236,10 @@ async function loadRuntime(dataDir: string): Promise<Runtime> {
     return copied;
   })();
   return runtime;
+}
+export async function nativeWebMarkdown(html: string, dataDir: string) {
+  const copied = await loadRuntime(dataDir);
+  return (await copied.extractBasicHtmlContent({ html, extractMode: "markdown" }))?.text ?? "";
 }
 function estimateModelContext(copied: Runtime, request: TextOptions) {
   return (
@@ -318,10 +340,10 @@ const controls = new Set(["tool_search", "tool_describe", "tool_call"]);
 // Use the original executor's direct tool surface for frequent operations.
 // Hiding these makes even an ordinary lookup depend on lexical discovery.
 const directTools = new Set([
+  "ask_user",
   "search_web",
   "web_fetch",
   "web_extract",
-  "read_web_data",
   "generate_image",
   "image_generation_status",
   "finish_task",
@@ -330,6 +352,45 @@ const directTools = new Set([
 ]);
 const nativeName = (name: string) => (controls.has(name) ? name : `okami_${name}`);
 const publicName = (name: string) => name.replace(/^okami_/, "");
+function reasoningModel(spec: string) {
+  const { provider, model } = modelSpec(spec);
+  return provider === "openai" || provider === "chatgpt"
+    ? { id: model, api: provider === "chatgpt" ? "openai-chatgpt-responses" : "openai-responses" }
+    : undefined;
+}
+/** Use the native visible surface and its own discovery receipts, not task-keyword guesses. */
+function selectedHostTools(context: NativeContext, registry: ReadonlySet<string>) {
+  const selected = new Set((context.tools ?? []).map((tool) => publicName(tool.name)));
+  const collect = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      value.forEach(collect);
+      return;
+    }
+    for (const [key, item] of Object.entries(value)) {
+      if ((key === "name" || key === "id") && typeof item === "string")
+        selected.add(publicName(item));
+      else if (typeof item === "object") collect(item);
+    }
+  };
+  for (const message of context.messages) {
+    if (message.role === "assistant" && Array.isArray(message.content))
+      for (const part of message.content) {
+        if (part.type !== "toolCall") continue;
+        const name = publicName(part.name ?? "");
+        if (controls.has(name)) collect(part.arguments);
+        else selected.add(name);
+      }
+    if (message.role === "toolResult" && controls.has(publicName(message.toolName ?? ""))) {
+      try {
+        collect(JSON.parse(textContent(message)));
+      } catch {
+        // Failed or textual discovery results cannot select host instructions.
+      }
+    }
+  }
+  return [...selected].filter((name) => registry.has(name));
+}
 type ToolSchema = {
   type?: string | string[];
   anyOf?: ToolSchema[];
@@ -556,6 +617,7 @@ export function openclawAgent(options: Options) {
           const converted = convertInputToTanStackAI(input);
           const outputs = new ToolOutputStore();
           outputs.observe(converted.messages);
+          let selectedTransportModel = options.model;
           const modelBudget = options.contextModel?.({
             tools: true,
             vision: false,
@@ -587,6 +649,7 @@ export function openclawAgent(options: Options) {
             }),
           ];
           const names = tools.map((tool) => nativeName(tool.name));
+          const registry = new Set(tools.map((tool) => tool.name));
           const schemas = new Map(
             tools.map((tool) => [
               tool.name,
@@ -603,6 +666,7 @@ export function openclawAgent(options: Options) {
             mkdir(workspace, { recursive: true, mode: 0o700 }),
             mkdir(agentDir, { recursive: true, mode: 0o700 }),
           ]);
+          const primaryReasoningModel = reasoningModel(options.model);
           const config = {
             agents: {
               entries: { [agentId]: { agentDir, workspace } },
@@ -624,7 +688,10 @@ export function openclawAgent(options: Options) {
                       id: "configured",
                       name: options.model,
                       input: ["text", "image"],
-                      reasoning: false,
+                      reasoning: Boolean(
+                        primaryReasoningModel &&
+                          copied.resolveOpenAIModelReasoningEfforts(primaryReasoningModel),
+                      ),
                       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
                       contextWindow,
                       maxTokens: 8192,
@@ -639,7 +706,11 @@ export function openclawAgent(options: Options) {
               slots: { memory: "none" },
               entries: { "okami-host": { enabled: true, config: { runId: input.runId } } },
             },
-            tools: { allow: names, toolSearch: { enabled: options.toolSearch ?? true } },
+            tools: {
+              allow: [...names, "session_status"],
+              toolSearch: { enabled: options.toolSearch ?? true },
+              loopDetection: { enabled: true },
+            },
             skills: { allowBundled: [], load: { watch: false } },
             logging: { level: "error", consoleLevel: "error" },
           };
@@ -673,7 +744,9 @@ export function openclawAgent(options: Options) {
           const host: Host = {
             tools: tools.map((tool) => ({
               name: nativeName(tool.name),
-              ...(directTools.has(tool.name) ? { catalogMode: "direct-only" } : {}),
+              ...(directTools.has(tool.name) || options.directToolNames?.includes(tool.name)
+                ? { catalogMode: "direct-only" }
+                : {}),
               label: tool.name,
               description: tool.description,
               parameters: schemas.get(tool.name),
@@ -684,6 +757,20 @@ export function openclawAgent(options: Options) {
                   const receipt = { id: toolCallId, name: tool.name, args: raw };
                   receipts.set(parent, receipt);
                   receipts.set(toolCallId, receipt);
+                  // A dispatched host call is one operation. Keep its native
+                  // child outcome and remove only this duplicate transport
+                  // wrapper; otherwise wrappers evict the original detector's
+                  // repeated-outcome history before it can veto a loop.
+                  const diagnostic = copied.getDiagnosticSessionState({
+                    sessionKey: `agent:${agentId}:${input.threadId}`,
+                    sessionId: input.threadId,
+                  });
+                  diagnostic.toolCallHistory = diagnostic.toolCallHistory?.filter(
+                    (call) =>
+                      call.toolName !== "tool_call" ||
+                      !call.toolCallId ||
+                      !receipts.has(call.toolCallId),
+                  );
                   // Upstream transcript sanitation can rewrite the parent id
                   // after dispatch. Use its own sanitizer to retain the actual
                   // child's receipt identity in the app's canonical journal.
@@ -815,15 +902,22 @@ export function openclawAgent(options: Options) {
                 const messages = hostMessages(context.messages, receipts);
                 await options.onMessages?.(outputs.restore(messages), "beforeModel");
                 await persist();
-                let systemPrompts = [
-                  context.systemPrompt ?? "",
-                  `Current UTC date and time: ${new Date().toISOString()}`,
-                ];
+                let systemPrompts = [context.systemPrompt ?? ""];
                 // extraSystemPrompt already put the host instructions in the
                 // native prompt. Duplicating them here bypasses OpenClaw's
                 // context accounting and can reject an otherwise admitted turn.
-                const latest = await options.promptContext?.();
+                const latest = await options.promptContext?.(selectedHostTools(context, registry));
                 if (latest) systemPrompts.push(latest);
+                // Reuse OpenClaw's live-time formatter at the transport boundary.
+                // Keep clock metadata out of the authoritative user transcript
+                // so follow-ups restore the same native session tree.
+                systemPrompts.push(
+                  copied.appendCronStyleCurrentTimeLine(
+                    "Live runtime clock (server metadata):",
+                    config,
+                    Date.now(),
+                  ),
+                );
                 const acknowledged =
                   options.finalResponseWhen?.() && options.finalResponseContext
                     ? await options.finalResponseContext()
@@ -866,11 +960,31 @@ export function openclawAgent(options: Options) {
                   options.model,
                   options.fallbacks,
                   options.providers,
-                  options.onModelSelected,
+                  (model) => {
+                    selectedTransportModel = `${model.provider}/${model.model}`;
+                    options.onModelSelected?.(model);
+                  },
                   options.loadBrowserImage,
-                  options.loadFileImage,
+                  // A generated file is deliverable with a text-only executor.
+                  // Optional preview hydration must not force a vision fallback;
+                  // explicit user images and browser screenshots retain admission.
+                  routingCapabilities(
+                    selectedTransportModel,
+                    options.providers ?? modelProviderConfig(options.dataDir),
+                  ).capabilities.vision
+                    ? options.loadFileImage
+                    : undefined,
                   {
                     harnessDeadlineMs: 21_600_000,
+                    modelOptions: (spec) => {
+                      const route = reasoningModel(spec);
+                      if (!route || !copied.resolveOpenAIModelReasoningEfforts(route)) return {};
+                      const effort = copied.resolveOpenAIReasoningEffortForModel({
+                        model: route,
+                        effort: streamOptions.reasoning ?? "medium",
+                      });
+                      return effort ? { reasoning: { effort } } : {};
+                    },
                     contextEstimate: (request) => {
                       // Native compaction reduces history, not the host's fixed
                       // instructions/catalog or the current user message.

@@ -1,7 +1,6 @@
 import type { Message } from "@ag-ui/core";
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
 import { repairHistoricalArguments } from "./hermes/history-repair.ts";
-import { limitHistoryTurns } from "./openclaw/history-turns.ts";
 import { completedMessages, publicJournalValue } from "./task-history.ts";
 
 /** OpenClaw fork-context adapter: carry the canonical parent transcript, not an
@@ -14,18 +13,8 @@ export function delegatedContext(
 ) {
   const boundary = originMessageId ? messages.findIndex((m) => m.id === originMessageId) : -1;
   const history = completedMessages(
-    repairHistoricalArguments(
-      limitHistoryTurns(boundary < 0 ? messages : messages.slice(0, boundary), 12),
-    ),
+    repairHistoricalArguments(boundary < 0 ? messages : messages.slice(0, boundary)),
   );
-  let remaining = 64000;
-  const recent: Message[] = [];
-  for (const message of history.toReversed()) {
-    const size = JSON.stringify(message).length;
-    if (size > remaining) break;
-    recent.unshift(message);
-    remaining -= size;
-  }
   const priorResults = tasks
     .filter((t) => t.result || t.evidence.length)
     .slice(-6)
@@ -38,7 +27,9 @@ export function delegatedContext(
       artifacts: t.artifactIds,
       evidence: t.evidence.slice(-12).map((e) => publicJournalValue(e, 4000)),
     }));
-  return { messages: completedMessages(recent), priorResults };
+  // The copied executor owns context admission and compaction for the selected
+  // model. Do not silently discard the parent's early facts before it sees them.
+  return { messages: history, priorResults };
 }
 
 export function delegatedContextMessages(task: AgentTask): Message[] {

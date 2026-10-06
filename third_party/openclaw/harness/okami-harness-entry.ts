@@ -10,3 +10,7 @@ export {setCommandLaneConcurrency} from './src/process/command-queue.ts';
 export {closeOpenClawAgentDatabasesAsync} from './src/state/openclaw-agent-db.ts';
 export {closeOpenClawStateDatabaseAsync} from './src/state/openclaw-state-db.ts';
 export {sanitizeToolCallIdsForCloudCodeAssist} from './src/agents/tool-call-id.ts';
+export {getDiagnosticSessionState} from './src/logging/diagnostic-session-state.ts';
+export {appendCronStyleCurrentTimeLine} from './src/agents/current-time.ts';
+export {extractBasicHtmlContent} from './src/agents/tools/web-fetch-utils.ts';
+export {resolveOpenAIModelReasoningEfforts,resolveOpenAIReasoningEffortForModel} from './packages/ai/src/providers/openai-reasoning-effort.ts';

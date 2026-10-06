@@ -1,11 +1,12 @@
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
-import { type DefaultTreeAdapterMap, parse } from "parse5";
+import { type DefaultTreeAdapterMap, parse, serialize } from "parse5";
 import { type Resolver, validatePublicUrl } from "../../worker/src/network.ts";
 import { type PublicDataQuery, selectPublicData } from "./public-data.ts";
 
 const maxBytes = 2 * 1024 * 1024;
+const maxDataBytes = 16 * 1024 * 1024;
 const maxText = 30000;
 const compactJson = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 /** Some public feeds use compact JWS despite an application/json header.
@@ -56,10 +57,10 @@ export type RenderedPublicPage = {
   extraction?: { status: "readable" | "partial"; reason?: string };
 };
 export const publicReadDescription =
-  "Read public HTML/JSON over HTTP, including embedded application JSON and published data/API URLs. Default auto never launches a browser. Inspect dataSources and prefer relevant API/MCP tools before requesting mode=headless for JavaScript-only data. Headless uses the VPS, never the personal graphical browser. mode=browser is a legacy alias for headless. Partial content is not verified evidence.";
+  "Read public HTML/JSON and discovered data URLs. Default auto uses HTTP; mode=headless renders JavaScript on the VPS. mode=browser is a legacy alias for headless. Inspect dataSources for published datasets. Truncated content does not establish that unread fields are absent.";
 
 export const publicResearchInstructions =
-  " For ordinary public research, start with search_web; its schema is already available. Read relevant result URLs with web_extract, which handles multiple sources and HTTP-to-headless recovery in one call. Prefer a configured structured API when it directly provides the requested data; use search_app_tools for connected-app data when relevant. Tool discovery searches capabilities, not news or factual answers. Use discovered endpoints and published URL templates with parameters grounded in the observed site configuration. A successful source read establishes the values. Do not invent endpoints, install connectors, or ask for new credentials for a public lookup. Next use search_web and web_fetch HTTP, inspecting embedded JSON and dataSources for published public data endpoints. Fetch relevant data URLs directly before rendering. For large JSON datasets use read_web_data: inspect the root structure, select an exact JSON pointer and the needed fields, then page through all requested rows. A read limit or omitted middle is not absence of data; retrieve the missing rows. Never launch a browser to read a large JSON file. If those paths are unavailable or insufficient, explicitly call web_fetch mode=headless for JavaScript/network data; this never opens the personal graphical browser. Only use personal/graphical navigation as a last resort for a task that actually requires interactive/session access. WebMCP is a site/browser capability, not a universal HTTP API: use it only when actually exposed by an available supported tool. Never claim a MCP/WebMCP/API was tried without a tool receipt. Stop when the requested facts are obtained, retain successful evidence after later failures, and declare outcome=partial when the requested data remains missing. Headless navigation and pending application data each get up to 60 seconds, returning sooner when ready. A deadline limits resource use; waiting a fixed number of seconds does not verify data.";
+  " Search with search_web and read relevant pages with web_fetch or web_extract (up to four URLs together). Snippets are leads, not full source reads. Prefer HTTP; use headless for JavaScript content. Follow relevant page links before treating missing facts as unavailable: dataSources can include unrelated analytics and datasets for other subjects. Use observed URLs or published URL templates, never invented endpoints. Use run_computer_command for complex datasets and batches; discover read_web_data when its structured queries help. Do not page thousands of records to compute a summary. Truncated excerpts and missing fields are not absence of data. Use the live runtime date. Attribute a reputable publisher's data honestly when direct primary-source access is unavailable. Public research needs no new credentials. Once the requested facts are sufficient, produce the requested deliverable. Report partial results only after relevant available paths are exhausted.";
 
 function pageData(root: Node, base: string) {
   const dataSources: { url: string; kind: string }[] = [];
@@ -381,10 +382,14 @@ export function readablePage(
 
 export class PublicWeb {
   constructor(
-    private readonly dependencies: { resolve?: Resolver; request?: typeof requestPublicPage } = {},
+    private readonly dependencies: {
+      resolve?: Resolver;
+      request?: typeof requestPublicPage;
+      renderHtml?: (html: string) => Promise<string>;
+    } = {},
   ) {}
   async readData(url: string, query: PublicDataQuery = {}, signal?: AbortSignal) {
-    const document = await this.document(url, signal, 16 * 1024 * 1024);
+    const document = await this.document(url, signal, maxDataBytes);
     let source: ReturnType<typeof publicJson>;
     try {
       source = publicJson(document.body);
@@ -521,13 +526,28 @@ export class PublicWeb {
       throw new WebReadError("RENDER_UNAVAILABLE", "Public rendering is unavailable.");
     signal?.throwIfAborted();
     await this.validate(url, signal);
-    const rendered = await options.render(url, signal);
-    signal?.throwIfAborted();
-    if (!readablePage({ ...rendered, extraction: undefined }))
-      throw new WebReadError(
-        "PAGE_BLOCKED",
-        "The rendered source is still blocked or empty. Read a different public source; no source data was verified.",
-      );
+    let rendered: RenderedPublicPage;
+    try {
+      rendered = await options.render(url, signal);
+      signal?.throwIfAborted();
+      if (!readablePage({ ...rendered, extraction: undefined }))
+        throw new WebReadError(
+          "PAGE_BLOCKED",
+          "The rendered source is still blocked or empty. Read a different public source; no source data was verified.",
+        );
+    } catch (error) {
+      signal?.throwIfAborted();
+      // Rendering and public HTTP have independent transports. A renderer failure
+      // does not establish that the source is unavailable through HTTP. The HTTP
+      // reader validates and pins every destination and redirect independently.
+      try {
+        const page = await this.readHttp(url, signal);
+        if (readablePage(page)) return page;
+      } catch {
+        signal?.throwIfAborted();
+      }
+      throw error;
+    }
     return {
       ...rendered,
       text: rendered.text.slice(0, maxText),
@@ -540,7 +560,14 @@ export class PublicWeb {
     };
   }
   private async readHttp(url: string, signal?: AbortSignal) {
-    const document = await this.document(url, signal);
+    const target = new URL(url);
+    const publishedData =
+      /\.(?:json|jws)$/i.test(target.pathname) ||
+      target.searchParams.get("format")?.toLowerCase() === "json";
+    // Published datasets use the same bounded transfer as readData. A model
+    // should receive their values/shape and paging guidance, not a page-size
+    // error that makes an accessible dataset look unavailable.
+    const document = await this.document(url, signal, publishedData ? maxDataBytes : maxBytes);
     if (
       (/json/.test(document.contentType) && document.body.length > maxText) ||
       compactJson.test(document.body.trim())
@@ -552,16 +579,20 @@ export class PublicWeb {
         throw new WebReadError("INVALID_JSON", "This source is not valid JSON.");
       }
       const projection = selectPublicData(source.data);
+      // Match the upstream JSON reader: preserve source values in its text,
+      // rather than replacing a large root object with an empty query result.
+      const text = JSON.stringify(source.data, null, 2);
       return {
         url: document.url,
         title: new URL(document.url).hostname,
-        text: JSON.stringify(projection).slice(0, maxText),
+        text: text.slice(0, maxText),
+        structure: projection.structure,
         links: [],
         dataSources: [{ url: document.url, kind: "published-data-link" }],
         extraction: {
           status: "partial" as const,
           reason:
-            "This JSON dataset exceeds the text preview. Use read_web_data with this URL, a pointer and selected fields from the structure below. Page using nextOffset until all requested rows are read; do not infer missing values from this preview or render the JSON in a browser.",
+            "This is a source JSON excerpt; unread fields remain available at this URL. Use run_computer_command to read and compute the complete dataset, or discover read_web_data for selected fields and aggregation. Do not infer absence from this excerpt or page thousands of rows to compute a summary.",
         },
         truncated: true,
         observedAt: new Date().toISOString(),
@@ -589,9 +620,41 @@ export class PublicWeb {
     const structured = products.length
       ? "\nStructured product data from this page (untrusted): " + JSON.stringify(products)
       : "";
+    let readableText = visibleText;
+    if (html && this.dependencies.renderHtml) {
+      // Preserve accessible image labels before the native text renderer drops images.
+      for (const node of htmlNodes(root, (node) => node.nodeName === "img")) {
+        if (!("tagName" in node)) continue;
+        const label = htmlAttribute(node, "alt") ?? "";
+        node.nodeName = node.tagName = "span";
+        node.childNodes = [{ nodeName: "#text", value: label, parentNode: node }];
+      }
+      for (const node of htmlNodes(root, (node) => node.nodeName === "a")) {
+        if (!("attrs" in node)) continue;
+        const href = node.attrs.find((attr) => attr.name === "href");
+        if (!href) continue;
+        try {
+          const url = new URL(href.value, document.url);
+          if (
+            !["http:", "https:"].includes(url.protocol) ||
+            url.username ||
+            url.password ||
+            url.href.length > 4096
+          )
+            throw new Error("Unsupported public link");
+          href.value = url.href;
+        } catch {
+          node.attrs = node.attrs.filter((attr) => attr !== href);
+        }
+      }
+      const content = main ?? htmlNodes(root, (node) => node.nodeName === "body")[0] ?? root;
+      readableText = await this.dependencies.renderHtml(
+        serialize("childNodes" in content ? content : root),
+      );
+    }
     const extracted = structured
-      ? visibleText.slice(0, 19000) + structured.slice(0, 11000)
-      : visibleText;
+      ? readableText.slice(0, 19000) + structured.slice(0, 11000)
+      : readableText;
     const text = data.embedded
       ? extracted.slice(0, 17500) +
         "\nEmbedded application JSON (untrusted source data):\n" +
@@ -669,7 +732,7 @@ export class PublicWeb {
         data.truncated ||
         (Boolean(data.embedded) && extracted.length > 17500) ||
         text.length > maxText ||
-        (Boolean(structured) && (visibleText.length > 19000 || structured.length > 11000)),
+        (Boolean(structured) && (readableText.length > 19000 || structured.length > 11000)),
       observedAt: new Date().toISOString(),
       provenance: { backend: "http" as const, authenticated: false as const },
     };
