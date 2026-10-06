@@ -1069,6 +1069,28 @@ export async function createApp(
       ),
     ),
   );
+  app.get("/api/google/mail-drafts/:id", async (c) => {
+    c.header("Cache-Control", "no-store");
+    return c.json(await agent.googleWorkspace.mailDraft(c.get("owner"), c.req.param("id")));
+  });
+  app.post("/api/google/mail-drafts/:id", async (c) => {
+    const body = z
+      .object({
+        operation: z.enum(["save", "send", "delete"]),
+        operationId: z.string().min(1).max(160),
+      })
+      .strict()
+      .parse(await c.req.json());
+    await agent.runtimePause.assertResumed(c.get("owner"));
+    return c.json(
+      await agent.googleWorkspace.operateMailDraft(
+        c.get("owner"),
+        c.req.param("id"),
+        body.operation,
+        body.operationId,
+      ),
+    );
+  });
   app.get("/api/google/account", async (c) => {
     c.header("Cache-Control", "no-store");
     if (config.mode === "sample") {

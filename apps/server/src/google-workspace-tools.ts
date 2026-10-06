@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import { type ActionProposal, emailDraftSchema } from "../../../packages/domain/src/index.ts";
-import { parseAddressList } from "../../../packages/integrations/src/google-parser.ts";
+import type { GoogleMailDraft } from "../../../packages/domain/src/google-mail-draft.ts";
+import {
+  decodeMimeHeader,
+  parseAddressList,
+} from "../../../packages/integrations/src/google-parser.ts";
 import {
   GoogleWorkspaceCatalog,
   googleServices,
@@ -65,6 +69,7 @@ type Binding = {
   requestHash: string;
   taskId?: string;
   uploadSha256?: string;
+  targetVersion?: string;
 };
 const digest = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
 let pinnedCatalog: GoogleWorkspaceCatalog | undefined;
@@ -145,6 +150,7 @@ export class GoogleWorkspaceHarness {
       if (upload && digest(upload.bytes) !== binding.uploadSha256)
         throw new AppError("Google upload changed since preparation", 409);
       const request = this.catalog.prepare({ ...input, upload });
+      if (binding.targetVersion) request.ifMatch = binding.targetVersion;
       const data = await workspace
         .google(owner, binding.connectionId, undefined, async () => {
           await this.authority(owner, input.toolId, binding.connectionId);
@@ -235,6 +241,55 @@ export class GoogleWorkspaceHarness {
       ? undefined
       : { mimeType: input.uploadMimeType ?? "text/plain", bytes: Buffer.from(input.uploadText) };
   }
+  private review(input: ExecuteInput, account: string) {
+    const display: Record<string, string> = { account, operation: input.toolId };
+    for (const key of [
+      "calendarId",
+      "eventId",
+      "fileId",
+      "documentId",
+      "spreadsheetId",
+      "presentationId",
+      "range",
+      "id",
+    ])
+      if (typeof input.parameters[key] === "string") display[key] = input.parameters[key];
+    const body = input.body as
+      | {
+          title?: string;
+          name?: string;
+          summary?: string;
+          id?: string;
+          raw?: string;
+          message?: { raw?: string };
+        }
+      | undefined;
+    const title = body?.title ?? body?.name ?? body?.summary;
+    if (typeof title === "string") display.resourceName = title;
+    const raw = body?.raw ?? body?.message?.raw;
+    if (raw && input.toolId.startsWith("gmail.")) {
+      const headers = Buffer.from(raw, "base64url")
+        .toString("utf8")
+        .split(/\r?\n\r?\n/, 1)[0]
+        .replace(/\r?\n[ \t]+/g, " ");
+      for (const key of ["To", "Cc", "Bcc", "Subject"]) {
+        const line = headers
+          .split(/\r?\n/)
+          .find((line) => line.toLowerCase().startsWith(`${key.toLowerCase()}:`));
+        if (line)
+          display[key.toLowerCase()] = decodeMimeHeader(line.slice(line.indexOf(":") + 1).trim());
+      }
+    }
+    // MIME, attachment bytes and server credentials never enter a review card.
+    display.request = JSON.stringify({
+      parameters: input.parameters,
+      body:
+        input.toolId.startsWith("gmail.") && raw
+          ? { id: body?.id, message: "Email contents shown in the draft card" }
+          : input.body,
+    }).slice(0, 3000);
+    return display;
+  }
   async execute(
     owner: string,
     input: ExecuteInput,
@@ -244,6 +299,8 @@ export class GoogleWorkspaceHarness {
       before?: () => Promise<void>;
       approval?: (id: string) => Promise<void>;
       artifact?: (id: string) => Promise<void>;
+      draftCard?: (id: string) => Promise<void>;
+      draftCardId?: string;
     } = {},
   ) {
     input = googleExecuteSchema.parse(input);
@@ -342,6 +399,41 @@ export class GoogleWorkspaceHarness {
         data,
       };
     }
+    const destructive = this.catalog.destructive(input.toolId, input.body);
+    const display = this.review(input, account.account);
+    let targetVersion: string | undefined;
+    if (destructive && input.toolId === "calendar.events.delete") {
+      const event = (await this.workspace
+        .google(owner, account.connectionId, options.signal)
+        .workspaceRequest(
+          this.catalog.prepare({
+            toolId: "calendar.events.get",
+            parameters: {
+              calendarId: input.parameters.calendarId ?? "primary",
+              eventId: input.parameters.eventId,
+            },
+          }),
+        )) as { summary?: string; etag?: string; start?: { dateTime?: string; date?: string } };
+      display.resourceName = event.summary ?? String(input.parameters.eventId);
+      if (event.start?.dateTime || event.start?.date)
+        display.starts = event.start.dateTime ?? event.start.date ?? "";
+      targetVersion = event.etag;
+    }
+    if (
+      destructive &&
+      input.toolId.startsWith("drive.files.") &&
+      typeof input.parameters.fileId === "string"
+    ) {
+      const file = (await this.workspace
+        .google(owner, account.connectionId, options.signal)
+        .workspaceRequest(
+          this.catalog.prepare({
+            toolId: "drive.files.get",
+            parameters: { fileId: input.parameters.fileId, fields: "id,name" },
+          }),
+        )) as { name?: string };
+      if (file.name) display.resourceName = file.name;
+    }
     const binding: Binding = {
       input,
       requestHash,
@@ -349,8 +441,20 @@ export class GoogleWorkspaceHarness {
       connectionId: account.connectionId,
       account: account.account,
       signature: this.signature(input.toolId),
+      ...(targetVersion ? { targetVersion } : {}),
       ...(upload ? { uploadSha256: digest(upload.bytes) } : {}),
     };
+    if (options.draftCardId) {
+      const card = await this.mailDraft(owner, options.draftCardId);
+      if (card.connectionId !== account.connectionId)
+        throw new AppError("Draft account changed", 409);
+      Object.assign(display, {
+        subject: card.draft.subject,
+        to: card.draft.to.join(", "),
+        cc: card.draft.cc.join(", "),
+        bcc: card.draft.bcc.join(", "),
+      });
+    }
     const action = await this.actions.proposeExternal(
       owner,
       {
@@ -358,15 +462,9 @@ export class GoogleWorkspaceHarness {
         target: new URL(request.url).origin,
         summary: `Google ${input.toolId} · ${account.account}`,
         money: false,
+        requiresHumanApproval: destructive,
         binding,
-        display: {
-          account: account.account,
-          operation: input.toolId,
-          request: JSON.stringify({ parameters: input.parameters, body: input.body }).slice(
-            0,
-            3000,
-          ),
-        },
+        display,
       },
       actionKey,
       options.taskId,
@@ -388,7 +486,15 @@ export class GoogleWorkspaceHarness {
     if (previous) {
       if (previous.requestHash !== requestHash)
         throw new AppError("Draft operation ID belongs to different details", 409);
-      return this.execute(owner, previous.input, options);
+      const result = await this.execute(owner, previous.input, options);
+      return this.recordDraft(
+        owner,
+        options.draftCardId ?? id,
+        input,
+        previous.input,
+        result,
+        options,
+      );
     }
     const toolId = input.draftId ? "gmail.users.drafts.update" : "gmail.users.drafts.create";
     const account = await this.authority(owner, toolId, input.account);
@@ -425,7 +531,147 @@ export class GoogleWorkspaceHarness {
       ));
     if (!saved || saved.requestHash !== requestHash)
       throw new AppError("Draft operation ID belongs to different details", 409);
-    return this.execute(owner, saved.input, options);
+    const result = await this.execute(owner, saved.input, options);
+    return this.recordDraft(owner, options.draftCardId ?? id, input, saved.input, result, options);
+  }
+  private async recordDraft(
+    owner: string,
+    id: string,
+    input: z.infer<typeof gmailDraftSchema>,
+    prepared: ExecuteInput,
+    result: Awaited<ReturnType<GoogleWorkspaceHarness["execute"]>>,
+    options: NonNullable<Parameters<GoogleWorkspaceHarness["execute"]>[2]>,
+  ) {
+    const account = await this.authority(owner, prepared.toolId, prepared.account);
+    const prior = await this.db.get<GoogleMailDraft>(owner, "google-mail-drafts", id);
+    const actionId = "actionId" in result ? result.actionId : undefined;
+    const message = (prepared.body as { message: { raw: string } }).message;
+    if (prior?.actionId !== actionId)
+      await this.db.put(owner, "google-mail-drafts", {
+        id,
+        account: account.account,
+        connectionId: account.connectionId,
+        draft: input.draft,
+        gmailDraftId: input.draftId ?? prior?.gmailDraftId,
+        actionId,
+        operation: "save",
+        status: result.status === "succeeded" ? "saved" : result.status,
+        raw: message.raw,
+        updatedAt: new Date().toISOString(),
+      });
+    const card = await this.mailDraft(owner, id);
+    await options.draftCard?.(id);
+    return { ...result, draftCard: card };
+  }
+  async mailDraft(owner: string, id: string): Promise<GoogleMailDraft> {
+    let saved = await this.db.get<GoogleMailDraft & { raw: string; lastOperationId?: string }>(
+      owner,
+      "google-mail-drafts",
+      id,
+    );
+    if (!saved) throw new AppError("Gmail draft not found", 404);
+    if (saved.actionId) {
+      const action = await this.db.get<ActionProposal>(owner, "actions", saved.actionId);
+      if (!action) throw new AppError("Gmail draft receipt not found", 409);
+      const previous = saved;
+      if (action.status === "succeeded") {
+        const result = JSON.parse(action.result ?? "null");
+        if (result?.status !== "succeeded" || result.connectionId !== saved.connectionId)
+          throw new AppError("Gmail draft receipt does not match its account", 409);
+        const status =
+          saved.operation === "save" ? "saved" : saved.operation === "send" ? "sent" : "deleted";
+        saved = {
+          ...saved,
+          status,
+          ...(saved.operation === "save" && result?.data?.id
+            ? { gmailDraftId: result.data.id }
+            : {}),
+        };
+      } else saved = { ...saved, status: action.status };
+      if (saved.status !== previous.status || saved.gmailDraftId !== previous.gmailDraftId)
+        await this.db.put(owner, "google-mail-drafts", saved);
+    }
+    const { raw: _raw, lastOperationId: _lastOperationId, ...publicDraft } = saved;
+    return publicDraft;
+  }
+  async operateMailDraft(
+    owner: string,
+    id: string,
+    operation: "save" | "send" | "delete",
+    operationId: string,
+  ) {
+    const draft = await this.mailDraft(owner, id);
+    const privateDraft = await this.db.get<
+      GoogleMailDraft & { raw: string; lastOperationId?: string }
+    >(owner, "google-mail-drafts", id);
+    if (!privateDraft) throw new AppError("Gmail draft not found", 404);
+    if (privateDraft.lastOperationId === operationId) {
+      if (privateDraft.operation !== operation)
+        throw new AppError("Operation ID belongs to different details", 409);
+      return {
+        draft,
+        actionId: draft.actionId,
+        approvalRequired: draft.status === "awaiting_review",
+      };
+    }
+    if (["sent", "deleted"].includes(draft.status))
+      throw new AppError("This draft has already been sent or deleted", 409);
+    if (["awaiting_review", "executing", "outcome_unknown"].includes(draft.status))
+      return {
+        draft,
+        actionId: draft.actionId,
+        approvalRequired: draft.status === "awaiting_review",
+      };
+    if (operation === "save") {
+      const result = await this.draft(
+        owner,
+        {
+          account: draft.connectionId,
+          draft: draft.draft,
+          draftId: draft.gmailDraftId,
+          operationId,
+        },
+        { draftCardId: id },
+      );
+      const stored = await this.db.get(owner, "google-mail-drafts", id);
+      await this.db.put(owner, "google-mail-drafts", {
+        ...stored,
+        id,
+        lastOperationId: operationId,
+      });
+      return {
+        draft: result.draftCard,
+        actionId: result.actionId,
+        approvalRequired: "approvalRequired" in result && result.approvalRequired,
+      };
+    }
+    if (!draft.gmailDraftId) throw new AppError("Save the Gmail draft first", 409);
+    const result = await this.execute(
+      owner,
+      {
+        toolId: operation === "send" ? "gmail.users.drafts.send" : "gmail.users.drafts.delete",
+        account: draft.connectionId,
+        parameters: operation === "delete" ? { id: draft.gmailDraftId } : {},
+        ...(operation === "send"
+          ? { body: { id: draft.gmailDraftId, message: { raw: privateDraft?.raw } } }
+          : {}),
+        operationId,
+      },
+      { draftCardId: id },
+    );
+    await this.db.put(owner, "google-mail-drafts", {
+      ...privateDraft,
+      id,
+      operation,
+      lastOperationId: operationId,
+      actionId: result.actionId,
+      updatedAt: new Date().toISOString(),
+    });
+    return {
+      draft: await this.mailDraft(owner, id),
+      actionId: result.actionId,
+      approvalRequired: "approvalRequired" in result && result.approvalRequired,
+    };
   }
 }
 

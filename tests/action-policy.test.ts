@@ -26,6 +26,42 @@ test("live default is money-only; scripted samples keep reviews", () => {
   assert.equal(approvalPolicy({ mode: "sample", approvalPolicy: "money" }), "all");
   assert.equal(approvalPolicy({ mode: "live", approvalPolicy: "all" }), "all");
 });
+test("destructive external actions always require a human decision even under money-only policy", async () => {
+  let calls = 0;
+  const service = new ActionService(db, {
+    policy: "money",
+    connected: async () => true,
+    execute: async () => "unused",
+  });
+  service.registerExternal("google.workspace", async () => {
+    calls++;
+    return "deleted";
+  });
+  const action = await service.proposeExternal(
+    "delete-review",
+    {
+      tool: "google.workspace",
+      target: "calendar.googleapis.com",
+      summary: "Delete test event",
+      money: false,
+      requiresHumanApproval: true,
+      binding: { eventId: "test-event" },
+    },
+    "delete-test-event",
+  );
+  assert.equal(action.status, "awaiting_review");
+  assert.equal(calls, 0);
+  await assert.rejects(
+    service.decide("delete-review", action.id, action.hash, "approve", "policy"),
+    /human/i,
+  );
+  assert.equal(calls, 0);
+  assert.equal(
+    (await service.decide("delete-review", action.id, action.hash, "approve")).status,
+    "succeeded",
+  );
+  assert.equal(calls, 1);
+});
 test("automatic Google dispatch is claimed once and audits no message payload", async () => {
   let calls = 0;
   const service = new ActionService(db, {

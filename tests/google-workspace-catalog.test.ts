@@ -4,6 +4,37 @@ import { GoogleWorkspaceCatalog } from "../packages/integrations/src/google-work
 
 const catalog = new GoogleWorkspaceCatalog();
 
+test("deletions, trash and nested content removal require a review across Google services", () => {
+  for (const [id, body] of [
+    ["calendar.events.delete"],
+    ["calendar.calendars.clear"],
+    ["gmail.users.drafts.delete"],
+    ["gmail.users.messages.trash"],
+    ["gmail.users.messages.batchDelete", { ids: ["message"] }],
+    ["drive.files.delete"],
+    ["drive.files.emptyTrash"],
+    ["drive.files.update", { trashed: true }],
+    ["sheets.spreadsheets.values.clear"],
+    ["sheets.spreadsheets.values.batchClear", { ranges: ["A1:B2"] }],
+    ["sheets.spreadsheets.batchUpdate", { requests: [{ deleteSheet: { sheetId: 5 } }] }],
+    [
+      "docs.documents.batchUpdate",
+      { requests: [{ deleteContentRange: { range: { startIndex: 1, endIndex: 2 } } }] },
+    ],
+    ["slides.presentations.batchUpdate", { requests: [{ deleteObject: { objectId: "slide" } }] }],
+    ["gmail.users.messages.modify", { removeLabelIds: ["INBOX"] }],
+  ] as const)
+    assert.equal(catalog.destructive(id, body), true, id);
+  for (const [id, body] of [
+    ["docs.documents.get"],
+    ["gmail.users.drafts.create", { message: { raw: "ignored" } }],
+    ["drive.files.update", { trashed: false }],
+    ["docs.documents.batchUpdate", { requests: [{ insertText: { text: "deleteObject" } }] }],
+    ["gmail.users.messages.modify", { removeLabelIds: [], addLabelIds: ["STARRED"] }],
+  ] as const)
+    assert.equal(catalog.destructive(id, body), false, id);
+});
+
 test("the pinned Google catalog discovers all six services without loading their schemas", () => {
   for (const service of ["gmail", "calendar", "drive", "docs", "sheets", "slides"]) {
     const result = catalog.search({ query: "", service, limit: 100 });
@@ -31,6 +62,35 @@ test("descriptions expand only the requested request-body branch", () => {
     () => catalog.describe("docs.documents.batchUpdate", ["notAField"]),
     /schema|field/i,
   );
+});
+
+test("broad batch schemas stay compact and expose a complete executable example", () => {
+  const description = catalog.describe("docs.documents.batchUpdate", ["requests"]);
+  assert.ok(JSON.stringify(description).length < 10000);
+  const example = description.requestExample;
+  assert.ok(example);
+  assert.equal(catalog.prepare({ toolId: description.id, ...example }).method, "POST");
+  assert.deepEqual(example.body, {
+    requests: [{ insertText: { location: { index: 1 }, text: "Text to insert" } }],
+  });
+});
+
+test("core document, spreadsheet and presentation examples have valid complete request envelopes", () => {
+  for (const service of ["docs", "sheets", "slides"]) {
+    for (const method of catalog.search({ query: "", service, limit: 100 }).tools) {
+      const description = catalog.describe(method.id);
+      if (description.requestExample)
+        assert.doesNotThrow(() => catalog.prepare({ toolId: method.id, ...description.requestExample }), method.id);
+    }
+  }
+});
+
+test("shortened resource identifiers fail before contacting Google", () => {
+  for (const documentId of ["110vQV…j7J2-mZc", "110vQV...j7J2-mZc"])
+    assert.throws(
+      () => catalog.prepare({ toolId: "docs.documents.get", parameters: { documentId } }),
+      /full|shortened/i,
+    );
 });
 
 test("read-only POST operations retain their read classification", () => {

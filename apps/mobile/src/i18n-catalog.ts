@@ -8,6 +8,35 @@ import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  "Clipboard unavailable": "Área de transferência indisponível",
+  "Change labels": "Alterar marcadores",
+  "Clear contents": "Limpar conteúdo",
+  "Empty trash": "Esvaziar lixeira",
+  "Move to trash": "Mover para a lixeira",
+  Range: "Intervalo",
+  "Item reference": "Referência do item",
+  "Presentation reference": "Referência da apresentação",
+  "Spreadsheet reference": "Referência da planilha",
+  "Document reference": "Referência do documento",
+  "File reference": "Referência do arquivo",
+  "Event reference": "Referência do evento",
+  Item: "Item",
+  Service: "Serviço",
+  "Delete or remove contents": "Excluir ou remover conteúdo",
+  "The result is uncertain. Check Gmail before attempting another change.":
+    "O resultado é incerto. Confira no Gmail antes de tentar outra alteração.",
+  "Reload draft": "Recarregar rascunho",
+  "Hide technical details": "Ocultar detalhes técnicos",
+  "Show technical details": "Mostrar detalhes técnicos",
+  "This removes the selected item from the account shown above. Nothing is deleted until you approve.":
+    "Isso remove o item selecionado da conta exibida acima. Nada será excluído até você aprovar.",
+  "Waiting for your approval": "Aguardando sua aprovação",
+  "Approve deletion": "Aprovar exclusão",
+  "Confirm deletion": "Confirmar exclusão",
+  "Saved in Gmail": "Salvo no Gmail",
+  "Loading draft…": "Carregando rascunho…",
+  "Gmail draft": "Rascunho no Gmail",
+
   "Preparing document preview…": "Preparando a visualização do documento…",
   "{done} of {total} steps completed": "{done} de {total} etapas concluídas",
   "Working on your request": "Trabalhando no seu pedido",

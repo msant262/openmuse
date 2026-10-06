@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { type TestContext, test } from "node:test";
+import { TaskWorker } from "../apps/server/src/engine/worker.ts";
 import { googleWorkspaceVerificationBinding } from "../apps/server/src/google-workspace-tools.ts";
 import type { ActionProposal } from "../packages/domain/src/index.ts";
 import { GoogleClient } from "../packages/integrations/src/google.ts";
@@ -36,6 +37,212 @@ async function fixture(t: TestContext, policy: "money" | "all" = "money") {
     });
   return server;
 }
+
+test("calendar deletion displays the actual event and dispatches only after an exact human approval", async (t) => {
+  const server = await fixture(t);
+  const writes: Request[] = [];
+  t.mock.method(
+    server.workspace,
+    "google",
+    (
+      _owner: string,
+      connectionId?: string,
+      signal?: AbortSignal,
+      beforeWrite?: () => Promise<void>,
+    ) => {
+      assert.equal(connectionId, "work-id");
+      return new GoogleClient({
+        signal,
+        beforeWrite,
+        getAccessToken: async () => "fixture",
+        fetch: async (url, init) => {
+          const request = new Request(url, init);
+          if (request.method === "GET")
+            return Response.json({
+              id: "test-event",
+              summary: "Own test event",
+              etag: '"version-one"',
+              start: { dateTime: "2026-10-07T12:00:00Z" },
+            });
+          writes.push(request);
+          return new Response(null, { status: 204 });
+        },
+      });
+    },
+  );
+  const input = {
+    toolId: "calendar.events.delete",
+    account: "work-id",
+    parameters: { calendarId: "primary", eventId: "test-event" },
+    operationId: "calendar-delete-card",
+  };
+  const prepared = await server.agent.googleWorkspace.execute("owner", input);
+  assert.equal(prepared.status, "awaiting_review");
+  assert.equal(writes.length, 0);
+  const action = await server.db.get<ActionProposal>("owner", "actions", prepared.actionId);
+  assert.ok(action);
+  assert.equal(action.data.requiresHumanApproval, true);
+  assert.equal(action.data.resourceName, "Own test event");
+  await assert.rejects(
+    server.actions.decide("owner", action.id, action.hash, "approve", "policy"),
+    /human/i,
+  );
+  await assert.rejects(server.actions.decide("owner", action.id, "wrong-hash", "approve"));
+  assert.equal(writes.length, 0);
+  await server.actions.decide("owner", action.id, action.hash, "approve");
+  await server.agent.googleWorkspace.execute("owner", input);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].method, "DELETE");
+  assert.equal(writes[0].headers.get("if-match"), '"version-one"');
+});
+
+test("draft cards preserve sender and content, save and send once, and never auto-delete", async (t) => {
+  const server = await fixture(t);
+  const writes: Request[] = [];
+  t.mock.method(
+    server.workspace,
+    "google",
+    (
+      _owner: string,
+      connectionId?: string,
+      signal?: AbortSignal,
+      beforeWrite?: () => Promise<void>,
+    ) => {
+      assert.equal(connectionId, "work-id");
+      return new GoogleClient({
+        signal,
+        beforeWrite,
+        getAccessToken: async () => "fixture",
+        fetch: async (url, init) => {
+          const request = new Request(url, init);
+          if (request.method === "GET") return Response.json({ emailAddress: "work@example.com" });
+          writes.push(request);
+          return request.method === "DELETE"
+            ? new Response(null, { status: 204 })
+            : Response.json({
+                id: request.url.endsWith("/send") ? "sent-message" : "remote-draft",
+              });
+        },
+      });
+    },
+  );
+  const input = {
+    account: "work-id",
+    draft: {
+      to: ["msant262@gmail.com"],
+      cc: [],
+      bcc: [],
+      subject: "Only test draft",
+      body: "Exact visible contents",
+      attachmentIds: [],
+    },
+    operationId: "card-create",
+  };
+  let linked = "";
+  const created = await server.agent.googleWorkspace.draft("owner", input, {
+    draftCard: async (id) => {
+      linked = id;
+    },
+  });
+  assert.equal(created.draftCard.id, linked);
+  assert.equal(created.draftCard.account, "work@example.com");
+  assert.equal(created.draftCard.gmailDraftId, "remote-draft");
+  assert.deepEqual(created.draftCard.draft, input.draft);
+  assert.doesNotMatch(JSON.stringify(created.draftCard), /raw|fixture/);
+  await assert.rejects(
+    server.agent.googleWorkspace.mailDraft("foreign-owner", linked),
+    /not found/,
+  );
+  const saved = await server.agent.googleWorkspace.operateMailDraft(
+    "owner",
+    linked,
+    "save",
+    "save-click",
+  );
+  assert.equal(saved.draft.status, "saved");
+  await server.agent.googleWorkspace.operateMailDraft("owner", linked, "save", "save-click");
+  assert.equal(writes.length, 2);
+  const pending = await server.agent.googleWorkspace.operateMailDraft(
+    "owner",
+    linked,
+    "delete",
+    "delete-click",
+  );
+  assert.equal(pending.draft.status, "awaiting_review");
+  assert.equal(writes.length, 2);
+  const action = await server.db.get<ActionProposal>("owner", "actions", pending.actionId);
+  assert.ok(action);
+  assert.equal(action.data.subject, input.draft.subject);
+  assert.equal(action.data.to, "msant262@gmail.com");
+  await server.actions.decide("owner", action.id, action.hash, "deny");
+  assert.equal((await server.agent.googleWorkspace.mailDraft("owner", linked)).status, "denied");
+  assert.equal(writes.length, 2);
+  const sent = await server.agent.googleWorkspace.operateMailDraft(
+    "owner",
+    linked,
+    "send",
+    "send-click",
+  );
+  assert.equal(sent.draft.status, "sent");
+  const repeated = await server.agent.googleWorkspace.operateMailDraft(
+    "owner",
+    linked,
+    "send",
+    "send-click",
+  );
+  assert.deepEqual(repeated, sent);
+  assert.equal(writes.length, 3);
+  assert.ok(writes.every((request) => request.method !== "DELETE"));
+  await assert.rejects(
+    server.agent.googleWorkspace.operateMailDraft("owner", linked, "delete", "late-delete"),
+    /already/,
+  );
+  assert.equal((await server.workspace.googleAccounts("owner")).length, 2);
+});
+
+test("a dispatched Google read failure retains its error and does not become an uncertain write", async (t) => {
+  const server = await fixture(t);
+  t.mock.method(
+    server.workspace,
+    "google",
+    () =>
+      new GoogleClient({
+        getAccessToken: async () => "fixture",
+        fetch: async () =>
+          Response.json({ error: { message: "Document not found" } }, { status: 404 }),
+      }),
+  );
+  const task = await server.agent.createTask("owner", { prompt: "Read my Google Doc" });
+  const worker = new TaskWorker(server.db, async (owner, running) => {
+    const args = {
+      toolId: "docs.documents.get",
+      account: "work-id",
+      parameters: { documentId: "missing-document" },
+      operationId: "missing-doc-read",
+    };
+    await assert.rejects(
+      server.agent.journal.run(
+        owner,
+        running,
+        {
+          id: "read-missing-doc",
+          name: "execute_google_workspace_tool",
+          args,
+        },
+        () => server.agent.googleWorkspace.execute(owner, args),
+        false,
+      ),
+      /Document not found/,
+    );
+    return { status: "failed", error: "Expected diagnostic failure" };
+  });
+  await worker.tick();
+  await worker.stop();
+  const op = (await server.agent.journal.operations("owner", task.id))[0];
+  assert.equal(op.effect, false);
+  assert.equal(op.status, "failed");
+  assert.match(JSON.stringify(op.receipt), /Document not found/);
+});
 
 test("Google discovery exposes metadata and which simultaneous accounts can perform an operation", async (t) => {
   const server = await fixture(t);
@@ -112,18 +319,28 @@ test("a real Gmail draft uses server-built UTF-8 MIME, the selected account and 
     },
     operationId: "draft-create-test",
   };
-  const first = await server.agent.googleWorkspace.draft("owner", input);
-  const repeated = await server.agent.googleWorkspace.draft("owner", input);
-  assert.equal(first.status, "succeeded");
-  assert.deepEqual(repeated, first);
+  const task = await server.agent.createTask("owner", {
+    prompt: "Create a draft email in Gmail for msant262@gmail.com",
+  });
+  const worker = new TaskWorker(server.db, async (owner, running) => {
+    const first = await server.agent.googleWorkspace.draft(owner, input, { taskId: running.id });
+    const repeated = await server.agent.googleWorkspace.draft(owner, input, { taskId: running.id });
+    assert.equal(first.status, "succeeded");
+    assert.deepEqual(repeated, first);
+    assert.doesNotMatch(JSON.stringify(first), /fixture|private-access|private-refresh/);
+    assert.equal((await server.agent.verification.assess(owner, running.id, 0)).status, "verified");
+    return { status: "succeeded", result: "Gmail draft saved" };
+  });
+  await worker.tick();
+  await worker.stop();
   assert.equal(calls.length, 1);
   assert.equal(new URL(calls[0].url).pathname, "/gmail/v1/users/me/drafts");
   const body = await calls[0].json();
   const mime = Buffer.from(body.message.raw, "base64url").toString();
   assert.match(mime, /To: msant262@gmail.com/);
   assert.match(mime, /Content-Transfer-Encoding: base64/);
-  assert.doesNotMatch(JSON.stringify(first), /fixture|private-access|private-refresh/);
   assert.equal((await server.workspace.googleAccounts("owner")).length, 2);
+  assert.equal((await server.agent.verification.assess("owner", task.id, 0)).status, "verified");
 });
 
 test("Google writes retain review, target account and action idempotency across default changes", async (t) => {

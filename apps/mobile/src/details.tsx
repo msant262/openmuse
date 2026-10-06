@@ -51,6 +51,7 @@ import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
 import { connectorReviewLines } from "./external-action-preview";
 import { FileContentPreview, hasFileContentPreview } from "./file-content-preview";
+import { GoogleApprovalCard } from "./google-workspace-cards";
 import { useI18n } from "./i18n";
 import PdfReader from "./PdfReader";
 import {
@@ -681,6 +682,16 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
   }
   const email = action.kind === "email.send";
   const external = action.kind === "external.action";
+  if (d.tool === "google.workspace" || action.kind === "calendar.delete")
+    return (
+      <Sheet
+        title={t("Review action")}
+        onClose={close}
+        footer={<Button onPress={close}>{t("Done")}</Button>}
+      >
+        <GoogleApprovalCard action={action} />
+      </Sheet>
+    );
   return (
     <Sheet
       title={action.title}
@@ -705,7 +716,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
               })}
               {`. ${t("Your approval applies only to the details shown above.")}`}
             </Text>
-            {action.kind !== "calendar.delete" && (
+            {!external && (
               <Button
                 small
                 icon={Edit3}
@@ -819,7 +830,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
         ) : (
           <>
             <ReviewLine label={t("Event")} value={String(d.title || "")} />
-            {!external && action.kind !== "calendar.delete" && (
+            {!external && (
               <>
                 <ReviewLine
                   label={t("Starts")}
@@ -849,9 +860,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
             )}
             <ReviewLine label={t("Calendar")} value={String(d.calendarId || "primary")} />
             <Text style={s.small}>
-              {action.kind === "calendar.delete"
-                ? t("This removes the event and may notify its attendees.")
-                : t("Attendees may receive an invitation or update from your connected calendar.")}
+              {t("Attendees may receive an invitation or update from your connected calendar.")}
             </Text>
           </>
         )}

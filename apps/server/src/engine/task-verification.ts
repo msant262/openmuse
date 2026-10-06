@@ -131,6 +131,11 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
   const remoteGoogleDocument =
     /\b(?:google\s*(?:drive|docs|sheets|slides)|drive|docs|sheets|slides)\b/i.test(prompt) &&
     !/\b(?:download|baixar|baixe|anexo|attachment|pdf|docx|xlsx|pptx|txt|csv)\b/i.test(prompt);
+  const nativeGmailDraft =
+    /\bgmail\b/i.test(prompt) &&
+    /\b(?:draft|rascunho)\b/i.test(prompt) &&
+    (/\b(?:create|crie|criar|save|salve|salvar|write|escreva|redija|prepare)\b/i.test(prompt) ||
+      /^\s*draft\b/i.test(prompt));
   const format = /\bpdf\b/i.test(prompt)
     ? "application/pdf"
     : /\bdocx\b/i.test(prompt)
@@ -179,11 +184,13 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       requiredItems: content,
     });
   if (
-    content.length > 0 ||
+    (!nativeGmailDraft && content.length > 0) ||
     task.kind === "plan" ||
     task.kind === "finance" ||
     /\b(report|relat[oó]rio|comparison|compara[çc][aã]o|plan|plano)\b/i.test(prompt) ||
-    (/\b(write|draft|redija|escreva|prepare)\b/i.test(prompt) && /\b(email|e-mail)\b/i.test(prompt))
+    (!nativeGmailDraft &&
+      /\b(write|draft|redija|escreva|prepare)\b/i.test(prompt) &&
+      /\b(email|e-mail)\b/i.test(prompt))
   )
     if (!criteria.some((criterion) => criterion.kind === "file"))
       criteria.push({
@@ -192,6 +199,14 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
         description: "The requested structured result exists and contains useful content",
         requiredItems: content,
       });
+  if (nativeGmailDraft)
+    criteria.push({
+      id: "requested-gmail-draft",
+      kind: "receipt",
+      effect: "email.draft",
+      description: "The requested draft was saved in Gmail with a confirmed provider receipt",
+      requiredItems: content,
+    });
   const send =
     task.kind === "document" ||
     (/\b(send|envie|enviar|reply|responda|mande)\b/i.test(prompt) &&
@@ -357,6 +372,12 @@ function actionMatches(
   const args = binding?.args ?? action.data;
   if (!useful(action.result) || !required(criterion, { args, result: action.result })) return false;
   if (!criterion.effect) return true;
+  if (criterion.effect === "email.draft")
+    return (
+      action.kind === "external.action" &&
+      binding?.serverId === "google-workspace" &&
+      /^gmail\.users\.drafts\.(create|update)$/.test(binding.tool)
+    );
   if (criterion.effect === "external")
     return [
       "email.send",

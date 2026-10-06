@@ -838,7 +838,13 @@ export class GoogleClient {
       url.password
     )
       throw new Error("Invalid Google API destination");
-    const result = await this.request(request.url, request.method, request.body, {}, request);
+    const result = await this.request(
+      request.url,
+      request.method,
+      request.body,
+      request.ifMatch ? { "If-Match": request.ifMatch } : {},
+      request,
+    );
     if (
       !request.readOnly &&
       request.receiptField &&

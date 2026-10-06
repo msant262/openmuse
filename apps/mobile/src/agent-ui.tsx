@@ -57,6 +57,7 @@ import { ArtifactResultCard } from "./artifact-result-card";
 import { AssistantResponse } from "./assistant-response";
 import { t as translate, useI18n } from "./i18n";
 import { InteractionCard } from "./interaction-card";
+import { GoogleMailDraftCard } from "./google-workspace-cards";
 import { MemorySettings } from "./memory-settings";
 import { SubjectIllustration } from "./muse-surfaces-illustration";
 import {
@@ -1161,6 +1162,8 @@ function display(value: unknown): string {
         : JSON.stringify(value, null, 2) || "";
 }
 export function ArtifactCard({ artifact }: { artifact: AgentArtifact }) {
+  if (typeof artifact.data.nativeGoogleDraftId === "string")
+    return <GoogleMailDraftCard id={artifact.data.nativeGoogleDraftId} />;
   return artifact.kind === "finance" ? (
     <FinanceArtifact artifact={artifact} />
   ) : (

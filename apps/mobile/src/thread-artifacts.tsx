@@ -1,11 +1,12 @@
 import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { Image, Pressable, Text, useWindowDimensions, View } from "react-native";
-import type { Artifact, BrowserSession } from "../../../packages/domain/src";
+import type { ActionProposal, Artifact, BrowserSession } from "../../../packages/domain/src";
 import type { AgentArtifact, AgentTask } from "../../../packages/domain/src/agent";
 import { ArtifactCard, TaskCard } from "./agent-ui";
 import { localizedAttachmentLabel } from "./attachment-ui-copy";
 import { BrowserThreadCard } from "./computer";
+import { GoogleApprovalCard } from "./google-workspace-cards";
 import { useI18n } from "./i18n";
 import { ResultCardFooter, ResultCardFrame } from "./result-card-frame";
 import { Button, ErrorNotice, useUI } from "./ui";
@@ -98,6 +99,7 @@ export function TaskThreadCard({ task }: { task: AgentTask }) {
     artifacts: AgentArtifact[];
     files: Artifact[];
     browsers: BrowserSession[];
+    action?: ActionProposal;
   }>();
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -110,9 +112,12 @@ export function TaskThreadCard({ task }: { task: AgentTask }) {
       .request<{ artifacts: AgentArtifact[]; files: Artifact[]; browsers: BrowserSession[] }>(
         `/api/agent/tasks/${task.id}`,
       )
-      .then((result) => {
+      .then(async (result) => {
+        const action = task.actionId
+          ? await api.request<ActionProposal>(`/api/actions/${task.actionId}`)
+          : undefined;
         if (active) {
-          setDetail({ ...result, owner: api.identityKey, taskId: task.id });
+          setDetail({ ...result, action, owner: api.identityKey, taskId: task.id });
           setError("");
         }
       })
@@ -131,6 +136,14 @@ export function TaskThreadCard({ task }: { task: AgentTask }) {
   return (
     <View style={{ gap: 12 }}>
       <TaskCard task={task} compact />
+      {visibleDetail?.action?.status === "awaiting_review" &&
+        (visibleDetail.action.data.tool === "google.workspace" ||
+          visibleDetail.action.kind === "calendar.delete") && (
+          <GoogleApprovalCard
+            action={visibleDetail.action}
+            onAnswered={async () => setAttempt((value) => value + 1)}
+          />
+        )}
       {visibleDetail?.browsers.map((browser) => (
         <BrowserThreadCard key={browser.id} browser={browser} />
       ))}

@@ -796,7 +796,14 @@ export class TaskJournal {
             "rejected_not_dispatched",
           );
         else if (current && !terminal.has(current.status))
-          await this.recordReceipt(owner, op.id, { outcomeUnknown: true }, "outcome_unknown");
+          await this.recordReceipt(
+            owner,
+            op.id,
+            effect
+              ? { outcomeUnknown: true }
+              : { error: error instanceof Error ? error.message : String(error), dispatched: true },
+            effect ? "outcome_unknown" : "failed",
+          );
         throw error;
       }
     });

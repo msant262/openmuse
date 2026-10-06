@@ -24,6 +24,7 @@ export interface ExternalAction {
   target: string;
   summary: string;
   money: boolean;
+  requiresHumanApproval?: boolean;
   binding: unknown;
   display?: Record<string, string | number>;
 }
@@ -105,7 +106,13 @@ export class ActionService {
       ...(await this.proposalAuthority(owner, taskId)),
       kind: "external.action",
       title: input.summary,
-      data: { tool: input.tool, target: input.target, summary: input.summary, ...input.display },
+      data: {
+        tool: input.tool,
+        target: input.target,
+        summary: input.summary,
+        ...input.display,
+        ...(input.requiresHumanApproval ? { requiresHumanApproval: true } : {}),
+      },
       status: "awaiting_review",
       createdAt: new Date(this.now()).toISOString(),
       expiresAt: new Date(this.now() + 30 * 60 * 1000).toISOString(),
@@ -117,7 +124,10 @@ export class ActionService {
         throw new AppError("Action ID belongs to different details", 409);
       return current;
     }
-    if (!requiresApproval(this.options.policy ?? "all", input.money))
+    if (
+      !input.requiresHumanApproval &&
+      !requiresApproval(this.options.policy ?? "all", input.money)
+    )
       return this.decide(owner, id, hash, "approve", "policy");
     await this.record(owner, saved, "Ready for your review");
     return saved;
@@ -174,7 +184,10 @@ export class ActionService {
       ...(await this.proposalAuthority(owner, taskId)),
       title,
       kind: input.kind,
-      data: input.data,
+      data: {
+        ...input.data,
+        ...(input.kind === "calendar.delete" ? { requiresHumanApproval: true } : {}),
+      },
       account: connection?.account,
       connectionId: connection?.id,
       target: prepared?.target,
@@ -207,7 +220,7 @@ export class ActionService {
         );
       return existing;
     }
-    if (!requiresApproval(this.options.policy ?? "all", false))
+    if (input.kind !== "calendar.delete" && !requiresApproval(this.options.policy ?? "all", false))
       return this.decide(owner, saved.id, saved.hash, "approve", "policy");
     await this.record(owner, saved, "Ready for your review");
     return saved;
@@ -237,6 +250,8 @@ export class ActionService {
     if (proposal.hash !== hash)
       throw new AppError("This proposal changed. Open its latest review before deciding.", 409);
     if (proposal.status !== "awaiting_review") return proposal;
+    if (decision === "approve" && actor === "policy" && proposal.data.requiresHumanApproval)
+      throw new AppError("This deletion requires a human approval", 409);
     if (decision === "approve" && proposal.taskId) {
       const task = await this.db.get<{ status: string }>(owner, "tasks", proposal.taskId);
       if (!task || !["running", "waiting_approval"].includes(task.status))

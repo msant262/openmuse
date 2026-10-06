@@ -867,6 +867,21 @@ export async function executeModelTask(
         if (!task.artifactIds.includes(id))
           task = await ctx.checkpoint({ artifactIds: [...task.artifactIds, id] });
       },
+      draftCard: async (id) => {
+        const draft = await service.googleWorkspace.mailDraft(owner, id);
+        const artifact = await service.artifact(
+          owner,
+          task,
+          "report",
+          draft.draft.subject,
+          "Gmail draft",
+          { nativeGoogleDraftId: id },
+          `gmail-draft:${id}`,
+        );
+        task = await ctx.checkpoint({
+          artifactIds: [...new Set([...task.artifactIds, artifact.id])],
+        });
+      },
     }),
     tool(
       "read_task_evidence",
