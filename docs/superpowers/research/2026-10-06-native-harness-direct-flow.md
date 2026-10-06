@@ -106,6 +106,10 @@ e MiniMax não foram validados ao vivo nesta sessão.
 
 ## Validação e distribuição
 
+O estado de publicação abaixo descreve esta entrega anterior. A atualização
+posterior de detalhes, memória e proatividade está documentada em
+[2026-10-06-step-details-memory-recovery.md](2026-10-06-step-details-memory-recovery.md).
+
 O último ajuste passou 49 testes de fontes/conclusão, tipos do servidor e
 compilação do candidato isolado. O chat passou 28 testes, tipos do app e export
 web. O supervisor passou 60 contratos nativos. Lint terminou sem erros.
