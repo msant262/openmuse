@@ -381,16 +381,6 @@ export class PersonalLearning {
       },
     });
     agent.threadId = `learning-${task.id}`;
-    let remaining = 32000;
-    const visibleMessages = messages
-      .slice()
-      .reverse()
-      .filter((m) => {
-        if (m.text.length > remaining) return false;
-        remaining -= m.text.length;
-        return true;
-      })
-      .reverse();
     agent.setMessages([
       {
         id: `learning-evidence-${task.id}`,
@@ -399,18 +389,14 @@ export class PersonalLearning {
           now: new Date(this.now()).toISOString(),
           timezone: this.service.routines.timezone,
           unresolvedWrites: [...pendingWrites],
-          userMessages: visibleMessages.map((m) => ({
+          // The selected model's ContextBudget owns admission. Never silently
+          // consume a source while hiding its evidence behind a fixed char cap.
+          userMessages: messages.map((m) => ({
             messageId: m.messageId,
             threadId: m.threadId,
             createdAt: m.createdAt,
             text: m.text,
           })),
-          omittedMessages: messages
-            .filter((m) => !visibleMessages.includes(m))
-            .map((m) => ({
-              messageId: m.messageId,
-              reason: "Outside this review context budget; do not infer its content",
-            })),
           existingMemories: memories.map((m) => ({
             id: m.id,
             text: m.text.slice(0, 1800),
