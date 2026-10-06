@@ -1826,7 +1826,7 @@ export async function executeModelTask(
         if (config.mode === "live")
           return service.googleWorkspace.draft(
             owner,
-            { account, draft: data, operationId: key },
+            { account, draft: data, operationId: createHash("sha256").update(key).digest("hex") },
             googleOptions,
           );
         const action = await service.prepare(

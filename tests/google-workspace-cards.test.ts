@@ -2,6 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { connectorReviewLines } from "../apps/mobile/src/external-action-preview.ts";
 import { componentHarness } from "./helpers/component.ts";
+import { delegatedToolResult } from "../apps/mobile/src/delegated-tool-result.ts";
+
+test("native Google handoffs are recognized independently of the foreground tool name", () => {
+  const receipt = { delegated: true, taskId: "owned-task", title: "Write an email" };
+  assert.equal(delegatedToolResult(JSON.stringify(receipt))?.taskId, "owned-task");
+  assert.equal(delegatedToolResult(receipt)?.taskId, "owned-task");
+  for (const result of [
+    null,
+    "invalid json",
+    { taskId: "task" },
+    { delegated: true },
+    { delegated: true, taskId: "" },
+    { delegated: false, taskId: "task" },
+  ])
+    assert.equal(delegatedToolResult(result), undefined);
+});
 
 const draft = {
   id: "draft-card",

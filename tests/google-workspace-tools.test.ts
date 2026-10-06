@@ -8,10 +8,20 @@ import type { ActionProposal } from "../packages/domain/src/index.ts";
 import { GoogleClient } from "../packages/integrations/src/google.ts";
 import { encryptSecret } from "../packages/integrations/src/vault.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
+import { modelFixture } from "./helpers/model.ts";
 
-async function fixture(t: TestContext, policy: "money" | "all" = "money") {
+async function fixture(
+  t: TestContext,
+  policy: "money" | "all" = "money",
+  config: Parameters<typeof taskRuntime>[1] = {},
+) {
   const encryptionKey = randomBytes(32).toString("base64");
-  const server = await taskRuntime(t, { mode: "live", encryptionKey, approvalPolicy: policy });
+  const server = await taskRuntime(t, {
+    mode: "live",
+    encryptionKey,
+    approvalPolicy: policy,
+    ...config,
+  });
   for (const [id, account, connectionId, scopes] of [
     ["google", "personal@example.com", "personal-id", ["gmail.readonly", "calendar.readonly"]],
     [
@@ -38,6 +48,70 @@ async function fixture(t: TestContext, policy: "money" | "all" = "money") {
     });
   return server;
 }
+
+test("the copied worker prepares an ordinary email as a real unsent Gmail draft and attaches its card", async (t) => {
+  const sequence = [
+    {
+      name: "prepare_email",
+      arguments: {
+        account: "work@example.com",
+        to: ["msant262@gmail.com"],
+        subject: "Okami teste pelo chat",
+        body: "O teste funcionou. Obrigado pela ajuda!",
+      },
+    },
+    { name: "finish_task", arguments: { summary: "Seu e-mail está pronto para revisão." } },
+  ];
+  await modelFixture(t, (index) => sequence[index]);
+  const server = await fixture(t, "money", {
+    agentBackend: "model",
+    model: "openai/fixture",
+    intelligenceApiKey: "fixture-key",
+  });
+  const writes: Request[] = [];
+  t.mock.method(
+    server.workspace,
+    "google",
+    (
+      _owner: string,
+      connectionId?: string,
+      signal?: AbortSignal,
+      beforeWrite?: () => Promise<void>,
+    ) =>
+      new GoogleClient({
+        signal,
+        beforeWrite,
+        getAccessToken: async () => "fixture",
+        fetch: async (url, init) => {
+          assert.equal(connectionId, "work-id");
+          const request = new Request(url, init);
+          if (request.method === "GET") return Response.json({ emailAddress: "work@example.com" });
+          writes.push(request);
+          return Response.json({ id: "real-draft-id" });
+        },
+      }),
+  );
+  const task = await server.agent.createTask("owner", {
+    prompt:
+      "Escreve um e-mail da conta work@example.com para msant262@gmail.com dizendo que o teste funcionou",
+  });
+  await server.agent.worker.tick();
+  const detail = await server.agent.detail("owner", task.id);
+  assert.equal(detail.task.status, "succeeded", detail.task.error ?? detail.task.question);
+  assert.equal(writes.length, 1);
+  assert.equal(new URL(writes[0].url).pathname, "/gmail/v1/users/me/drafts");
+  const artifact = detail.artifacts.find(
+    (item) => typeof item.data.nativeGoogleDraftId === "string",
+  );
+  assert.ok(artifact);
+  const card = await server.agent.googleWorkspace.mailDraft(
+    "owner",
+    String(artifact.data.nativeGoogleDraftId),
+  );
+  assert.equal(card.status, "saved");
+  assert.equal(card.account, "work@example.com");
+  assert.equal(card.draft.to[0], "msant262@gmail.com");
+});
 
 test("ordinary write and reply requests require a real draft; negated sending never requires an outbound receipt", () => {
   for (const prompt of [

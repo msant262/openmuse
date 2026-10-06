@@ -112,6 +112,7 @@ import { ProactivityAlerts } from "./proactivity-card";
 import { suggestionsFromRequests } from "./proactivity-state";
 
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
+import { delegatedToolResult } from "./delegated-tool-result";
 import { type Selection, useMuseThread } from "./threads";
 import { Button, Card, CheckRow, ErrorNotice, Sheet, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -1458,6 +1459,13 @@ export function ChatScreen({
                 >
                   {toolCalls.map((toolCall) => {
                     const toolMessage = toolMessages.get(toolCall.id);
+                    const delegated = delegatedToolResult(toolMessage?.content);
+                    if (delegated)
+                      return (
+                        <View key={toolCall.id}>
+                          <ServerToolCard name="Task" result={delegated} loading={false} />
+                        </View>
+                      );
                     const socialMessage = socialToolMessage(
                       toolCall.function.name,
                       toolMessage?.content,
