@@ -339,13 +339,55 @@ export async function executeModelTask(
             (criterion) => criterion.id === check.criterionId && criterion.kind === "file",
           ),
       );
-      const lastDataRead =
-        deliveryOutcome === "partial" && missingFiles.length
-          ? (await service.journal.operations(owner, task.id)).findLast(
-              (operation) =>
-                operation.toolName === "read_web_data" && operation.status === "succeeded",
-            )
-          : undefined;
+      const observations =
+        deliveryOutcome === "partial"
+          ? researchObservations(await service.journal.operations(owner, task.id))
+          : [];
+      const availableLinks = unreadSourceLinks(observations);
+      // Continue on changed evidence, rather than imposing one research attempt
+      // per user revision. Duplicate reads and timestamps do not create progress.
+      const researchKey = createHash("sha256")
+        .update(
+          JSON.stringify([
+            revision,
+            [
+              ...new Set(
+                observations
+                  .filter((op) => op.toolName !== "search_web" && op.status === "succeeded")
+                  .map((op) => {
+                    const receipt = op.receipt as
+                      | {
+                          url?: string;
+                          text?: string;
+                          rows?: unknown;
+                          error?: unknown;
+                          code?: unknown;
+                          total?: number;
+                          nextOffset?: number | null;
+                        }
+                      | undefined;
+                    return JSON.stringify([
+                      receipt?.url,
+                      receipt?.text,
+                      receipt?.rows,
+                      receipt?.error,
+                      receipt?.code,
+                      receipt?.total,
+                      receipt?.nextOffset,
+                    ]);
+                  }),
+              ),
+            ].sort(),
+            availableLinks.map((link) => link.url).sort(),
+          ]),
+        )
+        .digest("hex");
+      const lastDataRead = missingFiles.length
+        ? observations.findLast(
+            (operation) =>
+              operation.toolName === "read_web_data" && operation.status === "succeeded",
+          )
+        : undefined;
       const data = lastDataRead?.receipt as
         | {
             rows?: unknown[];
@@ -360,12 +402,13 @@ export async function executeModelTask(
       );
       const researchContinuation =
         deliveryOutcome === "partial" &&
-        missingFiles.length > 0 &&
-        task.state.researchContinuationRevision !== revision &&
+        (missingFiles.length > 0 || (!config.researchReviewEnabled && availableLinks.length > 0)) &&
+        task.state.researchContinuationKey !== researchKey &&
         task.evidence.some((item) => item.kind === "web");
       if (
-        missingFiles.length &&
-        (deliveryOutcome === "completed" || unreadAggregation || researchContinuation)
+        (missingFiles.length > 0 && deliveryOutcome === "completed") ||
+        unreadAggregation ||
+        researchContinuation
       ) {
         task = await ctx.checkpoint({
           completion,
@@ -373,7 +416,7 @@ export async function executeModelTask(
             ...task.state,
             deliveryCandidateArtifactIds: undefined,
             completionFollowup: completion.remaining,
-            ...(researchContinuation && { researchContinuationRevision: revision }),
+            ...(researchContinuation && { researchContinuationKey: researchKey }),
           },
         });
         return {
@@ -381,9 +424,7 @@ export async function executeModelTask(
           repairable: true,
           missing: completion.remaining,
           ...(researchContinuation && {
-            unreadSourceLinks: unreadSourceLinks(
-              researchObservations(await service.journal.operations(owner, task.id)),
-            ),
+            unreadSourceLinks: availableLinks,
           }),
           ...(unreadAggregation && {
             availableData: { request: lastDataRead?.args, nextOffset: data?.nextOffset },
@@ -393,9 +434,9 @@ export async function executeModelTask(
               ? `The last successful aggregation returned ${data?.rows?.length} of ${data?.total} rows and exposes the remaining rows. This is available unread data, not a source failure. Retrieve the complete aggregate with a sufficient limit or page the remaining groups before declaring the data unobtainable. For categories in nested arrays, expand and group by the observed category identifier; array positions may vary. `
               : "") +
             (researchContinuation
-              ? "Research ended before the requested deliverable existed. unreadSourceLinks below are exact URLs already returned by your source reads/searches, not operator hints or verified content. Select and read the links matching the requested subject; a dataset about other subjects does not establish that the requested results are unavailable. Continue once from the observed source receipts: follow the relevant returned result/data links, recover truncated data with read_tool_output or read_web_data, or compute it with run_computer_command. A guide linking to results is a lead to read, not proof that those results are unavailable. An inaccessible primary source does not invalidate readable attributed publisher data. If these concrete paths are actually blocked or unrelated, report that evidence with a partial finish; do not fabricate facts or generate a blank substitute. "
+              ? "The delivery is still partial. A saved draft does not resolve its missing facts. unreadSourceLinks below are exact URLs already returned by your source reads/searches, not operator hints or verified content. Select and read the links matching the requested subject; a dataset about other subjects does not establish that the requested results are unavailable. Continue from the changed source evidence: follow the relevant returned result/data links, recover truncated data with read_tool_output or read_web_data, or compute it with run_computer_command. A guide linking to results is a lead to read, not proof that those results are unavailable. An inaccessible primary source does not invalidate readable attributed publisher data. If these concrete paths are actually blocked or unrelated, report that evidence with a partial finish; do not fabricate facts or generate a blank substitute. "
               : "") +
-            "The requested file has not been delivered. Continue the authorized work using the available tools. Ask the user only for a decision or private input that the request and available tools cannot resolve. Prose alone does not complete a file request.",
+            "The original requested result is still incomplete. Continue the authorized work using the available tools. Ask the user only for a decision or private input that the request and available tools cannot resolve. Prose alone does not complete a file request.",
         };
       }
     }

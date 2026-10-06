@@ -165,8 +165,8 @@ conclusão, dados públicos, objetivo e revisões também passaram.
 
 A publicação é restrita às fronteiras do executor, configuração e entrypoint do
 harness, sobre a base de produção existente. Web e APK não são substituídos.
-Fonte publicada: `056c9810abd67cbfc605982fe30b418f68f45a7f`.
-Imagem: `sha256:545bd7af4d1f5e65e073a25ee7103ccf517595fd9fd4ccf132b915a5260bf3ef`.
+Fonte publicada: `b7431e714b5ee672703c2f9127bf38700e2bbf0b`.
+Imagem: `sha256:79c8e6ca073ce30fcfad522b83555b42d39698ec1b6167806135e2bab3d1cab7`.
 Luna permanece como executor de produção, com contexto de 1.050.000 tokens.
 DeepSeek, MiMo e MiniMax não foram validados ao vivo nesta sessão.
 
@@ -288,5 +288,26 @@ e pistas exatas no recibo de continuação. Os dez testes de conclusão de image
 passaram com personalidade configurada; os três de humanizer/SOUL passaram
 após ajustar uma fixture para fazer a leitura real da fonte exigida pelo
 verificador. Tipos e compilação passaram; lint sem erros. A décima sexta
-reprodução roda em produção com Luna e somente o pedido original mais o ano.
-Ainda exige conferência da fonte, dos 54 valores e dos pixels antes de aprovação.
+reprodução terminou parcial em 204,5 segundos: o GPT Image 2 produziu um mapa
+cinza declarado como dados pendentes. O executor inspecionou o arquivo real,
+mas a existência desse rascunho excluía a continuação de pesquisa do host.
+Não é aprovação da tarefa ou do desempenho.
+
+
+## Continuação com rascunho e progresso de fontes
+
+A condição de continuação verificava apenas critérios de arquivo ausente. Um
+finish_task parcial com PNG salvo podia encerrar mesmo com links ainda não lidos.
+O fluxo padrão passa a devolver esses links ao mesmo executor também quando já
+há um rascunho. A continuação usa uma assinatura do conteúdo das leituras e dos
+links disponíveis; não há somente uma oportunidade por revisão do usuário.
+Novos fatos ou mudanças nos links permitem continuar. Leituras duplicadas e
+horários novos não criam progresso; repetir o mesmo parcial sem nova evidência
+permite relatar um bloqueio, preservando a proteção nativa contra repetição.
+A revisão semântica opcional mantém seu próprio caminho quando habilitada.
+
+Passaram os onze testes de conclusão de imagem. O caso novo salva um rascunho,
+recebe duas conclusões parciais com pesquisas diferentes, abre a fonte final e
+entrega somente a imagem corrigida, sem revisor ou reescrita. O caso de fonte
+realmente bloqueada termina sem loop. Tipos, compilação e lint passaram sem
+erros. A décima sétima reprodução independente ainda precisa ser conferida.

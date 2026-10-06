@@ -256,6 +256,99 @@ test("a partial image finish continues from an observed unread result link witho
   assert.equal(fixture.imageBriefRequests.length, 0);
 });
 
+test("a partial saved image continues as new research progresses and delivers only the corrected artifact", async (t) => {
+  let draftId = "",
+    finalId = "";
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://results.example/guide" } },
+        {
+          name: "generate_image",
+          arguments: { operationId: "draft", prompt: "National-only data-pending map." },
+        },
+        {
+          name: "finish_task",
+          arguments: {
+            outcome: "partial",
+            summary: "The draft lacks regional results.",
+            artifactIds: [draftId],
+          },
+        },
+        { name: "web_fetch", arguments: { url: "https://results.example/regional" } },
+        {
+          name: "finish_task",
+          arguments: {
+            outcome: "partial",
+            summary: "The regional page links to its full data.",
+            artifactIds: [draftId],
+          },
+        },
+        { name: "web_fetch", arguments: { url: "https://results.example/data" } },
+        {
+          name: "generate_image",
+          arguments: {
+            operationId: "final",
+            prompt: "Regional map: North A 52% B 48%; South A 41% B 59%.",
+          },
+        },
+        {
+          name: "finish_task",
+          arguments: {
+            outcome: "completed",
+            summary: "The regional map is attached.",
+            artifactIds: [finalId],
+          },
+        },
+      ][i],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: url.endsWith("/guide")
+      ? '<article>National summary. <a href="/regional">Regional results</a></article>'
+      : url.endsWith("/regional")
+        ? '<article>Regional coverage. <a href="/data">Full data</a></article>'
+        : "<article>North: A 52%, B 48%. South: A 41%, B 59%.</article>",
+  }));
+  let generations = 0;
+  t.mock.method(f.agent.media, "generatedImage", async () => {
+    const final = generations++ > 0;
+    const file = await f.files.importAttachment(
+      "owner",
+      final ? "final.png" : "draft.png",
+      final ? Buffer.concat([png, Buffer.from("\n")]) : png,
+      "Map",
+      "image/png",
+    );
+    if (final) finalId = file.id;
+    else draftId = file.id;
+    return f.files.reference("owner", file.id);
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Research the regional percentages and create a map infographic.",
+  });
+  await f.agent.worker.tick();
+  const result = await f.agent.detail("owner", task.id);
+  assert.equal(result.task.status, "succeeded", result.task.error ?? undefined);
+  assert.equal(generations, 2);
+  assert.notEqual(draftId, finalId);
+  assert.deepEqual(result.task.state.deliveryCandidateArtifactIds, [finalId]);
+  const repairs = result.operations.filter(
+    (op) => op.toolName === "finish_task" && (op.receipt as { repairable?: boolean })?.repairable,
+  );
+  assert.equal(
+    repairs.length,
+    2,
+    "new source evidence allows another continuation despite the saved draft",
+  );
+  assert.equal(fixture.reviewRequests.length, 0);
+  assert.equal(fixture.imageBriefRequests.length, 0);
+  assert.equal(fixture.requests.length, 8);
+});
+
 test("an actual public-source blocker can finish partial after the bounded continuation", async (t) => {
   await modelFixture(
     t,
