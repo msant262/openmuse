@@ -128,6 +128,14 @@ export class RemoteComputerBackend implements ComputerBackend {
       if (!delivery)
         throw new AppError("Native operation delivery is missing; outcome unknown", 503);
       if (delivery.receipt && delivery.receipt.status !== "running") {
+        // A command's nonzero exit is a completed execution, not a lost
+        // transport acknowledgement. Return through command() so its bound
+        // exit/output receipt is persisted and the caller can repair the script.
+        if (
+          ["command", "media"].includes(operation.kind) &&
+          ["failed", "rejected_not_dispatched"].includes(delivery.receipt.status)
+        )
+          return delivery.receipt.data ?? {};
         if (delivery.receipt.status !== "succeeded")
           throw new AppError(
             delivery.receipt.message ??

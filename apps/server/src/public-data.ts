@@ -99,7 +99,7 @@ export function selectPublicData(value: unknown, query: PublicDataQuery = {}) {
     offset,
     nextOffset,
     truncated: nextOffset !== null,
-    structure: shape(chosen),
+    structure: shape(aggregated?.rows ?? chosen),
     ...(aggregated
       ? {
           aggregation: {
@@ -113,7 +113,9 @@ export function selectPublicData(value: unknown, query: PublicDataQuery = {}) {
     ...(rows.length === 0 && matches.length > offset
       ? {
           instruction:
-            "Rows exceed the output budget. Select only needed fields using select JSON pointers; no partial row was returned.",
+            !Array.isArray(chosen) && chosen && typeof chosen === "object" && !query.entries
+              ? "The selected object is too large for one row. Use entries=true to inspect its {key,value} records, select needed fields, or aggregate the complete dataset. No data was lost; an empty rows array here does not mean the dataset is empty."
+              : "Rows exceed the output budget. Select only needed fields using select JSON pointers; no partial row was returned.",
         }
       : {}),
   };
