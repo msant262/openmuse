@@ -1,366 +1,158 @@
-# Fluxo nativo de pesquisa e imagem — 6 de outubro de 2026
+# Harness de pesquisa e imagem — estado em 6 de outubro de 2026
 
-## Falhas reproduzidas
+## Resultado e limite da entrega
 
-A tarefa original `d1c6ca4705d3537b0fafb7cc84d602e15157adc3ac332ad05cf65d9c4247534e`
-falhou em oito segundos, sem executar ferramentas. O executor havia respondido
-com uma pergunta sobre o ano; o host tratava qualquer encerramento em texto como
-conclusão e substituía a pergunta por um erro de arquivo inexistente.
+As correções abaixo estão em `main` e publicadas na API e no web. Luna continua
+como executor e GPT Image 2 como gerador. **A autonomia e o desempenho ainda não
+estão aprovados.** Uma execução independente entregou o mapa com os 54 percentuais
+corretos, mas levou 9min23s. As duas seguintes falharam na cobertura dos dados ou
+fizeram uma pergunta desnecessária. Testes de contrato e existência de arquivo
+não substituem essas validações reais.
 
-A retomada real com Luna produziu um PNG pelo GPT Image 2. Entretanto, as revisões
-extras de briefing confundiam códigos de UF e propunham mudanças contraditórias.
-Pesquisa, revisões e geração levaram 818 segundos depois da resposta sobre o ano.
-Essa execução é a linha de base lenta, não uma aprovação do desempenho. Os 54
-percentuais do PNG foram comparados com os recibos da agregação: nenhuma diferença.
+Cada reprodução recebeu o pedido original de mapa com dois candidatos por UF e
+o ano 2026. O operador não forneceu fontes, percentuais nem respostas para
+contornar as perguntas indevidas. Recibos e imagens permanecem no arquivo privado
+do diagnóstico, fora do Git.
 
-Dez validações novas, sem fornecer números nem URLs ao executor, também falharam.
-A primeira pediu confirmação antes de pesquisar em cerca de 21 segundos. A segunda
-pesquisou e, em 184 segundos, afirmou incorretamente que 4 de outubro estaria no
-futuro em relação a 6 de outubro. A terceira corrigiu a data, mas em 51 segundos
-pediu ao usuário os dados depois de ler apenas duas páginas, embora a reportagem
-retornasse links de apuração não lidos. A quarta pesquisou por 278 segundos, encontrou
-a base municipal, mas descartou os dados do G1 por não conseguir conferência direta
-no TSE; terminou sem imagem. A quinta reconheceu a fragilidade de somar posições
-de candidatos, mas terminou em 165 segundos após obter somente uma de 28 linhas
-agregadas; as demais estavam disponíveis pela própria ferramenta. Nenhuma das
-cinco entregou a imagem solicitada. A sexta chamou GPT Image 2 em 82 segundos e
-recebeu um arquivo em cerca de 194 segundos, mas era um mapa de status sem os
-percentuais estaduais. A tarefa terminou parcial em 214 segundos; esse arquivo
-não é aprovação da tarefa nem do desempenho. A sétima sofreu interrupção do
-provedor, depois um bloqueio falso de reconciliação do computador. Sua retomada
-produziu somente três estados; terminou parcial em 1.074 segundos, incluindo a
-pausa de operação para publicar a correção. A oitava, sem intervenções, terminou
-parcial em 256 segundos com um mapa cinza sem percentuais estaduais. Nenhuma das
-dez cumpre a solicitação. A nona terminou em 62 segundos sem arquivo: leu uma
-prévia JSON truncada e encerrou antes de consultar as linhas ou os links relevantes.
-A décima terminou em 41 segundos sem arquivo após a reportagem de serviço,
-sem ler seus links de apuração. Somente as três
-tarefas de diagnóstico pausadas foram canceladas, preservando seus recibos privados
-e a tarefa do usuário. Não se respondeu à pergunta incorreta para aparentar sucesso.
+| Execução | Resultado observado | Tempo | Avaliação |
+| --- | --- | --- | --- |
+| Original, retomada após informar o ano | PNG com 54 valores conferidos contra a agregação municipal usada | 818,2s | Correto para a fonte usada; desempenho excessivo |
+| Reprodução 17, fonte `b7431e7` | Mapa geográfico, 27 UFs e tabela com os dois percentuais; 54 valores conferidos nos pixels contra o JSON consolidado lido | 563,5s | Passa funcionalmente; 9min23s continua excessivo |
+| Reprodução 18, fonte `c9dcb4a` | Apenas os percentuais dos 27 líderes; declarou parcial, depois mudou somente o status para concluído | 256,1s | Falha; a publicação seguinte impede essa troca sem progresso |
+| Reprodução 19, fonte atual `c8ac1fa` | Fonte municipal integral preservada; perguntou se podia usar o publicador sem confirmação direta no TSE; nenhum PNG | 143,6s até a pergunta | Falha de autonomia; não foi respondida para aparentar sucesso |
 
-## Fronteiras corrigidas
+A conferência da reprodução 17 valida os números contra a fonte consolidada
+atribuída ao publicador, sem alegar conferência direta no TSE. A fonte municipal
+e a consolidada têm quatro percentuais divergentes em DF/MT; não se troca o
+snapshot ou método usado sem registrar essa diferença. O gerador foi
+`gpt-image-2`, provider `codex`; a chamada levou aproximadamente 106 segundos.
+A maior parte dos 563,5 segundos ficou na pesquisa e preparação, incluindo
+releituras e timeout de fonte.
 
-O fluxo padrão é o executor nativo pesquisar, gerar e entregar. As chamadas
-independentes de modelo para revisar briefing e entrega são opcionais, habilitadas
-somente com `AGENT_RESEARCH_REVIEW_ENABLED=true`. Conexão de imagem, pertencimento
-dos arquivos, recibos duráveis, critérios de conclusão e revisão de ações externas
-continuam no servidor. Verificação mecânica não certifica a precisão de cada número.
+## Código original e fronteiras da aplicação
 
-Texto ou `finish_task` prematuro sem o arquivo solicitado retorna requisitos
-pendentes ao executor. `ask_user` está disponível diretamente para entradas que
-realmente bloqueiem a execução. A descrição desse tool deixou de permitir pausar
-por qualquer fato ausente: preserva a política original de decisões do usuário,
-com instrução para pesquisar fatos públicos enquanto houver fontes disponíveis.
-Não se exige plano para toda tarefa com mais de uma ação. Imagens produzidas pelo
-gerador independente podem ser entregues por um
-executor sem visão, sem forçar uma troca para modelo de fronteira. Referências
-visuais explícitas continuam sujeitas à capacidade real do executor.
+O `runEmbeddedAgent` original controla loop, ferramentas, recuperação e
+compactação. Os 10.664 arquivos registrados em `UPSTREAM.json` permanecem
+inalterados, pin `b56ae70a5e7e302dc2165c96b60214e84e19c7b1`, versão 2026.9.8,
+licença MIT. Não se instalou o produto OpenClaw.
 
-A descoberta e o dispatcher são os originais `tool_search`, `tool_describe` e
-`tool_call`. Instruções detalhadas dos módulos acompanham a superfície visível e
-os recibos de descoberta, em vez de carregar todos os módulos antecipadamente.
-As ferramentas da aplicação permanecem autenticadas e vinculadas ao proprietário;
-isso não instala os conectores ou canais de outro produto.
+Autenticação, arquivos, computador remoto, persistência de operações e formulários
+pertencem ao host. Essas fronteiras precisaram de correções; ter o código original
+no repositório não prova equivalência com a configuração do OpenClaw do usuário.
+Essa configuração e seu trace de dois minutos não foram obtidos. DeepSeek, MiMo
+e MiniMax não foram validados ao vivo nesta sessão.
 
-A proteção original de repetição está habilitada. O host remove da história nativa
-somente registros de transporte `tool_call` com filhos já efetivamente despachados,
-preservando a chamada filha e seu resultado. Wrappers sem filho executado permanecem.
-Assim, os duplicados não expulsam resultados idênticos antes do veto original.
-Algoritmos, limiares e os 10.664 arquivos de origem registrados em `UPSTREAM.json`
-permanecem inalterados. O entrypoint pertencente ao host expõe o estado nativo usado.
+## Correções publicadas
 
-O contexto temporal nativo já chegava ao modelo; ausência total de data não era a
-explicação. A allowlist do host, porém, excluía `session_status`: essa ferramenta
-original agora está habilitada. O adaptador também usa o formatador original
-`appendCronStyleCurrentTimeLine` para enviar hora legível e referência UTC como
-metadados do servidor ao transporte. O pedido e a árvore persistida não são
-reescritos. O teste de continuidade impediu publicar uma integração que recriava
-entradas antigas ao anexar a hora diretamente ao pedido.
+- Pesquisar, gerar e concluir ocorre no mesmo executor. Revisões independentes de
+  briefing/entrega são opt-in por `AGENT_RESEARCH_REVIEW_ENABLED=true`, desligadas
+  nesta produção. A reescrita adicional `TASK_REPLY_VOICE` foi removida; SOUL e
+  humanizer continuam no executor.
+- A data nativa já chegava ao modelo. `session_status` original está disponível,
+  e o formatador original anexa hora UTC ao transporte sem reescrever o pedido
+  ou recriar a história. Pedir a data não era ausência total de relógio.
+- O contexto declarado do Luna é 1.050.000 tokens. Foram removidos os cortes de
+  12 turnos/64 mil caracteres no repasse e 32 mil caracteres em mensagens de
+  usuário/assistente. Admissão e compactação usam o contexto do modelo. Testes
+  conservam o primeiro turno de 40 mensagens e textos com mais de 200 mil
+  caracteres; isso não é medição ao vivo com 200 mil tokens.
+- A descoberta original `tool_search`/`tool_describe`/`tool_call` permanece.
+  Ferramentas frequentes de pesquisa, imagem e conclusão ficam diretamente
+  disponíveis; instruções detalhadas acompanham famílias selecionadas. Gerar
+  imagem não carrega todas as instruções de Office/PDF.
+- A proteção original contra repetição permanece. Duplicatas do wrapper
+  `tool_call` saem somente quando seu filho foi executado; resultados filhos e
+  wrappers não executados permanecem. Os antigos tetos de 64/96 passos foram
+  removidos. Limites de transferência, prévias e resultados individuais ainda
+  existem e não equivalem à janela do modelo.
+- Modelos OpenAI conhecidos recebem o esforço de raciocínio original por rota;
+  `medium` do Luna chega ao provedor. Rotas desconhecidas conservam seus defaults.
+  Não houve troca do executor para Astra. A ponte Codex de geração pode usar um
+  modelo de texto interno; não se afirma ausência total de Astra na infraestrutura.
+- `web_fetch` usa o extrator Markdown original no HTTP, preserva links junto dos
+  rótulos e distingue reportagem, snippets e dados. Um 404 pode retornar URLs
+  exatas observadas, sem inventar ou ler endpoints sozinho. Busca tenta primeiro
+  o backend HTTP disponível e conserva alternativas.
+- JSON/JWS publicado tem transferência até 16 MiB e usa HTTP, inclusive quando
+  se pediu headless. HTML conserva orçamento próprio. O leitor negocia gzip,
+  deflate e Brotli com limite sobre bytes descompactados e validação de destinos.
+  Gzip reduziu a base municipal de 10.208.549 para 1.020.393 bytes; leituras em
+  4,34s e 1,64s não demonstram ganho de tempo por compressão.
+- Fontes excedentes são preservadas integralmente em arquivo interno privado.
+  `spill.fileId` e hash identificam o snapshot; `import_computer_file` e
+  `run_computer_command` permitem analisá-lo sem baixar outra vez. Esses arquivos
+  não aparecem como entrega. `maxChars` é admitido proporcionalmente ao contexto;
+  resultados grandes continuam recuperáveis por recibos/paginação.
+- Consultas estruturadas rejeitam campos fora do contrato e agregam o conjunto
+  antes de filtrar/paginar. Prévia incompleta não prova ausência de dados. Falha
+  de renderização pode usar HTTP público; URL privado e cancelamento não recebem
+  esse fallback.
+- Comandos falhos conservam saída, exit code e limpeza confirmada em recibo
+  durável. Reconciliação exige prova nativa e vínculo exato, sem repetir efeitos.
+  Status do computador deixa de injetar scripts e saídas de outras tarefas.
+- Texto sem arquivo não conclui imagem. Um rascunho parcial com caminhos observados
+  pode continuar no mesmo executor. Novos fatos permitem progresso; releituras
+  idênticas não criam continuação indefinida. Após declarar um arquivo parcial,
+  mudar apenas para `completed`, mantendo evidência e arquivo iguais, não resolve
+  requisitos. Essas verificações mecânicas não certificam a exatidão de fatos.
+- O supervisor publica resultados antes da espera por comandos, verifica jobs
+  ativos a cada segundo e mantém espera longa ociosa. Antes, uma espera de até
+  15 segundos atrasava resultados prontos.
+- No chat, a análise deixou de copiar todo o prefixo por mensagem. Índices de
+  mensagens, ferramentas e reações são memorizados enquanto seus dados não mudam.
+  Todos os turnos permanecem. Em cinco amostras, a mediana do trecho com 20 mil
+  mensagens caiu de 178,381ms para 0,070ms. Não é FPS: `ScrollView` ainda monta o
+  histórico completo.
 
-As instruções de pesquisa foram simplificadas: removida a orientação conflitante
-de paginar milhares de registros quando a ferramenta já agrega o conjunto inteiro.
-Leituras grandes de objetos explicam `entries=true` quando nenhuma linha cabe na
-saída, sem tratar isso como ausência de dados. Uma fonte secundária legível pode
-fundamentar uma entrega atribuída, com a limitação de acesso à fonte primária;
-isso não equivale a alegar conferência direta na fonte primária.
+## Validação e distribuição
 
-Um encerramento parcial sem o arquivo não pode declarar dados indisponíveis quando
-o último recibo de agregação informa linhas restantes disponíveis. Nesse caso, o
-servidor devolve a consulta e a paginação ao mesmo executor para continuar. A regra
-usa recibos reais e não chama um revisor. Resultados agregados mostram a estrutura
-do agregado em vez de repetir a amostra extensa da base original. Ausência real de
-dados continua podendo resultar em uma entrega parcial honesta.
+O último ajuste passou 49 testes de fontes/conclusão, tipos do servidor e
+compilação do candidato isolado. O chat passou 28 testes, tipos do app e export
+web. O supervisor passou 60 contratos nativos. Lint terminou sem erros.
+Testes anteriores estão nos commits anteriores. A suíte ampla anterior passou
+1.481 de 1.482 testes; o caso restante era uma fixture que contava GET como
+inferência, corrigida e validada isoladamente. Não se afirma nova execução
+integral verde.
 
-O leitor HTTP da aplicação agora usa `extractBasicHtmlContent`, o sanitizador de
-visibilidade e extrator Markdown originais do OpenClaw. URLs acompanham os trechos
-de origem, com rótulos acessíveis preservados e os controles de rede existentes.
-A ferramenta de dados deixa de desencorajar código: o executor pode descobrir
-`run_computer_command` para transformações no computador autorizado. O objetivo
-continua sendo a entrega solicitada, sem substituição por um gráfico de status.
+API publicada sobre a base de produção `73b15b5`, somente com as fronteiras
+autorizadas deste trabalho:
 
-O resultado de `start_computer` separa o estado do computador (`running`) da
-conclusão da operação (`succeeded`). A recuperação de registros antigos exige
-um único recibo nativo independente de início concluído, o mesmo vínculo de
-execução e nenhuma indicação de resultado desconhecido. Sem essa prova, mantém
-o bloqueio. Não repete a ação nem libera recursos históricos à força. Essa
-recuperação foi observada na sétima validação; seus dois registros incorretos
-foram reconciliados e os 21 registros históricos restantes foram preservados.
+- Fonte: `c8ac1fa0fc357c4a9d7d7417fd2461b1a0c117ba`.
+- Tag: `deploy/harness-direct-20261006-c8ac1fa`.
+- Imagem: `sha256:12a060efa81df1a8e7909ed6d81a95aa8ff78efb6528e95f43c8a6bcc97f703a`.
+- Web: `/opt/okami-web/releases/harness-native-20261006-9e2345e-chat`, com origem do
+  app em `9e2345e40df9041d4619ec2428fae7504851a69b`.
+- SHA-256 do HTML público: `3a55758ffafab47b7677a91a2b7240da6fbd026f5440fc1a884018fd692c8831`.
+- Supervisor: `0dbba0c64ad33f3cfe503d0cd53c980ad87c3aebdbd8c0aec44f9fc6a3cfd5d4`.
 
-Se o renderizador falha, o leitor pode tentar o HTTP público com validação própria
-de endereço e de todos os redirects. Cancelamento e URLs privados não ganham
-esse fallback. A execução de comandos fica imediatamente visível somente quando
-o computador está configurado. A consulta complexa `read_web_data` continua
-disponível por descoberta; não compete com leitura e shell na superfície inicial.
-As instruções orientam seguir links relacionados antes de concluir que faltam
-fatos e distinguem datasets relevantes de analytics ou outros assuntos.
+HTML e bundle publicados foram conferidos byte a byte pela origem tailnet e pelo
+domínio público. A primeira publicação web foi revertida na verificação; um 404
+anterior do bundle permanecia no cache CDN. A release final usa nome exclusivo
+e passou ambas as verificações. Rotas de API, executor e APK foram preservadas;
+não houve novo APK. A prévia local retornou erros de automação. Depois, a navegação
+na produção pelo browser colaborativo funcionou: a inspeção DOM confirmou o novo
+bundle carregado e o chat com a tarefa original. A captura de tela continuou
+falhando; não se apresenta isso como inspeção visual ou medição de chat longo.
 
-O transporte declarava todos os modelos como `reasoning: false` e ignorava
-o nível de raciocínio enviado pelo executor original. Para os modelos OpenAI
-conhecidos, o host agora usa o contrato de esforços do código original e encaminha
-o nível do harness ao provedor. O padrão nativo do Luna passa a chegar como
-`medium`. A projeção é feita por rota efetivamente admitida: um fallback
-desconhecido conserva os próprios defaults e não herda parâmetros incompatíveis.
-Não se muda o modelo principal nem se insere outra revisão de modelo. Rotas de
-DeepSeek, MiMo e MiniMax não recebem suposições de capacidade baseadas no Luna.
+Os 19 diagnósticos próprios tiveram recibos privados arquivados e foram retirados
+da lista por exclusão lógica. Somente os dois aguardando entrada foram cancelados.
+A tarefa original do usuário e seus arquivos permaneceram iguais. Os 21 registros
+históricos de operações e dois recursos retidos foram preservados; não se forçou
+limpeza de resultados incertos.
 
-A leitura HTTP de JSON passa a manter valores da fonte na prévia, como o
-leitor original, junto à estrutura completa do conjunto. Não substitui um
-objeto grande por `rows: []`. O conteúdo completo continua disponível para
-cálculo no computador ou consultas estruturadas; o limite da prévia não
-representa ausência de fatos nem redução da janela do modelo.
+A sessão de dispositivo criada exclusivamente pelo diagnóstico foi revogada.
+O computador permaneceu conectado no epoch 31; o supervisor e seu serviço foram
+conferidos, e somente os dois scripts temporários desta publicação foram removidos.
+O servidor local da prévia também foi encerrado. A checagem final encontrou API e
+browser saudáveis, zero tarefas/conversas/entregas nativas ativas, nenhuma manutenção
+aberta e o estado de pausa original preservado.
 
-Uma tentativa parcial sem o arquivo, após leituras públicas, recebe uma
-continuação na mesma revisão da tarefa para percorrer caminhos concretos
-restantes. Não chama um revisor nem relança efeitos concluídos. Um bloqueio
-real pode encerrar parcial depois dessa continuação; não se certifica sucesso
-em uma tarefa sem arquivo. A leitura incompleta de uma reportagem de serviço
-não é evidência de inexistência dos resultados que ela própria referencia.
+Existe apenas o checkout principal; `git worktree prune --dry-run` não encontra
+worktrees órfãos. Há 38 branches locais sem ancestralidade com main: quatro têm
+somente patches equivalentes, enquanto 34 têm patches não reconhecidos como
+idênticos por `git cherry`. Isso requer análise própria antes de chamá-las de
+integradas; nenhuma foi apagada ou mesclada às cegas. `.orca/` permanece intocado.
 
-O repasse ao worker ainda cortava a conversa em 12 turnos ou 64 mil
-caracteres, e checkpoints cortavam cada mensagem textual em 32 mil caracteres.
-Esses cortes foram removidos para mensagens do usuário e do assistente. O
-limite do fork permanece a mensagem originadora, preservando a separação entre
-história e pedidos posteriores. A admissão e compactação do executor nativo
-usam a janela real do modelo; redaction de credenciais e referências de
-recibos grandes continuam existentes. Os testes retêm fatos do primeiro
-turno de uma conversa com 40 mensagens e o final de textos com mais de
-200 mil caracteres.
-
-## Verificação e publicação
-
-As 47 regressões de conclusão e revisão e as 22 de continuidade e retomada
-passaram depois dos últimos ajustes. Os 17 testes do executor nativo, os 60 testes de provedores e os 39 testes
-de leitura, dados e imagem passaram no último ajuste. Os 31 testes do ajuste
-anterior passaram, incluindo configuração da superfície
-inicial e recuperação do computador; os 39 testes de leitura e imagem e os 23
-testes de diário e recuperação também passaram. Os testes cobrem conclusão prematura, falta genuína de entrada, geração com e sem
-visão sem revisores extras, instruções progressivas, repetição direta e descoberta,
-rolagem de data, leitura do relógio original com e sem descoberta, preservação da
-árvore e contexto declarado de 1.050.000 tokens. Compilação do servidor e checagem
-de tipos passaram. Fixtures HTTP ignoram probes GET, que não são inferências.
-A suíte ampla concluiu 1.481 de 1.482 testes: a única falha foi uma fixture de visão
-que contava uma sondagem GET como inferência. Depois da correção, seus quatro testes
-passaram; as 36 regressões dos executores e manutenção e as 41 regressões de
-conclusão, dados públicos, objetivo e revisões também passaram.
-
-A publicação é restrita às fronteiras do executor, configuração e entrypoint do
-harness, sobre a base de produção existente. Web e APK não são substituídos.
-Fonte publicada: `b7431e714b5ee672703c2f9127bf38700e2bbf0b`.
-Imagem: `sha256:79c8e6ca073ce30fcfad522b83555b42d39698ec1b6167806135e2bab3d1cab7`.
-Luna permanece como executor de produção, com contexto de 1.050.000 tokens.
-DeepSeek, MiMo e MiniMax não foram validados ao vivo nesta sessão.
-
-A validação final de pesquisa, geração e entrega ainda deve registrar resultado,
-tempo e conferência dos pixels, sem apresentar os testes anteriores como sucesso.
-
-
-## Recuperação de comandos, leituras grandes e conclusão de rascunhos
-
-A décima primeira reprodução parou com resultado desconhecido apesar de o
-comando ter terminado com `KeyError: top`, exit code 1 e limpeza confirmada.
-O adaptador remoto lançava uma exceção antes de persistir o recibo final.
-Agora devolve o recibo vinculado, com saída e código de retorno, permitindo
-corrigir o script. A manutenção reconcilia também a intenção e seu primitivo,
-sem repetir a execução. Os dois registros dessa reprodução ficaram `failed`;
-os 21 registros históricos e dois recursos retidos permaneceram preservados.
-
-As ferramentas de status do computador mostram prontidão e IDs de comandos
-pendentes. Saídas e scripts de outras tarefas não são injetados na nova conversa;
-os recibos completos continuam disponíveis por consulta explícita do comando.
-A consulta `read_web_data` rejeita campos desconhecidos na raiz, em vez de
-descartar silenciosamente um `expand` colocado fora de `aggregate`.
-
-A décima segunda reprodução encontrou o JSON correto de municípios, mas a
-leitura comum recusou seu tamanho. Gerou uma imagem apenas nacional e foi
-marcada como concluída em 317,4 segundos. Isso é uma falha, não uma aprovação.
-URLs de datasets JSON/JWS usam agora os mesmos 16 MiB de transferência do leitor
-estruturado, preservando a prévia e a estrutura para consulta do conjunto inteiro.
-HTML mantém seu orçamento separado. Uma resposta textual após criar um rascunho
-recebe uma continuação para o próprio executor selecionar a entrega e registrar
-se o pedido original foi cumprido. Outra resposta sem decisão explícita não
-certifica o rascunho como entrega completa.
-
-O supervisor nativo publicava resultados somente depois da próxima espera de
-até 15 segundos por novos comandos. Publica agora antes dessa espera e verifica
-comandos ativos a cada segundo, mantendo a espera longa quando ocioso. A mudança
-foi aplicada somente com fila e jobs vazios; o executor voltou conectado no
-mesmo serviço registrado, epoch 31. Hash do supervisor publicado:
-`0dbba0c64ad33f3cfe503d0cd53c980ad87c3aebdbd8c0aec44f9fc6a3cfd5d4`.
-
-Passaram 28 testes de comandos e recuperação, 21 de conclusão e entrega,
-14 de pesquisa e dados, e 60 contratos nativos. Compilação e checagem de tipos
-passaram; lint sem erros. A décima terceira reprodução está descrita abaixo; a aprovação exige cobertura
-estadual e pixels conferidos, além do tempo real.
-
-
-## Links exatos e latência da descoberta
-
-A décima terceira reprodução parou em 51,5 segundos, sem arquivo, com uma
-pergunta sobre a disponibilidade da eleição. A busca tinha devolvido a URL
-correta do G1. O modelo encurtou seu slug, recebeu 404 e concluiu incorretamente
-que faltavam resultados. A história da conversa original confirma que o pedido
-estava em uma conversa separada, iniciada pela mensagem do infográfico; não havia
-uma resposta nacional anterior nesse thread para herdar.
-
-Recibos de leitura com 404 passam a incluir URLs exatas já observadas nas buscas
-da mesma tarefa e origem. São alternativas ainda não lidas; não viram evidência
-nem provocam navegação automática. O executor pode corrigir a chamada sem
-reconstruir slugs pelo título. O teste do worker confirma o erro, o URL exato
-recuperado e a leitura real posterior, sem atribuir fatos ao link que falhou.
-
-A descoberta HTTP tentava os dois endpoints indisponíveis do DuckDuckGo antes
-do RSS do Bing, somando até 18 segundos em cada pesquisa. O backend disponível
-é tentado primeiro e a última rota que respondeu passa a ter prioridade nas
-pesquisas seguintes. Mantém alternativas se ela falhar, valida cada link e
-faz uma leitura nova para cada query. Passaram os 32 testes de extração e fluxo,
-os dois de busca e os 11 de mídia; tipos, compilação e lint sem erros.
-A décima quarta reprodução começou sem URLs nem percentuais fornecidos pelo
-operador. Terminou em 296,6 segundos usando Codex/GPT Image 2, mas é incorreta:
-os 54 percentuais estaduais do briefing diferem da soma independente dos dados
-municipais. O executor leu o panorama de governadores e inventou os percentuais
-presidenciais. A inspeção dos pixels confirma que o gerador reproduziu o briefing;
-a falha está na preparação factual. O servidor marcou conclusão porque havia
-arquivo e finish_task explícito; essa checagem mecânica não certificou os fatos.
-
-
-## Instruções menores por família de ferramenta
-
-Pedidos de imagem carregavam também as instruções completas de PDF, DOCX e PPTX.
-A execução passa a carregar somente as famílias de mídia selecionadas: imagem,
-documento ou áudio. A política de autoria e inspeção dos documentos permanece
-disponível quando essas ferramentas são escolhidas. O comando central foi
-encurtado, preservando recibos, credenciais, efeitos, decisões e a data nativa.
-A pesquisa exige correspondência entre sujeito, métrica, categoria e data do
-registro e do pedido, além de cobertura completa antes de compor números.
-view_file está disponível diretamente; um recibo de arquivo não autoriza alegar
-inspeção visual. Não há novo revisor, nova chamada de modelo ou troca do Luna.
-
-Passaram os 30 testes de composição nativa e fluxo de mídia. Após ampliar a
-verificação da superfície efetivamente enviada ao provedor, passaram os dez
-testes de conclusão de imagem: orientações de imagem presentes e instruções de
-Office/PDF ausentes. Tipos e compilação passaram; lint sem erros. A décima quinta
-reprodução usa o pedido original com o ano, sem URLs ou números fornecidos pelo
-operador. Terminou parcial em 143,6 segundos, sem imagem: reconheceu a diferença
-entre governadores e presidente, mas não abriu o link presidencial que já estava
-na página lida. Não é uma aprovação da tarefa.
-
-
-## Links contextuais e entrega pelo próprio executor
-
-Na extração headless, destinos e rótulos chegavam separados do texto. O adaptador
-passa a apresentar os links observados ao lado de seus rótulos de linha, como no
-Markdown HTTP. Rótulos ambíguos ou URLs inválidas não recebem destinos supostos.
-O recibo da continuação já existente inclui os links exatos observados ainda não
-lidos, excluindo tentativas anteriores e deduplicando âncoras e parâmetros de
-rastreamento. Essas entradas são pistas de navegação; não viram fatos, não fazem
-fetch automático e cada leitura continua validada no backend público.
-
-Havia também uma segunda inferência TASK_REPLY_VOICE em cada finish_task e
-encerramento em texto quando a personalidade estava configurada. O executor
-nativo já recebe SOUL e humanizer. Essa reescrita foi removida: a entrega conserva
-a resposta original, sem chamada extra nem alterações posteriores de fatos.
-A personalidade continua no prompt de execução. O teste com SOUL personalizado
-confirma pesquisa e geração com as três chamadas necessárias, sem revisões ou
-reescrita adicional, tanto com visão quanto sem ela.
-
-Passaram 33 testes de leitura e conclusão, incluindo links headless contextuais
-e pistas exatas no recibo de continuação. Os dez testes de conclusão de imagem
-passaram com personalidade configurada; os três de humanizer/SOUL passaram
-após ajustar uma fixture para fazer a leitura real da fonte exigida pelo
-verificador. Tipos e compilação passaram; lint sem erros. A décima sexta
-reprodução terminou parcial em 204,5 segundos: o GPT Image 2 produziu um mapa
-cinza declarado como dados pendentes. O executor inspecionou o arquivo real,
-mas a existência desse rascunho excluía a continuação de pesquisa do host.
-Não é aprovação da tarefa ou do desempenho.
-
-
-## Continuação com rascunho e progresso de fontes
-
-A condição de continuação verificava apenas critérios de arquivo ausente. Um
-finish_task parcial com PNG salvo podia encerrar mesmo com links ainda não lidos.
-O fluxo padrão passa a devolver esses links ao mesmo executor também quando já
-há um rascunho. A continuação usa uma assinatura do conteúdo das leituras e dos
-links disponíveis; não há somente uma oportunidade por revisão do usuário.
-Novos fatos ou mudanças nos links permitem continuar. Leituras duplicadas e
-horários novos não criam progresso; repetir o mesmo parcial sem nova evidência
-permite relatar um bloqueio, preservando a proteção nativa contra repetição.
-A revisão semântica opcional mantém seu próprio caminho quando habilitada.
-
-Passaram os onze testes de conclusão de imagem. O caso novo salva um rascunho,
-recebe duas conclusões parciais com pesquisas diferentes, abre a fonte final e
-entrega somente a imagem corrigida, sem revisor ou reescrita. O caso de fonte
-realmente bloqueada termina sem loop. Tipos, compilação e lint passaram sem
-erros. A décima sétima reprodução independente entregou o pedido em 563,5 segundos: pesquisa com Luna, uma geração com GPT Image 2, inspeção com view_file e finish_task selecionando apenas a imagem final. O operador não forneceu URLs ou valores à execução. A inspeção independente dos pixels conferiu as 27 UFs e os 54 percentuais contra o JSON consolidado efetivamente lido: nenhuma diferença. O mapa preserva a forma geográfica solicitada. O resultado funcional passa; o tempo de 9min23s continua excessivo frente aos dois minutos relatados pelo usuário.
-
-
-## Compressão no transporte público
-
-O leitor público já decodificava gzip, deflate e Brotli, mas solicitava sempre identity. Passa a negociar os três formatos, mantendo o limite aplicado aos bytes descompactados e a validação de cada destino. No VPS, o conjunto municipal ocupa 10.208.549 bytes sem compressão e 1.020.393 com gzip (90% menos transferência). Duas leituras independentes terminaram em 4,34s com gzip e 1,64s sem compressão: a medição não prova que essa alteração isolada elimina o timeout intermitente ou reduz o tempo total. Passaram 37 testes de HTTP/dados, incluindo negociação e rejeição de conteúdo descompactado excessivo; compilação passou, lint sem erros. A reprodução seguinte mede o comportamento sem inserir fontes ou fatos do operador.
-
-
-## Fonte completa preservada e conclusão parcial consistente
-
-A décima oitava reprodução terminou em 256,1 segundos, mas entregou somente os
-27 percentuais dos candidatos líderes. Não cumpre a comparação de dois valores
-por UF e não é aprovação. O próprio executor declarou esse arquivo parcial,
-recebeu uma continuação e, sem leitura ou arquivo novo, mudou apenas o outcome
-para completed. O host agora conserva essa declaração: trocar o status sem
-mudar evidência ou artefato não resolve a insuficiência. Uma fonte nova, uma
-imagem corrigida ou mudança de revisão do usuário podem resolver o parcial.
-Um bloqueio real ainda pode terminar parcial, sem obrigar novas inferências.
-O contexto de arquivo ausente também deixa de aparecer quando há rascunho salvo.
-
-Na integração HTTP, o corte de 30 mil caracteres descartava o restante da fonte.
-O OpenClaw original conserva o texto excedente com spillWebFetchContent. O host
-passa a preservar o JSON completo, ou texto público excedente, como arquivo
-interno privado do proprietário; o recibo identifica spill.fileId e hash. Esse
-arquivo não aparece na entrega. import_computer_file e run_computer_command
-podem processar a mesma fotografia da fonte, sem refazer download e sem receber
-números ou URLs do operador. A superfície configurada do computador inclui a
-importação. JSON publicado usa HTTP e não passa por renderização JavaScript.
-web_fetch também aceita maxChars dentro da proporção de contexto do modelo.
-
-Passaram 49 testes de HTTP/dados/conclusão. O caso de fonte truncada confere a
-leitura integral dos bytes privados, isolamento entre proprietários, ausência
-nos anexos e nenhuma abertura de browser para JSON. A sequência de conclusão
-rejeita uma troca de outcome sem trabalho e permite entrega após a correção.
-Tipos e compilação do candidato passaram; não há novo revisor nem troca do Luna.
-API publicada: source c8ac1fa0fc357c4a9d7d7417fd2461b1a0c117ba, imagem
-sha256:12a060efa81df1a8e7909ed6d81a95aa8ff78efb6528e95f43c8a6bcc97f703a.
-A décima nona reprodução usa novamente o pedido original com o ano, sem pistas
-ou fatos fornecidos pelo operador.
-
-## Custo do histórico na interface
-
-Cada mensagem copiava todo o prefixo do histórico antes de descobrir se era uma
-seleção de opção. Mensagens comuns causavam alocações quadráticas. A consulta
-agora recebe o histórico e o índice final sem cópia; opções futuras não podem
-validar mensagens antigas. Os índices de mensagens, ferramentas e reações são
-memorizados enquanto seus dados não mudam. Todos os turnos permanecem disponíveis.
-
-Passaram 28 testes de seleção e outbox, tipos do app e export web. Em cinco
-amostras locais de CPU, a mediana do trecho com 20 mil mensagens caiu de 178,381ms
-para 0,070ms. Isso mede o trecho alterado, não o tempo de quadro do navegador;
-ScrollView continua montando o histórico e não se afirma que todo atraso do chat
-foi eliminado. O browser colaborativo falhou ao abrir e navegar na prévia; não
-se apresenta isso como teste visual autenticado. Não foi publicado novo APK.
+Permanecem pendentes a falha de confirmação pública da reprodução 19, a meta de
+tempo relatada pelo usuário, a medição real da primeira resposta e do chat longo,
+e a comparação com as ferramentas/provedor do seu OpenClaw.
