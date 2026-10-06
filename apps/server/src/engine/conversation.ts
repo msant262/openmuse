@@ -33,7 +33,7 @@ import { buildProfileContext } from "../profile-context.ts";
 import { modelProviderConfig } from "../providers/config.ts";
 import { routingCapabilities } from "../providers/model-capabilities.ts";
 import { modelSelection, selectionContextModel } from "../providers/preferences.ts";
-import { publicReadDescription, readablePage } from "../public-web.ts";
+import { preservePublicSource, publicReadDescription, readablePage } from "../public-web.ts";
 import { runtimeTool } from "../runtime-tools.ts";
 import { SkillCatalog, skillTools } from "../skill-catalog.ts";
 import {
@@ -42,6 +42,7 @@ import {
   companionMessageContext,
 } from "./companion-conversation.ts";
 import { companionSocialTools } from "./companion-social-tools.ts";
+import { calculateMaxToolResultCharsWithCap } from "./openclaw/tool-result-limits.ts";
 import { openclawAgent } from "./openclaw-agent.ts";
 import { buildPromisedWorkPromptSection } from "./promised-work-prompt.ts";
 import type { AgentService } from "./service.ts";
@@ -614,12 +615,35 @@ export class ConversationAgent extends AbstractAgent {
         parameters: z.object({
           url: z.url().max(4096),
           mode: z.enum(["auto", "http", "headless", "browser"]).default("auto"),
+          maxChars: z
+            .number()
+            .int()
+            .min(100)
+            .max(16 * 1024 * 1024)
+            .optional(),
         }),
-        execute: async ({ url, mode }) => {
+        execute: async ({ url, mode, maxChars }) => {
           browserAbort.signal.throwIfAborted();
           try {
             const page = await this.service.web.read(url, browserAbort.signal, {
               mode,
+              maxChars:
+                maxChars === undefined
+                  ? undefined
+                  : Math.min(
+                      maxChars,
+                      selectedModel
+                        ? calculateMaxToolResultCharsWithCap(
+                            routingCapabilities(
+                              selectedModel,
+                              this.service.config.modelProviders ??
+                                modelProviderConfig(this.service.config.dataDir),
+                            ).capabilities.contextTokens,
+                            16 * 1024 * 1024,
+                          )
+                        : 30000,
+                    ),
+              spill: preservePublicSource(this.service.files, this.owner),
               render: (target, signal) =>
                 this.service.browser.observe(
                   this.owner,
