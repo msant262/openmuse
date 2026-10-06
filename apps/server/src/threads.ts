@@ -677,6 +677,26 @@ export class LocalThreads extends AgentRunner {
       let timer: ReturnType<typeof setTimeout> | undefined;
       let seen: { id: string; eventCount: number; runId: string; running: boolean } | undefined;
       let first = true;
+      let openRunId: string | undefined;
+      const emit = (event: BaseEvent) => {
+        if (event.type === EventType.RUN_STARTED) {
+          const id = (event as BaseEvent & { runId: string }).runId;
+          // A reader can observe a running record before RUN_STARTED is durable.
+          // The synthetic start and its later stored event are the same run.
+          if (openRunId === id) return;
+          if (openRunId)
+            subscriber.next({
+              type: EventType.RUN_FINISHED,
+              threadId: request.threadId,
+              runId: openRunId,
+            });
+          openRunId = id;
+        } else if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) {
+          if (event.type === EventType.RUN_FINISHED && !openRunId) return;
+          openRunId = undefined;
+        }
+        subscriber.next(event);
+      };
       const displayEvent = (event: BaseEvent): BaseEvent => {
         // RUN_STARTED.input is authoritative model context, not phone history.
         if (event.type === EventType.RUN_STARTED) {
@@ -711,28 +731,28 @@ export class LocalThreads extends AgentRunner {
             if (first) {
               const diagnostic = await this.db.latestThreadError(owner, thread.id);
               if (diagnostic && diagnostic.runId !== run?.runId) {
-                subscriber.next({
+                emit({
                   type: EventType.RUN_STARTED,
                   threadId: thread.id,
                   runId: diagnostic.runId,
                 });
-                subscriber.next({
+                emit({
                   type: EventType.CUSTOM,
                   name: "historical_run_error",
                   value: { ...diagnostic, origin: "history" },
                 });
-                subscriber.next({
+                emit({
                   type: EventType.RUN_FINISHED,
                   threadId: thread.id,
                   runId: diagnostic.runId,
                 });
               }
             }
-            if (seen?.running)
-              subscriber.next({
+            if (openRunId)
+              emit({
                 type: EventType.RUN_FINISHED,
                 threadId: thread.id,
-                runId: seen.runId,
+                runId: openRunId,
               });
             const runId = run?.runId ?? `restore-${thread.id}`;
             if (run?.status === "running") {
@@ -751,7 +771,7 @@ export class LocalThreads extends AgentRunner {
                 ...current,
                 messages: current.messages.slice(-CHAT_HISTORY_PAGE_SIZE),
               }))
-                subscriber.next(event);
+                emit(event);
             } else {
               const diagnostics = (run?.events ?? [])
                 .flatMap((event): BaseEvent[] => {
@@ -782,11 +802,11 @@ export class LocalThreads extends AgentRunner {
                 messages: run?.messages ?? [],
                 state: run?.state ?? {},
               }))
-                subscriber.next(event);
+                emit(event);
             }
             first = false;
           } else if (run) {
-            for (const event of run.events) subscriber.next(displayEvent(event));
+            for (const event of run.events) emit(displayEvent(event));
           }
           if (run)
             seen = {

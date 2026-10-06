@@ -1920,7 +1920,7 @@ export async function executeModelTask(
       "ask_user",
       // Preserve the native decision-only policy while using the app's form schema.
       // OpenClaw: src/agents/tool-description-presets.ts, describeAskUserTool.
-      "Ask the human only when blocked on a decision genuinely theirs that cannot be resolved from the request, code, or sensible defaults; never ask whether to proceed or confirm a plan. Ask for private input that only the user can provide. Do not ask the user to supply public facts or source links while research tools and relevant unread sources remain available; continue researching and report concrete source limitations in the delivery.",
+      "Ask the human only when blocked on a decision genuinely theirs that cannot be resolved from the request, code, or sensible defaults; never ask whether to proceed or confirm a plan. Explain exactly which information or decision is missing, why it is needed, and what the user should enter or choose. Supply a schema with concrete field labels/options when asking for multiple facts or a choice. Internal exceptions, read timeouts and reconciliation are runtime problems, not questions for the human. Ask for private input that only the user can provide. Do not ask the user to supply public facts or source links while research tools and relevant unread sources remain available; continue researching and report concrete source limitations in the delivery.",
       z
         .object({
           question: z
@@ -1958,7 +1958,7 @@ export async function executeModelTask(
           kind: "question",
           schema: schema ?? {
             title: question,
-            fields: [{ id: "reply", label: "Your answer", type: "text", multiline: true }],
+            fields: [{ id: "reply", label: question.slice(0, 300), type: "text", multiline: true }],
           },
         });
         outcome = {
@@ -2072,16 +2072,27 @@ export async function executeModelTask(
     } else if (error instanceof TaskSupersededError)
       outcome = { status: "queued", state: task.state };
     else if (error instanceof TaskOutcomeUnknownError) {
-      const physical = (await service.journal.operations(owner, task.id)).filter(
+      const operations = await service.journal.operations(owner, task.id);
+      const physical = operations.filter(
         (op) =>
           op.nativeEnvelope &&
           op.effect &&
           ["dispatching", "running", "outcome_unknown"].includes(op.status),
       );
       if (physical.length) await ctx.holdAdmission();
+      const affected = operations.filter((op) => error.operationIds.includes(op.id));
+      const accounts = [
+        ...new Set(
+          affected.map((op) => (op.args as { account?: string })?.account).filter(Boolean),
+        ),
+      ];
+      const language = (await service.profiles.get(owner, task.originThreadId)).fields.language;
+      const detail = language.startsWith("pt")
+        ? `Não consegui confirmar se a operação de “${task.title}” foi concluída${accounts.length ? ` na conta ${accounts.join(", ")}` : ""}. O progresso está salvo. A operação não será repetida enquanto o resultado estiver incerto, para evitar duplicação. Consulte os detalhes na aba Ações; não é necessário preencher uma resposta.`
+        : `I could not confirm whether the operation for “${task.title}” completed${accounts.length ? ` in ${accounts.join(", ")}` : ""}. Progress is saved. The operation will not be repeated while its outcome is uncertain, to avoid duplication. See the Actions tab for its details; no text answer is needed.`;
       outcome = {
-        status: "waiting_input",
-        question: error.message,
+        status: "paused",
+        question: detail,
         state: {
           ...task.state,
           reconcilingOperationIds: error.operationIds,

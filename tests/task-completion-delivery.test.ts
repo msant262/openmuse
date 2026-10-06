@@ -8,6 +8,98 @@ import type { ComputerSnapshot } from "../packages/domain/src/computer.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("a timed-out Gmail search remains a failed read and the agent retries without asking the user", async (t) => {
+  await modelFixture(
+    t,
+    (index) =>
+      [
+        {
+          name: "search_mail",
+          arguments: { query: 'subject:"Own test"', account: "alex@example.com" },
+        },
+        {
+          name: "search_mail",
+          arguments: { query: 'subject:"Own test"', account: "alex@example.com" },
+        },
+        {
+          name: "finish_task",
+          arguments: { summary: "Busca concluída: nenhum e-mail encontrado." },
+        },
+      ][index],
+  );
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  let reads = 0;
+  t.mock.method(server.workspace, "searchMail", async () => {
+    if (++reads === 1) throw new Error("The operation was aborted due to timeout");
+    return [];
+  });
+  const task = await server.agent.createTask("owner", {
+    prompt: 'Procure no Gmail o e-mail com assunto "Own test".',
+  });
+  await server.agent.worker.tick();
+  const searches = (await server.agent.journal.operations("owner", task.id)).filter(
+    (o) => o.toolName === "search_mail",
+  );
+  assert.equal(reads, 2);
+  assert.deepEqual(
+    searches.map((o) => [o.effect, o.status]),
+    [
+      [false, "failed"],
+      [false, "succeeded"],
+    ],
+  );
+  assert.equal((await server.agent.getTask("owner", task.id)).status, "succeeded");
+  assert.equal((await server.db.list("owner", "interaction-requests")).length, 0);
+});
+
+test("maintenance recovers historical Google read timeouts but never releases an uncertain write", async (t) => {
+  const server = await taskRuntime(t);
+  for (const name of ["search_mail", "execute_google_workspace_tool"]) {
+    const task = await server.agent.createTask("owner", { prompt: "Consulte meus e-mails" });
+    const id = `uncertain:${task.id}`;
+    const op = {
+      id,
+      taskId: task.id,
+      revision: 0,
+      bindingHash: bindingHash({ name }),
+      executorId: "vps",
+      executorEpoch: 1,
+      resourceFence: 0,
+      status: "outcome_unknown",
+      toolName: name,
+      args:
+        name === "search_mail" ? { query: "in:inbox" } : { toolId: "gmail.users.messages.send" },
+      effect: true,
+      runToken: "old-run",
+      resourceLeaseIds: [],
+      createdAt: new Date().toISOString(),
+      sequence: 1,
+      receipt: { error: "The operation was aborted due to timeout" },
+    };
+    await server.db.put("owner", "task-operations", op);
+    const blocked = await server.db.put("owner", "tasks", {
+      ...task,
+      status: "waiting_input" as const,
+      state: { ...task.state, reconcilingOperationIds: [id] },
+    });
+    await server.agent.interactions.forTask("owner", blocked);
+    assert.equal(await server.agent.recoverGoogleRead("owner", blocked), name === "search_mail");
+    const saved = await server.agent.getTask("owner", task.id);
+    assert.equal(saved.status, name === "search_mail" ? "queued" : "waiting_input");
+    const result = await server.db.get<{ status: string; effect: boolean }>(
+      "owner",
+      "task-operations",
+      id,
+    );
+    assert.equal(result?.status, name === "search_mail" ? "failed" : "outcome_unknown");
+    assert.equal(result?.effect, name !== "search_mail");
+    const questions = (
+      await server.db.list<{ taskId: string; status: string }>("owner", "interaction-requests")
+    ).filter((q) => q.taskId === task.id);
+    assert.equal(questions[0].status, name === "search_mail" ? "superseded" : "waiting");
+  }
+});
+
 const runningComputer: ComputerSnapshot = {
   enabled: true,
   provider: "native",

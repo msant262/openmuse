@@ -42,6 +42,13 @@ function requiredContent(prompt: string): string[] {
       .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "").split(/[.!?](?:\s|$)/)[0])
       .join(",");
   }
+  const literal =
+    /\b(?:containing|contendo)\s+(?:(?:the\s+)?text\s+|(?:o\s+)?texto\s+)?(?:[“"`'])([\s\S]*?)(?:[”"`'])/i.exec(
+      prompt,
+    )?.[1];
+  // Quoted text is one literal obligation; punctuation/conjunctions inside it
+  // are content, not list separators or the end of the user's instruction.
+  if (!list && literal !== undefined) return literal.trim() ? [literal.trim()] : [];
   const content = list ?? prompt.match(/\b(?:containing|contendo)\s+(?:the\s+)?([^.!?\n]+)/i)?.[1];
   if (!content) return [];
   return [
@@ -137,7 +144,10 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
   ].some(
     (match) =>
       !/(?:n[aã]o|not|don't|do not|without|sem|nunca|never)(?:\s+\S+){0,3}\s*$/i.test(
-        prompt.slice(Math.max(0, (match.index ?? 0) - 60), match.index),
+        prompt
+          .slice(Math.max(0, (match.index ?? 0) - 60), match.index)
+          .split(/[.!?;\n]/)
+          .at(-1) ?? "",
       ),
   );
   const nativeGmailDraft =
@@ -761,13 +771,18 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(execute_app_tool$|execute_google_workspace_tool$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
+                    !/^(execute_app_tool$|execute_google_workspace_tool$|search_mail$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
                       op.toolName,
                     ) ||
                     !useful(op.receipt) ||
                     (op.receipt as { error?: unknown })?.error
                   )
                     return false;
+                  if (op.toolName === "search_mail") {
+                    const result = op.receipt as { account?: unknown; matches?: unknown };
+                    if (typeof result.account !== "string" || !Array.isArray(result.matches))
+                      return false;
+                  }
                   if (
                     op.toolName === "execute_app_tool" &&
                     (op.receipt as { kind?: string })?.kind !== "composio.read"

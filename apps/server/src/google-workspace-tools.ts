@@ -82,7 +82,16 @@ function catalog() {
 }
 
 export function googleWorkspaceReadTool(name: string, args: unknown): boolean {
-  if (["search_google_workspace_tools", "describe_google_workspace_tool"].includes(name))
+  if (
+    [
+      "search_google_workspace_tools",
+      "describe_google_workspace_tool",
+      "search_mail",
+      "read_mail_thread",
+      "read_calendar",
+      "list_google_accounts",
+    ].includes(name)
+  )
     return true;
   if (name !== "execute_google_workspace_tool" || !args || typeof args !== "object") return false;
   const toolId = (args as { toolId?: unknown }).toolId;

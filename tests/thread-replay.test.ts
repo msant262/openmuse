@@ -6,6 +6,63 @@ import { ConversationInbox } from "../apps/server/src/conversation-inbox.ts";
 import { createStore } from "../apps/server/src/db.ts";
 import { LocalThreads } from "../apps/server/src/threads.ts";
 
+test("connecting before the first durable start event does not start the same run twice", async (t) => {
+  const db = await createStore();
+  const threads = new LocalThreads(db);
+  t.after(async () => {
+    await threads.close();
+    await db.close();
+  });
+  await threads.ensure("owner", "early-connect");
+  const run = {
+    id: "early-token",
+    threadId: "early-connect",
+    runId: "early-run",
+    createdAt: new Date().toISOString(),
+    status: "running",
+    events: [] as BaseEvent[],
+    messages: [],
+    state: {},
+  };
+  await db.put("owner", "thread-runs", run);
+  await db.claimThread("owner", run.threadId, run.id, 60_000);
+  const client = new (class extends AbstractAgent {
+    run() {
+      return of();
+    }
+    protected connect() {
+      return threads.withOwner("owner", () => threads.connect({ threadId: run.threadId }));
+    }
+  })({ threadId: run.threadId });
+  let starts = 0;
+  client.subscribe({
+    onRunStartedEvent: () => {
+      starts++;
+      if (starts === 1)
+        void (async () => {
+          await db.put("owner", "thread-runs", {
+            ...run,
+            status: "finished",
+            events: [
+              { type: EventType.RUN_STARTED, threadId: run.threadId, runId: run.runId },
+              { type: EventType.RUN_FINISHED, threadId: run.threadId, runId: run.runId },
+            ],
+          });
+          await db.compareAndSwap(
+            "owner",
+            "threads",
+            run.threadId,
+            { runToken: run.id },
+            { runToken: null, leaseUntil: null },
+          );
+        })();
+    },
+  });
+  await assert.doesNotReject(client.connectAgent());
+  assert.equal(starts, 1);
+  assert.equal(client.isRunning, false);
+});
+
 for (const laterSuccess of [false, true]) {
   test(`real AG-UI client reconnects a historical failure${laterSuccess ? " followed by success" : " alone"} without an active run`, async (t) => {
     const db = await createStore();

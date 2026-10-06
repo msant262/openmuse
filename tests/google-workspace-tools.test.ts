@@ -828,9 +828,11 @@ test("cloud document writing requires a confirmed native Google receipt with the
       }),
   );
   const task = await server.agent.createTask("owner", {
-    prompt: "Na conta work@example.com, cria no Google Docs um documento contendo Texto confirmado",
+    prompt:
+      "Na conta work@example.com, cria no Google Docs um documento contendo o texto “Texto confirmado. Criado e salvo.”",
   });
   assert.equal(task.criteria?.[0].id, "requested-google-document");
+  assert.deepEqual(task.criteria?.[0].requiredItems, ["Texto confirmado. Criado e salvo."]);
   const worker = new TaskWorker(server.db, async (owner, running) => {
     await server.agent.googleWorkspace.execute(
       owner,
@@ -853,7 +855,11 @@ test("cloud document writing requires a confirmed native Google receipt with the
         toolId: "docs.documents.batchUpdate",
         account: "work@example.com",
         parameters: { documentId: "full-document-id" },
-        body: { requests: [{ insertText: { location: { index: 1 }, text: "Texto confirmado" } }] },
+        body: {
+          requests: [
+            { insertText: { location: { index: 1 }, text: "Texto confirmado. Criado e salvo." } },
+          ],
+        },
         operationId: "cloud-text",
       },
       { taskId: running.id },

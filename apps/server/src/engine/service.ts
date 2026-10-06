@@ -46,7 +46,7 @@ import type { Store } from "../db.ts";
 import type { DesktopService } from "../desktop-service.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
-import { GoogleWorkspaceHarness } from "../google-workspace-tools.ts";
+import { GoogleWorkspaceHarness, googleWorkspaceReadTool } from "../google-workspace-tools.ts";
 import { ConnectedSearchBackend, type IntegrationService } from "../integrations.ts";
 import { InteractionRequests } from "../interaction-requests.ts";
 import { ProcedureMaintenance } from "../learning/procedure-maintenance.ts";
@@ -400,6 +400,9 @@ export class AgentService {
     this.refreshing = true;
     try {
       const globallyPaused = (await this.runtimePause.get("__runtime__")).paused;
+      if (!globallyPaused)
+        for (const { owner, value } of await this.db.scan<AgentTask>("tasks"))
+          await this.recoverGoogleRead(owner, value);
       // Confirmed native cleanup must free occupancy even when a separate
       // connector or audit repair fails later in this maintenance cycle.
       for (const { owner, value } of await this.db.scan<AgentTask>("tasks")) {
@@ -493,6 +496,72 @@ export class AgentService {
     } finally {
       this.refreshing = false;
     }
+  }
+  /** Recover old read timeouts misclassified as uncertain writes. No provider
+   * mutation or claimed success: preserve the failure and let the agent retry. */
+  async recoverGoogleRead(owner: string, task: AgentTask) {
+    const ids = task.state.reconcilingOperationIds;
+    if (task.status !== "waiting_input" || !Array.isArray(ids) || !ids.length) return false;
+    const operations = await this.journal.operations(owner, task.id);
+    const pending = ids.map((id) => operations.find((op) => op.id === id));
+    if (
+      !pending.every(
+        (op) =>
+          op &&
+          !op.nativeEnvelope &&
+          googleWorkspaceReadTool(op.toolName, op.args) &&
+          !operations.some((child) => child.parentOperationId === op.id && child.effect),
+      )
+    )
+      return false;
+    for (const op of pending) {
+      if (!op) return false;
+      if (["dispatching", "running", "outcome_unknown"].includes(op.status)) {
+        await this.db.compareAndSwap(
+          owner,
+          "task-operations",
+          op.id,
+          { status: op.status },
+          { effect: false },
+        );
+        await this.journal.recordReceipt(
+          owner,
+          op.id,
+          {
+            ...(op.receipt as object),
+            error: "Google read timed out; safe to retry the read.",
+            reconciliation: { readOnly: true, previousStatus: op.status },
+          },
+          "failed",
+          (op.sequence ?? 0) + 1,
+        );
+      }
+    }
+    const updated = await this.db.compareAndSwapTask(
+      owner,
+      task.id,
+      { status: "waiting_input" },
+      {
+        status: "queued",
+        question: null,
+        responsible: "agent",
+        state: { reconcilingOperationIds: null, interactionRequestId: null },
+      },
+    );
+    if (!updated) return false;
+    for (const request of await this.db.list<{ id: string; taskId: string; status: string }>(
+      owner,
+      "interaction-requests",
+    ))
+      if (request.taskId === task.id && request.status === "waiting")
+        await this.db.compareAndSwap(
+          owner,
+          "interaction-requests",
+          request.id,
+          { status: "waiting" },
+          { status: "superseded" },
+        );
+    return true;
   }
   async ensure(owner: string) {
     await this.db.insertIfAbsent(owner, "agent-settings", {

@@ -174,7 +174,13 @@ export class InteractionRequests {
       schema: {
         title: task.question ?? task.title,
         fields: [
-          { id: "reply", label: "Your answer", type: "text", required: true, multiline: true },
+          {
+            id: "reply",
+            label: (task.question ?? task.title).slice(0, 300),
+            type: "text",
+            required: true,
+            multiline: true,
+          },
         ],
       },
     });
