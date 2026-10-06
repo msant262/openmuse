@@ -49,6 +49,8 @@ const labels: Record<string, string> = {
   start: "Start",
   end: "End",
   location: "Location",
+  timeZone: "Time zone",
+  primary: "Primary calendar",
   subject: "Subject",
   to: "To",
   from: "From",
@@ -172,7 +174,28 @@ export function operationPresentation(
   const tool = operation.toolName.replace(/^primitive\./, "");
   let input = readable(operation.args);
   let output = readable(result);
-  if (tool === "search_web") {
+  if (
+    tool === "execute_google_workspace_tool" &&
+    typeof args.toolId === "string" &&
+    /^calendar\.(calendarList|calendars)\./.test(args.toolId)
+  ) {
+    const data = presentationRecord(receipt?.data) ?? {};
+    const calendar = (value: unknown) => {
+      const entry = presentationRecord(value) ?? {};
+      return {
+        title: entry.summary,
+        description: entry.description,
+        timeZone: entry.timeZone,
+        primary: entry.primary,
+      };
+    };
+    input = readable({ account: args.account });
+    output = readable({
+      status: receipt?.status,
+      account: receipt?.account,
+      ...(Array.isArray(data.items) ? { items: data.items.map(calendar) } : calendar(data)),
+    });
+  } else if (tool === "search_web") {
     input = readable({ query: args.query, limit: args.limit });
     output = readable(
       receipt

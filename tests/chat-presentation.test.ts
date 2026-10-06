@@ -5,6 +5,7 @@ import {
   googleActionPresentation,
   withGoogleActionContext,
 } from "../apps/mobile/src/external-action-preview.ts";
+import { operationPresentation } from "../apps/mobile/src/task-operation-details.ts";
 import {
   showTaskDeliveryChecks,
   taskOutcomeHeading,
@@ -200,4 +201,44 @@ test("real Gmail draft tool IDs and saved native calendar proposals retain meani
   assert.equal(view.verb, "Create event");
   assert.equal(view.item, "Okami agenda verificada");
   assert.match(view.fields[0].value, /15:00.*Europe\/Berlin/);
+});
+
+test("calendar settings are distinguished from appointments and the stage hides provider metadata", () => {
+  const op = {
+    id: "calendar-read",
+    toolName: "execute_google_workspace_tool",
+    status: "succeeded",
+    args: { toolId: "calendar.calendarList.get", account: "msant262@gmail.com" },
+    receipt: {
+      status: "succeeded",
+      account: "msant262@gmail.com",
+      data: {
+        summary: "msant262@gmail.com",
+        timeZone: "Europe/Berlin",
+        primary: true,
+        kind: "calendar#calendarListEntry",
+        etag: "private-transport-tag",
+        backgroundColor: "#9fc6e7",
+      },
+    },
+  };
+  assert.equal(
+    taskTimeline(
+      [
+        {
+          id: "step",
+          title: "Working on your request",
+          kind: "step",
+          date: "2026-10-06T13:00:00Z",
+          operationId: op.id,
+        },
+      ],
+      [op],
+    )[0].title,
+    "Read calendar settings",
+  );
+  const shown = JSON.stringify(operationPresentation(op));
+  assert.match(shown, /Europe\/Berlin/);
+  assert.match(shown, /Primary calendar/);
+  assert.doesNotMatch(shown, /calendar#calendarListEntry|private-transport-tag|9fc6e7/);
 });

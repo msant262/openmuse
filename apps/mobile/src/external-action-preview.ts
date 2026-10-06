@@ -125,6 +125,13 @@ export function googleOperationLabel(operation: string, preparing = false) {
   const [service] = operation.split(".");
   const method = operation.split(".").at(-1);
   if (service === "calendar") {
+    if (!operation.startsWith("calendar.events.")) {
+      if (operation === "calendar.freebusy.query") return "Check availability";
+      if (method === "list") return "Find calendars";
+      if (method === "get") return "Read calendar settings";
+      if (method === "clear") return "Clear calendar";
+      return "Edit calendar settings";
+    }
     if (method === "delete") return preparing ? "Prepare event removal" : "Remove event";
     if (["insert", "quickAdd"].includes(method ?? "")) return "Create event";
     if (["update", "patch"].includes(method ?? "")) return "Edit event";
