@@ -45,7 +45,7 @@ import { availableImageModels, imageProvider } from "./providers/images.ts";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const hashBytes = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
-const imageArgs = z.object({
+export const imageArgs = z.object({
   prompt: z.string().trim().min(1).max(8000),
   operationId: z.string().min(1).max(120),
   name: z.string().trim().min(1).max(120).optional(),
@@ -406,7 +406,12 @@ export class MediaService {
     scope: string,
     signal?: AbortSignal,
     beforeDispatch?: () => Promise<void>,
-  ): Promise<Awaited<ReturnType<Files["reference"]>> | { disabled: boolean; message: string }> {
+  ): Promise<
+    | (Awaited<ReturnType<Files["reference"]>> & {
+        generation?: { provider: string; model: string };
+      })
+    | { disabled: boolean; message: string }
+  > {
     const args = imageArgs.parse(raw);
     const config = this.config.modelProviders ?? modelProviderConfig(this.config.dataDir);
     const available = await availableImageModels(model, config);
@@ -419,7 +424,7 @@ export class MediaService {
             ? available.find((spec) => /^(grok|xai-oauth)\//.test(spec))
             : available[0];
     const provider = imageModel ? imageProvider(imageModel, config, this.upstream) : undefined;
-    if (!provider)
+    if (!imageModel || !provider)
       return {
         disabled: true,
         message:
@@ -431,6 +436,8 @@ export class MediaService {
       binding: string;
       status: "pending" | "succeeded" | "uncertain";
       fileId?: string;
+      provider?: string;
+      model?: string;
     };
     const binding = hash(
       JSON.stringify({
@@ -444,24 +451,31 @@ export class MediaService {
       if (previous.binding !== binding)
         throw new AppError("Operation ID already belongs to a different image request", 409);
       if (previous.status === "succeeded" && previous.fileId)
-        return this.files.reference(owner, previous.fileId);
+        return {
+          ...(await this.files.reference(owner, previous.fileId)),
+          ...(previous.provider && previous.model
+            ? { generation: { provider: previous.provider, model: previous.model } }
+            : {}),
+        };
       throw new AppError(
         "Image request outcome is unknown or pending; it will not be repeated automatically",
         409,
       );
     }
+    const generation = { provider: imageModel.split("/")[0], model: provider.model };
     if (
       !(await this.db.insertIfAbsent(owner, "image-generations", {
         id,
         binding,
         status: "pending",
+        ...generation,
       }))
     )
       return this.generatedImage(owner, model, args, scope, signal);
     const audit = {
       operationId: `image:${id}`,
       tool: "generate_image",
-      target: "Selected image provider",
+      target: `${generation.provider}/${generation.model}`,
       summary: "Generate image",
     };
     await new ActionLog(this.db).append(owner, audit, "started");
@@ -537,9 +551,10 @@ export class MediaService {
         binding,
         status: "succeeded",
         fileId: file.id,
+        ...generation,
       });
       await new ActionLog(this.db).finish(owner, audit, "succeeded");
-      return this.files.reference(owner, file.id);
+      return { ...(await this.files.reference(owner, file.id)), generation };
     } catch (error) {
       if (!dispatchGuardPassed || error instanceof ImageNotDispatchedError) {
         await new ActionLog(this.db).finish(owner, audit, "rejected_not_dispatched");
@@ -547,7 +562,12 @@ export class MediaService {
         throw error;
       }
       await new ActionLog(this.db).finish(owner, audit, "outcome_unknown");
-      await this.db.put(owner, "image-generations", { id, binding, status: "uncertain" });
+      await this.db.put(owner, "image-generations", {
+        id,
+        binding,
+        status: "uncertain",
+        ...generation,
+      });
       throw error;
     }
   }
@@ -609,7 +629,7 @@ export class MediaService {
 }
 
 export const mediaInstructions =
-  "For PDF, DOCX and PPTX, read the document-design skill and the format skill before composing. Use design_references recommend/read to compare suitable directions. Apply the chosen reference with explicit design.layout, display, palette and rationale; all catalog references are usable, not only the legacy presets. Critique the rendered composition against that intent, not only overflow. create_document accepts complete Markdown with headings, emphasis, lists, tables, quotes, owned file: images and chart/metrics/steps JSON blocks; it creates designed PDF or native editable DOCX/PPTX without a computer or source form. Choose design.reference, subtitle, eyebrow, footer and cover when useful. Do not substitute unformatted prose for an authored document. After creating a draft, call inspect_document in batches, examine the returned page pixels, then confirm_document_review in the next model turn. Review every page before finish_task. Correct problems by creating a fresh operation with replaceFileId for the current task draft and inspecting the new bytes. Internal previews are not deliverables. Text and Markdown formats preserve exact UTF-8. Use fill_pdf only for existing forms. For an image, illustration, poster or infographic, use generate_image to create the actual downloadable image. For an infographic about current facts, first research and verify sources, then include the exact verified facts, dates, labels and source names in a detailed visual prompt in the user's language; do not stop at a text outline. The image generator is independent of the chat model: image_generation_status lists connected image capabilities, including subscriptions. Auto selection prefers separately connected GPT Image through ChatGPT/Codex authorization, then Grok Imagine, independently of the chat model. For an explicit ChatGPT/GPT Image request use provider chatgpt; for Grok use provider grok. If the requested provider is not connected, show its Settings connection rather than substitute a different provider. Never add a billed API implicitly. No email or PDF attachment is needed to create an image. Give the image a descriptive name. Generated attachments are delivered automatically; refer to them naturally without exposing internal IDs. Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before a completed file receipt or repeat a pending/uncertain generation automatically.";
+  "For PDF, DOCX and PPTX, read the document-design skill and the format skill before composing. Use design_references recommend/read to compare suitable directions. Apply the chosen reference with explicit design.layout, display, palette and rationale; all catalog references are usable, not only the legacy presets. Critique the rendered composition against that intent, not only overflow. create_document accepts complete Markdown with headings, emphasis, lists, tables, quotes, owned file: images and chart/metrics/steps JSON blocks; it creates designed PDF or native editable DOCX/PPTX without a computer or source form. Choose design.reference, subtitle, eyebrow, footer and cover when useful. Do not substitute unformatted prose for an authored document. After creating a draft, call inspect_document in batches, examine the returned page pixels, then confirm_document_review in the next model turn. Review every page before finish_task. Correct problems by creating a fresh operation with replaceFileId for the current task draft and inspecting the new bytes. Internal previews are not deliverables. Text and Markdown formats preserve exact UTF-8. Use fill_pdf only for existing forms. For an image, illustration, poster or infographic, use generate_image to create the actual downloadable image. For an infographic about current facts, first obtain and verify every requested entity and category; a paginated sample is not the complete dataset. Before generating, check that the visual brief contains all requested labels and values, preserves the user's requested form (a geographic map needs geographic boundaries), and includes exact verified dates and source names in the user's language. Resolve coverage gaps before spending an image generation; do not stop at a text outline. The image generator is independent of the chat model: image_generation_status lists connected image capabilities, including subscriptions. Auto selection prefers separately connected GPT Image through ChatGPT/Codex authorization, then Grok Imagine, independently of the chat model. For an explicit ChatGPT/GPT Image request use provider chatgpt; for Grok use provider grok. If the requested provider is not connected, show its Settings connection rather than substitute a different provider. Never add a billed API implicitly. No email or PDF attachment is needed to create an image. Give the image a descriptive name. Generated images are drafts until checked against the original request and their actual pixels. Select only the final intended image IDs with finish_task.artifactIds; rejected drafts remain saved without being delivered. Refer to delivered attachments naturally without exposing internal IDs. Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before a completed file receipt or repeat a pending/uncertain generation automatically.";
 
 export function mediaTools(
   media: MediaService,
@@ -621,6 +641,7 @@ export function mediaTools(
     signal?: AbortSignal;
     before?: () => Promise<void>;
     effectBefore?: () => Promise<void>;
+    imageBrief?: (args: z.output<typeof imageArgs>) => Promise<unknown | undefined>;
     artifact?: (id: string, replacesFileId?: string) => Promise<void>;
     revision?: () => number;
     onComputerDispatch?: (receiptId: string) => Promise<void>;
@@ -794,17 +815,20 @@ export function mediaTools(
     ),
     tool(
       "generate_image",
-      "Create an actual image, poster or infographic using an available connected image generator. Auto uses subscription image generation independently of the chat model. Provide a complete visual prompt with verified facts and a descriptive name. Returns a downloadable image attachment.",
+      "Create an actual image, poster or infographic using an available connected image generator. Auto uses subscription image generation independently of the chat model. Before generating, verify that the visual prompt covers every requested entity, category and value and preserves the requested form; a paginated source sample is insufficient for a complete comparison. Provide verified facts and a descriptive name. Returns a downloadable draft; inspect actual pixels and select only the final intended file with finish_task.artifactIds.",
       imageArgs,
-      (args) =>
-        media.generatedImage(
+      async (args) => {
+        const repair = await options.imageBrief?.(args);
+        if (repair !== undefined) return repair;
+        return media.generatedImage(
           owner,
           options.model(),
           args,
           scope,
           options.signal,
           options.effectBefore ?? options.before,
-        ),
+        );
+      },
       true,
     ),
     tool(

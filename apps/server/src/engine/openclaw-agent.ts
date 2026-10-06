@@ -9,6 +9,7 @@ import {
   fromSpecTokenUsage,
   type ModelMessage,
   type SchemaInput,
+  type TextOptions,
 } from "@tanstack/ai";
 import { resolveDebugOption } from "@tanstack/ai/adapter-internals";
 import { Observable } from "rxjs";
@@ -16,10 +17,11 @@ import { z } from "zod";
 import type { ModelRequirements, WorkClass } from "../../../../packages/domain/src/runtime.ts";
 import type { Store } from "../db.ts";
 import type { BrowserImageLoader } from "../providers/browser-images.ts";
-import type { ModelProviderConfig } from "../providers/config.ts";
+import { type ModelProviderConfig, modelProviderConfig } from "../providers/config.ts";
+import { meetsRequirements, routingCapabilities } from "../providers/model-capabilities.ts";
 import type { ModelRouter } from "../providers/model-router.ts";
 import type { ModelSelection, ProviderContinuationCheckpoint } from "../providers/models.ts";
-import { continuationMessages, modelAdapter } from "../providers/models.ts";
+import { continuationMessages, modelAdapter, providerConfigured } from "../providers/models.ts";
 import type { ContextModelResolver } from "./context-budget.ts";
 import { harnessToolCatalog } from "./harness-tool-catalog.ts";
 import { resolveLiveToolResultMaxChars } from "./openclaw/tool-result-limits.ts";
@@ -216,6 +218,58 @@ async function loadRuntime(dataDir: string): Promise<Runtime> {
     return copied;
   })();
   return runtime;
+}
+function estimateModelContext(copied: Runtime, request: TextOptions) {
+  return (
+    Math.ceil(
+      1.2 *
+        (copied.estimateMessagesTokens(nativeMessages(request.messages)) +
+          JSON.stringify({
+            prompts: request.systemPrompts,
+            tools: request.tools,
+            schema: request.outputSchema,
+          }).length /
+            4),
+    ) + 4096
+  );
+}
+
+/** Reviews and execution use the same copied harness accounting, including the
+ * complete instructions and envelope. JSON transport bytes are not tokens. */
+export async function openclawContextEstimator(dataDir: string) {
+  const copied = await loadRuntime(dataDir);
+  return (request: TextOptions) => estimateModelContext(copied, request);
+}
+
+/** Translate only reducible host token pressure to the original overflow
+ * protocol. Missing tools/vision/auth and an explicit context floor stay normal
+ * admission failures; compaction cannot add those capabilities. */
+export function nativeContextOverflow(
+  checkpoint: ProviderContinuationCheckpoint,
+  providers: ModelProviderConfig | undefined,
+  contextFloor = 0,
+) {
+  const admission = checkpoint.admission;
+  if (
+    !providers ||
+    checkpoint.accepted ||
+    checkpoint.code !== "MODEL_CAPABILITY_UNAVAILABLE" ||
+    !admission ||
+    admission.requirements.contextTokens <= contextFloor
+  )
+    return undefined;
+  const compatible = admission.candidates.filter(
+    (candidate) =>
+      providerConfigured(candidate.model, providers) &&
+      meetsRequirements(candidate.capabilities, { ...admission.requirements, contextTokens: 0 }),
+  );
+  const capacity = Math.max(
+    0,
+    ...compatible.map((candidate) => candidate.capabilities.contextTokens),
+  );
+  if (!capacity || contextFloor > capacity || admission.requirements.contextTokens <= capacity)
+    return undefined;
+  return `prompt is too long: ${admission.requirements.contextTokens} tokens > ${capacity} maximum`;
 }
 /** Import and initialize the copied runtime before accepting chat requests. */
 export async function warmOpenclawHarness(dataDir: string): Promise<void> {
@@ -508,7 +562,12 @@ export function openclawAgent(options: Options) {
             structuredOutput: false,
             contextTokens: 0,
           });
-          const contextWindow = modelBudget?.contextTokens ?? 131072;
+          const contextWindow =
+            modelBudget?.contextTokens ??
+            routingCapabilities(
+              options.model,
+              options.providers ?? modelProviderConfig(options.dataDir),
+            ).capabilities.contextTokens;
           const outputBudget = resolveLiveToolResultMaxChars({
             contextWindowTokens: contextWindow,
           });
@@ -588,6 +647,7 @@ export function openclawAgent(options: Options) {
           let acknowledgmentBoundary: string | undefined;
           const receipts = new Map<string, DispatchReceipt>();
           let transportError: unknown;
+          let contextInterruption: ProviderContinuationCheckpoint | undefined;
           let manager: WorkingSession | undefined;
           const persist = async () => {
             if (!manager || !options.compaction) return;
@@ -800,6 +860,8 @@ export function openclawAgent(options: Options) {
                         options.finalResponseTools?.().includes(tool.name),
                     )
                   : available;
+                let contextOverflow: string | undefined;
+                let contextFloor = options.requirements?.contextTokens ?? 0;
                 const adapter = modelAdapter(
                   options.model,
                   options.fallbacks,
@@ -809,25 +871,40 @@ export function openclawAgent(options: Options) {
                   options.loadFileImage,
                   {
                     harnessDeadlineMs: 21_600_000,
-                    contextEstimate: (request) =>
-                      Math.ceil(
-                        1.2 *
-                          (copied.estimateMessagesTokens(nativeMessages(request.messages)) +
-                            JSON.stringify({
-                              prompts: request.systemPrompts,
-                              tools: request.tools,
-                              schema: request.outputSchema,
-                            }).length /
-                              4),
-                      ) + 4096,
+                    contextEstimate: (request) => {
+                      // Native compaction reduces history, not the host's fixed
+                      // instructions/catalog or the current user message.
+                      contextFloor = Math.max(
+                        options.requirements?.contextTokens ?? 0,
+                        estimateModelContext(copied, {
+                          ...request,
+                          messages: request.messages
+                            .filter((message) => message.role === "user")
+                            .slice(-1),
+                        }),
+                      );
+                      return estimateModelContext(copied, request);
+                    },
                     workClass: options.workClass,
                     requirements: options.requirements,
                     router: options.modelRouter,
-                    onInterrupted: (checkpoint) =>
-                      options.onProviderInterrupted?.({
+                    onInterrupted: (checkpoint) => {
+                      const saved = {
                         ...checkpoint,
                         messages: continuationMessages(messages),
-                      }),
+                      };
+                      contextOverflow = nativeContextOverflow(
+                        checkpoint,
+                        options.providers,
+                        contextFloor,
+                      );
+                      if (contextOverflow) {
+                        contextInterruption = saved;
+                        return;
+                      }
+                      contextInterruption = undefined;
+                      return options.onProviderInterrupted?.(saved);
+                    },
                     onFileImageObserved: options.onFileImageObserved,
                   },
                 );
@@ -847,7 +924,7 @@ export function openclawAgent(options: Options) {
                   logger: resolveDebugOption(false),
                 })) {
                   signal.throwIfAborted();
-                  if (event.type === "RUN_ERROR") throw new Error(event.message);
+                  if (event.type === "RUN_ERROR") throw new Error(contextOverflow ?? event.message);
                   if (event.type === "TEXT_MESSAGE_CONTENT") {
                     const blocks = message.content as Array<Record<string, unknown>>;
                     if (!blocks.length) blocks.push({ type: "text", text: "" });
@@ -1011,6 +1088,12 @@ export function openclawAgent(options: Options) {
               },
             });
             if (messageId) emit({ type: EventType.TEXT_MESSAGE_END, messageId });
+            if (
+              (transportError || result.meta.error) &&
+              (options.shouldContinue?.() ?? true) &&
+              contextInterruption
+            )
+              await options.onProviderInterrupted?.(contextInterruption);
             if (transportError && (options.shouldContinue?.() ?? true)) throw transportError;
             if (result.meta.error && (options.shouldContinue?.() ?? true))
               throw new Error(result.meta.error.message ?? "The copied harness failed");

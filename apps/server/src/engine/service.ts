@@ -595,8 +595,14 @@ export class AgentService {
       "task-budgets",
       typeof task.state.rootTaskId === "string" ? task.state.rootTaskId : task.id,
     );
+    const delivered =
+      task.state.artifactDeliveryPending === true
+        ? Array.isArray(task.state.deliveryArtifactIds)
+          ? (task.state.deliveryArtifactIds as string[])
+          : []
+        : task.artifactIds;
     const files = (await this.db.list<Artifact>(owner, "files")).filter(
-      (file) => !file.internal && task.artifactIds.includes(file.id),
+      (file) => !file.internal && delivered.includes(file.id),
     );
     const browsers = (await this.db.list<BrowserSession>(owner, "browsers")).filter((browser) =>
       [task.state.browserId, task.state.sessionId].includes(browser.id),
