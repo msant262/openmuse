@@ -1718,6 +1718,15 @@ export async function createStore(
   await database.query(
     "CREATE INDEX IF NOT EXISTS external_action_log_owner_time ON external_action_log(owner,time DESC,id DESC)",
   );
+  // Reconciliation joins each start to its receipt. Owner-only lookups rescan
+  // the entire owner's audit history for every operation and block PGlite's
+  // event loop once that history grows.
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS external_action_log_terminal_operation ON external_action_log(owner,(data->>'operationId')) WHERE data->>'result'<>'started'",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS external_action_log_started_time ON external_action_log(time,owner,id) WHERE data->>'result'='started'",
+  );
   await database.query(
     `CREATE OR REPLACE FUNCTION reject_action_log_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'External action log is append-only'; END $$`,
   );

@@ -216,3 +216,69 @@ test("startup audit cutoff excludes starts created after recovery begins", async
     await db.close();
   }
 });
+
+test("audit reconciliation looks up completed operations without rescanning each owner's history", async () => {
+  const db = await createStore();
+  const database = (
+    db as unknown as {
+      db: ConstructorParameters<typeof import("../apps/server/src/db.ts").Store>[0];
+    }
+  ).db;
+  try {
+    await database.query(`INSERT INTO external_action_log(owner,id,time,data)
+      SELECT 'busy-owner',entry || ':' || result,now(),jsonb_build_object(
+        'id',entry || ':' || result,'operationId',entry::text,'time',now(),'result',result)
+      FROM generate_series(1,2000) entry CROSS JOIN (VALUES ('started'),('succeeded')) outcomes(result)`);
+    const log = new ActionLog(db);
+    await log.append(
+      "first-owner",
+      { operationId: "shared", tool: "fixture", target: "fixture", summary: "Safe" },
+      "started",
+    );
+    await log.append(
+      "second-owner",
+      { operationId: "shared", tool: "fixture", target: "fixture", summary: "Safe" },
+      "succeeded",
+    );
+    const query = database.query.bind(database);
+    let reconciliation: { sql: string; params?: unknown[] } | undefined;
+    database.query = (sql, params) => {
+      if (sql.includes("FROM external_action_log start")) reconciliation = { sql, params };
+      return query(sql, params);
+    };
+    const pending = await db.unfinishedActionLog();
+    assert.deepEqual(
+      pending.map(({ owner, value }) => [owner, value.operationId]),
+      [["first-owner", "shared"]],
+    );
+    assert.ok(reconciliation);
+    const plan = await query(
+      `EXPLAIN (ANALYZE, FORMAT JSON) ${reconciliation.sql}`,
+      reconciliation.params,
+    );
+    const root = (plan.rows[0] as unknown as { "QUERY PLAN": { Plan: Record<string, unknown> }[] })[
+      "QUERY PLAN"
+    ][0].Plan;
+    const visited = (node: Record<string, unknown>): number => {
+      const own = ["Seq Scan", "Index Scan", "Index Only Scan", "Bitmap Heap Scan"].includes(
+        String(node["Node Type"]),
+      )
+        ? (Number(node["Actual Rows"] ?? 0) + Number(node["Rows Removed by Filter"] ?? 0)) *
+          Number(node["Actual Loops"] ?? 0)
+        : 0;
+      return (
+        own +
+        ((node.Plans ?? []) as Record<string, unknown>[]).reduce(
+          (sum, child) => sum + visited(child),
+          0,
+        )
+      );
+    };
+    assert.ok(
+      visited(root) < 40_000,
+      `Reconciliation inspected ${visited(root)} rows for 4,002 audit entries`,
+    );
+  } finally {
+    await db.close();
+  }
+});
