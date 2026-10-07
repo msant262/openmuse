@@ -161,7 +161,7 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
   const organizeMail =
     mailRequest &&
     !deleteMail &&
-    /(?:organiz|limp|arquiv|archive|clean|move|mova|mover|separ|rotul(?:a|e|ar)|etiquet(?:a|e|ar)|apli(?:ca|que|car)[\s\S]*(?:marcador|r[oó]tulo|label)|\blabel\s+(?:the|these|my)|coloca.*caixa)/i.test(
+    /(?:\borganiz|\blimp|\barquiv(?:ar|a|e|em)\b|\b(?:archive|clean|move|mova|mover)\b|\bsepar|\brotul(?:a|e|ar)|\betiquet(?:a|e|ar)|\bapli(?:ca|que|car)[\s\S]*(?:marcador|r[oó]tulo|label)|\blabel\s+(?:the|these|my)|\bcoloca.*caixa)/i.test(
       prompt,
     );
   if (organizeMail)
