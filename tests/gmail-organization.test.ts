@@ -9,7 +9,7 @@ import { GoogleWorkspaceCatalog } from "../packages/integrations/src/google-work
 import { encryptSecret } from "../packages/integrations/src/vault.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
-async function fixture(t: TestContext, ignoreWrite = false, count = 3) {
+async function fixture(t: TestContext, ignoreWrite = false, count = 3, pageSize = 2) {
   const encryptionKey = randomBytes(32).toString("base64");
   const server = await taskRuntime(t, { mode: "live", encryptionKey, approvalPolicy: "money" });
   await server.db.put("owner", "credentials", {
@@ -54,7 +54,7 @@ async function fixture(t: TestContext, ignoreWrite = false, count = 3) {
           if (path.endsWith("/labels")) return Response.json({ labels });
           if (request.method === "GET" && path.endsWith("/messages")) {
             const offset = Number(new URL(request.url).searchParams.get("pageToken") ?? 0),
-              size = 2;
+              size = pageSize;
             return Response.json({
               messages: [...messages.values()]
                 .slice(offset, offset + size)
@@ -69,7 +69,7 @@ async function fixture(t: TestContext, ignoreWrite = false, count = 3) {
               ? Response.json(message)
               : Response.json({ error: { message: "Not found" } }, { status: 404 });
           }
-          writes.push(request);
+          writes.push(request.clone());
           const body = JSON.parse(await request.text());
           if (!ignoreWrite)
             for (const id of body.ids ?? [path.split("/").at(-2)]) {
@@ -427,4 +427,130 @@ test("after approved mail deletion the delivered summary states the confirmed ef
   assert.match(completed.result ?? "", /Own test 0/);
   assert.doesNotMatch(completed.result ?? "", /Preparei|após aprovação/);
   assert.equal(server.writes.length, 1);
+});
+
+test("a request to delete all matching mail cannot prepare a partial ID selection", async (t) => {
+  const server = await fixture(t);
+  const task = await server.agent.createTask("owner", {
+    prompt: "Apaga todos os emails Own test do Gmail",
+  });
+  const worker = new TaskWorker(server.db, async (owner, running) => {
+    await assert.rejects(
+      server.agent.googleWorkspace.execute(
+        owner,
+        {
+          toolId: "gmail.users.messages.trash",
+          account: "test@example.com",
+          parameters: { id: "m0" },
+          operationId: "partial-trash",
+        },
+        { taskId: running.id },
+      ),
+      /prepare_gmail_trash/,
+    );
+    return { status: "failed", error: "Partial selection rejected before approval" };
+  });
+  await worker.tick();
+  await worker.stop();
+  assert.equal(
+    (await server.agent.getTask("owner", task.id)).error,
+    "Partial selection rejected before approval",
+  );
+  assert.equal(server.writes.length, 0);
+  assert.equal((await server.db.list("owner", "actions")).length, 0);
+});
+
+test("query-based trash freezes every page in one approval and resumes from the same selection", async (t) => {
+  const server = await fixture(t);
+  const task = await server.agent.createTask("owner", {
+    prompt: "Apaga todos os emails Own test do Gmail",
+  });
+  let actionId = "";
+  const input = {
+    account: "test@example.com",
+    query: 'subject:"Own test"',
+    operationId: "complete-trash",
+  };
+  const worker = new TaskWorker(server.db, async (owner, running) => {
+    const result = await server.agent.googleWorkspace.prepareTrash(owner, input, {
+      taskId: running.id,
+    });
+    actionId = result.actionId!;
+    return { status: "waiting_approval", actionId };
+  });
+  await worker.tick();
+  await worker.stop();
+  assert.equal(server.writes.length, 0);
+  const action = await server.db.get<ActionProposal>("owner", "actions", actionId);
+  assert.ok(action);
+  assert.equal(action.data.messageCount, "3");
+  assert.match(String(action.data.subject), /Own test 0[\s\S]*Own test 1[\s\S]*Own test 2/);
+  assert.notEqual((await server.agent.verification.assess("owner", task.id, 0)).status, "verified");
+  assert.equal(
+    (await server.actions.decide("owner", action.id, action.hash, "approve")).status,
+    "succeeded",
+  );
+  assert.equal((await server.agent.verification.assess("owner", task.id, 0)).status, "verified");
+  const resumed = await server.agent.googleWorkspace.prepareTrash("owner", input, {
+    taskId: task.id,
+  });
+  assert.equal(resumed.status, "succeeded");
+  assert.equal(server.writes.length, 1, "the approved selection must not be dispatched twice");
+  for (const message of server.messages.values()) assert.deepEqual(message.labelIds, ["TRASH"]);
+});
+
+test("more than 1000 matching emails use one approval with bounded Google requests", async (t) => {
+  const server = await fixture(t, false, 1005, 500);
+  const result = await server.agent.googleWorkspace.prepareTrash("owner", {
+    account: "test@example.com",
+    query: 'subject:"Own test"',
+    operationId: "large-trash",
+  });
+  assert.equal(result.status, "awaiting_review");
+  assert.equal(server.writes.length, 0);
+  assert.equal((await server.db.list("owner", "actions")).length, 1);
+  const action = await server.db.get<ActionProposal>("owner", "actions", result.actionId!);
+  assert.ok(action);
+  assert.equal(action.data.messageCount, "1005");
+  const completed = await server.actions.decide("owner", action.id, action.hash, "approve");
+  assert.equal(completed.status, "succeeded");
+  assert.equal(server.writes.length, 2);
+  assert.equal(JSON.parse(await server.writes[0].clone().text()).ids.length, 1000);
+  assert.equal(JSON.parse(completed.result!).mailChange.processed, 1005);
+  assert.equal(JSON.parse(completed.result!).mailSelection.matched, 1005);
+  const resumed = await server.agent.googleWorkspace.prepareTrash("owner", {
+    account: "test@example.com",
+    query: 'subject:"Own test"',
+    operationId: "large-trash",
+  });
+  assert.equal(resumed.mailChange.processed, 1005);
+  assert.equal(
+    resumed.mailChange.messages.length,
+    12,
+    "bulk IDs and metadata remain in server receipts instead of model context",
+  );
+  assert.equal(server.writes.length, 2);
+});
+
+test("an empty authoritative trash selection is a verified no-op without an approval card", async (t) => {
+  const server = await fixture(t, false, 0);
+  const task = await server.agent.createTask("owner", {
+    prompt: "Apaga todos os emails Own test do Gmail",
+  });
+  const worker = new TaskWorker(server.db, async (owner, running) => {
+    const result = await server.agent.googleWorkspace.prepareTrash(
+      owner,
+      { account: "test@example.com", query: 'subject:"Own test"', operationId: "empty-trash" },
+      { taskId: running.id },
+    );
+    assert.equal(result.noOp, true);
+    assert.equal(result.matched, 0);
+    assert.equal((await server.agent.verification.assess(owner, running.id, 0)).status, "verified");
+    return { status: "succeeded", result: "Nenhum e-mail corresponde à busca." };
+  });
+  await worker.tick();
+  await worker.stop();
+  assert.equal((await server.agent.getTask("owner", task.id)).status, "succeeded");
+  assert.equal(server.writes.length, 0);
+  assert.equal((await server.db.list("owner", "actions")).length, 0);
 });

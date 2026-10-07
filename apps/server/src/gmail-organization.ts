@@ -40,6 +40,40 @@ interface Plan {
 }
 const batchSize = 100;
 
+export async function selectGmailMessages(
+  harness: GoogleWorkspaceHarness,
+  owner: string,
+  account: string,
+  query: string,
+  operationId: string,
+  options: NonNullable<Parameters<GoogleWorkspaceHarness["execute"]>[2]>,
+) {
+  const ids = new Set<string>(),
+    tokens = new Set<string>();
+  let pageToken: string | undefined;
+  do {
+    await authorizeTaskEffect();
+    options.signal?.throwIfAborted();
+    const result = (await harness.execute(
+      owner,
+      {
+        toolId: "gmail.users.messages.list",
+        account,
+        parameters: { q: query, maxResults: 500, ...(pageToken ? { pageToken } : {}) },
+        operationId: `${operationId}:selection`,
+      },
+      options,
+    )) as { data?: { messages?: { id: string }[]; nextPageToken?: string } };
+    if (!result.data) throw new Error("Gmail did not return a message selection");
+    for (const message of result.data.messages ?? []) ids.add(message.id);
+    pageToken = result.data.nextPageToken;
+    if (pageToken && tokens.has(pageToken))
+      throw new Error("Gmail repeated a pagination token; selection is incomplete");
+    if (pageToken) tokens.add(pageToken);
+  } while (pageToken);
+  return [...ids];
+}
+
 /** IDs remain server-side. Pagination finishes before any change to the queried labels. */
 export class GmailOrganization {
   constructor(private readonly harness: GoogleWorkspaceHarness) {}
@@ -67,29 +101,14 @@ export class GmailOrganization {
           a.connectionId === input.account,
       );
       if (!account) throw new AppError("The selected Google account is disconnected", 409);
-      const ids = new Set<string>(),
-        tokens = new Set<string>();
-      let pageToken: string | undefined;
-      do {
-        await authorizeTaskEffect();
-        options.signal?.throwIfAborted();
-        const result = (await this.harness.execute(
-          owner,
-          {
-            toolId: "gmail.users.messages.list",
-            account: input.account,
-            parameters: { q: input.query, maxResults: 500, ...(pageToken ? { pageToken } : {}) },
-            operationId: `${input.operationId}:selection`,
-          },
-          options,
-        )) as { data?: { messages?: { id: string }[]; nextPageToken?: string } };
-        if (!result.data) throw new Error("Gmail did not return a message selection");
-        for (const message of result.data.messages ?? []) ids.add(message.id);
-        pageToken = result.data.nextPageToken;
-        if (pageToken && tokens.has(pageToken))
-          throw new Error("Gmail repeated a pagination token; selection is incomplete");
-        if (pageToken) tokens.add(pageToken);
-      } while (pageToken);
+      const ids = await selectGmailMessages(
+        this.harness,
+        owner,
+        input.account,
+        input.query,
+        input.operationId,
+        options,
+      );
       const task = options.taskId
         ? await db.get<{ state: { appliedRevision?: number } }>(owner, "tasks", options.taskId)
         : undefined;
@@ -100,12 +119,12 @@ export class GmailOrganization {
         requestHash,
         account: account.account,
         connectionId: account.connectionId,
-        ids: [...ids],
+        ids,
         query: input.query,
         labelIds: [],
         labelNames: input.labelNames,
         archive: input.archive,
-        complete: ids.size === 0,
+        complete: ids.length === 0,
         processed: 0,
         actionIds: [],
       };

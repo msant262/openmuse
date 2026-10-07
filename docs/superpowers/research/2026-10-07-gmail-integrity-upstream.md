@@ -38,3 +38,40 @@ As fontes copiadas do OpenClaw continuam no pin e passam pela verificação de i
 ## Validação
 
 Logs e recibos: `artifacts/gmail-integrity-20261007/` e `/root/okami-deployment/gmail-integrity-20261007/`. A aceitação real usa Luna no chat publicado e mensagens sintéticas com prefixo explícito, nas duas contas conectadas. Leituras reais iniciais de marcadores responderam em 0,38 s e 0,27 s, pelo OAuth do servidor. O aviso de segurança do Google não é contornado: autenticação inicial e desafios de conta são controlados pelo Google; as operações nativas não dependem de login pelo desktop.
+
+### Regressões reproduzidas e corrigidas durante a aceitação
+
+- O termo “arquivo” no pedido de criar documento podia ativar o critério de arquivamento de e-mails. O reconhecimento agora exige os verbos próprios de arquivamento.
+- Retomar um lote lento podia consumir todo o tempo disponível relendo recibos e devolver o mesmo cursor. A retomada precisa avançar pelo menos um lote pendente antes de devolver outro cursor. O teste com 205 mensagens confirmou avanço 100 → 200 → 205, com três escritas.
+- O agente pedia uma confirmação textual antes de preparar o card, ou tentava uma chamada paralela por mensagem e era interrompido pelo primeiro card. As instruções agora deixam explícito que preparar a ação não executa a exclusão; o lote vai para um card com conta, quantidade, assuntos e destino Lixeira.
+- A descoberta de ferramentas rejeitava `schemaPath: ["parameters"]` em leituras que não têm corpo. Ela agora descreve os parâmetros de consulta/caminho e aceita o prefixo `body` para os schemas de escrita. Caminhos desconhecidos continuam sendo rejeitados.
+- Uma exclusão aprovada e confirmada no Gmail podia entregar o texto anterior “Preparei… após aprovação”. A entrega final agora se baseia exclusivamente nos recibos nativos verificados das ações daquela tarefa, informando conta, quantidade e assuntos realmente enviados à Lixeira/excluídos.
+- Uma segunda conversa nova encontrou dois e-mails, mas o modelo, após tentar um campo de schema inexistente, preparou uma chamada individual de lixeira para apenas um. O card foi recusado. `prepare_gmail_trash` agora recebe conta e consulta, seleciona todas as páginas no servidor e congela os IDs antes de preparar uma única aprovação. Pedidos explícitos de “todos” rejeitam chamadas destrutivas diretas sem essa seleção e exigem um recibo de seleção completa para terminar. Acima de 1.000 mensagens, a aprovação continua única; somente as chamadas ao Google são divididas pelo limite oficial da API. O resumo para o modelo limita exemplos a 12, mantendo IDs e recibos completos no servidor. Busca vazia é um no-op verificado, sem card nem alegação de alterações.
+
+### Testes automatizados
+
+Nova execução da suíte completa: **1.622 testes passaram; zero falhas**, em 610,8 s, com Node 24.21.0 e concorrência 4. Os últimos ajustes de descoberta de schema e entrega foram cobertos também por **41 testes direcionados**, zero falhas, e pelo teste isolado da entrega final após aprovação. Os typechecks do servidor e do mobile e os builds do servidor, web e APK passaram. A suíte completa começou no commit `915c082f`; os dois ajustes seguintes foram validados adicionalmente pelos testes direcionados, sem alegação de nova execução completa em `310c80c2`.
+
+Na execução completa anterior houve aborto interno do processo Node/V8 no arquivo de versões. Os oito testes desse arquivo passaram na repetição isolada e a nova suíte completa terminou sem o aborto. As falhas de fixtures antigas descobertas na primeira execução foram corrigidas antes da execução verde.
+
+Regressões relevantes incluem: Google devolver sucesso sem aplicar rótulos; falha de leitura posterior; lista de rótulos vazia; paginação completa; cursor repetido; interrupção após escrita; retomada sem repetir efeitos; pesquisa ou criação de marcador não satisfazer organização; criação automática do relatório; lixeira via `modify` exigir aprovação; recusa não executar; assuntos e destino no card; resumo baseado no efeito confirmado.
+
+Depois da descoberta da seleção parcial, **74 testes direcionados** de Gmail, Google Workspace, conclusão e conectores passaram. Após o último ajuste de saída compacta, os **18 testes de Gmail** passaram novamente, incluindo seleção de 1.005 mensagens, dois pedidos Google e uma única aprovação, retomada sem duplicação e busca vazia. O typecheck, build TypeScript e Biome passaram.
+
+### Publicação e limites da verificação
+
+| Artefato | Versão publicada | Evidência |
+| --- | --- | --- |
+| API | `310c80c2c9515407d1f238ae7150f7a1d03af302` | Imagem `sha256:4560401a0eaaeef80d0aaeadf2d063428fef350a77d6ef831f14bd7d4f9fa12c`, container saudável. |
+| Web | `915c082f679ea99a0e914cfb0004e2689b0b93f6` | Bundle público `index-c3c5cb4bd02ad4408016401a79c8a6c9.js`; SHA-256 do índice `563c6d145a1111991ca935dc6416aad814717387f178e2920521c47e3430abbe`. |
+| APK arm64 | `915c082f679ea99a0e914cfb0004e2689b0b93f6` | SHA-256 `20874f4638b39124defb32110e05381da3d91a9285e308d0cd6cf384e156ebe7`, 67.217.381 bytes, assinatura verificada e push nativo configurado. |
+
+Os dois commits depois do build mobile alteram apenas o servidor/schema das ferramentas. O APK disponível é [okamibot.apk](https://app.okamibot.cloud/downloads/okamibot.apk?v=915c082f). O build registra `sourceDirty: true` por causa de `.orca/` não rastreado; os arquivos rastreados estavam limpos. O signatário tem SHA-256 `e6d8e6aeb25f3c1603efd369b9898dbb865343f4148a1969cd85383331053f8a`.
+
+A interface foi exercitada no domínio público em viewport mobile de 390 × 844 e desktop. A prévia nativa não abriu por erro explícito de AppArmor; o emulador Android também não iniciou e iOS não está disponível neste Linux. **Não houve aceitação em aparelho físico nem em APK instalado**; a verificação de instalação não deve ser inferida dos testes web ou da assinatura.
+
+O deploy foi feito com drenagem de admissões, parada confirmada do único escritor e troca apenas da imagem. Na primeira tentativa, 45 s eram insuficientes para a inicialização e houve rollback somente de código, preservando o mesmo volume. O orçamento de saúde passou para 180 s; a inicialização observada ficou próxima de 90 s. O backup completo foi capturado com o escritor parado. Não houve restauração/substituição do banco, segundo escritor, alteração do ambiente, desconexão das contas Google ou mudança da pausa escolhida pelo usuário. As 30 operações antigas incertas encontradas antes do trabalho foram preservadas, sem apagar evidência para permitir o deploy.
+
+### Confirmação de segurança do Google
+
+O desafio “Sim, fui eu” pertence à proteção da conta Google e é distinto do card de aprovação do OkamiBot. Sem o registro específico do alerta original não é possível atribuir seu gatilho exato. Os testes nativos desta rodada usam o OAuth conectado no servidor, com `gmail.modify` para Lixeira, e não abrem login Google nem solicitam escopo de exclusão permanente. A descrição oficial dos alertas e do fluxo de reconhecimento está em [Google: responder a alertas de segurança](https://support.google.com/accounts/answer/2590353?hl=pt-BR). O sucesso vazio de `batchModify` é documentado na [referência oficial Gmail](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/batchModify); por isso o executor verifica o estado posterior.

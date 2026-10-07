@@ -79,6 +79,14 @@ const readOnlyScope = (scope: string) => /readonly|\/gmail\.metadata$/.test(scop
 // Small, complete request shapes help models use the native APIs without
 // expanding the unrelated branches of Google's large Document/Request schemas.
 const requestExamples: Record<string, { parameters: Record<string, unknown>; body?: unknown }> = {
+  "gmail.users.messages.batchModify": {
+    parameters: {},
+    body: {
+      ids: ["MESSAGE_ID_FROM_PROVIDER_RESULT"],
+      addLabelIds: ["LABEL_ID_FROM_LABELS_LIST"],
+      removeLabelIds: ["INBOX"],
+    },
+  },
   "docs.documents.create": { parameters: {}, body: { title: "Document title" } },
   "docs.documents.get": {
     parameters: { documentId: "DOCUMENT_ID_FROM_CREATE_RESULT", includeTabsContent: true },
@@ -346,7 +354,10 @@ export class GoogleWorkspaceCatalog {
       if (!schema) throw new GoogleWorkspaceInputError("This operation has no request body schema");
       const resolved = this.resolve(document, schema);
       schema = field === "[]" ? resolved.items : resolved.properties?.[field];
-      if (!schema) throw new GoogleWorkspaceInputError(`Unknown schema field: ${field}`);
+      if (!schema)
+        throw new GoogleWorkspaceInputError(
+          `Unknown schema field: ${field}. Available fields: ${Object.keys(resolved.properties ?? {}).join(", ") || "none"}. Omit schemaPath to inspect this operation's request.`,
+        );
     }
     const selected = schema && this.resolve(document, schema);
     const broad = selected?.items || Object.keys(selected?.properties ?? {}).length > 12;

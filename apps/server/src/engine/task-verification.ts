@@ -151,11 +151,13 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     !/\b(?:draft|rascunho)\b/i.test(prompt);
   if (deleteMail)
     criteria.push({
-      id: "requested-mail-deletion",
+      id: /\b(?:all|every|todos|todas)\b/i.test(prompt)
+        ? "requested-mail-selection-deletion"
+        : "requested-mail-deletion",
       kind: "receipt",
       effect: "email.delete",
       description:
-        "The selected messages were removed only after human approval, and their trash/deletion status was verified in Gmail",
+        "Use prepare_gmail_trash(account,query,operationId) for deleting a group of emails: the server selects every search page and prepares one approval card. Only after human approval and provider readback can the entire requested selection be completed. Never prepare just one message from search_mail when the person requested all matches.",
       requiredItems: [],
     });
   const organizeMail =
@@ -453,10 +455,13 @@ function actionMatches(
       typeof action.result === "string" ? JSON.parse(action.result) : action.result,
     );
     const change = object(receipt?.mailChange);
+    const selection = object(receipt?.mailSelection);
     return (
       binding?.serverId === "google-workspace" &&
       change?.verified === true &&
-      (Number(change.trashed) > 0 || Number(change.deleted) > 0)
+      (Number(change.trashed) > 0 || Number(change.deleted) > 0) &&
+      (criterion.id !== "requested-mail-selection-deletion" ||
+        (selection?.complete === true && Number(selection.matched) === Number(change.processed)))
     );
   }
   if (criterion.effect === "email.organize") return false;
@@ -758,6 +763,24 @@ export class TaskVerification {
                     (!criterion.referenceId || criterion.referenceId === receipt.id),
                 )
                 .map((receipt) => receipt.id);
+            if (criterion.effect === "email.delete") {
+              const empty = await this.db.list<{
+                id: string;
+                taskId?: string;
+                revision: number;
+                selection: { ids: string[] };
+              }>(owner, "gmail-trash-intents");
+              evidenceIds.push(
+                ...empty
+                  .filter(
+                    (p) =>
+                      p.taskId === taskId &&
+                      p.revision === revision &&
+                      p.selection.ids.length === 0,
+                  )
+                  .map((p) => p.id),
+              );
+            }
             evidenceIds.push(
               ...ops
                 .filter(

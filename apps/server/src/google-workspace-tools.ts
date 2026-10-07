@@ -27,7 +27,11 @@ import {
   mailSnapshot,
   verifyMailChange,
 } from "./gmail-changes.ts";
-import { GmailOrganization, gmailOrganizationSchema } from "./gmail-organization.ts";
+import {
+  GmailOrganization,
+  gmailOrganizationSchema,
+  selectGmailMessages,
+} from "./gmail-organization.ts";
 import type { WorkspaceService } from "./workspace.ts";
 
 export const googleSearchSchema = z
@@ -71,6 +75,22 @@ export const gmailDraftSchema = z
     operationId: z.string().min(1).max(160),
   })
   .strict();
+export const gmailTrashSchema = z
+  .object({
+    account: z.string().min(1).max(320),
+    query: z.string().trim().min(1).max(2000),
+    operationId: z.string().min(1).max(120),
+  })
+  .strict();
+type MailSelection = { query: string; ids: string[] };
+type TrashIntent = {
+  id: string;
+  taskId?: string;
+  revision: number;
+  requestHash: string;
+  input: ExecuteInput;
+  selection: MailSelection;
+};
 type ExecuteInput = z.infer<typeof googleExecuteSchema>;
 type Binding = {
   connectionId: string;
@@ -83,6 +103,7 @@ type Binding = {
   targetVersion?: string;
   mailBefore?: MailSnapshot[];
   mailLabelNames?: string[];
+  mailSelection?: MailSelection;
 };
 const digest = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
 let pinnedCatalog: GoogleWorkspaceCatalog | undefined;
@@ -173,12 +194,29 @@ export class GoogleWorkspaceHarness {
         throw new AppError("Google upload changed since preparation", 409);
       const request = this.catalog.prepare({ ...input, upload });
       if (binding.targetVersion) request.ifMatch = binding.targetVersion;
-      const data = await workspace
-        .google(owner, binding.connectionId, undefined, async () => {
-          await this.authority(owner, input.toolId, binding.connectionId);
-          await beforeDispatch();
-        })
-        .workspaceRequest(request);
+      const client = workspace.google(owner, binding.connectionId, undefined, async () => {
+        await this.authority(owner, input.toolId, binding.connectionId);
+        await beforeDispatch();
+      });
+      let data: unknown;
+      const ids = (input.body as { ids?: string[] } | undefined)?.ids;
+      if (input.toolId === "gmail.users.messages.batchModify" && ids && ids.length > 1000) {
+        // One reviewed frozen selection, split only at Google's per-request limit.
+        for (let offset = 0; offset < ids.length; offset += 1000) {
+          try {
+            data = await client.workspaceRequest(
+              this.catalog.prepare({
+                ...input,
+                body: { ...(input.body as object), ids: ids.slice(offset, offset + 1000) },
+              }),
+            );
+          } catch (error) {
+            if (offset > 0 && error instanceof Error)
+              Object.assign(error, { outcomeUnknown: true });
+            throw error;
+          }
+        }
+      } else data = await client.workspaceRequest(request);
       let mailChange: MailChange | undefined;
       if (gmailMessageMutation(input.toolId)) {
         if (!binding.mailBefore)
@@ -204,6 +242,17 @@ export class GoogleWorkspaceHarness {
       const result = {
         status: "succeeded",
         ...(mailChange ? { mailChange } : {}),
+        ...(binding.mailSelection
+          ? {
+              mailSelection: {
+                query: binding.mailSelection.query,
+                matched: binding.mailSelection.ids.length,
+                complete:
+                  mailChange?.verified === true &&
+                  mailChange.processed === binding.mailSelection.ids.length,
+              },
+            }
+          : {}),
         toolId: input.toolId,
         account: binding.account,
         connectionId: binding.connectionId,
@@ -358,6 +407,7 @@ export class GoogleWorkspaceHarness {
       draftCard?: (id: string) => Promise<void>;
       draftCardId?: string;
       mailReport?: (report: Record<string, unknown>) => Promise<void>;
+      mailSelection?: MailSelection;
     } = {},
   ) {
     input = googleExecuteSchema.parse(input);
@@ -457,6 +507,21 @@ export class GoogleWorkspaceHarness {
       };
     }
     const destructive = this.catalog.destructive(input.toolId, input.body);
+    if (destructive && gmailMessageMutation(input.toolId) && options.taskId) {
+      const task = await this.db.get<{ criteria?: { id: string }[] }>(
+        owner,
+        "tasks",
+        options.taskId,
+      );
+      if (
+        task?.criteria?.some((c) => c.id === "requested-mail-selection-deletion") &&
+        !options.mailSelection
+      )
+        throw new AppError(
+          "This request asks for every matching message. Use prepare_gmail_trash with the account, complete Gmail search query and a stable operationId; the server selects every page and prepares one approval card.",
+          422,
+        );
+    }
     const display = this.review(input, account.account);
     let targetVersion: string | undefined;
     let mailBefore: MailSnapshot[] | undefined;
@@ -478,6 +543,8 @@ export class GoogleWorkspaceHarness {
         ids = thread.messages?.map((m) => m.id) ?? [];
       }
       ids = [...new Set(ids)];
+      if (options.mailSelection && bindingHash(ids) !== bindingHash(options.mailSelection.ids))
+        throw new AppError("Gmail action differs from the complete reviewed selection", 409);
       if (!ids.length)
         throw new AppError("Select actual Gmail messages before changing their labels", 422);
       const snapshot = await mailSnapshot(
@@ -559,6 +626,7 @@ export class GoogleWorkspaceHarness {
       signature: this.signature(input.toolId),
       ...(targetVersion ? { targetVersion } : {}),
       ...(mailBefore ? { mailBefore, mailLabelNames } : {}),
+      ...(options.mailSelection ? { mailSelection: options.mailSelection } : {}),
       ...(upload ? { uploadSha256: digest(upload.bytes) } : {}),
     };
     if (options.draftCardId) {
@@ -596,6 +664,83 @@ export class GoogleWorkspaceHarness {
     const result = await new GmailOrganization(this).run(owner, input, options);
     if ("verified" in result && result.verified === true) await options.mailReport?.(result);
     return result;
+  }
+  async prepareTrash(
+    owner: string,
+    raw: z.input<typeof gmailTrashSchema>,
+    options: Parameters<GoogleWorkspaceHarness["execute"]>[2] = {},
+  ) {
+    const input = gmailTrashSchema.parse(raw);
+    const requestHash = bindingHash(input);
+    const id = bindingHash({
+      scope: options.taskId ?? "http",
+      operationId: input.operationId,
+      kind: "gmail-trash",
+    });
+    await options.before?.();
+    options.signal?.throwIfAborted();
+    let intent = await this.db.get<TrashIntent>(owner, "gmail-trash-intents", id);
+    if (intent && intent.requestHash !== requestHash)
+      throw new AppError("Gmail trash operation ID belongs to different details", 409);
+    if (!intent) {
+      const account = await this.authority(
+        owner,
+        "gmail.users.messages.batchModify",
+        input.account,
+      );
+      const ids = await selectGmailMessages(
+        this,
+        owner,
+        account.connectionId,
+        input.query,
+        input.operationId,
+        options,
+      );
+      const task = options.taskId
+        ? await this.db.get<{ state: { appliedRevision?: number } }>(owner, "tasks", options.taskId)
+        : undefined;
+      const selected: TrashIntent = {
+        id,
+        taskId: options.taskId,
+        revision: task?.state.appliedRevision ?? 0,
+        requestHash,
+        input: {
+          toolId: "gmail.users.messages.batchModify",
+          account: account.connectionId,
+          parameters: {},
+          body: { ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] },
+          operationId: input.operationId,
+        },
+        selection: { query: input.query, ids },
+      };
+      await this.db.insertIfAbsent(owner, "gmail-trash-intents", selected);
+      intent = (await this.db.get<TrashIntent>(owner, "gmail-trash-intents", id)) ?? selected;
+    }
+    if (!intent.selection.ids.length)
+      return {
+        status: "succeeded",
+        matched: 0,
+        noOp: true,
+        verified: true,
+        selectionId: id,
+        actionId: undefined,
+      };
+    const result = await this.execute(owner, intent.input, {
+      ...options,
+      mailSelection: intent.selection,
+    });
+    const change = "mailChange" in result ? (result.mailChange as MailChange) : undefined;
+    return {
+      ...result,
+      ...(change
+        ? {
+            mailChange: { ...change, messages: change.messages.slice(0, 12) },
+            messageExamplesTruncated: change.messages.length > 12,
+          }
+        : {}),
+      matched: intent.selection.ids.length,
+      noOp: false,
+    };
   }
   async draft(
     owner: string,
@@ -922,7 +1067,7 @@ export function googleWorkspaceTools(
     defineTool({
       name: "describe_google_workspace_tool",
       description:
-        "Read the official parameters and request schema of one discovered Google operation. Expand only the required body branch with schemaPath, for example [requests,[],insertText]. No Google action is executed.",
+        "Read the official parameters and request schema of one discovered Google operation. Omit schemaPath first to see its actual fields. Expand only field names returned for that operation; [requests,[],insertText] applies to Docs batchUpdate, not Gmail. No Google action is executed.",
       parameters: googleDescribeSchema,
       execute: (input) => run(async () => harness.describe(input)),
     }),
@@ -939,6 +1084,13 @@ export function googleWorkspaceTools(
         "Organize all Gmail messages matching an authorized Gmail search query: apply existing or new labels/folders by name, optionally archive out of INBOX. Server follows every search page, freezes the selected IDs, changes bounded batches and reads back each message. Does not delete mail. Use this for cleanup, moving into folders and applying labels rather than copying hundreds of IDs. Use a stable operationId; if remaining is positive continue with the returned cursor and identical query/account/labels. Only claim the verified processed counts, and finish only when remaining is zero. Empty results are a confirmed no-op, not a claim of changes.",
       parameters: gmailOrganizationSchema,
       execute: (input) => run(() => harness.organize(owner, input, options)),
+    }),
+    defineTool({
+      name: "prepare_gmail_trash",
+      description:
+        "Prepare deletion of all Gmail emails matching the person's requested search query in one selected connected account. The server reads every page, freezes all IDs and presents ONE approval card with the exact count and subjects. Does not delete or trash anything before human approval. Prefer this for removing groups of mail rather than search_mail samples or individual trash calls. Uses recoverable Trash, not permanent deletion. Use a stable operationId; resume the same pending selection without preparing it again. On approvalRequired stop and wait for the card decision.",
+      parameters: gmailTrashSchema,
+      execute: (input) => run(() => harness.prepareTrash(owner, input, options)),
     }),
     defineTool({
       name: "save_gmail_draft",
