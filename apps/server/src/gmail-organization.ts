@@ -192,7 +192,12 @@ export class GmailOrganization {
       changes.push(result.mailChange);
       processed += batch.length;
       // Return a continuation between batches; the selected IDs never enter model context.
-      if (Date.now() - started > 20_000 && processed < plan.ids.length) break;
+      if (
+        processed > plan.processed &&
+        Date.now() - started > 20_000 &&
+        processed < plan.ids.length
+      )
+        break;
       options.signal?.throwIfAborted();
     }
     plan = {

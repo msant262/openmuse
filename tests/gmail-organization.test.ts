@@ -291,6 +291,67 @@ test("listing Gmail labels or creating an empty folder never invents an obligati
     );
 });
 
+test("creating a file and sending it by email never implies organizing the mailbox", () => {
+  const criteria = taskCriteria({
+    kind: "agent",
+    prompt: "Crie um arquivo TXT com a agenda e envie por email para wife@example.test",
+  });
+  assert.ok(!criteria.some((c) => c.effect === "email.organize"));
+  assert.ok(criteria.some((c) => c.effect === "email.send"));
+});
+
+test("slow replay of confirmed batches still advances the next organization continuation", async (t) => {
+  const server = await fixture(t, false, 205);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const originalPut = server.db.put.bind(server.db);
+  server.db.put = (async (owner, kind, value) => {
+    const saved = await originalPut(owner, kind, value);
+    if (
+      kind === "google-workspace-receipts" &&
+      "result" in value &&
+      (value.result as { mailChange?: unknown }).mailChange
+    )
+      t.mock.timers.tick(21_000);
+    return saved;
+  }) as typeof server.db.put;
+  const input = {
+    account: "test@example.com",
+    query: "in:inbox",
+    labelNames: ["Promoções"],
+    archive: true,
+    operationId: "slow-continuation",
+  };
+  const first = await server.agent.googleWorkspace.organize("owner", input);
+  assert.equal(first.processed, 100);
+  const originalGet = server.db.get.bind(server.db);
+  let slowReplay = true;
+  server.db.get = (async (owner, kind, id) => {
+    const value = await originalGet(owner, kind, id);
+    if (
+      slowReplay &&
+      kind === "actions" &&
+      (value as ActionProposal | null)?.status === "succeeded"
+    ) {
+      slowReplay = false;
+      t.mock.timers.tick(21_000);
+    }
+    return value;
+  }) as typeof server.db.get;
+  const second = await server.agent.googleWorkspace.organize("owner", {
+    ...input,
+    cursor: first.cursor,
+  });
+  assert.equal(second.processed, 200, "replayed batches cannot consume the entire continuation");
+  slowReplay = true;
+  const last = await server.agent.googleWorkspace.organize("owner", {
+    ...input,
+    cursor: second.cursor,
+  });
+  assert.equal(last.status, "succeeded");
+  assert.equal(last.processed, 205);
+  assert.equal(server.writes.length, 3, "no confirmed batch is submitted twice");
+});
+
 test("deleting mail requires a verified destructive receipt and a real approval before dispatch", async (t) => {
   const server = await fixture(t);
   const task = await server.agent.createTask("owner", {
