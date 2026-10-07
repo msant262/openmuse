@@ -46,6 +46,7 @@ import type { Store } from "../db.ts";
 import type { DesktopService } from "../desktop-service.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
+import type { MailChange } from "../gmail-changes.ts";
 import { GoogleWorkspaceHarness, googleWorkspaceReadTool } from "../google-workspace-tools.ts";
 import { ConnectedSearchBackend, type IntegrationService } from "../integrations.ts";
 import { InteractionRequests } from "../interaction-requests.ts";
@@ -2116,6 +2117,45 @@ export class AgentService {
         : language.startsWith("de")
           ? "Das angeforderte Bild konnte nicht erstellt werden. Es wurde keine Bilddatei geliefert."
           : "I couldn't generate the requested image. No image file was delivered.";
+    }
+    if (
+      completion.status === "verified" &&
+      task.criteria?.length &&
+      task.criteria.every((criterion) => criterion.effect === "email.delete")
+    ) {
+      const language = (await this.profiles.get(owner, task.originThreadId)).fields.language;
+      const summaries: string[] = [];
+      const ids = new Set(completion.checks.flatMap((check) => check.evidenceIds));
+      for (const id of ids) {
+        const action = await this.db.get<ActionProposal>(owner, "actions", id);
+        const receipt = await this.db.get<{
+          actionHash: string;
+          result: { account: string; mailChange?: MailChange };
+        }>(owner, "google-workspace-receipts", id);
+        const change = receipt?.result.mailChange;
+        if (
+          action?.taskId !== task.id ||
+          action.status !== "succeeded" ||
+          receipt?.actionHash !== action.hash ||
+          !change?.verified ||
+          !action.result ||
+          bindingHash(receipt.result) !== bindingHash(JSON.parse(action.result))
+        )
+          continue;
+        const trashed = change.messages.filter(
+          (message) => !message.deleted && message.labelIds.includes("TRASH"),
+        ).length;
+        const subjects = change.messages
+          .slice(0, 8)
+          .map((message) => message.subject || message.id)
+          .join("; ");
+        summaries.push(
+          language.startsWith("pt")
+            ? `Conta: ${receipt.result.account}. ${[trashed ? `${trashed} e-mails na Lixeira` : "", change.deleted ? `${change.deleted} e-mails excluídos permanentemente` : ""].filter(Boolean).join("; ")}. Estado conferido no Gmail. Assuntos: ${subjects}.`
+            : `Account: ${receipt.result.account}. ${[trashed ? `${trashed} emails in Trash` : "", change.deleted ? `${change.deleted} emails permanently deleted` : ""].filter(Boolean).join("; ")}. State verified in Gmail. Subjects: ${subjects}.`,
+        );
+      }
+      if (summaries.length) result = summaries.join("\n\n");
     }
     await context.event(
       "result",

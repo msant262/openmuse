@@ -386,3 +386,45 @@ test("deleting mail requires a verified destructive receipt and a real approval 
   assert.deepEqual(server.messages.get("m0")?.labelIds, ["TRASH"]);
   assert.equal((await server.agent.verification.assess("owner", task.id, 0)).status, "verified");
 });
+
+test("after approved mail deletion the delivered summary states the confirmed effect instead of stale preparation text", async (t) => {
+  const server = await fixture(t);
+  const task = await server.agent.createTask("owner", {
+    prompt: "Apaga os emails Own test do Gmail",
+  });
+  const worker = new TaskWorker(server.db, async (owner, running, context) => {
+    if (running.actionId)
+      return server.agent.finish(
+        running,
+        context,
+        "Preparei a exclusão. Só serão movidos após aprovação.",
+        owner,
+      );
+    const result = await server.agent.googleWorkspace.execute(
+      owner,
+      {
+        toolId: "gmail.users.messages.batchModify",
+        account: "test@example.com",
+        parameters: {},
+        body: { ids: ["m0", "m1"], addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] },
+        operationId: "summary-trash",
+      },
+      { taskId: running.id },
+    );
+    return { status: "waiting_approval", actionId: result.actionId };
+  });
+  await worker.tick();
+  const pending = await server.agent.getTask("owner", task.id);
+  const action = await server.db.get<ActionProposal>("owner", "actions", pending.actionId!);
+  assert.ok(action);
+  await server.actions.decide("owner", action.id, action.hash, "approve");
+  await worker.tick();
+  await worker.stop();
+  const completed = await server.agent.getTask("owner", task.id);
+  assert.equal(completed.status, "succeeded");
+  assert.match(completed.result ?? "", /2.*(?:Lixeira|trash)/i);
+  assert.match(completed.result ?? "", /test@example.com/);
+  assert.match(completed.result ?? "", /Own test 0/);
+  assert.doesNotMatch(completed.result ?? "", /Preparei|após aprovação/);
+  assert.equal(server.writes.length, 1);
+});
