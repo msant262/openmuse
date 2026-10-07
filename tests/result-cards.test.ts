@@ -458,6 +458,7 @@ test("image attachments show the signed source and both preview and footer open 
       "./agent-ui": {},
       "./attachment-ui-copy": { localizedAttachmentLabel: () => "PNG image" },
       "./computer": {},
+      "./google-workspace-cards": {},
       "./result-card-frame": frame,
       "./i18n": { useI18n: () => ({ t }) },
       "./ui": ui,
