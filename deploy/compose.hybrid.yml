@@ -2,10 +2,10 @@
 # systemd services. Compose 2.24.4+ supports the explicit dependency override.
 services:
   server:
-    # Match the base API budget: cold learning acceptance peaks just above 1 GiB.
-    # Hermes is an existing workload on the same 8 GB VPS, reserved separately.
-    mem_limit: 1280m
-    memswap_limit: 1280m
+    # PGlite recovery and the embedded harness exceeded 1280 MiB on cold start.
+    # Reserve 2 GiB on the 8 GiB hybrid VPS; keep separate Hermes and OS reserves.
+    mem_limit: 2g
+    memswap_limit: 2g
     ports: !override ["${OPENMUSE_BIND_HOST:-127.0.0.1}:8787:8787"]
     depends_on: !override
       browser:

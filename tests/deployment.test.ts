@@ -184,7 +184,7 @@ test("root browser image layout loads actual worker/shared modules with native s
   }
 });
 
-test("hybrid Compose retains 2GiB browser and legacy profile without starting a second computer host", async () => {
+test("hybrid Compose reserves 2GiB API recovery and browser without starting a second computer host", async () => {
   const overlaySource = await readFile("deploy/compose.hybrid.yml", "utf8");
   const overlay = parseDocument(overlaySource, {
     customTags: [{ tag: "!override", collection: "map", resolve: (value) => value }],
@@ -195,6 +195,8 @@ test("hybrid Compose retains 2GiB browser and legacy profile without starting a 
   };
   assert.equal(config.services.browser.mem_limit, "2g");
   assert.equal(config.services.browser.memswap_limit, "2g");
+  assert.equal(config.services.server.mem_limit, "2g");
+  assert.equal(config.services.server.memswap_limit, "2g");
   assert.deepEqual(config.services.server.depends_on, {
     browser: { condition: "service_healthy" },
     openbao: { condition: "service_healthy" },
@@ -207,7 +209,8 @@ test("hybrid Compose retains 2GiB browser and legacy profile without starting a 
   const base = parseDocument(await readFile("docker-compose.yml", "utf8")).toJS() as {
     services: Record<string, ComposeService>;
   };
-  assert(1280 * 1024 ** 2 + 2 * 1024 ** 3 + 256 * 1024 ** 2 < 7000000000);
+  const managed = 2 * 1024 ** 3 + 2 * 1024 ** 3 + 256 * 1024 ** 2;
+  assert(managed + 2304 * 1024 ** 2 + 1024 ** 3 < 8 * 1024 ** 3);
   assert(base.services.browser.volumes?.includes("browser-data:/data"));
   assert.equal(base.services.server.environment.DATABASE_URL, undefined);
 });

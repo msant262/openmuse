@@ -9,7 +9,9 @@ import subprocess
 import sys
 
 GIB=1024**3
-RAM_CEILING=7_000_000_000
+# Bound the nominal host budget by actual MemTotal as well. OS and Hermes
+# headroom are already explicit reservations in the summed budget below.
+RAM_CEILING=8*GIB
 HERMES_RESERVE=2304*1024**2
 OS_RESERVE=GIB
 

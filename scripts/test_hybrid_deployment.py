@@ -305,14 +305,15 @@ class ReceiverContracts(unittest.TestCase):
 
 
 class BudgetContracts(unittest.TestCase):
-    def test_measured_hermes_plus_os_and_browser_cap_fit_decimal_ceiling_and_swap_is_not_ram(self):
+    def test_measured_hermes_plus_os_and_recovery_caps_fit_actual_ram_and_swap_is_not_ram(self):
         compose={"services":{name:{"mem_limit":cap,"memswap_limit":cap} for name,cap in
-            (("server","1024m"),("browser","2g"),("openbao","256m"))}}
+            (("server","2g"),("browser","2g"),("openbao","256m"))}}
         compose["services"]["computer"]={"mem_limit":"2944m","memswap_limit":"2944m","profiles":["legacy-computer"]}
         mem={"MemTotal":8*1024**3,"MemAvailable":6*1024**3,"SwapTotal":4*1024**3}
         hermes={"active":True,"current":2163306496,"peak":2295918592}
         report=verify_hybrid.vps_budget(compose,mem,hermes)
-        self.assertTrue(report["ready"]);self.assertEqual(report["budgetBytes"],6979321856)
+        self.assertTrue(report["ready"]);self.assertEqual(report["budgetBytes"],8053063680)
+        self.assertFalse(verify_hybrid.vps_budget(compose,{**mem,"MemTotal":7*1024**3},hermes)["ready"])
         self.assertTrue(verify_hybrid.vps_budget(compose,{**mem,"SwapTotal":4*1024**3-4096},hermes)["ready"])
         self.assertFalse(verify_hybrid.vps_budget(compose,{**mem,"SwapTotal":4*1024**3-1024**2},hermes)["ready"])
         self.assertFalse(verify_hybrid.vps_budget(compose,mem,{**hermes,"peak":3*1024**3})["ready"])
@@ -321,7 +322,7 @@ class BudgetContracts(unittest.TestCase):
         self.assertFalse(verify_hybrid.vps_budget(compose,no_ram,hermes)["ready"])
         warm={**mem,"MemAvailable":2*1024**3}
         self.assertFalse(verify_hybrid.vps_budget(compose,warm,hermes)["ready"])
-        self.assertTrue(verify_hybrid.vps_budget(compose,warm,hermes,allocated={"server":1024**3,"browser":2*1024**3})["ready"])
+        self.assertTrue(verify_hybrid.vps_budget(compose,warm,hermes,allocated={"server":2*1024**3,"browser":2*1024**3})["ready"])
 
 
 class BrowserPolicyContracts(unittest.TestCase):

@@ -183,16 +183,18 @@ model directory is not overwritten automatically. Inspect it before reusing it.
 
 | Reservation | Bytes |
 | --- | ---: |
-| API/PGlite/embedded worker | 1,073,741,824 |
+| API/PGlite/embedded worker | 2,147,483,648 |
 | Headless browser fallback | 2,147,483,648 |
 | OpenBao | 268,435,456 |
 | Existing Hermes reserve (at least measured current/peak) | 2,415,919,104 |
 | OS/Tailscale/other host reserve | 1,073,741,824 |
-| Total with inventoried Hermes peak | **6,979,321,856** |
+| Total with inventoried Hermes peak | **8,053,063,680** |
 
-The total stays below decimal 7 GB only while measured Hermes and host pressure
-fit. The verifier fails if a larger Hermes peak or insufficient MemAvailable
-breaks the budget. Before startup it requires full cold headroom; while running
+PGlite recovery and the embedded harness exceeded the former 1,280 MiB API cap
+on cold start. The hybrid API now reserves 2 GiB while retaining the 1 GiB OS
+reserve and the measured Hermes reservation. The verifier bounds the total by
+both the nominal 8 GiB ceiling and actual MemTotal; it fails if a larger Hermes
+peak or insufficient MemAvailable breaks the budget. Before startup it requires full cold headroom; while running
 it subtracts only those same containers' current cgroup allocation and verifies
 their actual caps. The existing 4 GiB host swap protects the OS from brief
 pressure; it adds no admission capacity and containers/native bots remain
