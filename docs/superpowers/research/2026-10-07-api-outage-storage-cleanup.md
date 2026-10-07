@@ -87,7 +87,8 @@ idêntica do diretório histórico contido nos backups completos.
 
 **11.234.795.520 bytes foram liberados**, aproximadamente **11,2 GB**. O espaço
 livre medido passou de 31.396.675.584 para 42.631.471.104 bytes, e o disco passou
-de 70% para 59% ocupado. Os contêineres, IDs, horários de início, montagens,+hash do ambiente, rotas públicas e arquivos retidos permaneceram iguais durante
+de 70% para 59% ocupado. Os contêineres, IDs, horários de início, montagens,
+hash do ambiente, rotas públicas e arquivos retidos permaneceram iguais durante
 a limpeza.
 
 ## Validação final
