@@ -58,15 +58,37 @@ Regressões relevantes incluem: Google devolver sucesso sem aplicar rótulos; fa
 
 Depois da descoberta da seleção parcial, **74 testes direcionados** de Gmail, Google Workspace, conclusão e conectores passaram. Após o último ajuste de saída compacta, os **18 testes de Gmail** passaram novamente, incluindo seleção de 1.005 mensagens, dois pedidos Google e uma única aprovação, retomada sem duplicação e busca vazia. O typecheck, build TypeScript e Biome passaram.
 
+**Validação final em `d3f3dfa7`: suíte completa repetida com 1.628 testes, 1.628 aprovações, zero falhas, cancelamentos ou skips, em 597,5 s.** Log: `artifacts/gmail-selection-20261007/full-suite.log`. Não houve aborto Node/V8 nessa execução. Os arquivos de código ficaram estáveis durante a suíte; somente este relatório recebeu a evidência final depois.
+
 ### Publicação e limites da verificação
 
 | Artefato | Versão publicada | Evidência |
 | --- | --- | --- |
-| API | `310c80c2c9515407d1f238ae7150f7a1d03af302` | Imagem `sha256:4560401a0eaaeef80d0aaeadf2d063428fef350a77d6ef831f14bd7d4f9fa12c`, container saudável. |
+| API | `d3f3dfa73e6a8cc734db6fd47ee579e2c745858b` | Imagem `sha256:351c1956d93e237e15749c6c3f701edec54c57b390edb6a8b57a5dba99da94fe`, container saudável. |
 | Web | `915c082f679ea99a0e914cfb0004e2689b0b93f6` | Bundle público `index-c3c5cb4bd02ad4408016401a79c8a6c9.js`; SHA-256 do índice `563c6d145a1111991ca935dc6416aad814717387f178e2920521c47e3430abbe`. |
 | APK arm64 | `915c082f679ea99a0e914cfb0004e2689b0b93f6` | SHA-256 `20874f4638b39124defb32110e05381da3d91a9285e308d0cd6cf384e156ebe7`, 67.217.381 bytes, assinatura verificada e push nativo configurado. |
 
-Os dois commits depois do build mobile alteram apenas o servidor/schema das ferramentas. O APK disponível é [okamibot.apk](https://app.okamibot.cloud/downloads/okamibot.apk?v=915c082f). O build registra `sourceDirty: true` por causa de `.orca/` não rastreado; os arquivos rastreados estavam limpos. O signatário tem SHA-256 `e6d8e6aeb25f3c1603efd369b9898dbb865343f4148a1969cd85383331053f8a`.
+Os três commits depois do build mobile alteram apenas o servidor/schema das ferramentas. O APK disponível é [okamibot.apk](https://app.okamibot.cloud/downloads/okamibot.apk?v=915c082f). O build registra `sourceDirty: true` por causa de `.orca/` não rastreado; os arquivos rastreados estavam limpos. O signatário tem SHA-256 `e6d8e6aeb25f3c1603efd369b9898dbb865343f4148a1969cd85383331053f8a`.
+
+### Aceitação real pelo chat publicado
+
+Foram inseridas cinco mensagens sintéticas, identificadas pelo prefixo `Okami QA Gmail 20261007 0140`, usando `messages.insert`; nenhum e-mail foi enviado a terceiros. A conta A tinha três mensagens e a conta B tinha duas. As duas contas permaneceram conectadas simultaneamente. A rota ativa observada foi `chatgpt / gpt-6-luna`, sem fallback; contexto anunciado de 1.050.000 tokens.
+
+Cada pedido foi escrito no compositor normal, sem instruir o modelo a mostrar card ou escolher ferramenta. Depois da resposta, outra sessão de diagnóstico leu os metadados diretamente da API Gmail para as cinco mensagens e conferiu conta, IDs e rótulos. A verificação não se limitou ao texto do agente, ao HTTP de escrita nem ao recibo da própria tarefa.
+
+| Pedido normal | Conferência independente / resultado |
+| --- | --- |
+| Conta A: colocar todos os e-mails do prefixo numa pasta e tirar da caixa de entrada | 3/3 com o marcador novo e sem `INBOX`; relatório automático com conta, consulta, destino, quantidades e assuntos. |
+| Conta B: aplicar marcador e deixar na caixa de entrada | 2/2 com marcador e `INBOX`; conta A inalterada. |
+| Conta B: arquivar os mesmos e-mails mantendo o marcador | 2/2 sem `INBOX`, marcador preservado. |
+| Conta A: recusar card de exclusão | Nenhuma alteração nas cinco mensagens; tarefa cancelada e card recolhido. |
+| Conta A: aprovar card de exclusão em lote | 3/3 em `TRASH`, conta B inalterada. O texto final antigo ficou incorreto e motivou a correção de entrega em `310c80c2`. |
+| Conta B, conversa nova: card incompleto recusado | A busca registrou 2 resultados, mas o card tinha somente 1. Foi recusado; 2/2 permaneceram sem `TRASH`. Essa falha motivou `d3f3dfa7`. |
+| Conta B, outra conversa nova após `d3f3dfa7`: mesmo pedido normal | Um único card com os 2 assuntos e a conta correta; aprovação pela interface; 2/2 em `TRASH` na leitura independente. Tarefa `succeeded`, critério de seleção completa verificado, zero interações textuais adicionais e zero chamadas rejeitadas. O resumo informou conta, quantidade e os dois assuntos efetivos. |
+
+No último teste, a tarefa foi criada às `01:15:11.569Z`, o card às `01:16:05.983Z`, o despacho aprovado às `01:16:31.058Z` e a conclusão às `01:17:03.466Z`. São 54,4 s até o card, 25,1 s aguardando a decisão e 32,4 s do despacho até o resumo concluído, usando timestamps do mesmo servidor. O reload da conversa confirmou a sessão preservada, o card recolhido e o resultado persistido em aproximadamente 3,9 s; isso mede esta conversa de teste, não substitui um benchmark de todos os históricos.
+
+As cinco mensagens sintéticas terminaram na Lixeira recuperável, sem exclusão permanente. As três conversas contendo exclusivamente pedidos com o prefixo de teste foram arquivadas e as sete tarefas terminadas desta rodada removidas da lista visível pelos endpoints do aplicativo. Os recibos das ações permanecem para auditoria. As contas conectadas, companions e dados reais não foram removidos. As sessões temporárias de navegador e diagnóstico foram revogadas ao final; cópias temporárias de chaves/tokens foram eliminadas.
 
 A interface foi exercitada no domínio público em viewport mobile de 390 × 844 e desktop. A prévia nativa não abriu por erro explícito de AppArmor; o emulador Android também não iniciou e iOS não está disponível neste Linux. **Não houve aceitação em aparelho físico nem em APK instalado**; a verificação de instalação não deve ser inferida dos testes web ou da assinatura.
 
