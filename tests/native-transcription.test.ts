@@ -989,7 +989,11 @@ async function makeCrashSnapshot(
   assert.equal(publication.status, "prepared");
   const savedBytes = await readFile(join(state.directory, "files", `${publication.id}.bin`));
   assert.deepEqual(savedBytes, data, "all published bytes landed before simulated process death");
-  assert.equal(wrapper.status, "outcome_unknown");
+  assert.equal(localPublication.status, "dispatching");
+  // The outer native read fails when our simulated exception is caught. The
+  // publication primitive retains the unfinished filesystem write; below we replace
+  // both receipts with the state an actual process death would leave.
+  assert.equal(wrapper.status, "failed");
 
   // Recreate the durable state a process death leaves at this exact boundary:
   // the filesystem write and prepare row committed, but wrapper/primitive receipts did not.
