@@ -33,6 +33,7 @@ export const companionChatTools = new Set([
   "describe_google_workspace_tool",
   "execute_google_workspace_tool",
   "save_gmail_draft",
+  "organize_gmail",
   "list_procedures",
   "read_procedure",
   "find_ideas",

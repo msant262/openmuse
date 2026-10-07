@@ -22,7 +22,6 @@ test("deletions, trash and nested content removal require a review across Google
       { requests: [{ deleteContentRange: { range: { startIndex: 1, endIndex: 2 } } }] },
     ],
     ["slides.presentations.batchUpdate", { requests: [{ deleteObject: { objectId: "slide" } }] }],
-    ["gmail.users.messages.modify", { removeLabelIds: ["INBOX"] }],
   ] as const)
     assert.equal(catalog.destructive(id, body), true, id);
   for (const [id, body] of [
@@ -80,7 +79,10 @@ test("core document, spreadsheet and presentation examples have valid complete r
     for (const method of catalog.search({ query: "", service, limit: 100 }).tools) {
       const description = catalog.describe(method.id);
       if (description.requestExample)
-        assert.doesNotThrow(() => catalog.prepare({ toolId: method.id, ...description.requestExample }), method.id);
+        assert.doesNotThrow(
+          () => catalog.prepare({ toolId: method.id, ...description.requestExample }),
+          method.id,
+        );
     }
   }
 });

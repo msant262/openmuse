@@ -380,6 +380,8 @@ export const completionCriterionSchema = z
     format: z.string().max(100).optional(),
     effect: z
       .enum([
+        "email.delete",
+        "email.organize",
         "email.draft",
         "email.send",
         "calendar.create",

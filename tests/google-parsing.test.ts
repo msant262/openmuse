@@ -295,3 +295,26 @@ test("date-only calendar query boundaries use the first valid local time after a
   assert.equal(query?.searchParams.get("timeMin"), "2018-11-04T03:00:00.000Z");
   assert.equal(query?.searchParams.get("timeMax"), "2018-11-05T02:00:00.000Z");
 });
+
+test("upstream RFC2231 language-tagged headers preserve their non-UTF8 charset", async () => {
+  const client = mailClient({
+    headers: [{ name: "Subject", value: "=?ISO-8859-1*pt?Q?Promo=E7=F5es?=" }],
+  });
+  assert.equal((await client.listMail())[0].subject, "Promoções");
+});
+
+test("nested text in named MIME attachments never contaminates the parent message", async () => {
+  const client = mailClient({
+    mimeType: "multipart/mixed",
+    parts: [
+      { mimeType: "text/plain", body: { data: base64url("Outer body") } },
+      {
+        mimeType: "multipart/alternative",
+        filename: "attachment.mime",
+        body: { attachmentId: "attachment" },
+        parts: [{ mimeType: "text/plain", body: { data: base64url("Attached body") } }],
+      },
+    ],
+  });
+  assert.equal((await client.listMail())[0].body, "Outer body");
+});

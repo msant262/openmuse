@@ -25,7 +25,7 @@ export function unfoldHeaderValue(value: string): string {
 
 function decodeBytes(bytes: Uint8Array, charset: string): string {
   try {
-    return new TextDecoder(charset, { fatal: false }).decode(bytes);
+    return new TextDecoder(charset.split("*")[0], { fatal: false }).decode(bytes);
   } catch {
     // A mailbox may contain an unsupported label. UTF-8 replacement decoding keeps
     // that message readable and prevents one old message from aborting a sync.

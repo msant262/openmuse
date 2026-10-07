@@ -866,6 +866,28 @@ export async function executeModelTask(
       if (!task.artifactIds.includes(id))
         task = await ctx.checkpoint({ artifactIds: [...task.artifactIds, id] });
     },
+    mailReport: async (report) => {
+      const labels = (report.labelNames as string[]).join(", ");
+      const summary = `${report.processed} de ${report.matched} e-mails conferidos na conta ${report.account}.${Number(report.archived) > 0 ? ` ${report.archived} arquivados.` : ""}${labels ? ` Marcadores: ${labels}.` : ""}`;
+      const artifact = await service.artifact(
+        owner,
+        task,
+        "report",
+        "Organização do Gmail",
+        summary,
+        {
+          body: `${summary}\n\nBusca aplicada: ${report.query}\n${report.noOp ? "Nenhuma mensagem corresponde à busca; nenhum e-mail foi alterado." : "As alterações foram conferidas novamente no Gmail."}`,
+          actions:
+            (report.messages as { subject: string; from: string; url: string }[] | undefined)?.map(
+              (m) => ({ title: m.subject, detail: m.from, url: m.url }),
+            ) ?? [],
+          ...report,
+        },
+        `gmail-organization:${report.organizationId}`,
+      );
+      if (!task.artifactIds.includes(artifact.id))
+        task = await ctx.checkpoint({ artifactIds: [...task.artifactIds, artifact.id] });
+    },
     draftCard: async (id) => {
       const draft = await service.googleWorkspace.mailDraft(owner, id);
       const artifact = await service.artifact(

@@ -351,7 +351,7 @@ test("shared profile is refreshed at task safe points, survives disk restart/pro
       { name: "finish_task", arguments: { summary: "Routine completed from the shared profile." } },
     ];
     const routine = await server.agent.createTask("owner", {
-      prompt: "Prepare one formal email in English",
+      prompt: "Prepare one formal report in English",
       originThreadId: "chat",
       input: { routineId: "routine-fixture" },
     });
@@ -366,7 +366,7 @@ test("shared profile is refreshed at task safe points, survives disk restart/pro
     assert.equal(
       (await server.agent.profiles.get("owner")).fields.language,
       "de-DE",
-      "one-email wording remains task-local",
+      "one-report wording remains task-local",
     );
   } finally {
     await server?.agent.stop();

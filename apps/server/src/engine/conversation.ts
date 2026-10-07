@@ -488,7 +488,7 @@ export class ConversationAgent extends AbstractAgent {
         signal: browserAbort.signal,
         before: () => this.service.runtimePause.assertResumed(this.owner).then(() => {}),
       }).flatMap<ToolDefinition>((tool) =>
-        ["execute_google_workspace_tool", "save_gmail_draft"].includes(tool.name)
+        ["execute_google_workspace_tool", "save_gmail_draft", "organize_gmail"].includes(tool.name)
           ? delegateTools([tool])
           : [tool],
       ),

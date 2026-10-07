@@ -14,6 +14,7 @@ import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { DocumentReview } from "../document-review.ts";
 import type { Files } from "../files.ts";
+import { verifiedGmailOrganization } from "../gmail-organization.ts";
 import {
   googleWorkspaceReadObservation,
   googleWorkspaceVerificationBinding,
@@ -139,7 +140,39 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
   const remoteGoogleDocument =
     /\b(?:google\s*(?:drive|docs|sheets|slides)|drive|docs|sheets|slides)\b/i.test(prompt) &&
     !/\b(?:download|baixar|baixe|anexo|attachment|pdf|docx|xlsx|pptx|txt|csv)\b/i.test(prompt);
-  const mailRequest = /\b(?:gmail|e-?mail)\b/i.test(prompt);
+  const mailRequest =
+    /\b(?:gmail|e-?mails?)\b/i.test(prompt) ||
+    /caixa(?:s)?\s+(?:de\s+)?(?:entrada|principal|separada)|inbox/i.test(prompt);
+  const deleteMail =
+    mailRequest &&
+    /\b(?:delete|remove|trash|apague|apaga|apagar|exclua|excluir|exclui|deleta|deletar|lixeira)\b/i.test(
+      prompt,
+    ) &&
+    !/\b(?:draft|rascunho)\b/i.test(prompt);
+  if (deleteMail)
+    criteria.push({
+      id: "requested-mail-deletion",
+      kind: "receipt",
+      effect: "email.delete",
+      description:
+        "The selected messages were removed only after human approval, and their trash/deletion status was verified in Gmail",
+      requiredItems: [],
+    });
+  const organizeMail =
+    mailRequest &&
+    !deleteMail &&
+    /(?:organiz|limp|arquiv|archive|clean|move|mova|mover|separ|rotul(?:a|e|ar)|etiquet(?:a|e|ar)|apli(?:ca|que|car)[\s\S]*(?:marcador|r[oó]tulo|label)|\blabel\s+(?:the|these|my)|coloca.*caixa)/i.test(
+      prompt,
+    );
+  if (organizeMail)
+    criteria.push({
+      id: "requested-mail-organization",
+      kind: "receipt",
+      effect: "email.organize",
+      description:
+        "Organize Gmail with organize_gmail: finish all frozen search pages, apply the requested labels/archive, and confirm every message by provider readback. Creating a label or reading mail alone does not fulfill this request.",
+      requiredItems: [],
+    });
   const explicitSend = [
     ...prompt.matchAll(/\b(?:send|envie|envia|enviar|mande|manda|mandar)\b/gi),
   ].some(
@@ -414,6 +447,19 @@ function actionMatches(
     return false;
   if (!useful(action.result) || !required(criterion, { args, result: action.result })) return false;
   if (!criterion.effect) return true;
+  if (criterion.effect === "email.delete") {
+    if (binding?.serverId !== "google-workspace") return false;
+    const receipt = object(
+      typeof action.result === "string" ? JSON.parse(action.result) : action.result,
+    );
+    const change = object(receipt?.mailChange);
+    return (
+      binding?.serverId === "google-workspace" &&
+      change?.verified === true &&
+      (Number(change.trashed) > 0 || Number(change.deleted) > 0)
+    );
+  }
+  if (criterion.effect === "email.organize") return false;
   if (criterion.effect === "email.draft")
     return (
       action.kind === "external.action" &&
@@ -699,16 +745,19 @@ export class TaskVerification {
               }
             }
           else if (criterion.kind === "receipt") {
-            evidenceIds = receipts
-              .filter(
-                (receipt) =>
-                  receipt.taskId === taskId &&
-                  receipt.status === "succeeded" &&
-                  (receipt.dispatchedRevision ?? receipt.preparedRevision ?? 0) === revision &&
-                  actionMatches(criterion, receipt, bindings.get(receipt.id)) &&
-                  (!criterion.referenceId || criterion.referenceId === receipt.id),
-              )
-              .map((receipt) => receipt.id);
+            if (criterion.effect === "email.organize")
+              evidenceIds = await verifiedGmailOrganization(this.db, owner, taskId, revision);
+            else
+              evidenceIds = receipts
+                .filter(
+                  (receipt) =>
+                    receipt.taskId === taskId &&
+                    receipt.status === "succeeded" &&
+                    (receipt.dispatchedRevision ?? receipt.preparedRevision ?? 0) === revision &&
+                    actionMatches(criterion, receipt, bindings.get(receipt.id)) &&
+                    (!criterion.referenceId || criterion.referenceId === receipt.id),
+                )
+                .map((receipt) => receipt.id);
             evidenceIds.push(
               ...ops
                 .filter(

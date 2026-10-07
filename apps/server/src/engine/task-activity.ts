@@ -4,6 +4,7 @@ export function taskActivity(name: string) {
   if (/^(search_web|browser_research)$/.test(name)) return "Searching for sources";
   if (/^(web_fetch|web_extract|read_web_data|read_web)$/.test(name)) return "Reading sources";
   if (/^(generate_image|image_generation_status)$/.test(name)) return "Creating the image";
+  if (name === "organize_gmail") return "Organizing Gmail";
   if (name === "create_document") return "Creating the document";
   if (/^(inspect_document|confirm_document_review|view_file)$/.test(name))
     return "Checking the result";

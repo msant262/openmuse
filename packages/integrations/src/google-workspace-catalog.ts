@@ -203,6 +203,11 @@ export class GoogleWorkspaceCatalog {
       /\.(?:delete|batchDelete|trash|emptyTrash|clear|batchClear|remove)$/i.test(id)
     )
       return true;
+    // Removing INBOX archives mail. Label removal never deletes message contents.
+    if (/^gmail\.users\.(?:messages|threads)\.(?:modify|batchModify)$/.test(id))
+      return Boolean(
+        (body as { addLabelIds?: string[] } | undefined)?.addLabelIds?.includes("TRASH"),
+      );
     const visit = (value: unknown): boolean => {
       if (Array.isArray(value)) return value.some(visit);
       if (!value || typeof value !== "object") return false;
@@ -233,6 +238,15 @@ export class GoogleWorkspaceCatalog {
       apresentacao: "presentations",
       documento: "documents",
       envio: "send",
+      pasta: "labels",
+      pastas: "labels",
+      rotulo: "labels",
+      rotulos: "labels",
+      marcador: "labels",
+      marcadores: "labels",
+      arquivar: "modify",
+      mover: "modify",
+      aplicar: "modify",
       buscar: "list",
     };
     const query = input.query.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");

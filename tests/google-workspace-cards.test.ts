@@ -440,3 +440,40 @@ test("the Actions tab fetches one summary page and reopens a selected draft with
     h.close();
   }
 });
+
+test("Gmail organization cards state the verified count, destination and actual changed email subjects", () => {
+  const view = googleActionPresentation(
+    {
+      ...action,
+      status: "succeeded",
+      data: {
+        tool: "google.workspace",
+        operation: "gmail.users.messages.batchModify",
+        account: "work@example.com",
+        resourceName: "2 e-mails",
+      },
+      result: JSON.stringify({
+        status: "succeeded",
+        mailChange: {
+          verified: true,
+          processed: 2,
+          archived: 2,
+          labelNames: ["Promoções"],
+          messages: [
+            {
+              id: "m1",
+              subject: "Own promotion",
+              from: "shop@example.com",
+              url: "https://mail.google.com/mail/?authuser=work%40example.com#all/m1",
+            },
+          ],
+        },
+        data: {},
+      }),
+    } as any,
+    "pt-BR",
+  );
+  assert.match(view.outcome, /2/);
+  assert.ok(view.fields.some((f) => f.value.includes("Promoções")));
+  assert.ok(view.changes.some((c) => c.value?.includes("Own promotion")));
+});

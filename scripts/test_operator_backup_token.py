@@ -8,7 +8,10 @@ import operator_backup_token as bootstrap
 
 class OperatorBootstrap(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        # The bootstrap deliberately rejects writable ancestry. An application
+        # TMPDIR can sit beneath a shared user directory; use a root-owned
+        # sticky directory for this protected-file contract instead.
+        self.temp=tempfile.TemporaryDirectory(dir="/var/tmp");self.addCleanup(self.temp.cleanup)
         self.directory=Path(self.temp.name);self.directory.chmod(0o700)
         self.env=self.directory/"deployment.env";self.env.write_text("MODEL=fixture\nOPENMUSE_ACCESS_KEY=PAIRING-CANARY\n");self.env.chmod(0o600)
         self.token=self.directory/"api-bearer"

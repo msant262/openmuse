@@ -253,6 +253,7 @@ export function googleActionPresentation(
   const parameters = record(request.parameters);
   const receipt = record(action.result);
   const result = record(receipt.data ?? receipt.result ?? action.result);
+  const mailChange = record(receipt.mailChange);
   const properties = record(result.properties ?? body.properties);
   const operation =
     text(data.operation) ??
@@ -277,7 +278,10 @@ export function googleActionPresentation(
   const deletion =
     data.requiresHumanApproval === true ||
     /\.(delete|batchDelete|trash|emptyTrash|clear|batchClear|remove)$/.test(operation);
-  const verb = googleOperationLabel(operation);
+  const verb =
+    mailChange.verified === true && Number(mailChange.archived) > 0
+      ? "Archive email"
+      : googleOperationLabel(operation);
   const item =
     text(data.resourceName) ??
     text(data.subject) ??
@@ -319,6 +323,25 @@ export function googleActionPresentation(
     { label: "To", value: Array.isArray(data.to) ? data.to.join(", ") : text(data.to) },
     { label: "Cc", value: Array.isArray(data.cc) ? data.cc.join(", ") : text(data.cc) },
     { label: "Range", value: text(data.range ?? parameters.range) },
+    {
+      label: "Messages",
+      value: mailChange.verified === true ? String(mailChange.processed) : text(data.messageCount),
+    },
+    {
+      label: "Labels",
+      value: Array.isArray(mailChange.labelNames)
+        ? mailChange.labelNames.join(", ")
+        : text(data.labels),
+    },
+    {
+      label: "Destination",
+      value:
+        Number(mailChange.archived) > 0
+          ? locale === "pt-BR"
+            ? "Arquivados · Todos os e-mails"
+            : "Archived · All Mail"
+          : text(data.destination),
+    },
   ].flatMap((f) => (f.value ? [{ label: f.label, value: f.value }] : []));
   const requests = Array.isArray(body.requests) ? body.requests : [];
   const inserted = requests
@@ -340,6 +363,16 @@ export function googleActionPresentation(
       : undefined);
   const changes: { label: string; value?: string }[] = [];
   if (inserted) changes.push({ label: "Text added", value: inserted });
+  if (mailChange.verified === true && Array.isArray(mailChange.messages))
+    for (const message of mailChange.messages.slice(0, 12)) {
+      const entry = record(message);
+      changes.push({
+        label: "Email",
+        value: [text(entry.subject) ?? text(entry.id), text(entry.from)]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    }
   for (const request of requests) {
     const entry = record(request);
     const replace = record(entry.replaceAllText);
@@ -405,9 +438,14 @@ export function googleActionPresentation(
       : "You declined this action. It was not executed.",
     cancelled: "This action was cancelled.",
     expired: "This approval expired. A new review is required before making changes.",
-    succeeded: deletion
-      ? "Removal confirmed."
-      : (confirmedOutcomes[service] ?? "Change completed."),
+    succeeded:
+      mailChange.verified === true
+        ? locale === "pt-BR"
+          ? `${mailChange.processed} e-mails conferidos no Gmail.${Number(mailChange.archived) > 0 ? ` ${mailChange.archived} arquivados.` : ""}${Number(mailChange.trashed) > 0 ? ` ${mailChange.trashed} enviados à lixeira.` : ""}${Number(mailChange.deleted) > 0 ? ` ${mailChange.deleted} excluídos.` : ""}`
+          : `${mailChange.processed} emails verified in Gmail; ${mailChange.archived ?? 0} archived, ${mailChange.trashed ?? 0} trashed.`
+        : deletion
+          ? "Removal confirmed."
+          : (confirmedOutcomes[service] ?? "Change completed."),
     failed: "This action could not be completed. See the error below.",
     outcome_unknown: "The result has not been confirmed. Do not repeat this action yet.",
     executing: "The approved action is being executed.",

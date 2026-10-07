@@ -337,7 +337,7 @@ function mapMessage(message: z.infer<typeof messageSchema>): Mail {
       if (part.mimeType === "text/plain") plain.push(text);
       else html.push(htmlToPlainText(text));
     }
-    for (const child of part.parts ?? []) visit(child, depth + 1);
+    if (!part.filename) for (const child of part.parts ?? []) visit(child, depth + 1);
   };
   if (message.payload) visit(message.payload, 0);
   const from = parseAddressList(metadata.get("from") ?? "")[0];

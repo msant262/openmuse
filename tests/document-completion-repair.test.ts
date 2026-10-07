@@ -59,7 +59,7 @@ test("rejected finish and prose continuations share the unchanged cumulative bud
     (index) =>
       index === 0
         ? { name: "create_document", arguments: documentArgs }
-        : index === 2
+        : index >= 2
           ? { name: "finish_task", arguments: { summary: "Pronto e revisado." } }
           : undefined,
     { text: () => "Pronto e revisado." },
@@ -78,23 +78,25 @@ test("rejected finish and prose continuations share the unchanged cumulative bud
     maxMilliseconds: 60000,
     usedMilliseconds: 0,
   });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    await server.agent.worker.tick();
-    const pending = await server.agent.getTask("owner", task.id);
-    assert.equal(pending.status, "queued");
-    assert.equal(pending.attempts, attempt + 1);
-    const budget = await server.db.get<{ maxSteps: number; usedSteps: number }>(
-      "owner",
-      "task-budgets",
-      task.id,
-    );
-    assert.equal(budget?.maxSteps, 4);
-    assert.equal(budget?.usedSteps, (attempt + 1) * 2);
-  }
+  // The first prose ending queues artifact selection. Rejected explicit finishes
+  // then consume the remaining budget within the next run; a second prose ending
+  // would deliberately report a partial delivery instead of testing exhaustion.
+  await server.agent.worker.tick();
+  const pending = await server.agent.getTask("owner", task.id);
+  assert.equal(pending.status, "queued", pending.error ?? pending.question);
+  assert.equal(pending.attempts, 1);
+  const budget = await server.db.get<{ maxSteps: number; usedSteps: number }>(
+    "owner",
+    "task-budgets",
+    task.id,
+  );
+  assert.equal(budget?.maxSteps, 4);
+  assert.equal(budget?.usedSteps, 2);
   await server.agent.worker.tick();
   const saved = await server.agent.getTask("owner", task.id);
   assert.equal(saved.status, "waiting_input");
   assert.equal(saved.state.budgetExhausted, true);
+  assert.equal(saved.attempts, 2);
   assert.equal(fixture.requests.length, 4);
   assert.equal(await server.db.get("owner", "thread-publications", `task:${task.id}`), null);
   assert.equal(

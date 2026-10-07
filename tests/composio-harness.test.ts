@@ -572,12 +572,13 @@ for (const uncertain of [false, true]) {
       JSON.stringify(action),
     );
     assert.equal(fixture.calls.length, 1);
-    assert.equal(
-      current.status,
-      uncertain ? "waiting_input" : "succeeded",
-      JSON.stringify(current),
-    );
+    assert.equal(current.status, uncertain ? "paused" : "succeeded", JSON.stringify(current));
     if (uncertain) {
+      assert.equal(
+        (await server.db.list("owner", "interaction-requests")).length,
+        0,
+        "uncertain effects do not invent an input form",
+      );
       assert.equal(requests.length, 2, "the agent stops before it can retry an uncertain write");
       await server.agent.worker.tick();
       assert.equal(fixture.calls.length, 1);

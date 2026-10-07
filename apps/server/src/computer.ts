@@ -655,13 +655,32 @@ export class ComputerService {
           active.token !== lease.token ||
           active.stopping ||
           active.expiresAt <= Date.now()
-        )
-          return this.db.put(owner, "computer-commands", {
+        ) {
+          const stopped: ComputerCommand = {
             ...command,
             status: "interrupted",
             stderr: "Stopped before execution",
             completedAt: new Date().toISOString(),
-          });
+          };
+          const preserved = await this.db.compareAndSwap<ComputerCommand>(
+            owner,
+            "computer-commands",
+            id,
+            { status: "running" },
+            {
+              status: stopped.status,
+              stderr: stopped.stderr,
+              completedAt: stopped.completedAt,
+            },
+          );
+          return (
+            preserved ??
+            (await this.db.get<ComputerCommand>(owner, "computer-commands", id)) ??
+            stopped
+          );
+        }
+        const receipt = await this.db.get<ComputerCommand>(owner, "computer-commands", id);
+        if (receipt && receipt.status !== "running") return receipt;
         try {
           await options.onDispatch?.(id);
           await options.dispatchGuard?.();
