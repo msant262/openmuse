@@ -279,9 +279,13 @@ export function googleActionPresentation(
     data.requiresHumanApproval === true ||
     /\.(delete|batchDelete|trash|emptyTrash|clear|batchClear|remove)$/.test(operation);
   const verb =
-    mailChange.verified === true && Number(mailChange.archived) > 0
-      ? "Archive email"
-      : googleOperationLabel(operation);
+    service === "gmail" &&
+    ((mailChange.verified === true && Number(mailChange.trashed) > 0) ||
+      (Array.isArray(body.addLabelIds) && body.addLabelIds.includes("TRASH")))
+      ? "Move email to trash"
+      : mailChange.verified === true && Number(mailChange.archived) > 0
+        ? "Archive email"
+        : googleOperationLabel(operation);
   const item =
     text(data.resourceName) ??
     text(data.subject) ??
@@ -323,6 +327,7 @@ export function googleActionPresentation(
     { label: "To", value: Array.isArray(data.to) ? data.to.join(", ") : text(data.to) },
     { label: "Cc", value: Array.isArray(data.cc) ? data.cc.join(", ") : text(data.cc) },
     { label: "Range", value: text(data.range ?? parameters.range) },
+    { label: "Subject", value: service === "gmail" ? text(data.subject) : undefined },
     {
       label: "Messages",
       value: mailChange.verified === true ? String(mailChange.processed) : text(data.messageCount),

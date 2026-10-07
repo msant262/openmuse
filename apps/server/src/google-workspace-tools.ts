@@ -497,14 +497,17 @@ export class GoogleWorkspaceHarness {
       mailLabelNames = (body?.addLabelIds ?? []).map(
         (id) => labels.labels?.find((l) => l.id === id)?.name ?? id,
       );
-      display.resourceName = `${ids.length} e-mails`;
+      display.resourceName =
+        ids.length === 1 ? mailBefore[0]?.subject || "1 e-mail" : `${ids.length} e-mails`;
       display.messageCount = String(ids.length);
       display.subject = mailBefore
         .slice(0, 8)
         .map((m) => m.subject || m.id)
         .join("\n");
       display.labels = mailLabelNames.join(", ");
-      if (body?.removeLabelIds?.includes("INBOX"))
+      if (/\.trash$/.test(input.toolId) || body?.addLabelIds?.includes("TRASH"))
+        display.destination = "Lixeira";
+      else if (body?.removeLabelIds?.includes("INBOX"))
         display.destination = "Arquivados · Todos os e-mails";
     }
     if (destructive && input.toolId === "calendar.events.delete") {

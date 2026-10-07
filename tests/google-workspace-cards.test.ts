@@ -477,3 +477,30 @@ test("Gmail organization cards state the verified count, destination and actual 
   assert.ok(view.fields.some((f) => f.value.includes("Promoções")));
   assert.ok(view.changes.some((c) => c.value?.includes("Own promotion")));
 });
+
+test("pending batch trash cards identify every displayed subject before approval", () => {
+  const view = googleActionPresentation(
+    {
+      ...action,
+      title: "Google Gmail",
+      data: {
+        tool: "google.workspace",
+        operation: "gmail.users.messages.batchModify",
+        account: "work@example.com",
+        requiresHumanApproval: true,
+        resourceName: "2 e-mails",
+        messageCount: "2",
+        subject: "Own test 1\nOwn test 2",
+        request: JSON.stringify({
+          body: { ids: ["m1", "m2"], addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] },
+        }),
+      },
+    } as any,
+    "pt-BR",
+  );
+  assert.equal(view.verb, "Move email to trash");
+  assert.ok(
+    view.fields.some((f) => f.value.includes("Own test 1") && f.value.includes("Own test 2")),
+  );
+  assert.ok(view.fields.some((f) => f.label === "Messages" && f.value === "2"));
+});

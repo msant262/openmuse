@@ -52,6 +52,7 @@ export const ptBR: Record<string, string> = {
     "Isso remove o item selecionado da conta exibida acima. Nada será excluído até você aprovar.",
   "Waiting for your approval": "Aguardando sua aprovação",
   "Approve deletion": "Aprovar exclusão",
+  Deny: "Recusar",
   "Confirm deletion": "Confirmar exclusão",
   "Saved in Gmail": "Salvo no Gmail",
   "Loading draft…": "Carregando rascunho…",
