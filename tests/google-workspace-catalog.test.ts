@@ -74,6 +74,25 @@ test("broad batch schemas stay compact and expose a complete executable example"
   });
 });
 
+test("lazy descriptions accept the parameters envelope for reads and body prefixes for writes", () => {
+  const list = catalog.describe("gmail.users.messages.list", ["parameters"]);
+  assert.ok(list.parameters.q);
+  assert.ok(list.parameters.pageToken);
+  assert.equal(list.body, undefined);
+  const insert = catalog.describe("docs.documents.batchUpdate", [
+    "body",
+    "requests",
+    "[]",
+    "insertText",
+  ]);
+  assert.ok(insert.body);
+  assert.deepEqual(insert.schemaPath, ["requests", "[]", "insertText"]);
+  assert.throws(
+    () => catalog.describe("gmail.users.messages.list", ["parameters", "unknown"]),
+    /parameter/i,
+  );
+});
+
 test("core document, spreadsheet and presentation examples have valid complete request envelopes", () => {
   for (const service of ["docs", "sheets", "slides"]) {
     for (const method of catalog.search({ query: "", service, limit: 100 }).tools) {
