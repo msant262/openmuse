@@ -12,6 +12,7 @@ import { memoryInput } from "../memory.ts";
 import { playbookRoutes } from "../playbooks.ts";
 import { proactivityRoutes } from "../proactivity/routes.ts";
 import { routineInput } from "../routines.ts";
+import { workspaceReadEtag } from "../workspace-etag.ts";
 import type { AgentService } from "./service.ts";
 import { taskTimingUpdateSchema } from "./task-timing.ts";
 
@@ -51,7 +52,14 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
   app.route("/avatars", avatarRoutes(service.avatars));
   app.route("/proactivity", proactivityRoutes(service));
   app.route("/playbooks", playbookRoutes(service.playbooks));
-  app.get("/", async (c) => c.json(await service.snapshot(c.get("owner"))));
+  app.get("/", async (c) => {
+    const owner = c.get("owner");
+    const etag = await workspaceReadEtag(service.db, owner, "agent");
+    c.header("ETag", etag);
+    c.header("Cache-Control", "private, no-cache");
+    if (c.req.header("If-None-Match") === etag) return c.body(null, 304);
+    return c.json(await service.snapshot(owner));
+  });
   app.get("/profile", async (c) =>
     c.json(await service.profiles.get(c.get("owner"), c.req.query("threadId"))),
   );

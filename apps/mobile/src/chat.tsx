@@ -692,6 +692,7 @@ export function ChatScreen({
     return () => subscription.unsubscribe();
   }, [agent, queue]);
   const replayLock = useRef(false);
+  const lastInteractions = useRef<InteractionRequest[] | undefined>(undefined);
   const syncReplay = useCallback(async () => {
     if (!(queue instanceof MessageOutbox) || replayLock.current || !loaded || !isReady) return;
     replayLock.current = true;
@@ -713,8 +714,13 @@ export function ChatScreen({
       const cards = await api.request<{ requests: InteractionRequest[] }>(
         `/api/conversations/${threadId}/interactions`,
       );
-      setQuestions(cards.requests.filter((r) => r.kind === "question" || r.kind === "credential"));
-      setSuggestions(suggestionsFromRequests(cards.requests));
+      if (cards.requests !== lastInteractions.current) {
+        lastInteractions.current = cards.requests;
+        setQuestions(
+          cards.requests.filter((r) => r.kind === "question" || r.kind === "credential"),
+        );
+        setSuggestions(suggestionsFromRequests(cards.requests));
+      }
       if ((needsSnapshot || replay.events.length) && !runLock.current && !agent.isRunning) {
         runLock.current = true;
         // Response streaming may wait for a stored message to retry. Keep journal

@@ -259,22 +259,7 @@ export class ConversationInbox {
     };
   }
   pending() {
-    return this.db
-      .scan<InboxMessage>("conversation-inbox")
-      .then((items) =>
-        items
-          .filter(
-            ({ value }) =>
-              value.status === "dispatching" ||
-              (value.status === "accepted" &&
-                (!value.retryAfter || Date.parse(value.retryAfter) <= Date.now())),
-          )
-          .sort(
-            (a, b) =>
-              a.value.createdAt.localeCompare(b.value.createdAt) ||
-              a.value.id.localeCompare(b.value.id),
-          ),
-      );
+    return this.db.pendingInbox<InboxMessage>(new Date().toISOString());
   }
   async get(owner: string, threadId: string, messageId: string) {
     return this.db.get<InboxMessage>(owner, "conversation-inbox", `${threadId}:${messageId}`);

@@ -5,6 +5,7 @@ import { resolveApiOrigin } from "./api-origin";
 import { AuthManager, type Session, type SessionTransport } from "./auth-manager";
 import { authenticatedFetch, authenticatedUpload } from "./auth-transport";
 import { ComputerRequests, durableComputerPath } from "./computer-requests";
+import { ConditionalJson } from "./conditional-json";
 import { createCredentialStorage } from "./credential-storage";
 import { messageStorage } from "./message-storage";
 import { withWebSessionLock } from "./web-session-coordinator";
@@ -19,6 +20,8 @@ export const API_URL = resolveApiOrigin({
 });
 
 export class MuseApi {
+  private readonly conditional = new ConditionalJson();
+  private conditionalIdentity?: string;
   private readonly computerRequests = new ComputerRequests(
     messageStorage,
     (value) => Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, value),
@@ -65,11 +68,22 @@ export class MuseApi {
     requestId?: string,
     signal?: AbortSignal,
   ): Promise<T> {
+    const verb = method ?? (body === undefined ? "GET" : "POST");
+    if (this.conditionalIdentity !== this.identityKey) {
+      this.conditional.clear();
+      this.conditionalIdentity = this.identityKey;
+    }
+    if (verb !== "GET") this.conditional.clear();
+    const conditional =
+      verb === "GET" &&
+      (path === "/api/agent" || /^\/api\/conversations\/[^/]+\/interactions$/.test(path));
+    const checkpoint = conditional ? this.conditional.get<T>(path) : undefined;
     const init = {
       signal,
-      method: method ?? (body === undefined ? "GET" : "POST"),
+      method: verb,
       headers: {
         Authorization: `Bearer ${this.token}`,
+        ...(checkpoint ? { "If-None-Match": checkpoint.etag } : {}),
         ...(requestId ? { "Idempotency-Key": requestId } : {}),
         ...(body === undefined || body instanceof FormData
           ? {}
@@ -81,7 +95,9 @@ export class MuseApi {
       typeof this.credential === "string"
         ? await fetch(`${API_URL}${path}`, init)
         : await authenticatedFetch(this.credential, `${API_URL}${path}`, init);
-    return parseResponse<T>(response);
+    if (response.status === 304 && checkpoint) return checkpoint.value;
+    const value = await parseResponse<T>(response);
+    return conditional ? this.conditional.save(path, response.headers.get("ETag"), value) : value;
   }
   async upload<T>(operation: (authorization: string) => Promise<{ status: number; body: string }>) {
     if (typeof this.credential !== "string")

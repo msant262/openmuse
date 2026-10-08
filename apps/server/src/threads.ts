@@ -117,9 +117,7 @@ export class LocalThreads extends AgentRunner {
         await this.recover(owner, value.threadId);
         if (await this.db.threadLeaseActive(owner, value.threadId)) continue;
         if (value.status === "dispatching") {
-          const previous = (await this.runs(owner, value.threadId)).find(
-            (run) => run.runId === value.runId,
-          );
+          const previous = await this.db.get<Run>(owner, "thread-runs", value.runId);
           if (previous) {
             await this.inbox.mark(
               owner,
@@ -165,9 +163,7 @@ export class LocalThreads extends AgentRunner {
           value.runId,
         )
           .then(async () => {
-            const run = (await this.runs(owner, value.threadId)).find(
-              (run) => run.runId === value.runId,
-            );
+            const run = await this.db.get<Run>(owner, "thread-runs", value.runId);
             await this.inbox!.mark(
               owner,
               value.id,
@@ -235,7 +231,8 @@ export class LocalThreads extends AgentRunner {
   }
   private async title(owner: string, thread: Thread, messages?: Message[]): Promise<Thread> {
     if (thread.name?.trim()) return thread;
-    const history = messages ?? (await this.runs(owner, thread.id)).at(-1)?.messages ?? [];
+    const history =
+      messages ?? (await this.db.latestThreadRun<Run>(owner, thread.id))?.messages ?? [];
     const first = history.find((message) => message.role === "user" && message.content);
     const text =
       typeof first?.content === "string"
@@ -360,7 +357,7 @@ export class LocalThreads extends AgentRunner {
     if (!(await this.db.claimThread(owner, threadId, token, this.leaseMs))) return false;
     try {
       await this.recover(owner, threadId);
-      const latest = (await this.runs(owner, threadId)).at(-1);
+      const latest = await this.db.latestThreadRun<Run>(owner, threadId);
       const messageId = `publication-${id}`;
       const createdAt = new Date(
         Math.max(Date.now(), Date.parse(latest?.createdAt ?? "") + 1 || 0),
@@ -496,8 +493,7 @@ export class LocalThreads extends AgentRunner {
     // A competing claimant may have replaced an expired run while its recovery was pending.
     await this.recover(owner, threadId);
     await this.compaction.resume(owner, threadId);
-    const historic = await this.runs(owner, threadId);
-    const previous = historic.at(-1);
+    const previous = await this.db.latestThreadRun<Run>(owner, threadId);
     const previousSnapshot =
       previous?.status === "running" ? await this.replaySnapshot(previous) : previous;
     const messages = [...(previousSnapshot?.messages ?? [])];
@@ -756,22 +752,42 @@ export class LocalThreads extends AgentRunner {
               });
             const runId = run?.runId ?? `restore-${thread.id}`;
             if (run?.status === "running") {
-              // Only the current live run needs event reconstruction. Old completed turns
-              // arrive together in a bounded snapshot and never animate through the UI.
+              // Restore the current result atomically, including an in-progress reply.
+              // Sending its old tokens again makes a reload animate the whole task history.
               const current = await this.replaySnapshot(run);
-              const events = compactEvents(run.events).map(displayEvent);
-              if (!events.some((event) => event.type === EventType.RUN_STARTED))
-                events.unshift({ type: EventType.RUN_STARTED, threadId: thread.id, runId });
-              const start = events.findIndex((event) => event.type === EventType.RUN_STARTED);
-              events.splice(start + 1, 0, {
+              emit({ type: EventType.RUN_STARTED, threadId: thread.id, runId });
+              emit({
                 type: EventType.MESSAGES_SNAPSHOT,
-                messages: run.inputMessages ?? [],
-              });
-              for (const event of this.canonicalEvents(events, {
-                ...current,
                 messages: current.messages.slice(-CHAT_HISTORY_PAGE_SIZE),
-              }))
-                emit(event);
+              });
+              emit({ type: EventType.STATE_SNAPSHOT, snapshot: current.state });
+              const text = new Map<string, BaseEvent>();
+              const tools = new Map<string, { start: BaseEvent; end?: BaseEvent }>();
+              for (const event of run.events) {
+                const value = event as BaseEvent & { messageId?: string; toolCallId?: string };
+                if (event.type === EventType.TEXT_MESSAGE_START && value.messageId)
+                  text.set(value.messageId, event);
+                if (event.type === EventType.TEXT_MESSAGE_END && value.messageId)
+                  text.delete(value.messageId);
+                if (event.type === EventType.TOOL_CALL_START && value.toolCallId)
+                  tools.set(value.toolCallId, { start: event });
+                if (event.type === EventType.TOOL_CALL_END && value.toolCallId) {
+                  const tool = tools.get(value.toolCallId);
+                  if (tool) tool.end = event;
+                }
+                if (event.type === EventType.TOOL_CALL_RESULT && value.toolCallId)
+                  tools.delete(value.toolCallId);
+              }
+              // Only open protocol boundaries are needed to apply future deltas/results.
+              for (const event of text.values()) emit(event);
+              for (const tool of tools.values()) {
+                emit(tool.start);
+                if (tool.end) emit(tool.end);
+              }
+              for (const event of run.events
+                .filter((event) => event.type === EventType.CUSTOM)
+                .slice(-32))
+                emit(displayEvent(event));
             } else {
               const diagnostics = (run?.events ?? [])
                 .flatMap((event): BaseEvent[] => {
@@ -816,18 +832,7 @@ export class LocalThreads extends AgentRunner {
               running: run.status === "running",
             };
           const pendingMessage =
-            this.inbox &&
-            (
-              await this.db.list<import("./conversation-inbox.ts").InboxMessage>(
-                owner,
-                "conversation-inbox",
-              )
-            ).some(
-              (item) =>
-                (item.status === "accepted" || item.status === "dispatching") &&
-                item.threadId === request.threadId &&
-                (!expectedRunId || item.runId === expectedRunId),
-            );
+            this.inbox && (await this.db.inboxPending(owner, request.threadId, expectedRunId));
           if (snapshot.activeRunToken || run?.status === "running" || pendingMessage)
             timer = setTimeout(() => void poll(), 150);
           else subscriber.complete();

@@ -48,7 +48,8 @@ export type DocumentTheme = {
   display: "serif" | "sans" | "mono";
 };
 
-const documentColor = z.string().regex(/^#[0-9a-f]{6}$/i);
+// JSON Schema has no RegExp flags: native tool validation must accept the same colors as Zod.
+const documentColor = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 export const documentDesignSchema = z
   .object({
     reference: z.string().trim().min(1).max(80).optional(),

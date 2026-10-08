@@ -1,4 +1,4 @@
-import { AbstractAgent, type BaseEvent, type Message } from "@ag-ui/client";
+import { AbstractAgent, type BaseEvent, compactEvents, type Message } from "@ag-ui/client";
 import { of } from "rxjs";
 import { z } from "zod";
 import type { Store } from "./db.ts";
@@ -14,7 +14,7 @@ type ReplayableRun = {
 export async function replayThreadSnapshot(run: ReplayableRun, events = run.events) {
   class ReplayAgent extends AbstractAgent {
     run() {
-      return of(...events);
+      return of(...compactEvents(events));
     }
   }
   const reader = new ReplayAgent();

@@ -1,8 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PDFDict, PDFDocument, PDFName, PDFString } from "pdf-lib";
-import { composeDocument, runsText } from "../packages/integrations/src/document-model.ts";
+import { z } from "zod";
+import {
+  composeDocument,
+  documentDesignSchema,
+  runsText,
+} from "../packages/integrations/src/document-model.ts";
 import { createDesignedPdf } from "../packages/integrations/src/document-pdf.ts";
+
+test("native document tool JSON Schema accepts uppercase and lowercase color codes", () => {
+  const schema = z.toJSONSchema(documentDesignSchema) as {
+    properties: { palette: { properties: { paper: { pattern: string } } } };
+  };
+  const pattern = new RegExp(schema.properties.palette.properties.paper.pattern);
+  for (const color of ["#FAF8F5", "#faf8f5", "#Faf8f5"]) assert.equal(pattern.test(color), true);
+  assert.equal(pattern.test("#GGGGGG"), false);
+});
 
 test("PDF source labels retain clickable link destinations", async () => {
   const bytes = await createDesignedPdf(

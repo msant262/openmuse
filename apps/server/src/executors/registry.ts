@@ -419,9 +419,7 @@ export class ExecutorRegistry {
   async deliveries(owner: string, executorId: string) {
     if (this.registration(executorId).owner !== owner)
       throw new AppError("Native executor belongs to another owner", 403);
-    return (await this.db.list<ExecutorDelivery>(SYSTEM, "deliveries")).filter(
-      (value) => value.owner === owner && value.operation.executorId === executorId,
-    );
+    return this.db.executorDeliveries<ExecutorDelivery>(owner, executorId);
   }
   private async claim(executorId: string, epoch: number) {
     const authority = this.options.authority,
@@ -431,9 +429,7 @@ export class ExecutorRegistry {
     if (this.stopping || !authority || !node.connected || !node.reconciled)
       return { epoch, pause, operations };
     const owner = this.registration(executorId).owner;
-    const deliveries = (await this.deliveries(owner, executorId)).sort((a, b) =>
-      a.createdAt.localeCompare(b.createdAt),
-    );
+    const deliveries = await this.db.executorDeliveries<ExecutorDelivery>(owner, executorId, true);
     for (const delivery of deliveries) {
       if (this.stopping) break;
       const operation = delivery.operation;

@@ -31,6 +31,70 @@ interface Database {
 }
 
 export class Store {
+  async workspaceVersion(owner: string): Promise<string> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('owner',(SELECT jsonb_build_array(count(*),max(updated_at)) FROM records WHERE owner=$1),
+        'runtime',(SELECT jsonb_build_array(count(*),max(updated_at)) FROM records WHERE
+          (owner='__runtime__' AND kind='runtime-pause') OR kind='work-admissions')) AS data`,
+      [owner],
+    );
+    return JSON.stringify(result.rows[0].data);
+  }
+  async taskOperations<T>(owner: string, taskId: string): Promise<T[]> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='task-operations' AND data->>'taskId'=$2 ORDER BY data->>'createdAt',id",
+      [owner, taskId],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  async pendingInbox<T>(now: string): Promise<{ owner: string; value: T }[]> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('owner',owner,'value',data) AS data FROM records
+       WHERE kind='conversation-inbox' AND (data->>'status'='dispatching' OR
+         (data->>'status'='accepted' AND (data->>'retryAfter' IS NULL OR (data->>'retryAfter')::timestamptz<=$1::timestamptz)))
+       ORDER BY data->>'createdAt',id`,
+      [now],
+    );
+    return result.rows.map((row) => row.data as unknown as { owner: string; value: T });
+  }
+  async inboxPending(owner: string, threadId: string, runId?: string): Promise<boolean> {
+    const result = await this.db.query(
+      "SELECT data->'id' AS data FROM records WHERE owner=$1 AND kind='conversation-inbox' AND data->>'threadId'=$2 AND data->>'status' IN ('accepted','dispatching') AND ($3::text IS NULL OR data->>'runId'=$3) LIMIT 1",
+      [owner, threadId, runId ?? null],
+    );
+    return result.rows.length > 0;
+  }
+  async pendingThreadPublications<T>(): Promise<{ owner: string; value: T }[]> {
+    const result = await this.db.query(
+      "SELECT jsonb_build_object('owner',owner,'value',data) AS data FROM records WHERE kind='thread-publications' AND data->>'status' IN ('pending','posted') AND data->>'notificationSent' IS DISTINCT FROM 'true' ORDER BY updated_at,id",
+    );
+    return result.rows.map((row) => row.data as unknown as { owner: string; value: T });
+  }
+  async executorDeliveries<T>(owner: string, executorId: string, queuedOnly = false): Promise<T[]> {
+    const result = await this.db.query(
+      `SELECT data FROM records WHERE owner='__executors__' AND kind='deliveries' AND data->>'owner'=$1
+       AND data->'operation'->>'executorId'=$2 ${queuedOnly ? "AND data->>'state'='queued'" : ""} ORDER BY data->>'createdAt',id`,
+      [owner, executorId],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  async pushRecoveryDeliveries<T>(): Promise<{ owner: string; value: T }[]> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('owner',owner,'value',data) AS data FROM records WHERE kind='push-deliveries'
+       AND (data->>'status'='sending' OR data->>'auditedStatus' IS DISTINCT FROM data->>'status') ORDER BY updated_at,id`,
+    );
+    return result.rows.map((row) => row.data as unknown as { owner: string; value: T });
+  }
+  async pushRecoveryIntents<T>(): Promise<{ owner: string; value: T }[]> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('owner',intent.owner,'value',intent.data) AS data FROM records intent
+       JOIN records notice ON notice.owner=intent.owner AND notice.kind='notifications' AND notice.id=intent.id
+       WHERE intent.kind='push-intents' AND (intent.data->>'status'='pending' OR
+         (intent.data->>'nativeDelivery' IS NOT NULL AND notice.data->>'nativeDelivery' IS DISTINCT FROM intent.data->>'nativeDelivery'))
+       ORDER BY intent.updated_at,intent.id`,
+    );
+    return result.rows.map((row) => row.data as unknown as { owner: string; value: T });
+  }
   async chatSocialRecords<T>(
     owner: string,
     threadId: string,
@@ -505,6 +569,13 @@ export class Store {
     const result = await this.db.query(
       "SELECT data FROM records WHERE owner=$1 AND kind=$2 ORDER BY updated_at DESC,id",
       [owner, kind],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  async listByStatus<T>(owner: string, kind: string, status: string): Promise<T[]> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind=$2 AND data->>'status'=$3 ORDER BY updated_at DESC,id",
+      [owner, kind, status],
     );
     return result.rows.map((row) => row.data as T);
   }
@@ -985,6 +1056,16 @@ export class Store {
       [owner, threadId],
     );
     return result.rows[0]?.data as unknown as T | undefined;
+  }
+  async latestThreadRun<T>(owner: string, threadId: string): Promise<T | undefined> {
+    const result = await this.db.query(
+      `WITH latest AS (SELECT data FROM records WHERE owner=$1 AND kind='thread-runs' AND data->>'threadId'=$2
+        ORDER BY data->>'createdAt' DESC,id DESC LIMIT 1)
+       SELECT CASE WHEN data ? 'messages' THEN data ELSE data || jsonb_build_object('messages',
+         COALESCE((SELECT jsonb_agg(data ORDER BY position) FROM thread_messages WHERE owner=$1 AND thread_id=$2),'[]'::jsonb)) END AS data FROM latest`,
+      [owner, threadId],
+    );
+    return result.rows[0]?.data as T | undefined;
   }
   /** UI reconnects read one run and a recent display page, never all historic run events. */
   async threadDisplaySnapshot<T>(
@@ -1476,6 +1557,21 @@ export async function createStore(
   }
   await database.query(
     "CREATE TABLE IF NOT EXISTS records(owner text NOT NULL,kind text NOT NULL,id text NOT NULL,data jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,kind,id))",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS records_kind_updated ON records(kind,updated_at,id)",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS task_operation_task_created ON records(owner,(data->>'taskId'),(data->>'createdAt'),id) WHERE kind='task-operations'",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS conversation_inbox_pending ON records((data->>'createdAt'),id) WHERE kind='conversation-inbox' AND data->>'status' IN ('accepted','dispatching')",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS executor_delivery_queue ON records((data->>'owner'),(data->'operation'->>'executorId'),(data->>'createdAt'),id) WHERE owner='__executors__' AND kind='deliveries' AND data->>'state'='queued'",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS push_delivery_recovery ON records(updated_at,id) WHERE kind='push-deliveries' AND (data->>'status'='sending' OR data->>'auditedStatus' IS DISTINCT FROM data->>'status')",
   );
   await initializeDurableConversations((sql) => database.query(sql));
   await initializeThreadCompaction((sql) => database.query(sql));

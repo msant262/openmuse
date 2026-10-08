@@ -6,6 +6,111 @@ import { ConversationInbox } from "../apps/server/src/conversation-inbox.ts";
 import { createStore } from "../apps/server/src/db.ts";
 import { LocalThreads } from "../apps/server/src/threads.ts";
 
+test("reloading an active research reply restores one snapshot and streams only new tokens", async (t) => {
+  const db = await createStore();
+  const threads = new LocalThreads(db);
+  t.after(async () => {
+    await threads.close();
+    await db.close();
+  });
+  await threads.ensure("owner", "research");
+  const run = {
+    id: "research-token",
+    threadId: "research",
+    runId: "research-run",
+    createdAt: new Date().toISOString(),
+    status: "running",
+    state: {},
+    initialState: {},
+    messages: [{ id: "question", role: "user" as const, content: "Pesquise cursos de IA" }],
+    inputMessages: [{ id: "question", role: "user" as const, content: "Pesquise cursos de IA" }],
+    events: [
+      { type: EventType.RUN_STARTED, threadId: "research", runId: "research-run" },
+      { type: EventType.TEXT_MESSAGE_START, messageId: "answer", role: "assistant" },
+      ...Array.from({ length: 2000 }, () => ({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "answer",
+        delta: "curso ",
+      })),
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "search",
+        toolCallName: "search_web",
+        parentMessageId: "answer",
+      },
+      { type: EventType.TOOL_CALL_ARGS, toolCallId: "search", delta: '{"query":"AI courses"}' },
+      { type: EventType.TOOL_CALL_END, toolCallId: "search" },
+    ] as BaseEvent[],
+  };
+  await db.put("owner", "thread-runs", run);
+  await db.claimThread("owner", run.threadId, run.id, 60_000);
+  const client = new (class extends AbstractAgent {
+    run() {
+      return of();
+    }
+    protected connect() {
+      return threads.withOwner("owner", () => threads.connect({ threadId: run.threadId }));
+    }
+  })({ threadId: run.threadId });
+  let restored!: () => void;
+  const checkpoint = new Promise<void>((resolve) => {
+    restored = resolve;
+  });
+  const received: BaseEvent[] = [];
+  client.subscribe({
+    onEvent: ({ event }) => {
+      received.push(event);
+    },
+    onMessagesSnapshotEvent: () => {
+      restored();
+    },
+  });
+  const connected = client.connectAgent();
+  await checkpoint;
+  // Give the first replay batch time to establish the open stream boundaries.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(client.messages.find((m) => m.id === "answer")?.content, "curso ".repeat(2000));
+  const tail: BaseEvent[] = [
+    {
+      type: EventType.TOOL_CALL_RESULT,
+      toolCallId: "search",
+      messageId: "source",
+      role: "tool",
+      content: '{"sources":["verified"]}',
+    },
+    { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "answer", delta: "final" },
+    { type: EventType.TEXT_MESSAGE_END, messageId: "answer" },
+    { type: EventType.RUN_FINISHED, threadId: run.threadId, runId: run.runId },
+  ];
+  for (const event of tail) await db.appendRecordEvent("owner", run.id, event);
+  await db.compareAndSwap(
+    "owner",
+    "thread-runs",
+    run.id,
+    { status: "running" },
+    { status: "finished" },
+  );
+  await db.compareAndSwap(
+    "owner",
+    "threads",
+    run.threadId,
+    { runToken: run.id },
+    { runToken: null, leaseUntil: null },
+  );
+  await connected;
+  assert.equal(
+    client.messages.find((m) => m.id === "answer")?.content,
+    "curso ".repeat(2000) + "final",
+  );
+  assert.equal(client.messages.find((m) => m.id === "source")?.content, '{"sources":["verified"]}');
+  assert.equal(
+    received.filter((e) => e.type === EventType.TEXT_MESSAGE_CONTENT).length,
+    1,
+    "old tokens cannot animate again on the phone",
+  );
+  assert.ok(received.length < 15, `received ${received.length} events instead of a checkpoint`);
+});
+
 test("connecting before the first durable start event does not start the same run twice", async (t) => {
   const db = await createStore();
   const threads = new LocalThreads(db);

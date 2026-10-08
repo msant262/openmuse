@@ -148,17 +148,16 @@ export class TaskWorker {
     return pending;
   }
   private async tickInternal() {
-    if (this.stopping) return;
-    if (this.running)
-      await this.db.put("system", "worker-status", {
-        id: "tasks",
-        lastTickAt: new Date(this.now()).toISOString(),
-      });
-    if (this.ticking) return;
+    if (this.stopping || this.ticking) return;
     this.ticking = true;
     this.lastTickAt = new Date(this.now()).toISOString();
     const batch: Promise<void>[] = [];
     try {
+      if (this.running)
+        await this.db.put("system", "worker-status", {
+          id: "tasks",
+          lastTickAt: this.lastTickAt,
+        });
       if ((await this.pause.get("__runtime__")).paused) return;
       const due = await this.db.eligibleTasks<AgentTask>(new Date(this.now()).toISOString());
       due.sort((a, b) => this.compareTaskOrder(a.value, b.value));

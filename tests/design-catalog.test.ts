@@ -243,7 +243,7 @@ test("design tool is bounded read-only data with exact IDs, no traversal and lif
   for (const args of [
     { action: "read", id: "../../LICENSE" },
     { action: "read", id: "claude", page: 999 },
-    { action: "search", query: "x".repeat(161) },
+    { action: "search", query: "x".repeat(2001) },
     { action: "list", limit: 1000 },
     { action: "write", id: "claude" },
   ]) {

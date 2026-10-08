@@ -51,7 +51,7 @@ const manifestSchema = z
   .strict();
 const listSchema = z
   .object({
-    query: z.string().trim().min(1).max(160).optional(),
+    query: z.string().trim().min(1).max(2000).optional(),
     page: z.number().int().min(0).max(127).default(0),
     limit: z.number().int().min(1).max(20).default(10),
   })

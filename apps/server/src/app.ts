@@ -85,6 +85,7 @@ import { modelProviderConfig } from "./providers/config.ts";
 import { modelPreferenceRoutes } from "./providers/preferences.ts";
 import { LocalThreads } from "./threads.ts";
 import { WorkspaceService } from "./workspace.ts";
+import { workspaceReadEtag } from "./workspace-etag.ts";
 
 export async function createApp(
   db: Store,
@@ -490,7 +491,14 @@ export async function createApp(
     "*",
     cors({
       origin: (origin) => (origins.has(origin) ? origin : undefined),
-      allowHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-OpenMuse-CSRF"],
+      allowHeaders: [
+        "Content-Type",
+        "Authorization",
+        "Idempotency-Key",
+        "X-OpenMuse-CSRF",
+        "If-None-Match",
+      ],
+      exposeHeaders: ["ETag"],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       credentials: true,
     }),
@@ -824,9 +832,15 @@ export async function createApp(
       ),
     ),
   );
-  app.get("/api/conversations/:threadId/interactions", async (c) =>
-    c.json({ requests: await agent.interactions.list(c.get("owner"), c.req.param("threadId")) }),
-  );
+  app.get("/api/conversations/:threadId/interactions", async (c) => {
+    const owner = c.get("owner"),
+      threadId = c.req.param("threadId");
+    const etag = await workspaceReadEtag(db, owner, `interactions:${threadId}`);
+    c.header("ETag", etag);
+    c.header("Cache-Control", "private, no-cache");
+    if (c.req.header("If-None-Match") === etag) return c.body(null, 304);
+    return c.json({ requests: await agent.interactions.list(owner, threadId) });
+  });
   if (manualNative) app.route("/api/computer", manualNative.routes(auth));
   app.route("/api/computer", computerRoutes(computer, files));
   app.route("/api/computer/file-versions", fileVersionRoutes(computer.recovery));

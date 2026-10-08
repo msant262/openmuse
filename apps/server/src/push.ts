@@ -59,6 +59,7 @@ type Delivery = {
   deviceId: string;
   notificationId: string;
   leaseUntil?: string;
+  auditedStatus?: Delivery["status"];
 };
 type DeliveryIntent = {
   id: string;
@@ -236,11 +237,18 @@ export class PushService {
     };
   }
   private async auditReceipt(owner: string, delivery: Delivery) {
-    if (delivery.status === "sending") return;
+    if (delivery.status === "sending" || delivery.auditedStatus === delivery.status) return;
     const log = new ActionLog(this.db);
     if (delivery.status !== "suppressed") await log.append(owner, this.audit(delivery), "started");
     if (delivery.status === "pending") {
       await log.finish(owner, this.audit(delivery), "rejected_not_dispatched");
+      await this.db.compareAndSwap(
+        owner,
+        "push-deliveries",
+        delivery.id,
+        { status: delivery.status },
+        { auditedStatus: delivery.status },
+      );
       return;
     }
     await log.finish(
@@ -253,6 +261,13 @@ export class PushService {
           : delivery.status === "outcome_unknown"
             ? "outcome_unknown"
             : "failed",
+    );
+    await this.db.compareAndSwap(
+      owner,
+      "push-deliveries",
+      delivery.id,
+      { status: delivery.status },
+      { auditedStatus: delivery.status },
     );
   }
   private active = new Set<Promise<unknown>>();
@@ -287,7 +302,7 @@ export class PushService {
     );
   }
   async recover() {
-    for (const { owner, value } of await this.db.scan<Delivery>("push-deliveries")) {
+    for (const { owner, value } of await this.db.pushRecoveryDeliveries<Delivery>()) {
       if (
         value.status === "sending" &&
         (!value.leaseUntil || Date.parse(value.leaseUntil) < Date.now())
@@ -304,9 +319,9 @@ export class PushService {
           await this.db.notificationDelivery(owner, value.notificationId, "outcome_unknown");
       }
     }
-    for (const { owner, value } of await this.db.scan<Delivery>("push-deliveries"))
+    for (const { owner, value } of await this.db.pushRecoveryDeliveries<Delivery>())
       await this.auditReceipt(owner, value);
-    for (const { owner, value } of await this.db.scan<DeliveryIntent>("push-intents")) {
+    for (const { owner, value } of await this.db.pushRecoveryIntents<DeliveryIntent>()) {
       const notice = await this.db.get<AgentNotification>(owner, "notifications", value.id);
       if (!notice) continue;
       if (value.status === "pending") await this.deliver(owner, notice);

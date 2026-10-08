@@ -9,6 +9,30 @@ import { createStore } from "../apps/server/src/db.ts";
 import { nativePushAdapters, PushService } from "../apps/server/src/push.ts";
 import type { AgentNotification } from "../packages/domain/src/agent.ts";
 
+test("settled notifications leave the recovery queue without repeated audit writes or historical reads", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  const push = new PushService(db, { ios: async () => "accepted" });
+  await push.register("owner", { installationId: "phone", platform: "ios", token: "b".repeat(64) });
+  await push.notify("owner", {
+    id: "settled",
+    title: "Research finished",
+    body: "Result",
+    read: false,
+    createdAt: new Date().toISOString(),
+  });
+  await push.recover();
+  const reads = t.mock.method(db, "get");
+  const audit = t.mock.method(db, "appendActionLog");
+  for (let i = 0; i < 10; i++) await push.recover();
+  assert.equal(reads.mock.calls.length, 0);
+  assert.equal(audit.mock.calls.length, 0);
+  // A partially saved notification status still reconciles, without another native send.
+  await db.compareAndSwap("owner", "notifications", "settled", {}, { nativeDelivery: "pending" });
+  await push.recover();
+  assert.equal((await db.get("owner", "notifications", "settled"))?.nativeDelivery, "accepted");
+});
+
 test("native notification stays durable with explicit missing credentials and private device tokens", async () => {
   const db = await createStore();
   try {

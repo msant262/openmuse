@@ -157,9 +157,7 @@ export class TaskJournal {
   evidenceBefore?: (owner: string, task: AgentTask) => Promise<void>;
   constructor(readonly db: Store) {}
   async operations(owner: string, taskId: string) {
-    return (await this.db.list<JournalOperation>(owner, "task-operations"))
-      .filter((op) => op.taskId === taskId)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    return this.db.taskOperations<JournalOperation>(owner, taskId);
   }
   async requiredHistoryIds(owner: string, taskId: string) {
     return (await this.operations(owner, taskId))

@@ -518,8 +518,14 @@ export class WorkspaceService {
             ...(row.cachedAt ? { cachedAt: row.cachedAt } : {}),
           },
         }));
-    let mail = cachedRows(await this.db.list<CachedRow<Mail>>(owner, "mail"));
-    let events = cachedRows(await this.db.list<CachedRow<CalendarEvent>>(owner, "events"));
+    let mail =
+      section === "all" || section === "mail"
+        ? cachedRows(await this.db.list<CachedRow<Mail>>(owner, "mail"))
+        : [];
+    let events =
+      section === "all" || section === "calendar"
+        ? cachedRows(await this.db.list<CachedRow<CalendarEvent>>(owner, "events"))
+        : [];
     const describe = (rows: (Mail | CalendarEvent)[], requested: boolean): WorkspaceSource =>
       workspaceSourceSchema.parse({
         status: !requested
@@ -647,10 +653,18 @@ export class WorkspaceService {
       },
       mail: mail.sort((a, b) => b.date.localeCompare(a.date)),
       events: events.sort((a, b) => a.start.localeCompare(b.start)),
-      files: await this.files.list(owner),
-      browsers: await this.db.list<BrowserSession>(owner, "browsers"),
-      actions: await this.db.visibleRecords<ActionProposal>(owner, "actions"),
-      activity: await this.db.visibleRecords<ActivityEntry>(owner, "activity"),
+      files: ["all", "files", "essential"].includes(section) ? await this.files.list(owner) : [],
+      browsers: ["all", "browser", "essential"].includes(section)
+        ? await this.db.list<BrowserSession>(owner, "browsers")
+        : [],
+      actions:
+        section === "all" || section === "essential"
+          ? await this.db.visibleRecords<ActionProposal>(owner, "actions")
+          : [],
+      activity:
+        section === "all" || section === "essential"
+          ? await this.db.visibleRecords<ActivityEntry>(owner, "activity")
+          : [],
       connections: [
         {
           id: "google",
