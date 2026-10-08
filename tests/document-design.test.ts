@@ -10,7 +10,7 @@ import {
 import { createDesignedPdf } from "../packages/integrations/src/document-pdf.ts";
 
 test("native document tool JSON Schema accepts uppercase and lowercase color codes", () => {
-  const schema = z.toJSONSchema(documentDesignSchema) as {
+  const schema = z.toJSONSchema(documentDesignSchema) as unknown as {
     properties: { palette: { properties: { paper: { pattern: string } } } };
   };
   const pattern = new RegExp(schema.properties.palette.properties.paper.pattern);

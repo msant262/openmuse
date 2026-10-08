@@ -32,7 +32,7 @@ test("a blocked worker heartbeat does not accumulate another write for every tim
     }
     return put(...args);
   });
-  const worker = new TaskWorker(db, async () => {});
+  const worker = new TaskWorker(db, async () => ({}));
   t.after(async () => {
     release();
     await worker.stop();
