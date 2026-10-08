@@ -129,6 +129,7 @@ test("reading an internal document preview cannot promote it to a task or chat a
   });
   assert.equal(preview.attachment, false);
   assert.equal(preview.fileImage, true);
+  assert.deepEqual(preview.hyperlinks, [{ page: 1, urls: [] }]);
   assert.deepEqual(attachments, [document.fileId]);
   const reread = await execute("view_file", { fileId: preview.fileId });
   assert.equal(reread.attachment, false, "view_file must preserve internal preview status");
@@ -148,6 +149,34 @@ test("reading an internal document preview cannot promote it to a task or chat a
     (await server.agent.detail("owner", task.id)).files.map((file) => file.id),
     [document.fileId],
   );
+});
+
+test("document inspection proves actual hyperlinks separately from its page pixels", async (t) => {
+  const server = await taskRuntime(t);
+  const result = await server.agent.media.createDocument(
+    "owner",
+    {
+      ...documentArgs,
+      content: "[Curso de IA](https://courses.example/ai)\n\nhttps://courses.example/certificate",
+      operationId: "link-evidence",
+    },
+    "link-evidence",
+  );
+  const preview = await server.agent.media.inspectDocument(
+    "owner",
+    {
+      fileId: result.fileId,
+      startPage: 1,
+      pageCount: 2,
+    },
+    "link-evidence",
+    0,
+  );
+  assert.deepEqual(preview.hyperlinks, [
+    { page: 1, urls: ["https://courses.example/ai", "https://courses.example/certificate"] },
+  ]);
+  assert.match(preview.instruction, /PNG cannot show whether text is clickable/);
+  assert.equal(preview.attachment, false);
 });
 
 test("interrupted document inspection recovers private preview bytes without delivering them", async (t) => {

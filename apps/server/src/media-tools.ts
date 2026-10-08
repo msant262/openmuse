@@ -23,6 +23,7 @@ import {
   documentRendererVersion,
   renderDocument,
 } from "../../../packages/integrations/src/document-render.ts";
+import { inspectPdfHyperlinks } from "../../../packages/integrations/src/pdf.ts";
 import { ActionLog } from "./action-log.ts";
 import { base64Limit, decodeBase64 } from "./base64.ts";
 import {
@@ -370,9 +371,10 @@ export class MediaService {
       ...(generation.design && { design: generation.design }),
       pageCount: rendered.pageCount,
       pages: rendered.pages,
+      hyperlinks: await inspectPdfHyperlinks(rendered.pdfBytes, rendered.pages),
       nextPage: rendered.pages.at(-1)! < rendered.pageCount ? rendered.pages.at(-1)! + 1 : null,
       instruction:
-        "Examine the actual pixels against the applied design and its rationale, not only clipping/readability. Assess dominant message, hierarchy, typography, meaningful composition/visuals and consistency with the intended audience. Report concrete mismatches (for example all slides use the same text layout despite a process/comparison brief); ordinary whitespace is not a defect. Do not approve a generic template merely because it has no overlap. Use confirm_document_review in the next turn. Correct a failed draft with create_document.replaceFileId and a fresh operationId, then inspect its new bytes.",
+        "Examine the actual pixels against the applied design and its rationale, including hierarchy, typography, clipping, readability and data accuracy. Report concrete defects that prevent faithful delivery. Ordinary whitespace, a continuous section crossing a page, or text checkboxes alone are not failed-review reasons. The hyperlinks field reads actual PDF link annotations: a PNG cannot show whether text is clickable. Do not claim missing links when those URLs are present in this metadata. Use confirm_document_review in the next turn. Correct a failed draft with create_document.replaceFileId and a fresh operationId, then inspect its new bytes. Keep the requested output format; internal rendering and optional polish are not decisions to send back to the user.",
     };
   }
   async imageCapabilities(model: string | undefined) {

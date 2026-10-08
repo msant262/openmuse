@@ -70,6 +70,27 @@ async function loadPdf(bytes: Uint8Array): Promise<PDFDocument> {
   }
 }
 
+/** Read actual link annotations; rasterized page images cannot prove clickability. */
+export async function inspectPdfHyperlinks(bytes: Uint8Array, pages: number[]) {
+  const doc = await loadPdf(bytes);
+  return pages.map((number) => {
+    if (!Number.isInteger(number) || number < 1 || number > doc.getPageCount())
+      throw new PdfError("PDF hyperlink inspection page is invalid");
+    const annotations = doc.getPage(number - 1).node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+    const links = new Set<string>();
+    for (let i = 0; annotations && i < annotations.size(); i++) {
+      const annotation = annotations.lookup(i, PDFDict);
+      const action = annotation.lookupMaybe(PDFName.of("A"), PDFDict);
+      const uri = action?.lookup(PDFName.of("URI"));
+      if (uri instanceof PDFString || uri instanceof PDFHexString) {
+        const url = uri.decodeText();
+        if (/^(https?:|mailto:)/i.test(url)) links.add(url);
+      }
+    }
+    return { page: number, urls: [...links] };
+  });
+}
+
 function inspectField(field: PDFField): PdfInspection["fields"][number] {
   const name = field.getName();
   if (field instanceof PDFTextField) {
