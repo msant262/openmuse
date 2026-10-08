@@ -5,7 +5,7 @@ import { resolveApiOrigin } from "./api-origin";
 import { AuthManager, type Session, type SessionTransport } from "./auth-manager";
 import { authenticatedFetch, authenticatedUpload } from "./auth-transport";
 import { ComputerRequests, durableComputerPath } from "./computer-requests";
-import { ConditionalJson } from "./conditional-json";
+import { ConditionalJson, invalidatesReadCache } from "./conditional-json";
 import { createCredentialStorage } from "./credential-storage";
 import { messageStorage } from "./message-storage";
 import { withWebSessionLock } from "./web-session-coordinator";
@@ -73,7 +73,7 @@ export class MuseApi {
       this.conditional.clear();
       this.conditionalIdentity = this.identityKey;
     }
-    if (verb !== "GET") this.conditional.clear();
+    if (invalidatesReadCache(path, verb)) this.conditional.clear();
     const conditional =
       verb === "GET" &&
       (path === "/api/agent" || /^\/api\/conversations\/[^/]+\/interactions$/.test(path));

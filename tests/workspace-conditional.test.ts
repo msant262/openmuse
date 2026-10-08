@@ -7,6 +7,8 @@ import { createApp } from "../apps/server/src/app.ts";
 import { createStore } from "../apps/server/src/db.ts";
 
 test("unchanged app refresh returns no payload or rebuilt workspace; new data invalidates it", async (t) => {
+  const now = Date.now();
+  t.mock.method(Date, "now", () => now);
   const directory = await mkdtemp(join(tmpdir(), "okami-conditional-"));
   const db = await createStore();
   t.after(async () => {
@@ -72,4 +74,23 @@ test("unchanged app refresh returns no payload or rebuilt workspace; new data in
   assert.equal(repeat.status, 304);
   assert.equal(cards.mock.calls.length, 1);
   assert.notEqual(cardEtag, etag, "different resources cannot share a cached response");
+  // Idle desktop polling and persisted model receipts cannot redraw every card.
+  await db.put("local-user", "task-operations", { id: "old-receipt", taskId: "old-task" });
+  await db.put("local-user", "computer-commands", { id: "screen-refresh", status: "completed" });
+  await db.put("local-user", "tasks", { id: "unrelated", status: "running" });
+  const stillUnchanged = await server.app.request(path, {
+    headers: { ...headers, "If-None-Match": cardEtag },
+  });
+  assert.equal(stillUnchanged.status, 304);
+  assert.equal(cards.mock.calls.length, 1);
+  // A change to the waiting card's own task must invalidate it immediately.
+  await db.put("local-user", "interaction-requests", {
+    id: "card",
+    threadId: "research",
+    taskId: "related",
+    status: "waiting",
+  });
+  const relatedVersion = await db.workspaceVersion("local-user", "interactions:research");
+  await db.put("local-user", "tasks", { id: "related", status: "cancelled" });
+  assert.notEqual(await db.workspaceVersion("local-user", "interactions:research"), relatedVersion);
 });

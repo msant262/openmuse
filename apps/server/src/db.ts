@@ -31,12 +31,22 @@ interface Database {
 }
 
 export class Store {
-  async workspaceVersion(owner: string): Promise<string> {
+  async workspaceVersion(owner: string, resource = "agent"): Promise<string> {
+    const threadId = resource.startsWith("interactions:") ? resource.slice(13) : null;
     const result = await this.db.query(
-      `SELECT jsonb_build_object('owner',(SELECT jsonb_build_array(count(*),max(updated_at)) FROM records WHERE owner=$1),
+      `SELECT jsonb_build_object('owner',(SELECT jsonb_build_array(count(*),max(updated_at)) FROM records record WHERE owner=$1 AND
+        CASE WHEN $2::text IS NOT NULL THEN
+          (kind='interaction-requests' AND data->>'threadId'=$2) OR
+          (kind='tasks' AND EXISTS(SELECT 1 FROM records request WHERE request.owner=$1 AND request.kind='interaction-requests'
+            AND request.data->>'threadId'=$2 AND request.data->>'taskId'=record.id))
+        ELSE kind IN ('tasks','goals','monitors','ideas','memories','memory-suppressions','agent-artifacts','notifications',
+          'agent-settings','agent-profiles','avatar-assets','avatar-generations','actions') OR
+          (kind='computer-commands' AND data->>'status' IN ('running','interrupted','timed_out')) OR
+          (kind='image-generations' AND data->>'status' IN ('pending','uncertain')) OR
+          (kind IN ('mcp-receipts','push-deliveries') AND data->>'status' IN ('sending','outcome_unknown')) END),
         'runtime',(SELECT jsonb_build_array(count(*),max(updated_at)) FROM records WHERE
-          (owner='__runtime__' AND kind='runtime-pause') OR kind='work-admissions')) AS data`,
-      [owner],
+          $2::text IS NULL AND ((owner='__runtime__' AND kind='runtime-pause') OR kind='work-admissions'))) AS data`,
+      [owner, threadId],
     );
     return JSON.stringify(result.rows[0].data);
   }

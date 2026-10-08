@@ -204,12 +204,12 @@ export class BrowserService {
   }
   async hasUncertainDispatch(owner: string, taskId: string) {
     if (!this.router) return false;
-    const operations = await this.db.list<{
+    const operations = await this.db.taskOperations<{
       taskId: string;
       toolName: string;
       status: string;
       effect: boolean;
-    }>(owner, "task-operations");
+    }>(owner, taskId);
     if (
       !operations.some(
         (operation) =>

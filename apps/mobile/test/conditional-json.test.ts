@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ConditionalJson } from "../src/conditional-json.ts";
+import { ConditionalJson, invalidatesReadCache } from "../src/conditional-json.ts";
+
+test("periodic social reads preserve checkpoints while real decisions invalidate them", () => {
+  assert.equal(invalidatesReadCache("/api/conversations/research/social/window", "POST"), false);
+  assert.equal(invalidatesReadCache("/api/conversations/research/interactions", "GET"), false);
+  assert.equal(invalidatesReadCache("/api/conversations/research/messages", "POST"), true);
+  assert.equal(invalidatesReadCache("/api/agent/actions/action/decide", "POST"), true);
+  assert.equal(invalidatesReadCache("/api/conversations/research/social/message", "POST"), true);
+});
 
 test("unchanged workspace reads retain object identity; mutations and account changes clear it", () => {
   const first = new ConditionalJson();

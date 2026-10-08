@@ -1,5 +1,13 @@
 export type JsonCheckpoint<T> = { etag: string; value: T };
 
+/** The social window uses POST only to carry message IDs; it is a read. */
+export function invalidatesReadCache(path: string, method: string) {
+  return (
+    method !== "GET" &&
+    !(method === "POST" && /^\/api\/conversations\/[^/]+\/social\/window$/.test(path))
+  );
+}
+
 /** Cache only within one authenticated API instance; a 304 retains object identity. */
 export class ConditionalJson {
   private entries = new Map<string, JsonCheckpoint<unknown>>();
