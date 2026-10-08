@@ -12,7 +12,7 @@ import { memoryInput } from "../memory.ts";
 import { playbookRoutes } from "../playbooks.ts";
 import { proactivityRoutes } from "../proactivity/routes.ts";
 import { routineInput } from "../routines.ts";
-import { workspaceReadEtag } from "../workspace-etag.ts";
+import { matchesReadEtag, workspaceReadEtag } from "../workspace-etag.ts";
 import type { AgentService } from "./service.ts";
 import { taskTimingUpdateSchema } from "./task-timing.ts";
 
@@ -57,7 +57,7 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     const etag = await workspaceReadEtag(service.db, owner, "agent");
     c.header("ETag", etag);
     c.header("Cache-Control", "private, no-cache");
-    if (c.req.header("If-None-Match") === etag) return c.body(null, 304);
+    if (matchesReadEtag(c.req.header("If-None-Match"), etag)) return c.body(null, 304);
     return c.json(await service.snapshot(owner));
   });
   app.get("/profile", async (c) =>

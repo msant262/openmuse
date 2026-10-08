@@ -47,6 +47,15 @@ test("unchanged app refresh returns no payload or rebuilt workspace; new data in
   assert.equal(unchanged.status, 304);
   assert.equal(await unchanged.text(), "");
   assert.equal(snapshot.mock.calls.length, calls);
+  const compressedProxy = await server.app.request("/api/agent", {
+    headers: { ...headers, "If-None-Match": `"other", W/${etag}` },
+  });
+  assert.equal(
+    compressedProxy.status,
+    304,
+    "compressed public responses keep the same read validator",
+  );
+  assert.equal(snapshot.mock.calls.length, calls);
   await db.put("local-user", "notifications", {
     id: "new",
     title: "New result",
@@ -69,7 +78,7 @@ test("unchanged app refresh returns no payload or rebuilt workspace; new data in
   const cardEtag = initial.headers.get("ETag");
   assert.ok(cardEtag);
   const repeat = await server.app.request(path, {
-    headers: { ...headers, "If-None-Match": cardEtag },
+    headers: { ...headers, "If-None-Match": `W/${cardEtag}` },
   });
   assert.equal(repeat.status, 304);
   assert.equal(cards.mock.calls.length, 1);

@@ -85,7 +85,7 @@ import { modelProviderConfig } from "./providers/config.ts";
 import { modelPreferenceRoutes } from "./providers/preferences.ts";
 import { LocalThreads } from "./threads.ts";
 import { WorkspaceService } from "./workspace.ts";
-import { workspaceReadEtag } from "./workspace-etag.ts";
+import { matchesReadEtag, workspaceReadEtag } from "./workspace-etag.ts";
 
 export async function createApp(
   db: Store,
@@ -838,7 +838,7 @@ export async function createApp(
     const etag = await workspaceReadEtag(db, owner, `interactions:${threadId}`);
     c.header("ETag", etag);
     c.header("Cache-Control", "private, no-cache");
-    if (c.req.header("If-None-Match") === etag) return c.body(null, 304);
+    if (matchesReadEtag(c.req.header("If-None-Match"), etag)) return c.body(null, 304);
     return c.json({ requests: await agent.interactions.list(owner, threadId) });
   });
   if (manualNative) app.route("/api/computer", manualNative.routes(auth));
