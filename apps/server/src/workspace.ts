@@ -518,14 +518,12 @@ export class WorkspaceService {
             ...(row.cachedAt ? { cachedAt: row.cachedAt } : {}),
           },
         }));
-    let mail =
-      section === "all" || section === "mail"
-        ? cachedRows(await this.db.list<CachedRow<Mail>>(owner, "mail"))
-        : [];
-    let events =
-      section === "all" || section === "calendar"
-        ? cachedRows(await this.db.list<CachedRow<CalendarEvent>>(owner, "events"))
-        : [];
+    let mail = ["all", "mail", "essential"].includes(section)
+      ? cachedRows(await this.db.list<CachedRow<Mail>>(owner, "mail"))
+      : [];
+    let events = ["all", "calendar", "essential"].includes(section)
+      ? cachedRows(await this.db.list<CachedRow<CalendarEvent>>(owner, "events"))
+      : [];
     const describe = (rows: (Mail | CalendarEvent)[], requested: boolean): WorkspaceSource =>
       workspaceSourceSchema.parse({
         status: !requested
