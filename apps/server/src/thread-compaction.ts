@@ -1,4 +1,4 @@
-import { AbstractAgent, type BaseEvent, compactEvents, type Message } from "@ag-ui/client";
+import { AbstractAgent, type BaseEvent, EventType, type Message } from "@ag-ui/client";
 import { of } from "rxjs";
 import { z } from "zod";
 import type { Store } from "./db.ts";
@@ -12,9 +12,41 @@ type ReplayableRun = {
 };
 /** The same durable event projection serves full history, recovery and bounded pages. */
 export async function replayThreadSnapshot(run: ReplayableRun, events = run.events) {
+  // Merge only consecutive token/argument deltas. The generic AG-UI compactor
+  // folds STATE_DELTA against an empty state, losing this run's initialState.
+  // Preserve state, metadata and protocol ordering exactly as persisted.
+  const compacted: BaseEvent[] = [];
+  for (const event of events) {
+    const previous = compacted.at(-1);
+    if (
+      previous &&
+      !previous.metadata &&
+      !event.metadata &&
+      previous.type === event.type &&
+      ((event.type === EventType.TEXT_MESSAGE_CONTENT &&
+        "messageId" in previous &&
+        "messageId" in event &&
+        previous.messageId === event.messageId) ||
+        (event.type === EventType.TOOL_CALL_ARGS &&
+          "toolCallId" in previous &&
+          "toolCallId" in event &&
+          previous.toolCallId === event.toolCallId)) &&
+      "delta" in previous &&
+      typeof previous.delta === "string" &&
+      "delta" in event &&
+      typeof event.delta === "string"
+    ) {
+      compacted[compacted.length - 1] = {
+        ...previous,
+        delta: previous.delta + event.delta,
+      } as BaseEvent;
+    } else {
+      compacted.push(event);
+    }
+  }
   class ReplayAgent extends AbstractAgent {
     run() {
-      return of(...compactEvents(events));
+      return of(...compacted);
     }
   }
   const reader = new ReplayAgent();

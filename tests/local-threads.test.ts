@@ -997,7 +997,15 @@ test("active reconnect drains the durable tail when completion follows its captu
         .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
         .map((event) => ("delta" in event ? event.delta : ""))
         .join(""),
-      "Partial final",
+      " final",
+    );
+    const checkpoint = events.find((event) => event.type === EventType.MESSAGES_SNAPSHOT);
+    assert.ok(checkpoint && "messages" in checkpoint);
+    assert.equal(
+      (checkpoint.messages as RunAgentInput["messages"]).find(
+        (message) => message.id === "controlled",
+      )?.content,
+      "Partial",
     );
     assert.equal(events.filter((event) => event.type === EventType.TEXT_MESSAGE_END).length, 1);
     const history = await threads.history("wife", "tail");
