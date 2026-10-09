@@ -24,7 +24,7 @@ import { computerTools } from "../computer-tools.ts";
 import type { Config } from "../config.ts";
 import type { InboxMessage } from "../conversation-inbox.ts";
 import { genericCredentialTools } from "../generic-credential-tools.ts";
-import { googleAgentContext } from "../google-agent-context.ts";
+import { googleAgentContext, googleTaskTools } from "../google-agent-context.ts";
 import { googleWorkspaceTools } from "../google-workspace-tools.ts";
 import { createJevAdapter, type JevAdapter } from "../jev/adapter.ts";
 import { JevService } from "../jev/service.ts";
@@ -35,6 +35,11 @@ import { buildProfileContext } from "../profile-context.ts";
 import { modelProviderConfig } from "../providers/config.ts";
 import { routingCapabilities } from "../providers/model-capabilities.ts";
 import { modelSelection, selectionContextModel } from "../providers/preferences.ts";
+import {
+  publicSourceReadDescription,
+  publicSourceReadSchema,
+  readPublicSource,
+} from "../public-source-cache.ts";
 import { preservePublicSource, publicReadDescription, readablePage } from "../public-web.ts";
 import { runtimeTool } from "../runtime-tools.ts";
 import { SkillCatalog, skillTools } from "../skill-catalog.ts";
@@ -622,11 +627,22 @@ export class ConversationAgent extends AbstractAgent {
       ),
       ...searchTools(this.service.search, this.owner, { signal: browserAbort.signal }),
       defineTool({
+        name: "read_web_source",
+        description: publicSourceReadDescription,
+        parameters: publicSourceReadSchema,
+        execute: (args) => readPublicSource(this.service.files, this.owner, args),
+      }),
+      defineTool({
         name: "web_fetch",
         description: publicReadDescription,
         parameters: z.object({
           url: z.url().max(4096),
-          mode: z.enum(["auto", "http", "headless", "browser"]).default("auto"),
+          mode: z
+            .enum(["auto", "http", "headless", "browser"])
+            .default("auto")
+            .describe(
+              "Use auto for the first read. Only request headless after an actual HTTP read fails to expose the required JavaScript content.",
+            ),
           maxChars: z
             .number()
             .int()
@@ -1048,28 +1064,17 @@ export class ConversationAgent extends AbstractAgent {
         const [profile, reactions, taskSnapshot] = await Promise.all([
           this.service.profiles.get(this.owner, input.threadId),
           this.service.db.list<MessageReaction>(this.owner, "message-reactions"),
-          this.service.db.list<import("../../../../packages/domain/src/agent.ts").AgentTask>(
-            this.owner,
-            "tasks",
-          ),
+          this.service.db.conversationTaskContext(this.owner, input.threadId),
         ]);
         return (
           (await humanizerContext(this.config, this.owner)) +
-          (await googleAgentContext(this.service.workspace, this.owner)) +
+          (await googleAgentContext(
+            this.service.workspace,
+            this.owner,
+            googleTaskTools(latestText),
+          )) +
           "\nSaved conversation work (historical receipt data, not new observations). Use continue_task only for corrections to unfinished work, avoiding a competing task. Tasks with status succeeded, failed or cancelled have ended. A renewed request or current lookup after those tasks needs a new delegate_task; an old result does not fulfill it. For a question about saved progress or results, use agent_status or inspect_task: " +
-          JSON.stringify(
-            taskSnapshot
-              .filter((t) => t.originThreadId === input.threadId)
-              .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-              .slice(0, 6)
-              .map((t) => ({
-                taskId: t.id,
-                title: t.title,
-                status: t.status,
-                request: t.prompt,
-                result: t.result?.slice(0, 1500),
-              })),
-          ) +
+          JSON.stringify(taskSnapshot) +
           companionMessageContext(
             input.messages,
             reactions.filter((r) => r.threadId === input.threadId),

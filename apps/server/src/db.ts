@@ -589,6 +589,50 @@ export class Store {
     );
     return result.rows.map((row) => row.data as T);
   }
+  async workspaceTasks<T>(owner: string): Promise<T[]> {
+    const result = await this.db.query(
+      `SELECT data || jsonb_build_object('state',COALESCE(data->'state','{}'::jsonb)-ARRAY['providerCheckpoint','conversationContext','delegatedBrief']) AS data
+       FROM records WHERE owner=$1 AND kind='tasks' AND data->>'deletedAt' IS NULL AND data->>'historyHiddenAt' IS NULL
+       ORDER BY updated_at DESC,id`,
+      [owner],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  async deletedTaskIds(owner: string): Promise<string[]> {
+    const result = await this.db.query(
+      "SELECT jsonb_build_object('id',id) AS data FROM records WHERE owner=$1 AND kind='tasks' AND data->>'deletedAt' IS NOT NULL",
+      [owner],
+    );
+    return result.rows.map((row) => row.data.id as string);
+  }
+  async activeTaskIds(owner: string): Promise<string[]> {
+    const result = await this.db.query(
+      "SELECT jsonb_build_object('id',id) AS data FROM records WHERE owner=$1 AND kind='tasks' AND data->>'status' IN ('running','waiting_job')",
+      [owner],
+    );
+    return result.rows.map((row) => row.data.id as string);
+  }
+  async workspaceOperationCounts(owner: string): Promise<{ active: number; uncertain: number }> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('active',count(*) FILTER(WHERE
+         (kind='computer-commands' AND data->>'status'='running') OR (kind='image-generations' AND data->>'status'='pending') OR
+         (kind IN ('mcp-receipts','push-deliveries') AND data->>'status'='sending')),
+       'uncertain',count(*) FILTER(WHERE (kind='computer-commands' AND data->>'status' IN ('interrupted','timed_out')) OR
+         (kind='image-generations' AND data->>'status'='uncertain') OR (kind IN ('mcp-receipts','push-deliveries') AND data->>'status'='outcome_unknown'))) AS data
+       FROM records WHERE owner=$1 AND kind IN ('computer-commands','image-generations','mcp-receipts','push-deliveries')`,
+      [owner],
+    );
+    return result.rows[0].data as { active: number; uncertain: number };
+  }
+  async conversationTaskContext(owner: string, threadId: string) {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('taskId',id,'title',data->>'title','status',data->>'status','request',data->>'prompt','result',left(data->>'result',1500)) AS data
+       FROM records WHERE owner=$1 AND kind='tasks' AND data->>'originThreadId'=$2 AND data->>'deletedAt' IS NULL
+       ORDER BY data->>'createdAt' DESC,id LIMIT 6`,
+      [owner, threadId],
+    );
+    return result.rows.map((row) => row.data);
+  }
   /** Presentation archive keeps canonical records available to receipts and reconciliation. */
   async visibleRecords<T>(owner: string, kind: string): Promise<T[]> {
     const result = await this.db.query(
@@ -755,6 +799,38 @@ export class Store {
       [owner, id, JSON.stringify(expected), JSON.stringify(patch)],
     );
     return (result.rows[0]?.data as T | undefined) ?? null;
+  }
+  async taskMaintenanceCandidates<T>(phase: "recovery" | "native") {
+    const condition =
+      phase === "native"
+        ? "data->>'status'<>'running' AND (data->'state'->>'nativeCleanupPending'='true' OR data->'state'->>'nativeAdmissionPending'='true')"
+        : `(data->>'status'='waiting_input' AND jsonb_typeof(data->'state'->'reconcilingOperationIds')='array' AND data->'state'->'reconcilingOperationIds'<>'[]'::jsonb)
+         OR (data->>'status'='waiting_provider' AND data->>'nextRunAt' IS NULL AND data->'state'->'providerCheckpoint'->>'code'='MODEL_PROVIDER_INTERRUPTED' AND data->'state'->'providerCheckpoint'->>'accepted'='true')`;
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('owner',owner,'value',data) AS data FROM records WHERE kind='tasks' AND (${condition}) ORDER BY updated_at,id`,
+    );
+    return result.rows.map((row) => row.data as unknown as { owner: string; value: T });
+  }
+  /** Recover only changed outcomes. Database row versions also detect patches
+   * that preserve the task's user-facing updatedAt field. Historical payloads
+   * stay in the database once their publication has completed. */
+  async pendingTaskOutcomes<T>(owner?: string, id?: string) {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('owner',task.owner,'value',task.data,'version',task.updated_at::text) AS data
+       FROM records task WHERE task.kind='tasks' AND ($1::text IS NULL OR task.owner=$1) AND ($2::text IS NULL OR task.id=$2)
+       AND task.data->>'deletedAt' IS NULL AND task.data->'input'->>'internalActivity' IS DISTINCT FROM 'true'
+       AND task.data->'input'->>'proactivityCycleId' IS NULL
+       AND NOT EXISTS(SELECT 1 FROM records receipt WHERE receipt.owner=task.owner AND receipt.kind='task-outcome-publications'
+         AND receipt.id=task.id AND receipt.data->>'recordVersion'=task.updated_at::text)
+       ORDER BY task.updated_at,task.id LIMIT $3`,
+      [owner ?? null, id ?? null, id ? 1 : 100],
+    );
+    return result.rows.map(
+      (row) => row.data as unknown as { owner: string; value: T; version: string },
+    );
+  }
+  async recordTaskOutcomePublication(owner: string, taskId: string, recordVersion: string) {
+    await this.put(owner, "task-outcome-publications", { id: taskId, recordVersion });
   }
   /** Indexed work queue; priority ordering is applied by the scheduler after this bounded read. */
   async eligibleTasks<T>(now: string, limit = 200): Promise<{ owner: string; value: T }[]> {

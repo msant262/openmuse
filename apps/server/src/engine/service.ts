@@ -402,13 +402,15 @@ export class AgentService {
     try {
       const globallyPaused = (await this.runtimePause.get("__runtime__")).paused;
       if (!globallyPaused)
-        for (const { owner, value } of await this.db.scan<AgentTask>("tasks")) {
+        for (const { owner, value } of await this.db.taskMaintenanceCandidates<AgentTask>(
+          "recovery",
+        )) {
           await this.recoverGoogleRead(owner, value);
           await this.recoverInterruptedProvider(owner, value);
         }
       // Confirmed native cleanup must free occupancy even when a separate
       // connector or audit repair fails later in this maintenance cycle.
-      for (const { owner, value } of await this.db.scan<AgentTask>("tasks")) {
+      for (const { owner, value } of await this.db.taskMaintenanceCandidates<AgentTask>("native")) {
         if (
           (value.state.nativeCleanupPending === true ||
             value.state.nativeAdmissionPending === true) &&
@@ -451,7 +453,7 @@ export class AgentService {
       await new ActionLog(this.db).reconcile();
       if (!globallyPaused) await this.monitorObservations.flush();
       // Recover publications if the process exited after committing an outcome.
-      for (const { owner, value } of await this.db.scan<AgentTask>("tasks"))
+      for (const { owner, value } of await this.db.pendingTaskOutcomes<AgentTask>())
         await this.publishOutcome(owner, value);
       if (!globallyPaused)
         for (const { owner, value } of await this.db.scan<Monitor>("monitors"))
@@ -621,13 +623,12 @@ export class AgentService {
       identity,
       runtimePause,
       actions,
-      computerCommands,
-      imageGenerations,
-      mcpReceipts,
-      pushDeliveries,
+      operationCounts,
+      activeTaskIds,
+      deletedTaskIds,
       admissions,
     ] = await Promise.all([
-      this.db.list<AgentTask & { historyHiddenAt?: string }>(owner, "tasks"),
+      this.db.workspaceTasks<AgentTask>(owner),
       this.db.list<Goal>(owner, "goals"),
       this.db.list<Monitor>(owner, "monitors"),
       this.db.list<Idea>(owner, "ideas"),
@@ -643,17 +644,16 @@ export class AgentService {
       this.db.get<AgentIdentity>(owner, "agent-settings", "identity"),
       this.runtimePause.get(owner),
       this.db.visibleRecords<ActionProposal>(owner, "actions"),
-      this.db.list<{ status: string }>(owner, "computer-commands"),
-      this.db.list<{ status: string }>(owner, "image-generations"),
-      this.db.list<{ status: string }>(owner, "mcp-receipts"),
-      this.db.list<{ status: string }>(owner, "push-deliveries"),
+      this.db.workspaceOperationCounts(owner),
+      this.db.activeTaskIds(owner),
+      this.db.deletedTaskIds(owner),
       this.db.scan<{ id: string; hold?: boolean }>("work-admissions"),
     ]);
     const heartbeat = await this.db.get<{ lastTickAt: string }>("system", "worker-status", "tasks");
     const profile = await this.profiles.get(owner);
-    const removed = new Set(tasks.filter((task) => task.deletedAt).map((task) => task.id));
+    const removed = new Set(deletedTaskIds);
     return {
-      tasks: tasks.filter((task) => !task.deletedAt && !task.historyHiddenAt),
+      tasks,
       goals,
       monitors,
       ideas,
@@ -676,25 +676,13 @@ export class AgentService {
       runtimePause,
       runtimeStatus: {
         activeTasks: new Set([
-          ...tasks
-            .filter((task) => ["running", "waiting_job"].includes(task.status))
-            .map((task) => task.id),
+          ...activeTaskIds,
           ...admissions.filter(({ value }) => value.hold).map(({ value }) => value.id),
         ]).size,
-        activeOperations:
-          computerCommands.filter((command) => command.status === "running").length +
-          imageGenerations.filter((generation) => generation.status === "pending").length +
-          mcpReceipts.filter((receipt) => receipt.status === "sending").length +
-          pushDeliveries.filter((delivery) => delivery.status === "sending").length,
+        activeOperations: operationCounts.active,
         uncertainOperations:
           actions.filter((action) => ["executing", "outcome_unknown"].includes(action.status))
-            .length +
-          computerCommands.filter((command) =>
-            ["interrupted", "timed_out"].includes(command.status),
-          ).length +
-          imageGenerations.filter((generation) => generation.status === "uncertain").length +
-          mcpReceipts.filter((receipt) => receipt.status === "outcome_unknown").length +
-          pushDeliveries.filter((delivery) => delivery.status === "outcome_unknown").length,
+            .length + operationCounts.uncertain,
         executorConfirmation: "unavailable",
       },
       worker: {
@@ -2189,10 +2177,11 @@ export class AgentService {
     };
   }
   private async publishOutcome(owner: string, saved: AgentTask) {
-    // Historical scans include logically removed work. Removal racing this
-    // scan must not stop every owner's learning and heartbeat with a 404.
-    const task = await this.db.get<AgentTask>(owner, "tasks", saved.id);
-    if (!task || task.deletedAt) return;
+    // Read the latest unpublished row version. Concurrent removal or an
+    // already published outcome must not interrupt maintenance with a 404.
+    const record = (await this.db.pendingTaskOutcomes<AgentTask>(owner, saved.id))[0];
+    if (!record) return;
+    const task = record.value;
     if (typeof task.input.proactivityCycleId === "string" || task.input.internalActivity === true)
       return;
     await this.playbooks.recordOutcome(owner, task.id);
@@ -2405,6 +2394,7 @@ export class AgentService {
         { status: "active", error: task.error },
         { status: "paused" },
       );
+    await this.db.recordTaskOutcomePublication(owner, task.id, record.version);
   }
   private async document(
     owner: string,

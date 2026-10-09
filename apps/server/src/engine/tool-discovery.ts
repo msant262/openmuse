@@ -26,6 +26,7 @@ const eager = new Set([
   "search_gifs",
   "search_web",
   "web_fetch",
+  "read_web_source",
   "read_web_data",
   "web_extract",
   "reply_to_message",

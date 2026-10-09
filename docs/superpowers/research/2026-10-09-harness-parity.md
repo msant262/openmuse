@@ -74,4 +74,18 @@ Commit `cc19b84a` was published through a drained server-only handoff, with exit
 
 Latest affected regression run passed **98/98**, covering research/review, Code Mode, source extraction, public data, real loading deadlines, saved files and delivery verification. Root TypeScript and changed-file Biome passed (existing warnings remain). Tests establish boundaries and regressions; they do not substitute for ordinary model acceptance.
 
-The next guarded server publication and remaining capability acceptance are pending. Diagnostic conversations/devices/files belong only to this run; original user data, Google accounts, companions and historical uncertain effects must be preserved. **Whole-harness acceptance remains open.**
+Commit `7a6d17fd` was published with a drained server-only handoff in 31.35 seconds. Its ordinary free-course repeat still failed acceptance: after about six minutes it asked the user to relax the already explicit criteria instead of completing research and replacing unsuitable choices. The focused review correctly refused unconfirmed free access; correct rejection does not make the task usable or delivered.
+
+## Context and database investigation
+
+A reversible, local-only runtime probe measured repeated full task scans and hundreds of per-task reads by maintenance. Public research also received the entire unrelated Gmail/Calendar mutation guide in every task turn. Neither finding alone proves the complete cause of the observed heap exhaustion.
+
+- Maintenance now selects actual provider/read recovery and native cleanup candidates inside the database. Hidden native cleanup remains eligible; uncertain effects are preserved.
+- Outcome publication has a persisted database-row version receipt, recorded only after its publication work succeeds. Unchanged historical outcomes are not rehydrated. Any later row patch becomes eligible again, including patches that preserve the task's public `updatedAt`; startup backfill is bounded to 100 candidates per cycle. Pending thread publications retain their separate restart recovery.
+- Workspace snapshots filter hidden/deleted tasks before transfer, omit internal provider/conversation history and aggregate operation occupancy in SQL. Full canonical task detail remains available. Hidden active tasks still count toward occupancy and another owner's operations never enter the counts.
+- Foreground conversation context reads six projected tasks from the current thread instead of hydrating all owner task histories. Workspace mutation instructions are loaded for the relevant connector surface; the background core instructions have been shortened without waiving request constraints or approvals.
+- `read_web_source` reads/searches the original preserved public-page text through owner-checked file storage. A truncated source no longer requires a computer import, command or refetch. Its original URL/time and exact bytes remain evidence, not a new network read or an attachment. Quoted access review recognizes these actual reads; ordinary uploads cannot impersonate preserved public sources.
+
+Red-before-fix tests reproduced historical rescans, irrelevant Workspace instructions, and execution history in snapshots. The maintenance/context group passed 57/57; source/connector regressions passed 63/63; research/runtime regressions passed 68/68; subsequent snapshot tests passed 17/17; foreground handoff/correction/disclosure passed 23/23. Counts overlap and are not additive. TypeScript passed after the snapshot and context changes. Guarded publication and ordinary research/image delivery and sustained-memory repeats remain required.
+
+Diagnostic conversations/devices/files belong only to this run; original user data, Google accounts, companions and historical uncertain effects must be preserved. **Whole-harness acceptance remains open.**

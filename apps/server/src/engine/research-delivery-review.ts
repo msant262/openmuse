@@ -44,6 +44,7 @@ const decisionSchema = z.object({
 
 const researchTools = new Set([
   "web_fetch",
+  "read_web_source",
   "read_web_data",
   "web_extract",
   "read_web",

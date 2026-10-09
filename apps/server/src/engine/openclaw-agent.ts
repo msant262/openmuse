@@ -356,6 +356,7 @@ const directTools = new Set([
   "finish_task",
   "todo_list",
   "read_tool_output",
+  "read_web_source",
   "list_google_accounts",
 ]);
 const nativeName = (name: string) => (controls.has(name) ? name : `okami_${name}`);
