@@ -32,6 +32,11 @@ import {
   gmailOrganizationSchema,
   selectGmailMessages,
 } from "./gmail-organization.ts";
+import {
+  type DriveSearchInput,
+  driveSearchSchema,
+  searchGoogleDrive,
+} from "./google-drive-search.ts";
 import type { WorkspaceService } from "./workspace.ts";
 
 export const googleSearchSchema = z
@@ -121,6 +126,7 @@ export function googleWorkspaceReadTool(name: string, args: unknown): boolean {
       "read_mail_thread",
       "read_calendar",
       "list_google_accounts",
+      "search_drive",
     ].includes(name)
   )
     return true;
@@ -173,6 +179,31 @@ export function googleWorkspaceReadObservation(args: unknown, receipt: unknown):
 /** Shared by HTTP, chat and durable workers; every write uses the existing action executor. */
 export class GoogleWorkspaceHarness {
   readonly catalog = catalog();
+  async searchDrive(
+    owner: string,
+    input: DriveSearchInput,
+    options: { signal?: AbortSignal; before?: () => Promise<void> } = {},
+  ) {
+    return searchGoogleDrive(
+      input,
+      await this.workspace.googleAccounts(owner),
+      async (account, parameters) => {
+        await options.before?.();
+        const result = await this.execute(
+          owner,
+          {
+            toolId: "drive.files.list",
+            account: account.connectionId,
+            parameters,
+            operationId: `drive-search:${digest(Buffer.from(JSON.stringify({ account: account.connectionId, parameters })))}`,
+          },
+          options,
+        );
+        return "data" in result ? result.data : undefined;
+      },
+      options.signal,
+    );
+  }
   constructor(
     readonly db: Store,
     readonly workspace: WorkspaceService,
@@ -1057,6 +1088,13 @@ export function googleWorkspaceTools(
     return options.queue ? options.queue(guarded) : guarded();
   };
   return [
+    defineTool({
+      name: "search_drive",
+      description:
+        "Search actual Google Drive files and folders by an ordinary name, or list a folder with parentId and an empty query. Handles spaces/name variants, all connected accounts when account is omitted, shared items, shortcuts and every result page. No API query syntax or schema discovery is needed. Results identify the account, actual IDs, links and whether account coverage is complete. For a requested folder use kind:folders, then list its contents with the returned id as parentId; for shortcuts use shortcutDetails.targetId. Metadata is not document content. A partial/failed search never proves the requested item is absent. Does not modify Drive.",
+      parameters: driveSearchSchema,
+      execute: (input) => run(() => harness.searchDrive(owner, input, options)),
+    }),
     defineTool({
       name: "search_google_workspace_tools",
       description:

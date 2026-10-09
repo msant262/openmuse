@@ -59,6 +59,66 @@ async function fixture(
   return server;
 }
 
+test("native Drive search uses the connected account authority, returns folder counts and performs only GETs", async (t) => {
+  const server = await fixture(t);
+  const calls: { connectionId?: string; url: URL; method?: string }[] = [];
+  t.mock.method(
+    server.workspace,
+    "google",
+    (_owner: string, connectionId?: string) =>
+      new GoogleClient({
+        getAccessToken: async () => "fixture",
+        fetch: async (raw, init) => {
+          const url = new URL(String(raw));
+          calls.push({ connectionId, url, method: init?.method });
+          assert.equal(url.pathname, "/drive/v3/files");
+          return Response.json({
+            files: [
+              {
+                id: "folder-result",
+                name: "MovingDE",
+                mimeType: "application/vnd.google-apps.folder",
+                webViewLink: "https://drive.google.com/drive/folders/folder-result",
+              },
+            ],
+            incompleteSearch: false,
+          });
+        },
+      }),
+  );
+  const result = await server.agent.googleWorkspace.searchDrive("owner", {
+    query: "MOVING DE",
+    account: "work@example.com",
+    kind: "folders",
+    limit: 20,
+  });
+  assert.equal(result.complete, true);
+  assert.equal(result.totalMatches, 1);
+  assert.equal(result.files[0].account, "work@example.com");
+  assert.equal(result.files[0].match, "name_variant");
+  assert.equal(calls[0].connectionId, "work-id");
+  assert.equal(calls[0].method, "GET");
+  assert.equal(calls[0].url.searchParams.get("includeItemsFromAllDrives"), "true");
+  assert.ok(!JSON.stringify(result).includes("private-access-canary"));
+  assert.equal((await server.db.list("owner", "actions")).length, 0);
+});
+
+test("Drive search cannot turn an account without Drive permission into an empty successful search", async (t) => {
+  const server = await fixture(t);
+  t.mock.method(server.workspace, "google", () => {
+    throw new Error("Unauthorized provider call");
+  });
+  const result = await server.agent.googleWorkspace.searchDrive("owner", {
+    query: "MOVING DE",
+    account: "personal@example.com",
+    kind: "folders",
+    limit: 20,
+  });
+  assert.equal(result.complete, false);
+  assert.equal(result.status, "partial");
+  assert.equal(result.accounts[0].errorCode, "GOOGLE_SCOPE_REQUIRED");
+});
+
 test("an uncertain Google write gives a concrete status without manufacturing a text question", async (t) => {
   await modelFixture(t, () => ({
     name: "execute_google_workspace_tool",

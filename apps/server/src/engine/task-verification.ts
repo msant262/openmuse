@@ -15,6 +15,7 @@ import type { Store } from "../db.ts";
 import { DocumentReview } from "../document-review.ts";
 import type { Files } from "../files.ts";
 import { verifiedGmailOrganization } from "../gmail-organization.ts";
+import { observedDriveSearch } from "../google-drive-search.ts";
 import {
   googleWorkspaceReadObservation,
   googleWorkspaceVerificationBinding,
@@ -844,7 +845,7 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(execute_app_tool$|execute_google_workspace_tool$|search_mail$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
+                    !/^(execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
                       op.toolName,
                     ) ||
                     !useful(op.receipt) ||
@@ -856,6 +857,8 @@ export class TaskVerification {
                     if (typeof result.account !== "string" || !Array.isArray(result.matches))
                       return false;
                   }
+                  if (op.toolName === "search_drive" && !observedDriveSearch(op.receipt))
+                    return false;
                   if (
                     op.toolName === "execute_app_tool" &&
                     (op.receipt as { kind?: string })?.kind !== "composio.read"

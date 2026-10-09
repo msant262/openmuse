@@ -71,6 +71,7 @@ import { fileVersionRoutes } from "./file-versions.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
 import { googleCallbackPage } from "./google-callback-page.ts";
+import { driveSearchSchema } from "./google-drive-search.ts";
 import {
   gmailDraftSchema,
   googleDescribeSchema,
@@ -1056,6 +1057,18 @@ export async function createApp(
       await agent.googleWorkspace.search(
         c.get("owner"),
         googleSearchSchema.parse(await c.req.json()),
+      ),
+    ),
+  );
+  app.post("/api/google/drive/search", async (c) =>
+    c.json(
+      await agent.googleWorkspace.searchDrive(
+        c.get("owner"),
+        driveSearchSchema.parse(await c.req.json()),
+        {
+          signal: c.req.raw.signal,
+          before: () => agent.runtimePause.assertResumed(c.get("owner")).then(() => {}),
+        },
       ),
     ),
   );
