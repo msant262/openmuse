@@ -2229,6 +2229,96 @@ test("review repairs its own quotation protocol before sending a correct researc
   );
 });
 
+test("free-access proof binds a provider policy and named catalogue entry to their separate observed pages", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, {
+    researchReview: () => ({
+      complete: true,
+      missing: [],
+      nextSteps: [],
+      accessAudit: [
+        {
+          option: "Introductory AI",
+          access: "free",
+          sourceUrl: "https://academy.example/catalogue",
+          evidence: [
+            {
+              sourceUrl: "https://academy.example/policy",
+              quote: "Every course in our learning catalogue is free.",
+            },
+            {
+              sourceUrl: "https://academy.example/catalogue",
+              quote: "Introductory AI — three hours, all learners.",
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Recommend a free introductory course.",
+  });
+  const observations = [
+    {
+      toolName: "web_fetch",
+      status: "succeeded",
+      args: { url: "https://academy.example/policy" },
+      receipt: {
+        url: "https://academy.example/policy",
+        text: "Every course in our learning catalogue is free.",
+      },
+    },
+    {
+      toolName: "web_fetch",
+      status: "succeeded",
+      args: { url: "https://academy.example/catalogue" },
+      receipt: {
+        url: "https://academy.example/catalogue",
+        text: "Introductory AI — three hours, all learners.",
+      },
+    },
+  ];
+  const input = {
+    task,
+    summary: "Introductory AI offers free study through this provider's learning catalogue.",
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    stage: "access_selection" as const,
+    signal: new AbortController().signal,
+  };
+  const accepted = await reviewResearchDelivery({ ...input, operations: observations as never });
+  assert.equal(accepted.complete, true);
+  assert.equal(accepted.accessAudit?.[0].evidence?.length, 2);
+  assert.equal(fixture.reviewRequests.length, 1, "correct provenance needs no extra inference");
+  for (const invalid of [
+    observations.slice(1),
+    [{ ...observations[0], toolName: "search_web" }, observations[1]],
+    [
+      {
+        ...observations[0],
+        receipt: {
+          ...observations[0].receipt,
+          text: "Registration is free. A subscription is required.",
+        },
+      },
+      observations[1],
+    ],
+    [
+      {
+        ...observations[0],
+        receipt: { ...observations[0].receipt, error: "Blocked page" },
+      },
+      observations[1],
+    ],
+  ])
+    assert.equal(
+      (await reviewResearchDelivery({ ...input, operations: invalid as never })).complete,
+      false,
+      "every fragment needs the actual successful page read at its own URL",
+    );
+});
+
 test("an empty optional proof list is missing evidence, not a provider outage, and does not mask an exact quote", async (t) => {
   await modelFixture(t, () => undefined, {
     researchReview: (_body, i) => ({
