@@ -13,6 +13,145 @@ function taskRuntime(
   return baseTaskRuntime(t, { ...config, researchReviewEnabled: true }, options);
 }
 
+test("free-only recommendations repair unconfirmed access with the selected model even when optional review is disabled", async (t) => {
+  let reviews = 0;
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://courses.example/premium" } },
+        {
+          name: "finish_task",
+          arguments: {
+            summary:
+              "Free course: Premium AI. Certificate requires PRO; access price is unconfirmed.",
+          },
+        },
+        { name: "web_fetch", arguments: { url: "https://courses.example/open" } },
+        {
+          name: "finish_task",
+          arguments: {
+            summary:
+              "Open AI: the complete course is free. Its optional certificate costs €20. Source: https://courses.example/open",
+          },
+        },
+      ][i],
+    {
+      researchReview: (body, i) => {
+        reviews++;
+        assert.match(body, /full requested content/i);
+        assert.equal(JSON.parse(body).model, "fixture");
+        return i === 0
+          ? {
+              complete: false,
+              needsMoreResearch: true,
+              missing: ["Premium AI full-course access has not been confirmed free"],
+              nextSteps: [
+                "Read the discovered alternative https://courses.example/open and verify full-course access separately from its certificate",
+              ],
+            }
+          : { complete: true, needsMoreResearch: false, missing: [], nextSteps: [] };
+      },
+    },
+  );
+  const f = await baseTaskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: false,
+  });
+  const reads: string[] = [];
+  t.mock.method(f.agent.web, "document", async (url: string) => {
+    reads.push(url);
+    return {
+      url,
+      contentType: "text/html",
+      body: url.endsWith("/premium")
+        ? '<main>Free registration. Certificate and graded assignments require PRO. <a href="https://courses.example/open">Open AI course</a></main>'
+        : "<main>All lessons and exercises are free with no trial or subscription. Optional certificate €20.</main>",
+    };
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Pesquise um curso gratuito de IA generativa e diga se o certificado é pago.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(reviews, 2, "unverified access must be rejected before marking success");
+  assert.deepEqual(reads, ["https://courses.example/premium", "https://courses.example/open"]);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.result);
+  assert.match(saved.result ?? "", /complete course is free/);
+  assert.equal(saved.question, "");
+  assert.equal(fixture.imageBriefRequests.length, 0);
+});
+
+test("ordinary source lookup retains zero review calls when optional review is disabled", async (t) => {
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://courses.example/description" } },
+        { name: "finish_task", arguments: { summary: "The course has six lessons." } },
+      ][i],
+  );
+  const f = await baseTaskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: false,
+  });
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "<main>The course has six lessons.</main>",
+  }));
+  const task = await f.agent.createTask("owner", {
+    prompt: "How many lessons does this course have?",
+  });
+  await f.agent.worker.tick();
+  assert.equal((await f.agent.getTask("owner", task.id)).status, "succeeded");
+  assert.equal(fixture.reviewRequests.length, 0);
+});
+
+test("selection review checks the selected replacement document and omits discarded drafts", async (t) => {
+  let reviewed = false;
+  await modelFixture(t, () => undefined, {
+    researchReview: (body) => {
+      const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
+      assert.equal(input.artifactCreation.length, 1);
+      assert.equal(input.artifactCreation[0].args.content, "Open course: all lessons are free.");
+      reviewed = true;
+      return { complete: true, missing: [], nextSteps: [] };
+    },
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Compare free AI courses in a PDF." });
+  const { reviewResearchDelivery } = await import(
+    "../apps/server/src/engine/research-delivery-review.ts"
+  );
+  await reviewResearchDelivery({
+    task: { ...task, artifactIds: ["corrected-pdf"] },
+    summary: "Corrected comparison attached.",
+    operations: [
+      {
+        toolName: "create_document",
+        status: "succeeded",
+        args: { content: "Premium course with unconfirmed access." },
+        receipt: { fileId: "discarded-pdf" },
+      },
+      {
+        toolName: "create_document",
+        status: "succeeded",
+        args: { content: "Open course: all lessons are free." },
+        receipt: { fileId: "corrected-pdf" },
+      },
+    ] as Parameters<typeof reviewResearchDelivery>[0]["operations"],
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    stage: "access_selection",
+    signal: new AbortController().signal,
+  });
+  assert.equal(reviewed, true);
+});
+
 test("a review cannot certify a comparison while its request audit identifies missing entities", async (t) => {
   await modelFixture(t, () => undefined, {
     researchReview: () => ({

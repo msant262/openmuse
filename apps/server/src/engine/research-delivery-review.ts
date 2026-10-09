@@ -119,6 +119,23 @@ export function needsResearchReview(task: AgentTask, operations: JournalOperatio
   return task.kind === "agent" && operations.some((op) => researchTools.has(op.toolName));
 }
 
+/** Cost/access eligibility is a selection requirement, not a disclaimer the
+ * agent can waive. Check it even when broad, optional research review is off.
+ * Only current user scope is inspected; source text cannot activate this gate. */
+export function requiresAccessConstraintReview(task: AgentTask) {
+  const request = `${task.prompt}\n${JSON.stringify(task.state.directives ?? [])}`
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase();
+  return (
+    task.kind === "agent" &&
+    /\b(?:gratuit[oa]s?|free|sem\s+(?:custo|pagar)|no[- ]cost|without\s+paying)\b/u.test(request) &&
+    /\b(?:cursos?|courses?|recomend\w*|recommend\w*|opcoes|options?|alternativ\w*|ferramentas?|tools?|plataformas?|platforms?)\b/u.test(
+      request,
+    )
+  );
+}
+
 /** Independent, read-only semantic review. It cannot approve effects or replace
  * deterministic receipt verification; its only power is to reject a delivery. */
 export async function reviewResearchDelivery(options: {
@@ -130,7 +147,7 @@ export async function reviewResearchDelivery(options: {
   providers: ModelProviderConfig;
   structured: boolean;
   signal: AbortSignal;
-  stage?: "delivery" | "image_brief";
+  stage?: "delivery" | "image_brief" | "access_selection";
   images?: { fileId: string; mimeType: string; data: string }[];
 }) {
   const reads = researchObservations(options.operations);
@@ -181,7 +198,15 @@ export async function reviewResearchDelivery(options: {
     artifacts: options.task.artifactIds,
     reviewedImageIds: options.images?.map((image) => image.fileId),
     artifactCreation: options.operations
-      .filter((op) => /^(generate_image|create_document)$/.test(op.toolName))
+      .filter((op) => {
+        const fileId = (op.receipt as { fileId?: unknown } | undefined)?.fileId;
+        return (
+          /^(generate_image|create_document)$/.test(op.toolName) &&
+          op.status === "succeeded" &&
+          typeof fileId === "string" &&
+          options.task.artifactIds.includes(fileId)
+        );
+      })
       .map((op) => ({ tool: op.toolName, args: op.args, status: op.status, receipt: op.receipt })),
     structuredReplies: options.structured,
     proposedAnswer: options.summary,
@@ -210,6 +235,11 @@ export async function reviewResearchDelivery(options: {
       ...(options.stage === "image_brief"
         ? [
             "IMAGE_BRIEF_REVIEW. This is a pre-generation check of the proposed visual brief, before an image exists. Evaluate whether its supplied facts and requested visual form cover the original user's explicit requirements using the observed sources. Do not require an existing artifact, actual pixels or a completed delivery at this stage. A promised future lookup, missing values, placeholders, a disclaimer, or a partial dataset cannot satisfy a request for a complete factual comparison. Accept a sufficient brief without requesting more research or embellishments; final pixel/usability inspection happens independently after generation. Return the same JSON decision schema and concrete repairs. Set needsMoreResearch=false when observed facts already suffice and only the brief needs correction.",
+          ]
+        : []),
+      ...(options.stage === "access_selection"
+        ? [
+            "ACCESS_SELECTION_REVIEW. Audit the original user's cost and access constraints using actual observed page evidence and the proposed answer/document content. Free registration, a free trial, a limited preview, historical pricing, or an unconfirmed access condition cannot establish that the full requested content is currently free. Verify full requested content access separately from optional paid certificates, badges, graded assignments or extras; a paid optional certificate alone does not disqualify a genuinely free course. Reject any selected option whose required access is paid or unconfirmed. A caveat does not repair its inclusion in a free-only comparison. Identify which option fails, the observed evidence, and a concrete available research or replacement step. Do not invent prices, URLs or course conditions. Do not demand optional paid credentials be free unless the user requested that. Review facts and selected document text here; the independent file and visual review protocol verifies actual artifact usability. Do not request image pixels for a document or require extra artistic work.",
           ]
         : []),
     ],

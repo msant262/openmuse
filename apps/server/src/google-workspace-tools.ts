@@ -1091,7 +1091,7 @@ export function googleWorkspaceTools(
     defineTool({
       name: "search_drive",
       description:
-        "Search actual Google Drive files and folders by an ordinary name, or list a folder with parentId and an empty query. Handles spaces/name variants, all connected accounts when account is omitted, shared items, shortcuts and every result page. No API query syntax or schema discovery is needed. Results identify the account, actual IDs, links and whether account coverage is complete. For a requested folder use kind:folders, then list its contents with the returned id as parentId; for shortcuts use shortcutDetails.targetId. Metadata is not document content. A partial/failed search never proves the requested item is absent. Does not modify Drive.",
+        "Search actual Google Drive files and folders by an ordinary name, or list a folder with parentId and an empty query. Handles spaces/name variants, all connected accounts when account is omitted, shared items, shortcuts and every result page. No API query syntax or schema discovery is needed. Results identify the account, actual IDs, links and whether account coverage is complete. fileCount and folderCount count the complete paginated matches separately; totalMatches includes both. For a requested folder use kind:folders, then list its contents with the returned id as parentId; for shortcuts use shortcutDetails.targetId. Metadata is not document content. A partial/failed search never proves the requested item is absent. Does not modify Drive.",
       parameters: driveSearchSchema,
       execute: (input) => run(() => harness.searchDrive(owner, input, options)),
     }),

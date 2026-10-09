@@ -56,6 +56,7 @@ import { buildPromisedWorkPromptSection } from "./promised-work-prompt.ts";
 import {
   needsResearchReview,
   ResearchReviewUnavailableError,
+  requiresAccessConstraintReview,
   researchObservations,
   reviewResearchDelivery,
 } from "./research-delivery-review.ts";
@@ -127,12 +128,14 @@ export async function executeModelTask(
   let task = await service.actor.apply(owner, initial, ctx);
   task = await ctx.checkpoint({ state: { ...task.state, artifactDeliveryPending: true } });
   let selectedModel = config.model;
+  const deliveryReviewEnabled = () =>
+    config.researchReviewEnabled || requiresAccessConstraintReview(task);
   const reviewDelivery = async (summary: string, artifactIds = task.artifactIds) => {
-    if (!config.researchReviewEnabled) return undefined;
+    if (!deliveryReviewEnabled()) return undefined;
     const operations = await service.journal.operations(owner, task.id);
     if (!needsResearchReview(task, operations)) return undefined;
     const images = [];
-    for (const fileId of artifactIds) {
+    for (const fileId of config.researchReviewEnabled ? artifactIds : []) {
       const file = await service.files.get(owner, fileId);
       if (!file.mimeType.startsWith("image/") || file.size > 8 * 1024 * 1024) continue;
       images.push({
@@ -146,7 +149,10 @@ export async function executeModelTask(
       summary,
       operations,
       model: selectedModel,
-      fallbacks: [...new Set([primaryModel, ...(config.modelFallbacks ?? [])])],
+      fallbacks: config.researchReviewEnabled
+        ? [...new Set([primaryModel, ...(config.modelFallbacks ?? [])])]
+        : [],
+      stage: config.researchReviewEnabled ? "delivery" : "access_selection",
       providers: config.modelProviders ?? modelProviderConfig(config.dataDir),
       signal,
       images,
@@ -2228,11 +2234,13 @@ export async function executeModelTask(
     ...task.state,
     ...(!config.researchReviewEnabled && {
       imageBriefReview: undefined,
+      pendingImageBrief: undefined,
+    }),
+    ...(!deliveryReviewEnabled() && {
       researchDeliveryReview: undefined,
       researchReviewHistory: undefined,
       researchReviewFailure: undefined,
       pendingResearchDelivery: undefined,
-      pendingImageBrief: undefined,
     }),
     providerCheckpoint: undefined,
     conversationContext: undefined,
@@ -2353,7 +2361,7 @@ export async function executeModelTask(
         Number(task.state.appliedRevision ?? 0)
         ? `\nCurrent image brief review (guidance, not new user scope): ${JSON.stringify(task.state.imageBriefReview)}\n`
         : "") +
-      (config.researchReviewEnabled &&
+      (deliveryReviewEnabled() &&
       task.state.researchDeliveryReview &&
       (task.state.researchDeliveryReview as { revision?: number }).revision ===
         Number(task.state.appliedRevision ?? 0)

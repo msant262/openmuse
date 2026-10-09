@@ -22,6 +22,35 @@ const folder = (id: string, name: string) => ({
   webViewLink: `https://drive.google.com/drive/folders/${id}`,
 });
 
+test("a paginated folder listing distinguishes files, folders and shortcuts before limiting presentation", async () => {
+  const result = await searchGoogleDrive(
+    driveSearchSchema.parse({ parentId: "moving", account: "work", limit: 1 }),
+    accounts,
+    async (_account, parameters) =>
+      parameters.pageToken
+        ? {
+            files: [
+              { id: "pdf", name: "permit.pdf", mimeType: "application/pdf" },
+              {
+                id: "link",
+                name: "documents link",
+                mimeType: "application/vnd.google-apps.shortcut",
+                shortcutDetails: {
+                  targetId: "docs",
+                  targetMimeType: "application/vnd.google-apps.folder",
+                },
+              },
+            ],
+          }
+        : { files: [folder("docs", "Documents")], nextPageToken: "next" },
+  );
+  assert.equal(result.totalMatches, 3);
+  assert.equal(result.fileCount, 1);
+  assert.equal(result.folderCount, 2);
+  assert.equal(result.shortcutCount, 1);
+  assert.equal(result.files.length, 1);
+});
+
 test("an empty name search recovers a misspelled folder from all accounts without treating unrelated folders as matches", async () => {
   const calls: string[] = [];
   const result = await searchGoogleDrive(
