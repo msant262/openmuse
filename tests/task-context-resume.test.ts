@@ -94,10 +94,23 @@ test("provider recovery keeps large read history prunable instead of duplicating
   });
   assert.ok(server.agent.config.modelProviders);
   sharedModelRouter(server.agent.config.modelProviders).health.succeeded("openai/fixture");
+  let checkpointDuringDispatch: unknown;
+  const journalRun = server.agent.journal.run.bind(server.agent.journal);
+  t.mock.method(server.agent.journal, "run", async (...args: Parameters<typeof journalRun>) => {
+    if (args[2].name === "finish_task")
+      checkpointDuringDispatch = (await server.agent.getTask("owner", task.id)).state
+        .providerCheckpoint;
+    return journalRun(...args);
+  });
   await server.agent.actor.wake("owner", task.id, "provider");
   await server.agent.worker.tick();
   const completed = await server.agent.getTask("owner", task.id);
   assert.equal(completed.status, "succeeded", completed.error ?? completed.question);
+  assert.equal(
+    checkpointDuringDispatch,
+    null,
+    "a recovered execution must retire the previous provider outage before dispatching more work",
+  );
   assert.equal(
     fixture.requests.length,
     5,

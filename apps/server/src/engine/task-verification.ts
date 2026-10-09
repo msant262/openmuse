@@ -178,6 +178,25 @@ function requestedExecution(prompt: string) {
   );
 }
 
+/** File mentions identify input material too. Require a positive output request
+ * before demanding an attachment; a filename lookup can finish with its answer. */
+function requestedFileOutput(prompt: string) {
+  const requests = prompt.matchAll(
+    /\b(?:create|generate|produce|build|make|write|draft|export|deliver|download|attach|save|crie|cria|criar|gere|gera|gerar|produza|faça|faz|fazer|monte|montar|elabore|elaborar|escreva|escrever|redija|exporte|exportar|entregue|entregar|baixe|baixar|anexe|anexar|salve|salvar)\b|\b(?:quero|want|need|preciso)\s+(?:(?:um|uma|a|an|the|o|new|novo|nova)\s+)*(?:pdf|docx|xlsx|pptx|txt|csv|arquivo|file|documento|document|resultado|result|output)\b/gi,
+  );
+  return [...requests].some((match) => {
+    const prefix =
+      prompt
+        .slice(0, match.index)
+        .split(/[.!?;\n]/)
+        .at(-1) ?? "";
+    return !(
+      /(?:n[aã]o|not|don't|do not|without|sem|nunca|never)(?:\s+\S+){0,3}\s*$/i.test(prefix) ||
+      /\b(?:como|how\s+to)\s*$/i.test(prefix)
+    );
+  });
+}
+
 export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): CompletionCriterion[] {
   const prompt = task.prompt,
     criteria: CompletionCriterion[] = [],
@@ -299,6 +318,7 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
   else if (
     !remoteGoogleDocument &&
     (!literalFileEdit || fileDelivery) &&
+    requestedFileOutput(prompt) &&
     /\b(pdf|docx|xlsx|pptx|txt|csv|arquivo|file|document|documento)\b/i.test(prompt)
   )
     criteria.push({

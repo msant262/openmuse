@@ -8,6 +8,37 @@ import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("reading or locating files does not invent a file-delivery obligation", () => {
+  for (const prompt of [
+    "Procure no computador os arquivos com ‘checag’ no nome e veja em qual linha aparece ‘orçamento’. Me diga o nome do arquivo e o texto dessa linha.",
+    "Search the files named budget and tell me which file contains the total.",
+    "Leia este PDF e me diga a data de vencimento.",
+    "Read the CSV file and tell me the number of rows.",
+    "Quero encontrar um PDF e saber a data de vencimento.",
+    "Preciso ler o arquivo e descobrir o total.",
+    "Explique como criar um arquivo PDF.",
+    "Explain how to create a PDF file.",
+    "Não gere um documento; apenas informe o valor.",
+  ])
+    assert.ok(
+      !taskCriteria({ kind: "agent", prompt }).some((criterion) => criterion.kind === "file"),
+      prompt,
+    );
+  for (const prompt of [
+    "Pesquise três cursos gratuitos e me entregue um PDF comparativo.",
+    "Crie um arquivo TXT chamado orçamento.txt com o total.",
+    "Create a PDF comparison and attach it.",
+    "Quero o resultado em PDF.",
+    "Faz pra mim um PDF com o comparativo.",
+    "Deliver the saved document.",
+    "Read the CSV file and deliver it as a PDF.",
+  ])
+    assert.ok(
+      taskCriteria({ kind: "agent", prompt }).some((criterion) => criterion.kind === "file"),
+      prompt,
+    );
+});
+
 test("create then replace delivers the edited bytes rather than requiring the obsolete source literal", async (t) => {
   const server = await taskRuntime(t);
   const prompt =

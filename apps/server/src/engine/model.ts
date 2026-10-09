@@ -2529,7 +2529,7 @@ export async function executeModelTask(
       providerCheckpoint = saved;
     },
     onProviderRecovered: async () => {
-      if (!providerCheckpoint) return;
+      if (!providerCheckpoint && !task.state.providerCheckpoint) return;
       providerCheckpoint = undefined;
       task = await ctx.checkpoint({ state: { ...task.state, providerCheckpoint: null } });
     },
