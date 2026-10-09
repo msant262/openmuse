@@ -11,6 +11,7 @@ import {
 import { inspectPdf } from "../../../../packages/integrations/src/pdf.ts";
 import { readPdfText } from "../../../../packages/integrations/src/pdf-text.ts";
 import { workspacePath } from "../computer.ts";
+import { commandReceiptSchema, computerSearchReceipt } from "../computer-contract.ts";
 import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { DocumentReview } from "../document-review.ts";
@@ -1024,7 +1025,7 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
+                    !/^(execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|search_files$|run_computer_command$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
                       op.toolName,
                     ) ||
                     !useful(op.receipt) ||
@@ -1038,6 +1039,26 @@ export class TaskVerification {
                   }
                   if (op.toolName === "search_drive" && !observedDriveSearch(op.receipt))
                     return false;
+                  if (op.toolName === "search_files") {
+                    const search = computerSearchReceipt.safeParse(op.receipt);
+                    if (
+                      !search.success ||
+                      (!search.data.results.length &&
+                        (!search.data.complete || search.data.totalMatches !== 0))
+                    )
+                      return false;
+                  }
+                  if (op.toolName === "run_computer_command") {
+                    const command = commandReceiptSchema.safeParse(op.receipt);
+                    if (
+                      !command.success ||
+                      command.data.status !== "succeeded" ||
+                      command.data.exitCode !== 0 ||
+                      command.data.outcomeUnknown === true ||
+                      !command.data.stdout.trim()
+                    )
+                      return false;
+                  }
                   if (
                     op.toolName === "execute_app_tool" &&
                     (op.receipt as { kind?: string })?.kind !== "composio.read"

@@ -39,6 +39,128 @@ test("reading or locating files does not invent a file-delivery obligation", () 
     );
 });
 
+test("owned native search observations verify a lookup, including bounded positive matches, without accepting incomplete absence", async (t) => {
+  const runtime = await taskRuntime(t);
+  const task = await runtime.agent.createTask("owner", {
+    prompt: "Procure os arquivos com checag no nome e informe a linha com orçamento.",
+  });
+  const receipt = {
+    path: "/workspace",
+    target: "content",
+    outputMode: "content",
+    order: "discovery",
+    results: [{ path: "/workspace/checagem.txt", line: 1, content: "O orçamento é 200 euros." }],
+    offset: 0,
+    nextOffset: null,
+    complete: true,
+    totalMatches: 1,
+    entriesScanned: 2,
+    bytesRead: 27,
+    skippedFiles: 0,
+    limits: [],
+    scope: "owned_utf8_files_up_to_256KB",
+    guidance: "Only observed owned files; incomplete scans do not prove absence.",
+  };
+  const operation = {
+    id: `${task.id}:search`,
+    taskId: task.id,
+    revision: 0,
+    executorId: "native",
+    executorEpoch: 1,
+    resourceFence: 0,
+    runToken: "test",
+    resourceLeaseIds: [],
+    createdAt: new Date().toISOString(),
+    status: "succeeded" as const,
+    toolName: "search_files",
+    bindingHash: "a".repeat(64),
+    effect: false,
+    args: { path: "/workspace", pattern: "orçamento", target: "content" },
+    receipt,
+  };
+  for (const [label, changes, expected] of [
+    ["actual", {}, true],
+    [
+      "bounded-positive",
+      { receipt: { ...receipt, complete: false, nextOffset: 1, totalMatches: null } },
+      true,
+    ],
+    ["complete-absence", { receipt: { ...receipt, results: [], totalMatches: 0 } }, true],
+    [
+      "incomplete-absence",
+      { receipt: { ...receipt, complete: false, results: [], totalMatches: null } },
+      false,
+    ],
+    ["malformed", { receipt: { results: receipt.results } }, false],
+    ["failed", { status: "failed" }, false],
+    ["wrong-revision", { revision: 1 }, false],
+    ["another-task", { taskId: "another-task" }, false],
+  ] as const) {
+    await runtime.db.put("owner", "task-operations", { ...operation, ...changes });
+    const assessed = await runtime.agent.verification.assess(
+      "owner",
+      task.id,
+      0,
+      label === "complete-absence"
+        ? "Nenhuma correspondência nessa área pesquisada."
+        : "checagem.txt, linha 1: O orçamento é 200 euros.",
+    );
+    assert.equal(assessed.status === "verified", expected, `${label}: ${JSON.stringify(assessed)}`);
+  }
+});
+
+test("native command output is a current observation only after successful confirmed execution", async (t) => {
+  const runtime = await taskRuntime(t);
+  const task = await runtime.agent.createTask("owner", { prompt: "Confira o total e me informe." });
+  const receipt = {
+    id: "job",
+    command: "cat /workspace/total.txt",
+    cwd: "/workspace",
+    status: "succeeded",
+    exitCode: 0,
+    stdout: "200 euros\n",
+    stderr: "",
+    truncated: false,
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    cleanupConfirmed: true,
+  };
+  for (const [label, changes, expected] of [
+    ["actual", {}, true],
+    ["pending", { status: "running", exitCode: undefined }, false],
+    ["failed", { status: "failed", exitCode: 1 }, false],
+    ["unknown", { outcomeUnknown: true }, false],
+    ["nonzero", { exitCode: 1 }, false],
+    ["empty", { stdout: "" }, false],
+    ["malformed", { command: undefined }, false],
+  ] as const) {
+    await runtime.db.put("owner", "task-operations", {
+      id: `${task.id}:command`,
+      taskId: task.id,
+      revision: 0,
+      executorId: "native",
+      executorEpoch: 1,
+      resourceFence: 0,
+      runToken: "test",
+      resourceLeaseIds: [],
+      createdAt: new Date().toISOString(),
+      status: "succeeded",
+      toolName: "run_computer_command",
+      bindingHash: "a".repeat(64),
+      effect: true,
+      args: { command: receipt.command },
+      receipt: { ...receipt, ...changes },
+    });
+    const assessed = await runtime.agent.verification.assess(
+      "owner",
+      task.id,
+      0,
+      "O total é 200 euros.",
+    );
+    assert.equal(assessed.status === "verified", expected, label);
+  }
+});
+
 test("create then replace delivers the edited bytes rather than requiring the obsolete source literal", async (t) => {
   const server = await taskRuntime(t);
   const prompt =
