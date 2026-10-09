@@ -42,6 +42,7 @@ export function driveNameQuery(input: DriveSearchInput) {
   if (input.parentId) conditions.push(`${quote(input.parentId)} in parents`);
   if (input.kind === "folders")
     conditions.push(`(mimeType = ${quote(folderMime)} or mimeType = ${quote(shortcutMime)})`);
+  if (input.kind === "files") conditions.push(`mimeType != ${quote(folderMime)}`);
   if (input.query) {
     const terms = input.query.match(/[\p{L}\p{N}]+/gu) ?? [];
     const meaningful = terms.filter((term) => !/^(de|da|do|das|dos|the|of|and)$/i.test(term));

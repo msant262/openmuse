@@ -181,3 +181,10 @@ test("Drive query treats apostrophes/backslashes as name data and the tool is a 
   assert.equal(googleWorkspaceReadTool("search_drive", { query: "MOVING DE" }), true);
   assert.equal(driveSearchSchema.safeParse({}).success, false);
 });
+
+test("file searches exclude folders while folder searches keep navigable shortcuts", () => {
+  const files = driveNameQuery(driveSearchSchema.parse({ query: "Moving", kind: "files" }));
+  const folders = driveNameQuery(driveSearchSchema.parse({ query: "Moving", kind: "folders" }));
+  assert.match(files, /mimeType != 'application\/vnd.google-apps.folder'/);
+  assert.match(folders, /mimeType = 'application\/vnd.google-apps.shortcut'/);
+});
