@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { reviewResearchDelivery } from "../apps/server/src/engine/research-delivery-review.ts";
 import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime as baseTaskRuntime } from "./helpers/task-runtime.ts";
 
@@ -12,6 +13,73 @@ function taskRuntime(
 ) {
   return baseTaskRuntime(t, { ...config, researchReviewEnabled: true }, options);
 }
+
+test("document preflight defers only file delivery while retaining factual and access failures", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, {
+    researchReview: (_body, i) => ({
+      complete: false,
+      missing:
+        i === 1 ? ["Free access is unknown", "PDF not yet delivered"] : ["PDF not yet delivered"],
+      nextSteps: ["Deliver the PDF"],
+      needsMoreResearch: true,
+      requestAudit: [
+        {
+          requirement: "Course content and free access",
+          satisfied: i !== 1,
+          scope: "content",
+          evidence: i === 1 ? "Unknown access" : "The full course is free.",
+        },
+        {
+          requirement: "Deliver PDF",
+          satisfied: false,
+          scope: "delivery",
+          evidence: "PDF not yet delivered",
+        },
+      ],
+      accessAudit: [
+        {
+          option: "Open course",
+          access: "free",
+          sourceUrl: "https://courses.example/open",
+          quote: "The full course is free.",
+        },
+      ],
+    }),
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Research a free course and deliver a PDF.",
+  });
+  const common = {
+    task,
+    summary: "Open course: the full course is free.",
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    stage: "access_selection" as const,
+    signal: new AbortController().signal,
+    operations: [
+      {
+        id: "read",
+        taskId: task.id,
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url: "https://courses.example/open" },
+        receipt: { url: "https://courses.example/open", text: "The full course is free." },
+      },
+    ] as never,
+  };
+  const beforeRendering = await reviewResearchDelivery({ ...common, proposedDocument: true });
+  assert.equal(beforeRendering.complete, true);
+  assert.deepEqual(beforeRendering.missing, []);
+  const unsupportedContent = await reviewResearchDelivery({ ...common, proposedDocument: true });
+  assert.equal(unsupportedContent.complete, false);
+  assert.ok(unsupportedContent.missing.includes("Course content and free access"));
+  const actualDelivery = await reviewResearchDelivery(common);
+  assert.equal(actualDelivery.complete, false);
+  assert.ok(actualDelivery.missing.includes("Deliver PDF"));
+  assert.equal(fixture.reviewRequests.length, 3);
+});
 
 test("free-only recommendations repair unconfirmed access with the selected model even when optional review is disabled", async (t) => {
   let reviews = 0;

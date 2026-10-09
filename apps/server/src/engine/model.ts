@@ -493,7 +493,7 @@ export async function executeModelTask(
           repairable: true,
           missing: completion.remaining,
           instruction:
-            "The requested program/command has not completed with a successful execution receipt. Continue the already authorized work using run_computer_command; start the computer if needed, execute the actual program and obtain its result. A source file or anticipated output does not prove execution. Reuse and poll pending commands; never replay an uncertain effect. If an observed blocker prevents execution, report that concrete blocker with outcome=partial rather than asking permission to do the requested work.",
+            "The requested program/command has not completed with a successful execution receipt. Continue the already authorized work in the appropriate runtime: execute_code can execute JavaScript calculations, while Python, shell commands and other requested runtimes require run_computer_command. Start the computer if needed and obtain the actual result. A source file or anticipated output does not prove execution. Reuse and poll pending commands; never replay an uncertain effect. If an observed blocker prevents execution, report that concrete blocker with outcome=partial rather than asking permission to do the requested work.",
         };
       }
     }

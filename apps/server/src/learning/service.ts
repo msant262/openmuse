@@ -1,4 +1,6 @@
+import { EventType } from "@ag-ui/core";
 import { defineTool } from "@copilotkit/runtime/v2";
+import { lastValueFrom, tap } from "rxjs";
 import { z } from "zod";
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
 import {
@@ -6,9 +8,10 @@ import {
   procedureInputSchema,
   procedureReadSchema,
 } from "../../../../packages/domain/src/playbooks.ts";
+import type { TaskBudget } from "../../../../packages/domain/src/runtime.ts";
 import { bindingHash, type InboxMessage } from "../conversation-inbox.ts";
+import { openclawAgent } from "../engine/openclaw-agent.ts";
 import type { AgentService } from "../engine/service.ts";
-import { tanstackAgent } from "../engine/tanstack-agent.ts";
 import type { TaskContext } from "../engine/worker.ts";
 import { AppError } from "../errors.ts";
 import type { ProviderContinuationCheckpoint } from "../providers/models.ts";
@@ -25,6 +28,7 @@ type State = {
   lastError?: string | null;
   changes?: number;
 };
+const learningReferenceVersion = 1;
 
 export { sourcedMemoryInput as learningMemoryInput } from "./memory-writer.ts";
 
@@ -62,6 +66,7 @@ export class PersonalLearning {
     return {
       enabled: this.enabled,
       ...state,
+      lastError: task?.status === "failed" ? task.error : state?.lastError,
       activeTask: task
         ? { id: task.id, status: task.status, error: task.error, nextRunAt: task.nextRunAt }
         : null,
@@ -88,6 +93,7 @@ export class PersonalLearning {
       // Removed evidence can be retired without inference. Valid failed corrections
       // remain pending; a cancelled review is never restarted automatically.
       if (task?.status === "failed") {
+        if (await this.recoverReferenceFailure(owner, task)) return task.id;
         const sources = (task.input.learningSources ?? []) as Source[];
         if (sources.length && !(await this.db.learningReviewSources(owner, sources)).length)
           await this.db.compareAndSwapTask(
@@ -127,7 +133,12 @@ export class PersonalLearning {
       {
         title: "Review personal memory and learned procedures",
         prompt: "Consolidate useful sourced personal context and verified procedures.",
-        input: { memoryReview: true, internalActivity: true, learningSources: sources },
+        input: {
+          memoryReview: true,
+          internalActivity: true,
+          learningSources: sources,
+          learningReferenceVersion,
+        },
         timing: { priority: "low", timezone: this.service.routines.timezone },
       },
       id,
@@ -174,6 +185,88 @@ export class PersonalLearning {
         (await this.db.get<State>(owner, "learning-state", "review"))?.activeTaskId ?? undefined
       );
     return id;
+  }
+  /** One bounded migration for the observed old-ID failure, not a general
+   * automatic budget extension. Retain usage, failed receipts and valid saves. */
+  private async recoverReferenceFailure(owner: string, task: AgentTask) {
+    if (Number(task.input.learningReferenceVersion ?? 0) >= learningReferenceVersion) return false;
+    const budget = await this.db.get<TaskBudget>(owner, "task-budgets", task.id);
+    if (!budget || budget.maxSteps == null || budget.usedSteps < budget.maxSteps) return false;
+    const sources = (task.input.learningSources ?? []) as Source[];
+    const available = await this.db.learningReviewSources(owner, sources);
+    const sourceIds = new Set(available.filter((s) => s.kind === "tasks").map((s) => s.value.id));
+    const operations = await this.service.journal.operations(owner, task.id);
+    const invalid = operations.filter((o) => {
+      const args = o.args as { sourceTaskId?: string };
+      const receipt = o.receipt as { error?: string; dispatched?: boolean } | undefined;
+      return (
+        o.toolName === "learn_procedure" &&
+        o.status === "rejected_not_dispatched" &&
+        receipt?.dispatched === false &&
+        receipt.error === "Procedure must come from a verified review source" &&
+        typeof args.sourceTaskId === "string" &&
+        !sourceIds.has(args.sourceTaskId)
+      );
+    });
+    if (
+      !invalid.length ||
+      operations.some(
+        (o) =>
+          !invalid.includes(o) &&
+          !(o.status === "succeeded" && ["learn_memory", "learn_procedure"].includes(o.toolName)),
+      )
+    )
+      return false;
+    const invalidKeys = new Set(
+      invalid.map((o) => `procedure:${(o.args as { sourceTaskId: string }).sourceTaskId}`),
+    );
+    const pending = (task.state.learningWriteErrors ?? []) as [string, string][];
+    // Real failed corrections and uncertain effects remain pending.
+    if (pending.some(([key]) => !invalidKeys.has(key)) || !sourceIds.size) return false;
+    const result = await this.db.durableMutation(
+      owner,
+      `learning-reference-repair:${task.id}:${learningReferenceVersion}`,
+      bindingHash({ taskId: task.id, version: learningReferenceVersion }),
+      [
+        {
+          kind: "tasks",
+          id: task.id,
+          mode: "merge",
+          expected: { status: "failed", input: task.input, state: task.state },
+          value: {
+            status: "queued",
+            error: null,
+            nextRunAt: null,
+            input: { ...task.input, learningReferenceVersion },
+            state: {
+              ...task.state,
+              learningFailures: 0,
+              learningWriteErrors: [],
+              learningReferenceRepair: {
+                version: learningReferenceVersion,
+                rejectedOperationIds: invalid.map((o) => o.id),
+                previousError: task.error,
+                previousBudget: budget,
+              },
+            },
+          },
+        },
+        {
+          kind: "task-budgets",
+          id: task.id,
+          mode: "merge",
+          expected: { ...budget },
+          value: {
+            revision: budget.revision + 1,
+            maxSteps: budget.usedSteps + 24,
+            maxMilliseconds: budget.usedMilliseconds + 300000,
+          },
+        },
+      ],
+      [],
+      true,
+    );
+    return result.status === "applied";
   }
   async learn(owner: string, raw: unknown, messages: InboxMessage[], reviewTaskId: string) {
     return writeSourcedMemory(
@@ -269,6 +362,21 @@ export class PersonalLearning {
     if (!selection.model) throw new AppError("No connected model for personal learning", 503);
     const memories = (await this.service.memory.page(owner, { limit: 40, includeInactive: true }))
       .entries;
+    const taskReferences = new Map(completed.map((t, index) => [`task_${index + 1}`, t.id]));
+    const messageReferences = new Map(
+      messages.map((m, index) => [`message_${index + 1}`, m.messageId]),
+    );
+    const sourceTaskId = (reference: string) => {
+      const id =
+        taskReferences.get(reference) ??
+        (completed.some((t) => t.id === reference) ? reference : undefined);
+      if (!id)
+        throw new AppError(
+          `Choose an exact verified task reference: ${[...taskReferences.keys()].join(", ")}`,
+          422,
+        );
+      return id;
+    };
     const viewedProcedures = new Set<string>();
     let toolQueue: Promise<unknown> = Promise.resolve();
     const written = new Set(
@@ -294,9 +402,18 @@ export class PersonalLearning {
         name: "learn_procedure",
         description:
           "Save a verified reusable method, or update an existing automatically learned procedure. Source task and tools must have successful receipts; user-owned procedures are protected.",
-        parameters: procedureInputSchema,
-        execute: async (input) => {
+        parameters: procedureInputSchema.safeExtend({
+          sourceTaskId: z
+            .string()
+            .min(1)
+            .max(128)
+            .describe(
+              "Use the short id from verifiedTasks, for example task_1. Never invent or reconstruct a storage ID.",
+            ),
+        }),
+        execute: async (raw) => {
           await guard();
+          const input = { ...raw, sourceTaskId: sourceTaskId(raw.sourceTaskId) };
           if (input.id && !viewedProcedures.has(`${input.id}:${input.expectedVersion}`))
             throw new AppError("Read the current procedure before changing it", 409);
           const writeKey = `procedure:${input.sourceTaskId}`;
@@ -358,8 +475,15 @@ export class PersonalLearning {
         description:
           "Save or correct a compact user fact, taste, evidenced habit or follow-up plan. Quote the supplied user evidence. Update matching memory by id/revision.",
         parameters: learningMemoryInput,
-        execute: async (input) => {
+        execute: async (raw) => {
           await guard();
+          const input = {
+            ...raw,
+            evidence: raw.evidence.map((e) => ({
+              ...e,
+              messageId: messageReferences.get(e.messageId) ?? e.messageId,
+            })),
+          };
           const writeKey = `memory:${input.category}:${input.evidence
             .map((e) => e.messageId)
             .sort()
@@ -409,13 +533,14 @@ export class PersonalLearning {
         },
       }),
     ];
-    const agent = tanstackAgent({
+    const agent = openclawAgent({
+      dataDir: this.service.config.dataDir,
       model: selection.model,
       fallbacks: selection.fallbacks,
       providers: this.service.config.modelProviders,
       contextModel:
         selectionContextModel(this.service.config, selection) ?? this.service.contextModel,
-      maxSteps: 8,
+      toolSearch: false,
       tools,
       prompt: learningReviewPrompt,
       workClass: "background",
@@ -439,11 +564,10 @@ export class PersonalLearning {
         return "";
       },
     });
-    agent.threadId = `learning-${task.id}`;
-    agent.setMessages([
+    const evidence = [
       {
         id: `learning-evidence-${task.id}`,
-        role: "user",
+        role: "user" as const,
         content: JSON.stringify({
           now: new Date(this.now()).toISOString(),
           timezone: this.service.routines.timezone,
@@ -451,7 +575,7 @@ export class PersonalLearning {
           // The selected model's ContextBudget owns admission. Never silently
           // consume a source while hiding its evidence behind a fixed char cap.
           userMessages: messages.map((m) => ({
-            messageId: m.messageId,
+            messageId: `message_${messages.indexOf(m) + 1}`,
             threadId: m.threadId,
             createdAt: m.createdAt,
             text: m.text,
@@ -467,7 +591,7 @@ export class PersonalLearning {
           })),
           verifiedTasks: await Promise.all(
             completed.map(async (t) => ({
-              id: t.id,
+              id: `task_${completed.indexOf(t) + 1}`,
               prompt: t.prompt.slice(0, 2000),
               result: t.result?.slice(0, 3000),
               successfulTools: (await this.service.journal.operations(owner, t.id))
@@ -481,7 +605,7 @@ export class PersonalLearning {
           ),
         }),
       },
-    ]);
+    ];
     const interrupt = () => {
       preempted = true;
       agent.abortRun();
@@ -491,7 +615,23 @@ export class PersonalLearning {
     const abort = () => agent.abortRun();
     ctx.signal.addEventListener("abort", abort, { once: true });
     try {
-      await agent.runAgent({ runId: `learning-${task.id}-${task.attempts}` });
+      await lastValueFrom(
+        agent
+          .run({
+            threadId: `learning-${task.id}`,
+            runId: `learning-${task.id}-${task.attempts}`,
+            messages: evidence,
+            tools: [],
+            context: [],
+            state: {},
+          })
+          .pipe(
+            tap((event) => {
+              if (event.type === EventType.RUN_ERROR && "message" in event)
+                throw new Error(String(event.message));
+            }),
+          ),
+      );
       await guard();
       if (pendingWrites.size)
         throw new AppError("Learning ended with failed writes; the source remains pending", 502);
@@ -544,6 +684,9 @@ export class PersonalLearning {
       });
       throw error;
     } finally {
+      // The copied runner's cancellation can finish its event stream before
+      // an admitted tool settles. Join writes before releasing the task lease.
+      await toolQueue;
       if (this.active.get(owner) === interrupt) this.active.delete(owner);
       ctx.signal.removeEventListener("abort", abort);
       await this.service.actor.chargeElapsed(owner, task, this.now() - started);

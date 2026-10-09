@@ -1,7 +1,12 @@
 import { posix } from "node:path";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
-import { computerCommandSchema, computerPathSchema, computerWriteSchema } from "./computer.ts";
+import {
+  computerPathSchema as absoluteComputerPathSchema,
+  computerWriteSchema as absoluteComputerWriteSchema,
+  computerCommandSchema,
+  workspacePath,
+} from "./computer.ts";
 import {
   type ComputerBackend,
   commandReceiptSchema,
@@ -33,6 +38,28 @@ export function computerTools(
     dispatchContext?: () => Promise<ExecutorDispatchContext>;
   } = {},
 ) {
+  // Model file tools work relative to the private workspace. The backend/API
+  // boundary remains absolute, and traversal is checked before normalization.
+  const computerPathSchema = absoluteComputerPathSchema.extend({
+    path: z
+      .string()
+      .min(1)
+      .max(2048)
+      .transform((path, ctx) => {
+        try {
+          return workspacePath(posix.isAbsolute(path) ? path : `/workspace/${path}`);
+        } catch (error) {
+          ctx.addIssue({
+            code: "custom",
+            message: error instanceof Error ? error.message : "Invalid workspace path",
+          });
+          return z.NEVER;
+        }
+      }),
+  });
+  const computerWriteSchema = computerPathSchema.extend({
+    text: absoluteComputerWriteSchema.shape.text,
+  });
   const filePathSchema = computerPathSchema.refine(
     ({ path }) => !["", "/workspace", "."].includes(posix.normalize(path).replace(/\/+$/, "")),
     "File operation requires a file path; /workspace is a directory. Use list_files to find a file or search_saved_files for existing app attachments.",
@@ -68,10 +95,17 @@ export function computerTools(
       parameters,
       execute: (args) => {
         const operation = async () => {
+          const input = parameters.safeParse(args);
+          if (!input.success)
+            return {
+              error: input.error.message,
+              status: "rejected_not_dispatched",
+              dispatched: false,
+            };
           try {
             await options.before?.();
             if (automatedEffect) await options.effectBefore?.();
-            const result = await action(parameters.parse(args));
+            const result = await action(input.data);
             const receipt = commandReceiptSchema.safeParse(result);
             if (automatedEffect && receipt.success) {
               if (computerCommandCleanupConfirmed(receipt.data))
@@ -194,7 +228,10 @@ export function computerTools(
     tool(
       "write_computer_file",
       "Save a UTF-8 file up to 256 KB inside /workspace",
-      computerWriteSchema,
+      computerWriteSchema.refine(
+        ({ path }) => path !== "/workspace",
+        "Choose a file inside /workspace",
+      ),
       async ({ path, text }) => computer.write(owner, path, text),
       true,
     ),
@@ -246,7 +283,10 @@ export function computerTools(
     tool(
       "write_file",
       "Write a workspace UTF-8 file up to 256KB",
-      computerWriteSchema,
+      computerWriteSchema.refine(
+        ({ path }) => path !== "/workspace",
+        "Choose a file inside /workspace",
+      ),
       ({ path, text }) => computer.write(owner, path, text),
       true,
     ),

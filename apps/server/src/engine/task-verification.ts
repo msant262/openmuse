@@ -334,7 +334,7 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       kind: "receipt",
       effect: "command",
       description:
-        "Execute the requested command/program in the computer and obtain its successful exit receipt. Writing the expected output or source file alone does not prove execution.",
+        "Execute the requested command/program and obtain its successful runtime receipt. Writing the expected output or source file alone does not prove execution.",
       requiredItems: [],
     });
   if (/\b(submit|submeta)\b/i.test(prompt) && /\b(form|formul[aá]rio)\b/i.test(prompt))
@@ -534,8 +534,14 @@ function actionMatches(
   }
   return true;
 }
-function operationMatches(criterion: CompletionCriterion, op: JournalOperation) {
-  if (!op.effect || op.parentOperationId || op.nativeEnvelope || op.status !== "succeeded")
+function operationMatches(criterion: CompletionCriterion, op: JournalOperation, prompt: string) {
+  const codeMode = criterion.effect === "command" && op.toolName === "execute_code";
+  if (
+    (!op.effect && !codeMode) ||
+    op.parentOperationId ||
+    op.nativeEnvelope ||
+    op.status !== "succeeded"
+  )
     return false;
   const receipt = object(op.receipt);
   if (
@@ -547,6 +553,15 @@ function operationMatches(criterion: CompletionCriterion, op: JournalOperation) 
     !required(criterion, { args: op.args, receipt })
   )
     return false;
+  if (codeMode)
+    return (
+      !/\b(?:python\w*|bash|shell|terminal|comando|command|powershell|ruby|php|java|rust|gcc)\b/i.test(
+        prompt,
+      ) &&
+      typeof object(op.args)?.code === "string" &&
+      Boolean(String(object(op.args)?.code).trim()) &&
+      receipt.status === "completed"
+    );
   if (!criterion.effect || criterion.effect === "command") {
     if (/^(run_command|run_computer_command)$/.test(op.toolName))
       return (
@@ -808,7 +823,7 @@ export class TaskVerification {
                   (op) =>
                     op.revision === revision &&
                     (!criterion.referenceId || criterion.referenceId === op.id) &&
-                    operationMatches(criterion, op),
+                    operationMatches(criterion, op, task.prompt),
                 )
                 .map((op) => op.id),
             );

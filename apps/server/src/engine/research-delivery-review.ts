@@ -25,6 +25,7 @@ const decisionSchema = z.object({
     .array(
       z.object({
         requirement: z.string().max(700),
+        scope: z.enum(["content", "delivery"]).default("content"),
         satisfied: z.boolean(),
         evidence: z.string().max(700),
       }),
@@ -266,6 +267,11 @@ export async function reviewResearchDelivery(options: {
             "DOCUMENT_CONTENT_PREFLIGHT. The proposedAnswer is complete proposed document content before rendering. Verify its factual claims, eligibility and requested categories using observed sources. Do not require an existing file, pixels, or final presentation at this stage; those have an independent later protocol. Reject specific unsupported claims before expensive rendering. An unchanged failed brief will not be rendered or reviewed again until facts or content change.",
           ]
         : []),
+      ...(options.proposedDocument
+        ? [
+            "DOCUMENT_PREFLIGHT_SCOPE. Rendering has NOT happened yet. requestAudit must distinguish scope:'content' (requested facts, each option, access, language, duration, certificate cost, source links) from scope:'delivery' (file creation, attachment and visual inspection). Judge complete only for content at this stage. File creation and attachment are not missing factual evidence; do not ask the agent to deliver a PDF before allowing the PDF renderer to run. Omit deferred delivery requirements from missing and nextSteps. Do not research to repair a file that has not been rendered. The host enforces actual bytes, file format, attachment and inspection independently after rendering. A content gap must remain scope:'content', including unsupported course access or certificate claims; never defer it as delivery.",
+          ]
+        : []),
       ...(options.stage === "image_brief"
         ? [
             "IMAGE_BRIEF_REVIEW. This is a pre-generation check of the proposed visual brief, before an image exists. Evaluate whether its supplied facts and requested visual form cover the original user's explicit requirements using the observed sources. Do not require an existing artifact, actual pixels or a completed delivery at this stage. A promised future lookup, missing values, placeholders, a disclaimer, or a partial dataset cannot satisfy a request for a complete factual comparison. Accept a sufficient brief without requesting more research or embellishments; final pixel/usability inspection happens independently after generation. Return the same JSON decision schema and concrete repairs. Set needsMoreResearch=false when observed facts already suffice and only the brief needs correction.",
@@ -341,8 +347,27 @@ export async function reviewResearchDelivery(options: {
       JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "")),
     );
     const unsatisfied = decision.requestAudit.filter((item) => !item.satisfied);
+    // A pre-render review cannot wait for the renderer's own future receipt.
+    // Only explicitly deferred delivery failures qualify; content/access
+    // failures keep blocking, and final delivery retains its independent checks.
+    if (
+      options.proposedDocument &&
+      unsatisfied.length &&
+      unsatisfied.every((item) => item.scope === "delivery") &&
+      decision.requestAudit.some((item) => item.scope === "content" && item.satisfied)
+    ) {
+      decision.complete = true;
+      decision.blocked = false;
+      decision.needsMoreResearch = false;
+      decision.missing = [];
+      decision.nextSteps = [];
+    }
     for (const item of unsatisfied)
-      if (!decision.missing.includes(item.requirement)) decision.missing.push(item.requirement);
+      if (
+        (!options.proposedDocument || item.scope !== "delivery") &&
+        !decision.missing.includes(item.requirement)
+      )
+        decision.missing.push(item.requirement);
     if (options.stage === "access_selection" && decision.complete) {
       const normalize = (value: string) =>
         value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();

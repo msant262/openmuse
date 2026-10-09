@@ -88,6 +88,49 @@ test("execution criteria distinguish running code from explaining or only writin
   }
 });
 
+test("an executed Code Mode program is valid execution, while a shell or Python request needs its own runtime", async (t) => {
+  const server = await taskRuntime(t);
+  for (const [prompt, status, revision, expected] of [
+    ["Execute um programa para calcular os números primos.", "completed", 0, true],
+    ["Execute um programa para calcular os números primos.", "failed", 0, false],
+    ["Execute um programa para calcular os números primos.", "completed", 1, false],
+    ["Run a Python program to calculate primes.", "completed", 0, false],
+    ["Run the command python3 primes.py.", "completed", 0, false],
+  ] as const) {
+    const task = await server.agent.createTask("owner", { prompt });
+    await server.agent.journal.prepare("owner", {
+      id: `code:${task.id}`,
+      taskId: task.id,
+      revision,
+      executorId: "vps",
+      executorEpoch: 1,
+      resourceFence: 0,
+      runToken: "test",
+      resourceLeaseIds: [],
+      createdAt: new Date().toISOString(),
+      status: "succeeded",
+      toolName: "execute_code",
+      bindingHash: "a".repeat(64),
+      effect: false,
+      args: {
+        code: "const p=[];for(let n=2;n<=100;n++){let prime=true;for(let d=2;d*d<=n;d++){if(n%d===0){prime=false;break;}}if(prime)p.push(n);}text(p);",
+      },
+      receipt: {
+        status,
+        output: [{ type: "text", text: "2,3,5,7" }],
+        value: null,
+        toolCallCount: 0,
+      },
+    });
+    const result = await server.agent.verification.assess("owner", task.id, 0);
+    assert.equal(
+      result.checks.find((c) => c.criterionId === "requested-command")?.passed,
+      expected,
+      prompt,
+    );
+  }
+});
+
 function officeZip(entries: Record<string, string>, advertisedSize?: number) {
   const chunks: Buffer[] = [],
     directory: Buffer[] = [];

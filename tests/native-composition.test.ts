@@ -376,37 +376,45 @@ test("paired manual cancellation reuses owned command authority while globally p
   );
 });
 
-for (const source of ["manual-command", "manual-file", "model-file"] as const)
+for (const source of [
+  "manual-command",
+  "manual-file",
+  "model-file",
+  "model-relative-file",
+] as const)
   test(`${source} holds its background slot before native claim across controller restart`, async (t) => {
     const path = "/workspace/admission.txt",
       text = "Durable fixture";
-    if (source === "model-file")
+    const modelFile = source.startsWith("model-");
+    if (modelFile)
       await modelFixture(t, (index) =>
         index === 0
-          ? { name: "write_computer_file", arguments: { path, text } }
+          ? {
+              name: "write_computer_file",
+              arguments: { path: source === "model-relative-file" ? "admission.txt" : path, text },
+            }
           : { name: "finish_task", arguments: { summary: "Wrote the note" } },
       );
     const server = await nativeRuntime(
       t,
-      source === "model-file" ? { agentBackend: "model", model: "openai/fixture" } : {},
+      modelFile ? { agentBackend: "model", model: "openai/fixture" } : {},
     );
     assert.ok(server.manualNative);
-    const taskId =
-      source === "model-file"
-        ? (await server.agent.createTask("local-user", { prompt: "Save the supplied note" })).id
-        : (
-            await server.manualNative.enqueue(
-              "local-user",
-              server.session.deviceId,
-              source,
-              source === "manual-command"
-                ? {
-                    method: "execute",
-                    args: { command: "sleep 30", timeoutMs: 30000, background: false },
-                  }
-                : { method: "write", args: { path, text } },
-            )
-          ).taskId;
+    const taskId = modelFile
+      ? (await server.agent.createTask("local-user", { prompt: "Save the supplied note" })).id
+      : (
+          await server.manualNative.enqueue(
+            "local-user",
+            server.session.deviceId,
+            source,
+            source === "manual-command"
+              ? {
+                  method: "execute",
+                  args: { command: "sleep 30", timeoutMs: 30000, background: false },
+                }
+              : { method: "write", args: { path, text } },
+          )
+        ).taskId;
     const pending = server.agent.worker.tick();
     // An empty long poll is valid while the copied model runtime starts. Native
     // clients poll again; admission must not depend on the first five seconds.
@@ -416,6 +424,7 @@ for (const source of ["manual-command", "manual-file", "model-file"] as const)
       batch = await server.node("claim", { epoch: server.epoch, waitMs: 5000 });
     assert.equal(batch.operations.length, 1);
     const operation = batch.operations[0];
+    if (modelFile) assert.equal(operation.args.path, path);
     assert.equal(
       (await server.db.get<{ hold: boolean }>("__runtime__", "work-admissions", taskId))?.hold,
       true,
