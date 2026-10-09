@@ -6,6 +6,21 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const resolve = async () => [{ address: "93.184.216.34", family: 4 }];
 
+test("a course article with a static logo placeholder stays readable over HTTP", async () => {
+  const { PublicWeb, readablePage } = await import("../apps/server/src/public-web.ts");
+  const web = new PublicWeb({
+    resolve,
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: '<title>Course</title><main><h1>Generative AI</h1><p>The full course is free. Duration: 4 hours.</p><span class="skillup-meta__logo-placeholder">Included with</span></main>',
+    }),
+  });
+  const page = await web.read("https://courses.example/course");
+  assert.equal(page.extraction.status, "readable");
+  assert.equal(readablePage(page), true);
+});
+
 test("the production reader keeps native Markdown links with their context and filters hidden content", async (t) => {
   const f = await taskRuntime(t);
   t.mock.method(f.agent.web, "document", async (url: string) => ({

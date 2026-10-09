@@ -4,6 +4,34 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { readPublicContent } from "../apps/worker/src/public-read.ts";
 
+test("a static logo placeholder does not hold a fully loaded course article for a minute", {
+  timeout: 10_000,
+}, async (t) => {
+  const workerRequire = createRequire(resolve("apps/worker/package.json"));
+  const { chromium }: typeof import("../apps/worker/node_modules/playwright/index.js") =
+    workerRequire("playwright");
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(
+    '<main><h1>Free Generative AI Course</h1><p>Full course access is free for 90 days. Duration: 4 hours.</p><span class="skillup-meta__logo-placeholder">Included with</span></main>',
+  );
+  const read = readPublicContent(page);
+  void read.catch(() => {});
+  const result = await Promise.race([
+    read,
+    new Promise<never>((_resolve, reject) =>
+      setTimeout(
+        () =>
+          reject(new Error("Static decorative placeholder incorrectly blocked article reading")),
+        2000,
+      ),
+    ),
+  ]);
+  assert.equal(result.extraction.status, "readable");
+  assert.match(result.text, /Duration: 4 hours/);
+});
+
 test("the actual DOM reader returns a completed article with a styled country select immediately", {
   timeout: 10_000,
 }, async (t) => {

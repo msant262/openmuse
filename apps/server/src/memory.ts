@@ -4,6 +4,7 @@ import type { AgentMemory } from "../../../packages/domain/src/agent.ts";
 import { bindingHash } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
+import { relatedSearchQuery } from "./history-retrieval.ts";
 import { memoryFingerprint } from "./memory-fingerprint.ts";
 import { RevisionHistory } from "./memory-history.ts";
 
@@ -185,7 +186,9 @@ export class MemoryService {
     };
   }
   async recall(owner: string, query = "") {
-    return (await this.page(owner, { query, limit: 40 })).entries;
+    const exact = (await this.page(owner, { query, limit: 40 })).entries;
+    const related = !exact.length && relatedSearchQuery(query);
+    return related ? (await this.page(owner, { query: related, limit: 40 })).entries : exact;
   }
   async context(owner: string, query = "", maxBytes = 8000) {
     let size = 2;

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Message } from "@ag-ui/core";
 import { createStore } from "../apps/server/src/db.ts";
+import { HistoryRetrieval } from "../apps/server/src/history-retrieval.ts";
 import { MemoryService } from "../apps/server/src/memory.ts";
 import { personalTools } from "../apps/server/src/personal-tools.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
@@ -168,6 +169,65 @@ test("ranked memory recall filters forgotten and expired facts before ranking an
     assert.doesNotMatch(
       JSON.stringify(await memory.recall("owner", "hoteis tranquilos")),
       /PRIVATE|Esquecer|antiga/,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("natural recall recovers related facts and human messages when expanded wording has no exact match", async () => {
+  const db = await createStore();
+  try {
+    const memory = new MemoryService(db);
+    const fact = await memory.save(
+      "owner",
+      "Começou o Google AI Professional Certificate na Coursera e aceita gastar cerca de €50 por mês.",
+    );
+    const hidden = await memory.save("owner", "Forgotten Google AI course budget 50 euros.");
+    await memory.forget("owner", hidden.id);
+    await memory.save("foreign", "PRIVATE Google AI course budget 50 euros.");
+    await transcript(db, "owner", "courses", [
+      { id: "started", role: "user", content: "Comecei o certificado Google AI na Coursera." },
+      { id: "budget", role: "user", content: "Uns 50 euros por mês é tranquilo." },
+    ]);
+    await transcript(db, "foreign", "other", [
+      { id: "private", role: "user", content: "PRIVATE Google AI Coursera 50 euros." },
+    ]);
+    await transcript(
+      db,
+      "owner",
+      "archived-courses",
+      [{ id: "archived", role: "user", content: "ARCHIVED Google AI Coursera 50 euros." }],
+      true,
+    );
+    const query = "curso IA começou Coursera orçamento gasto 50 euros mensais";
+    assert.equal(
+      (await memory.page("owner", { query })).entries.length,
+      0,
+      "the management filter retains exact keyword semantics",
+    );
+    assert.deepEqual(
+      (await memory.recall("owner", query)).map((item) => item.id),
+      [fact.id],
+    );
+    const history = await new HistoryRetrieval(db).search("owner", {
+      query: "Google AI Coursera cursos data science analytics 50 euros mensais",
+      limit: 10,
+    });
+    assert.ok(history.matches.some((item) => item.messageId === "started"));
+    assert.ok(history.matches.some((item) => item.messageId === "budget"));
+    assert.doesNotMatch(JSON.stringify(history), /PRIVATE|ARCHIVED/);
+    assert.equal(history.matchMode, "related_terms");
+    assert.match(history.policy, /partial/i);
+    assert.deepEqual(await memory.recall("owner", '"missing exact phrase"'), []);
+    assert.equal(
+      (
+        await new HistoryRetrieval(db).search("owner", {
+          query: '"missing exact phrase"',
+        })
+      ).matches.length,
+      0,
+      "explicit quoted search must not broaden",
     );
   } finally {
     await db.close();

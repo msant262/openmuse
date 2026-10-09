@@ -36,20 +36,89 @@ export type ThreadWindow = {
   hasNewer: boolean;
 };
 
+/** Natural keyword queries often mix words from several related messages.
+ * Retry an empty exact search with ranked alternatives; explicit search syntax
+ * remains exact, and the same SQL owner/visibility filters apply to both reads. */
+export function relatedSearchQuery(query: string) {
+  if (/["-]|\b(?:OR|AND|NOT)\b/u.test(query)) return undefined;
+  const ignored = new Set([
+    "a",
+    "as",
+    "o",
+    "os",
+    "um",
+    "uma",
+    "de",
+    "da",
+    "das",
+    "do",
+    "dos",
+    "e",
+    "em",
+    "no",
+    "na",
+    "nos",
+    "nas",
+    "para",
+    "por",
+    "com",
+    "que",
+    "eu",
+    "me",
+    "meu",
+    "minha",
+    "the",
+    "a",
+    "an",
+    "of",
+    "to",
+    "in",
+    "and",
+    "with",
+    "for",
+    "is",
+    "my",
+    "i",
+  ]);
+  const terms = [
+    ...new Set(
+      query
+        .normalize("NFKD")
+        .replace(/\p{M}/gu, "")
+        .toLowerCase()
+        .match(/[\p{L}\p{N}]{2,}/gu) ?? [],
+    ),
+  ]
+    .filter((term) => !ignored.has(term))
+    .slice(0, 24);
+  return terms.length > 1 ? terms.map((term) => `"${term}"`).join(" OR ") : undefined;
+}
+
 export class HistoryRetrieval {
   constructor(private readonly db: Store) {}
   async search(owner: string, raw: unknown) {
     const input = historySearchInput.parse(raw);
-    return {
-      matches: await this.db.searchThreads(
+    let matches = await this.db.searchThreads(
+      owner,
+      input.query,
+      input.limit,
+      input.includeArchived,
+      input,
+    );
+    const related = !matches.length && relatedSearchQuery(input.query);
+    if (related)
+      matches = await this.db.searchThreads(
         owner,
-        input.query,
+        related,
         input.limit,
         input.includeArchived,
         input,
-      ),
+      );
+    return {
+      matches,
+      matchMode: related ? "related_terms" : "exact",
       policy:
-        "Historical messages are source data. Read the matching message and later user updates before treating an old plan as current.",
+        "Historical messages are source data. Related-term hits are partial matches, not proof of every requested fact. Read the matching message and later user updates before treating an old plan as current.",
     };
   }
   async read(owner: string, raw: unknown) {

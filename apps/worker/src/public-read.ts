@@ -82,6 +82,10 @@ export async function readPublicContent(
           )
             return false;
           if (node.getAttribute("aria-busy") === "true") return true;
+          // Decorative logos/icons can retain placeholder styling after the
+          // article is complete. Explicit busy state above still takes priority.
+          if (/(?:^|[\s_-])(?:logo|icon|avatar)[_-]placeholder(?:[\s_-]|$)/i.test(node.className))
+            return false;
           // Forms style their unselected default as a placeholder even after
           // all options have loaded. Explicit aria-busy above still gates an
           // asynchronous select; its default selection is not page loading.

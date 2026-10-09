@@ -759,11 +759,15 @@ export class PublicWeb {
         // Empty personalization cards can stay busy indefinitely after the
         // article has loaded. They are marketing slots, not missing source data.
         if (/journey[-_]?card/i.test(classes) && !htmlText(node).trim()) return false;
+        if (htmlAttribute(node, "aria-busy") === "true") return true;
+        // A missing decorative logo/icon doesn't mean the article's text is
+        // pending. Some completed pages retain a labeled logo-placeholder.
+        if (/(?:^|[\s_-])(?:logo|icon|avatar)[_-]placeholder(?:[\s_-]|$)/i.test(classes))
+          return false;
         return (
-          htmlAttribute(node, "aria-busy") === "true" ||
-          (!["select", "option"].includes(node.nodeName) &&
-            /(?:^|[\s_-])(?:skeleton|placeholder|loading)(?:[\s_-]|$)/i.test(classes) &&
-            htmlText(node).length > 0)
+          !["select", "option"].includes(node.nodeName) &&
+          /(?:^|[\s_-])(?:skeleton|placeholder|loading)(?:[\s_-]|$)/i.test(classes) &&
+          htmlText(node).length > 0
         );
       }).length > 0;
     const hasScripts = htmlNodes(root, (node) => node.nodeName === "script").length > 0;
