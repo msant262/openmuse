@@ -672,6 +672,9 @@ export class ConversationAgent extends AbstractAgent {
                         : 30000,
                     ),
               spill: preservePublicSource(this.service.files, this.owner),
+              extract: (url, signal) =>
+                this.service.integrations?.extract(url, { owner: this.owner, signal }) ??
+                Promise.resolve(null),
               render: (target, signal) =>
                 this.service.browser.observe(
                   this.owner,

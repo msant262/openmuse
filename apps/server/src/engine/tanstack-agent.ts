@@ -184,7 +184,7 @@ export function tanstackAgent(options: {
           offset: z.number().int().nonnegative().default(0),
           limit: z.number().int().min(2).max(8000).default(4000),
         }),
-        execute: async (args) => outputStore.read(args),
+        execute: async (args) => outputStore.readTool(args),
       });
       // Build the system prompt like the classic mode. It does not forward system messages.
       let system = `Current UTC date and time: ${new Date().toISOString()}\n${options.prompt}`;

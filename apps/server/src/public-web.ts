@@ -49,6 +49,8 @@ export class WebReadError extends Error {
 }
 
 export type RenderedPublicPage = {
+  observedAt?: string;
+  provenance?: { backend: "http" | "browser"; provider?: string; authenticated?: boolean };
   spill?: PublicSourceSpill;
   dataSources?: { url: string; kind: string }[];
   url: string;
@@ -70,6 +72,7 @@ export type PublicSourceSpill = {
 export type PublicReadOptions = {
   maxChars?: number;
   spill?: (source: { url: string; text: string; mimeType: string }) => Promise<PublicSourceSpill>;
+  extract?: (url: string, signal?: AbortSignal) => Promise<RenderedPublicPage | null>;
 };
 
 /** Keep a fetched source in the owner's private file store, outside delivered attachments. */
@@ -559,17 +562,27 @@ export class PublicWeb {
       new URL(url).searchParams.get("format")?.toLowerCase() === "json";
     if ((options.mode !== "browser" && options.mode !== "headless") || publishedData) {
       try {
-        return await this.readHttp(url, signal, options);
+        const page = await this.readHttp(url, signal, options);
+        if (options.mode !== "http" && !publishedData && !readablePage(page)) {
+          const extracted = await this.extract(url, signal, options);
+          if (extracted) return extracted;
+        }
+        return page;
       } catch (error) {
         signal?.throwIfAborted();
         // Never convert network/URL policy rejection or cancellation into browser dispatch.
         if (
           options.mode === "http" ||
-          !options.render ||
+          (!options.render && !options.extract) ||
           !(error instanceof WebReadError) ||
           !["HTTP_403", "HTTP_429", "PAGE_BLOCKED"].includes(error.code)
         )
           throw error;
+        if (!publishedData) {
+          const extracted = await this.extract(url, signal, options);
+          if (extracted) return extracted;
+        }
+        if (!options.render) throw error;
         return {
           url,
           title: new URL(url).hostname,
@@ -634,6 +647,41 @@ export class PublicWeb {
       extraction: rendered.extraction ?? { status: "readable" as const },
       observedAt: new Date().toISOString(),
       provenance: { backend: "browser" as const, mode: "headless" as const },
+    };
+  }
+  private async extract(url: string, signal: AbortSignal | undefined, options: PublicReadOptions) {
+    if (!options.extract) return null;
+    signal?.throwIfAborted();
+    const target = await this.validate(url, signal);
+    let page: RenderedPublicPage | null;
+    try {
+      page = await options.extract(target.url.href, signal);
+    } catch {
+      signal?.throwIfAborted();
+      return null;
+    }
+    signal?.throwIfAborted();
+    // A provider may omit a URL or return entries out of order. Never file an
+    // unrelated page under the requested source or treat a challenge as content.
+    if (!page || page.url !== target.url.href || !readablePage(page)) return null;
+    const limit = options.maxChars ?? maxText;
+    const spill =
+      page.text.length > limit && options.spill
+        ? {
+            ...(await options.spill({ url: page.url, text: page.text, mimeType: "text/plain" })),
+            truncated: page.truncated,
+          }
+        : undefined;
+    return {
+      ...page,
+      links: page.links ?? [],
+      dataSources: page.dataSources ?? [],
+      provenance: page.provenance ?? { backend: "http" as const, authenticated: false as const },
+      text: page.text.slice(0, limit),
+      ...(spill && { spill }),
+      truncated: page.truncated || page.text.length > limit,
+      observedAt: page.observedAt ?? new Date().toISOString(),
+      extraction: page.extraction ?? { status: "readable" as const },
     };
   }
   private async readHttp(url: string, signal?: AbortSignal, options: PublicReadOptions = {}) {

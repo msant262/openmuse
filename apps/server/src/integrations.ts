@@ -3,11 +3,13 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { CredentialInteractionRequest } from "../../../packages/domain/src/runtime.ts";
 import type { SearchInput, SearchResult } from "../../../packages/domain/src/search.ts";
+import { type Resolver, validatePublicUrl } from "../../worker/src/network.ts";
 import { configuredSecretScrubber } from "./configured-secrets.ts";
 import type { SecretStore } from "./credentials/contracts.ts";
 import type { GenericCredentials } from "./credentials/generic.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
+import { type RenderedPublicPage, readablePage } from "./public-web.ts";
 import type { SearchBackend, SearchContext } from "./search.ts";
 
 const provider = {
@@ -53,7 +55,12 @@ export class IntegrationService {
   constructor(
     private readonly db: Store,
     private readonly vault: SecretStore,
-    private readonly options: { available: boolean; fetch?: typeof fetch; now?: () => number },
+    private readonly options: {
+      available: boolean;
+      fetch?: typeof fetch;
+      now?: () => number;
+      resolve?: Resolver;
+    },
   ) {}
   private now() {
     return this.options.now?.() ?? Date.now();
@@ -201,7 +208,7 @@ export class IntegrationService {
     });
   }
   private async call(
-    path: "/usage" | "/search",
+    path: "/usage" | "/search" | "/extract",
     apiKey: string,
     body?: unknown,
     signal?: AbortSignal,
@@ -487,6 +494,83 @@ export class IntegrationService {
           fullPagesRead: false,
         },
       };
+    } catch (error) {
+      context.signal?.throwIfAborted();
+      if (connection && error instanceof AppError && error.code === "INTEGRATION_INVALID_KEY")
+        await this.db.compareAndSwap(
+          context.owner,
+          "integrations",
+          "tavily",
+          { credentialRef: connection.credentialRef },
+          { status: "invalid_credentials" },
+        );
+      return null;
+    }
+  }
+  /** Read actual page content with the configured account, never search snippets.
+   * Match the requested URL; partial provider failures preserve the HTTP fallback. */
+  async extract(url: string, context: SearchContext): Promise<RenderedPublicPage | null> {
+    context.signal?.throwIfAborted();
+    const connection = await this.db.get<Connection>(context.owner, "integrations", "tavily");
+    const generic = await this.genericCredentials?.findByOrigin(context.owner, provider.origin);
+    if (!this.options.available || (!generic && connection?.status !== "connected")) return null;
+    const target = await validatePublicUrl(url, this.options.resolve);
+    context.signal?.throwIfAborted();
+    let apiKey = "";
+    try {
+      const body = {
+        urls: [target.url.href],
+        extract_depth: "basic",
+        format: "markdown",
+        include_images: false,
+        timeout: 10,
+      };
+      let raw: unknown;
+      if (generic && this.genericCredentials) {
+        const result = await this.genericCredentials.httpForOrigin(
+          context.owner,
+          provider.origin,
+          {
+            path: "/extract",
+            method: "POST",
+            body,
+            intent: "read",
+            summary: "Read public source content",
+          },
+          { signal: context.signal, beforeDispatch: context.before },
+        );
+        if (!result?.ok) return null;
+        raw = JSON.parse(result.body);
+      } else {
+        const secret =
+          connection && (await this.vault.read(context.owner, connection.credentialRef));
+        if (!secret?.data.apiKey) return null;
+        apiKey = secret.data.apiKey;
+        await context.before?.();
+        raw = await this.call("/extract", apiKey, body, context.signal);
+      }
+      const response = z
+        .object({
+          results: z
+            .array(
+              z.object({ url: z.string(), raw_content: z.string(), title: z.string().optional() }),
+            )
+            .max(20),
+        })
+        .parse(raw);
+      const item = response.results.find((item) => item.url === target.url.href);
+      if (!item) return null;
+      const scrub = configuredSecretScrubber([apiKey]);
+      const text = scrub(item.raw_content);
+      const page: RenderedPublicPage = {
+        url: target.url.href,
+        title: scrub(item.title ?? /^#\s+(.+)$/m.exec(text)?.[1] ?? target.url.hostname),
+        text,
+        truncated: false,
+        observedAt: new Date(this.now()).toISOString(),
+        provenance: { backend: "http", provider: "tavily", authenticated: false },
+      };
+      return readablePage(page) ? page : null;
     } catch (error) {
       context.signal?.throwIfAborted();
       if (connection && error instanceof AppError && error.code === "INTEGRATION_INVALID_KEY")

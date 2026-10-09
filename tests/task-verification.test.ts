@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -6,6 +7,124 @@ import { deflateRawSync } from "node:zlib";
 import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
+
+test("create then replace delivers the edited bytes rather than requiring the obsolete source literal", async (t) => {
+  const server = await taskRuntime(t);
+  const prompt =
+    "Crie um arquivo TXT chamado checagem-edicao.txt contendo “O orçamento é 100 euros.”. Depois troque 100 por 200 nesse arquivo e me entregue a versão atualizada.";
+  const task = await server.agent.createTask("owner", { prompt });
+  assert.deepEqual(
+    task.criteria?.find((criterion) => criterion.id === "requested-file")?.requiredItems,
+    ["O orçamento é 200 euros."],
+  );
+  const updated = Buffer.from("O orçamento é 200 euros.");
+  const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+  const patch = await server.agent.journal.prepare("owner", {
+    id: `${task.id}:patch`,
+    taskId: task.id,
+    revision: 0,
+    executorId: "native",
+    executorEpoch: 1,
+    resourceFence: 0,
+    runToken: "test",
+    resourceLeaseIds: [],
+    createdAt: new Date().toISOString(),
+    status: "succeeded",
+    toolName: "patch",
+    bindingHash: "a".repeat(64),
+    effect: true,
+    args: { path: "checagem-edicao.txt", old_string: "100", new_string: "200" },
+    receipt: {
+      path: "/workspace/checagem-edicao.txt",
+      status: "succeeded",
+      replacements: 1,
+      beforeSha256: sha(Buffer.from("O orçamento é 100 euros.")),
+      afterSha256: sha(updated),
+    },
+  });
+  for (const [label, bytes, exportPath, expected] of [
+    ["updated", updated, "checagem-edicao.txt", true],
+    ["obsolete", Buffer.from("O orçamento é 100 euros."), "checagem-edicao.txt", false],
+    ["unrelated", updated, "another.txt", false],
+    [
+      "changed-after-patch",
+      Buffer.from("O orçamento é 200 euros. Extra!"),
+      "checagem-edicao.txt",
+      false,
+    ],
+  ] as const) {
+    const file = await server.files.importAttachment("owner", `${label}.txt`, bytes, "Fixture");
+    const changed = await server.db.compareAndSwapTask(
+      "owner",
+      task.id,
+      { status: "queued" },
+      {
+        artifactIds: [file.id],
+      },
+    );
+    assert.ok(changed);
+    const exported = await server.agent.journal.prepare("owner", {
+      ...patch,
+      id: `${task.id}:${label}`,
+      toolName: "export_computer_file",
+      effect: false,
+      args: { path: exportPath },
+      receipt: { fileId: file.id, attachment: true },
+    });
+    const assessment = await server.agent.verification.assess("owner", task.id, 0);
+    assert.equal(assessment.status === "verified", expected, JSON.stringify({ label, assessment }));
+    await server.db.remove("owner", "task-operations", exported.id);
+  }
+  assert.deepEqual(
+    taskCriteria({
+      kind: "agent",
+      prompt: "Create a TXT containing ‘Old amount.’ Then replace ‘Old amount.’ with '$& new'.",
+    }).find((criterion) => criterion.id === "requested-file")?.requiredItems,
+    ["$& new"],
+    "quoted replacements retain literal dollar sequences",
+  );
+  assert.deepEqual(
+    taskCriteria({
+      kind: "agent",
+      prompt: "Create a TXT containing ‘Keep 100.’ Required fields: total, status.",
+    }).find((criterion) => criterion.id === "requested-file")?.requiredItems,
+    ["total", "status"],
+    "explicit independent field obligations stay mandatory",
+  );
+});
+
+test("a requested exact text literal is content, while mandatory section labels still need their own body", async (t) => {
+  const server = await taskRuntime(t);
+  for (const [prompt, body, expected] of [
+    ["Create a TXT containing ‘Hello, world.’", "Hello, world.", true],
+    ["Create a TXT containing ‘Hello, world.’", "Hello world", false],
+    ["Create a TXT. Required sections: Total, Status.", "Total\nStatus", false],
+    [
+      "Create a TXT. Required sections: Total, Status.",
+      "Total\n200 euros\nStatus\nConfirmed",
+      true,
+    ],
+  ] as const) {
+    const task = await server.agent.createTask("owner", { prompt });
+    const file = await server.files.importAttachment(
+      "owner",
+      "literal.txt",
+      Buffer.from(body),
+      "Fixture",
+    );
+    await server.db.compareAndSwapTask(
+      "owner",
+      task.id,
+      { status: "queued" },
+      { artifactIds: [file.id] },
+    );
+    assert.equal(
+      (await server.agent.verification.assess("owner", task.id, 0)).status === "verified",
+      expected,
+      prompt,
+    );
+  }
+});
 
 test("literal edits require confirmed file changes rather than an unrequested download", async (t) => {
   const server = await taskRuntime(t);

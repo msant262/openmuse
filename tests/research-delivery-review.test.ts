@@ -1996,3 +1996,68 @@ test("a 32k model completes research and image delivery without any larger model
     );
   assert.equal((await f.agent.detail("owner", task.id)).files.length, 1);
 });
+
+test("access review compares visible source quotes and distinguishes unknown descriptive fields from eligibility", async (t) => {
+  await modelFixture(t, () => undefined, {
+    researchReview: (body) => {
+      const instructions = JSON.parse(body).instructions;
+      assert.match(instructions, /DESCRIPTIVE_FIELD_SCOPE/);
+      assert.match(instructions, /OPEN_CONTENT_ACCESS/);
+      return {
+        complete: true,
+        missing: [],
+        nextSteps: [],
+        accessAudit: [
+          {
+            option: "Open course",
+            access: "free",
+            sourceUrl: "https://courses.example/open",
+            quote: "The complete course content is free.",
+          },
+        ],
+      };
+    },
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Compare free courses, their language, duration and certificate cost.",
+  });
+  const common = {
+    task,
+    summary: "Open course: free content; language and certificate cost not stated by the provider.",
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    stage: "access_selection" as const,
+    proposedDocument: true,
+    signal: new AbortController().signal,
+  };
+  const operations = [
+    {
+      toolName: "web_fetch",
+      status: "succeeded",
+      args: { url: "https://courses.example/open" },
+      receipt: {
+        url: "https://courses.example/open",
+        text: "The complete course content is **free**.",
+        extraction: { status: "readable" },
+      },
+    },
+  ];
+  const decision = await reviewResearchDelivery({ ...common, operations: operations as never });
+  assert.equal(decision.complete, true);
+  const blocked = await reviewResearchDelivery({
+    ...common,
+    operations: [
+      {
+        ...operations[0],
+        receipt: {
+          ...operations[0].receipt,
+          extraction: { status: "partial" },
+          error: "Blocked page",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(blocked.complete, false, "a challenge or partial page cannot certify eligibility");
+});

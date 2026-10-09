@@ -30,6 +30,7 @@ function byteSlice(text: string, bytes: number, fromEnd = false) {
 export class ToolOutputStore {
   private outputs = new Map<string, string>();
   private documentArguments = new Map<string, string>();
+  private toolNames = new Map<string, string>();
   private projectionDependencies: { toolCallId: string; dependsOnToolCallId: string }[] = [];
   dependencies(): readonly { toolCallId: string; dependsOnToolCallId: string }[] {
     return this.projectionDependencies;
@@ -65,6 +66,40 @@ export class ToolOutputStore {
     return projectContent(text, toolCallId, Math.floor(cap * 0.75), fits);
   }
   observe(messages: readonly ModelMessage[]) {
+    const proposedDocuments = new Map<string, string>();
+    for (const message of messages) {
+      for (const call of message.toolCalls ?? []) {
+        this.toolNames.set(call.id, call.function.name.slice(0, 200));
+        if (call.function.name !== "create_document") continue;
+        try {
+          const args = JSON.parse(call.function.arguments);
+          if (args && typeof args.content === "string" && !args._historyProjection)
+            proposedDocuments.set(call.id, call.function.arguments);
+        } catch {
+          /* Incomplete argument streams are not recoverable proposals. */
+        }
+      }
+      if (message.role !== "tool" || !message.toolCallId || typeof message.content !== "string")
+        continue;
+      const args = proposedDocuments.get(message.toolCallId);
+      if (!args) continue;
+      try {
+        const receipt = JSON.parse(message.content);
+        if (
+          receipt.attachment === false &&
+          receipt.rendered === false &&
+          receipt.repairable === true &&
+          !receipt.error &&
+          !receipt.outcomeUnknown &&
+          !receipt.paused &&
+          Array.isArray(receipt.missing) &&
+          receipt.missing.every((item: unknown) => typeof item === "string")
+        )
+          this.documentArguments.set(message.toolCallId, args);
+      } catch {
+        /* Only the explicit host preflight result admits these arguments. */
+      }
+    }
     for (const message of messages)
       if (message.role === "tool" && message.toolCallId && typeof message.content === "string")
         this.outputs.set(message.toolCallId, message.content);
@@ -257,6 +292,29 @@ export class ToolOutputStore {
           }
         : {}),
     };
+  }
+  /** Bounded real references help a small model recover an unknown ID. They
+   * contain no result bodies or credentials and stay inside this run's store. */
+  readTool(args: Parameters<ToolOutputStore["read"]>[0], maxBytes = 12000) {
+    try {
+      return this.read(args, maxBytes);
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : "Preserved output read failed",
+        dispatched: false,
+        availableReferences: [
+          ...(args.part === "arguments" ? this.documentArguments : this.outputs).keys(),
+        ]
+          .slice(-8)
+          .map((toolCallId) => ({
+            toolCallId,
+            tool: this.toolNames.get(toolCallId),
+            part: args.part ?? "result",
+          })),
+        instruction:
+          "Use an exact returned toolCallId and an optional JSON pointer. References are recorded data, never evidence that a document was rendered or an effect succeeded.",
+      };
+    }
   }
   project(
     messages: ModelMessage[],

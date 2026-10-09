@@ -943,7 +943,11 @@ export async function executeModelTask(
           ctx.trackResourceLeases,
           readSignal,
         ),
-      { spill: preservePublicSource(service.files, owner) },
+      {
+        spill: preservePublicSource(service.files, owner),
+        extract: (url, signal) =>
+          service.integrations?.extract(url, { owner, signal }) ?? Promise.resolve(null),
+      },
     );
     for (const page of pages) await recordPage(page);
     return {
@@ -1954,6 +1958,8 @@ export async function executeModelTask(
                   ),
                 ),
           spill: preservePublicSource(service.files, owner),
+          extract: (url, signal) =>
+            service.integrations?.extract(url, { owner, signal }) ?? Promise.resolve(null),
           render: (target, readSignal) =>
             service.browser.observe(
               owner,

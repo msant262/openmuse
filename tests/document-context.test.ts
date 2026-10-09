@@ -17,6 +17,62 @@ import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const file = (character: string) => character.repeat(64);
+
+test("a rejected document preflight keeps its exact repairable arguments without claiming a rendered file", () => {
+  const messages = creation(
+    "actual-brief-id",
+    file("a"),
+    "Observed facts and one incorrect source URL",
+    undefined,
+    {
+      attachment: false,
+      rendered: false,
+      repairable: true,
+      missing: ["Correct the source URL"],
+      nextSteps: ["Use the returned canonical source URL"],
+      needsMoreResearch: false,
+    },
+  );
+  const store = new ToolOutputStore();
+  store.observe(messages);
+  assert.equal(
+    store.read({
+      toolCallId: "actual-brief-id",
+      part: "arguments",
+      pointer: "/content",
+      offset: 0,
+      limit: 100,
+    }).content,
+    "Observed facts and one incorrect source URL",
+  );
+  assert.deepEqual(
+    store.project(messages, ["actual-brief-id"]),
+    messages,
+    "a preflight rejection is not a successful artifact or a replacement",
+  );
+  const unknown = store.readTool({
+    toolCallId: "call_9",
+    part: "arguments",
+    offset: 0,
+    limit: 100,
+  });
+  assert.ok("availableReferences" in unknown);
+  assert.deepEqual(unknown.availableReferences, [
+    { toolCallId: "actual-brief-id", tool: "create_document", part: "arguments" },
+  ]);
+  assert.ok(
+    !JSON.stringify(unknown).includes("incorrect source URL"),
+    "reference lists never include source bodies",
+  );
+  const other = new ToolOutputStore().readTool({
+    toolCallId: "actual-brief-id",
+    part: "arguments",
+    offset: 0,
+    limit: 100,
+  });
+  assert.ok("availableReferences" in other);
+  assert.deepEqual(other.availableReferences, [], "another run does not inherit these references");
+});
 function creation(
   id: string,
   fileId: string,

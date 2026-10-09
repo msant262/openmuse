@@ -114,7 +114,7 @@ export function mergeExtractResults(
 }
 
 /** Bounded batch extraction with Hermes-style per-call rescue and ordered outcomes.
- * Our configured backends are public HTTP and the isolated VPS renderer. Policy
+ * HTTP uses configured provider extraction before the isolated renderer. Policy
  * failures and cancellation never enter fallback; one source cannot erase the rest. */
 export async function extractPublicSources(
   web: PublicWeb,

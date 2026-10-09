@@ -28,7 +28,7 @@ import { officeContent } from "./task-office.ts";
 /** Literal user content requirements are persisted before any model work.
  * This qualifies bounded explicit lists, without pretending to assess every
  * possible freeform goal semantically. */
-function requiredContent(prompt: string): string[] {
+function requiredContent(prompt: string): { items: string[]; literal: boolean } {
   const marker =
     /(?:required\s+(?:sections?|items?|fields?)|(?:se[çc][oõ]es|itens|campos)\s+obrigat[oó]ri[oa]s?|(?:following|these)\s+(?:sections?|items?|fields?))\s*:\s*/i.exec(
       prompt,
@@ -52,18 +52,39 @@ function requiredContent(prompt: string): string[] {
   const literal = quoted?.[1] ?? quoted?.[2] ?? quoted?.[4];
   // Quoted text is one literal obligation; punctuation/conjunctions inside it
   // are content, not list separators or the end of the user's instruction.
-  if (!list && literal !== undefined) return literal.trim() ? [literal.trim()] : [];
+  if (!list && literal !== undefined) {
+    // A literal supplied for creation is the initial state when the person
+    // explicitly requests a subsequent replacement. Keeping the old literal
+    // as the final obligation makes a correct create/edit/export impossible.
+    let finalText = literal;
+    const token = "(?:“[^”]*”|‘[^’]*’|\"[^\"]*\"|'[^']*'|\\x60[^\\x60]*\\x60|-?\\d+(?:[.,]\\d+)?)";
+    const edits = new RegExp(
+      `\\b(?:replace|substitua|troque)\\s+(${token})\\s+(?:with|por)\\s+(${token})`,
+      "gi",
+    );
+    const unquote = (text: string) => (/^[“‘"'`]/.test(text) ? text.slice(1, -1) : text);
+    for (const match of prompt.slice(quoted!.index + quoted![0].length).matchAll(edits)) {
+      const oldText = unquote(match[1]),
+        newText = unquote(match[2]);
+      if (oldText && finalText.split(oldText).length === 2)
+        finalText = finalText.split(oldText).join(newText);
+    }
+    return { items: finalText.trim() ? [finalText.trim()] : [], literal: true };
+  }
   const content = list ?? prompt.match(/\b(?:containing|contendo)\s+(?:the\s+)?([^.!?\n]+)/i)?.[1];
-  if (!content) return [];
-  return [
-    ...new Set(
-      content
-        .replace(/\s+(?:and|e)\s+(?:send|email|envie|enviar)\b[\s\S]*$/i, "")
-        .split(/[,;]|\s+(?:and|e|&)\s+/i)
-        .map((item) => item.replace(/^[\s'"`-]+|[\s'"`-]+$/g, "").trim())
-        .filter(Boolean),
-    ),
-  ];
+  if (!content) return { items: [], literal: false };
+  return {
+    literal: false,
+    items: [
+      ...new Set(
+        content
+          .replace(/\s+(?:and|e)\s+(?:send|email|envie|enviar)\b[\s\S]*$/i, "")
+          .split(/[,;]|\s+(?:and|e|&)\s+/i)
+          .map((item) => item.replace(/^[\s'"`-]+|[\s'"`-]+$/g, "").trim())
+          .filter(Boolean),
+      ),
+    ],
+  };
 }
 
 export function mandatoryTaskCriteria(
@@ -160,7 +181,7 @@ function requestedExecution(prompt: string) {
 export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): CompletionCriterion[] {
   const prompt = task.prompt,
     criteria: CompletionCriterion[] = [],
-    content = requiredContent(prompt);
+    content = requiredContent(prompt).items;
   const remoteGoogleDocument =
     /\b(?:google\s*(?:drive|docs|sheets|slides)|drive|docs|sheets|slides)\b/i.test(prompt) &&
     !/\b(?:download|baixar|baixe|anexo|attachment|pdf|docx|xlsx|pptx|txt|csv)\b/i.test(prompt);
@@ -445,7 +466,8 @@ function required(criterion: CompletionCriterion, value: unknown) {
 }
 /** Literal labels need content of their own, not another required heading.
  * This is structural evidence, not a semantic assessment of the prose. */
-function textContains(content: string, item: string, items: string[]): boolean {
+function textContains(content: string, item: string, items: string[], literal = false): boolean {
+  if (literal) return content.includes(item);
   const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const labels = [...new Set(items.map((value) => value.trim().toLowerCase()))]
     .filter(Boolean)
@@ -462,14 +484,20 @@ function textContains(content: string, item: string, items: string[]): boolean {
     return /[\p{L}\p{N}]/u.test(body);
   });
 }
-function artifactContains(value: unknown, item: string, items: string[] = [item]): boolean {
-  if (typeof value === "string") return textContains(value, item, items);
-  if (Array.isArray(value)) return value.some((entry) => artifactContains(entry, item, items));
+function artifactContains(
+  value: unknown,
+  item: string,
+  items: string[] = [item],
+  literal = false,
+): boolean {
+  if (typeof value === "string") return textContains(value, item, items, literal);
+  if (Array.isArray(value))
+    return value.some((entry) => artifactContains(entry, item, items, literal));
   if (!value || typeof value !== "object") return false;
   return Object.entries(value).some(([key, entry]) =>
     key.trim().toLowerCase() === item.toLowerCase()
       ? useful(entry)
-      : artifactContains(entry, item, items),
+      : artifactContains(entry, item, items, literal),
   );
 }
 type McpBinding = {
@@ -756,8 +784,12 @@ export class TaskVerification {
         op.toolName !== "finish_task",
     );
     const criteria = task.criteria ?? taskCriteria(task);
+    const requestedContent = requiredContent(task.prompt);
     const checks = await Promise.all(
       criteria.map(async (criterion) => {
+        const literal =
+          requestedContent.literal &&
+          criterion.requiredItems.every((item) => requestedContent.items.includes(item));
         let evidenceIds: string[] = [];
         if (current && !uncertain) {
           if (criterion.kind === "artifact")
@@ -770,7 +802,7 @@ export class TaskVerification {
                   (!criterion.referenceId || criterion.referenceId === artifact.id) &&
                   useful(artifact.data) &&
                   criterion.requiredItems.every((item) =>
-                    artifactContains(artifact.data, item, criterion.requiredItems),
+                    artifactContains(artifact.data, item, criterion.requiredItems, literal),
                   ),
               )
               .map((artifact) => artifact.id);
@@ -798,6 +830,43 @@ export class TaskVerification {
               try {
                 const bytes = await this.files.bytes(owner, id);
                 if (!bytes.length || bytes.length !== file.size) continue;
+                const edit = criteria.find((entry) => entry.id === "requested-workspace-edit");
+                if (edit) {
+                  const editedHashes = new Map(
+                    ops
+                      .filter(
+                        (entry) =>
+                          entry.revision === revision && operationMatches(edit, entry, task.prompt),
+                      )
+                      .map((entry) => {
+                        const receipt = object(entry.receipt)!;
+                        return [receipt.path, receipt.afterSha256] as const;
+                      }),
+                  );
+                  const exported = ops.some((entry) => {
+                    if (
+                      entry.status !== "succeeded" ||
+                      entry.revision !== revision ||
+                      !/^(?:primitive\.)?export_computer_file$/.test(entry.toolName) ||
+                      object(entry.receipt)?.fileId !== id
+                    )
+                      return false;
+                    const path = object(entry.args)?.path;
+                    if (typeof path !== "string") return false;
+                    try {
+                      const canonical = workspacePath(
+                        path.startsWith("/") ? path : `/workspace/${path}`,
+                      );
+                      return (
+                        editedHashes.get(canonical) ===
+                        createHash("sha256").update(bytes).digest("hex")
+                      );
+                    } catch {
+                      return false;
+                    }
+                  });
+                  if (!exported) continue;
+                }
                 let content = "";
                 let structuredContent: unknown;
                 if (file.mimeType === "application/pdf") {
@@ -831,8 +900,8 @@ export class TaskVerification {
                 if (
                   criterion.requiredItems.every((item) =>
                     structuredContent !== undefined
-                      ? artifactContains(structuredContent, item, criterion.requiredItems)
-                      : textContains(content, item, criterion.requiredItems),
+                      ? artifactContains(structuredContent, item, criterion.requiredItems, literal)
+                      : textContains(content, item, criterion.requiredItems, literal),
                   )
                 )
                   evidenceIds.push(id);

@@ -215,27 +215,43 @@ test("a runtime credential for Tavily powers search without a legacy integration
     resolve: async () => [{ address: "93.184.216.34", family: 4 }],
     request: async (target, input) => {
       requests++;
-      assert.equal(target.url.href, "https://api.tavily.com/search");
+      assert.ok(
+        ["https://api.tavily.com/search", "https://api.tavily.com/extract"].includes(
+          target.url.href,
+        ),
+      );
       assert.equal(input.method, "POST");
       assert.equal(input.headers.Authorization, `Bearer ${canary}`);
       assert.equal(String(input.body).includes(canary), false);
       return {
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          results: [
-            {
-              title: "Available makeup offers",
-              url: "https://shop.example.test/offers",
-              content: `Offers listed today ${canary}`,
-            },
-          ],
-        }),
+        body: JSON.stringify(
+          target.url.pathname === "/extract"
+            ? {
+                results: [
+                  {
+                    url: "https://shop.example.test/offers",
+                    raw_content: `# Offers\nActual public offer ${canary}`,
+                  },
+                ],
+              }
+            : {
+                results: [
+                  {
+                    title: "Available makeup offers",
+                    url: "https://shop.example.test/offers",
+                    content: `Offers listed today ${canary}`,
+                  },
+                ],
+              },
+        ),
       };
     },
   });
   const integrations = new IntegrationService(db, vault, {
     available: true,
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
     fetch: async () => {
       throw new Error("Legacy fixed-provider credential path must not run");
     },
@@ -289,4 +305,81 @@ test("a runtime credential for Tavily powers search without a legacy integration
   assert.equal(result.sources[0].url, "https://shop.example.test/offers");
   assert.equal(JSON.stringify(result).includes(canary), false);
   searchResultSchema.parse(result);
+  const page = await integrations.extract("https://shop.example.test/offers", { owner: "owner" });
+  assert.equal(requests, 2);
+  assert.equal(page?.provenance?.provider, "tavily");
+  assert.match(page?.text ?? "", /Actual public offer/);
+  assert.equal(JSON.stringify(page).includes(canary), false);
+});
+
+test("connected Tavily extracts actual matching pages privately and cannot cross owner or URL boundaries", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  const { vault } = vaultFixture();
+  await vault.write("owner", "extract-key", { apiKey: canary }, 0);
+  await db.put("owner", "integrations", {
+    id: "tavily",
+    credentialRef: "extract-key",
+    status: "connected",
+  });
+  let calls = 0;
+  const service = new IntegrationService(db, vault, {
+    available: true,
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    fetch: async (url, init) => {
+      calls++;
+      assert.equal(String(url), "https://api.tavily.com/extract");
+      assert.equal(new Headers(init?.headers).get("Authorization"), `Bearer ${canary}`);
+      assert.equal(init?.redirect, "error");
+      const body = JSON.parse(String(init?.body));
+      assert.deepEqual(body.urls, ["https://courses.example/free"]);
+      assert.equal(body.extract_depth, "basic");
+      assert.equal(body.format, "markdown");
+      assert.equal(String(init?.body).includes(canary), false);
+      return Response.json({
+        results: [
+          { url: "https://wrong.example/", raw_content: "Must not become the requested source." },
+          { url: body.urls[0], raw_content: `# Actual course\nThe course is free. ${canary}` },
+        ],
+        failed_results: [],
+      });
+    },
+  });
+  assert.equal(await service.extract("https://courses.example/free", { owner: "other" }), null);
+  await assert.rejects(service.extract("http://127.0.0.1/private", { owner: "owner" }));
+  await assert.rejects(
+    service.extract("https://courses.example/free", {
+      owner: "owner",
+      signal: AbortSignal.abort(),
+    }),
+  );
+  assert.equal(calls, 0);
+  const page = await service.extract("https://courses.example/free", { owner: "owner" });
+  assert.equal(page?.url, "https://courses.example/free");
+  assert.match(page?.text ?? "", /The course is free/);
+  assert.equal(page?.provenance?.provider, "tavily");
+  assert.equal(JSON.stringify(page).includes(canary), false);
+  assert.equal(calls, 1);
+});
+
+test("Tavily per-URL extraction failure cannot masquerade as a successful read", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  const { vault } = vaultFixture();
+  await vault.write("owner", "extract-key", { apiKey: canary }, 0);
+  await db.put("owner", "integrations", {
+    id: "tavily",
+    credentialRef: "extract-key",
+    status: "connected",
+  });
+  const service = new IntegrationService(db, vault, {
+    available: true,
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    fetch: async () =>
+      Response.json({
+        results: [{ url: "https://other.example/", raw_content: "Unrelated" }],
+        failed_results: [{ url: "https://courses.example/free", error: canary }],
+      }),
+  });
+  assert.equal(await service.extract("https://courses.example/free", { owner: "owner" }), null);
 });

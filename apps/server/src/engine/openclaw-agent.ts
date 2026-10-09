@@ -664,7 +664,7 @@ export function openclawAgent(options: Options) {
             defineTool({
               ...harnessToolCatalog[0],
               parameters: outputArgs,
-              execute: async (args) => outputs.read(outputArgs.parse(args), outputBudget),
+              execute: async (args) => outputs.readTool(outputArgs.parse(args), outputBudget),
             }),
           ];
           tools.push(

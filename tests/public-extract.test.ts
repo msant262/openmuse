@@ -181,3 +181,96 @@ test("documented code templates do not force a page through the renderer", async
   assert.equal(page.extraction?.status, "readable");
   assert.match(page.text, /\{day\}/);
 });
+
+test("configured extraction rescues an HTTP block before opening a browser", async () => {
+  let extracts = 0,
+    renders = 0;
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({ status: 403, headers: {}, body: "Forbidden" }),
+  });
+  const url = "https://courses.example/free";
+  const [page] = await extractPublicSources(
+    web,
+    [url],
+    undefined,
+    async () => {
+      renders++;
+      throw new Error("provider content needs no browser");
+    },
+    {
+      extract: async (target) => {
+        extracts++;
+        return {
+          url: target,
+          title: "Free course",
+          text: "The complete course is free and takes three hours.",
+          truncated: false,
+          provenance: { backend: "http", provider: "tavily", authenticated: false },
+        };
+      },
+    },
+  );
+  assert.equal(extracts, 1);
+  assert.equal(renders, 0);
+  assert.match(page.text, /three hours/);
+  assert.equal(page.provenance?.provider, "tavily");
+});
+
+test("extract rescue preserves full source text and explicit HTTP mode stays HTTP-only", async () => {
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({ status: 403, headers: {}, body: "Forbidden" }),
+  });
+  const text = "Actual source content. ".repeat(3000);
+  let extracted = 0,
+    preserved = "";
+  const options = {
+    maxChars: 200,
+    extract: async (url: string) => {
+      extracted++;
+      return { url, title: "Source", text, truncated: false };
+    },
+    spill: async (source: { text: string }) => {
+      preserved = source.text;
+      return {
+        fileId: "private-cache",
+        chars: text.length,
+        size: text.length,
+        sha256: "hash",
+        truncated: false,
+      };
+    },
+  };
+  const page = await web.read("https://courses.example/read", undefined, options);
+  assert.equal(page.text.length, 200);
+  assert.equal(preserved, text);
+  assert.ok("spill" in page);
+  assert.equal(page.spill?.truncated, false);
+  await assert.rejects(
+    web.read("https://courses.example/read", undefined, { ...options, mode: "http" }),
+  );
+  assert.equal(extracted, 1);
+});
+
+test("extraction never dispatches rejected destinations or cancellation, and cannot substitute another URL", async () => {
+  let extracts = 0;
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({ status: 403, headers: {}, body: "Forbidden" }),
+  });
+  const extract = async () => {
+    extracts++;
+    return {
+      url: "https://other.example/",
+      title: "Wrong",
+      text: "Unrelated content",
+      truncated: false,
+    };
+  };
+  await assert.rejects(web.read("http://127.0.0.1/private", undefined, { extract }));
+  await assert.rejects(web.read("https://courses.example/", AbortSignal.abort(), { extract }));
+  assert.equal(extracts, 0);
+  await assert.rejects(web.read("https://courses.example/", undefined, { extract }));
+  assert.equal(extracts, 1);
+});
