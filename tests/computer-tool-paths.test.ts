@@ -62,3 +62,52 @@ test("invalid file paths are rejected before effect authorization and remain saf
   assert.equal(authorizations, 0);
   assert.equal(writes, 0);
 });
+
+test("native file search is discoverable, scoped and read-only, and rejects traversal before dispatch", async () => {
+  const calls: unknown[] = [];
+  let effects = 0;
+  const backend = {
+    search: async (owner: string, path: string, parameters: unknown) => {
+      calls.push({ owner, path, parameters });
+      return {
+        results: [{ path: `${path}/budget.txt`, line: 2, content: "200 euros" }],
+        complete: true,
+      };
+    },
+  } as unknown as ComputerBackend;
+  const tools = computerTools(backend, {} as never, "owner", "scope", {
+    effectBefore: async () => {
+      effects++;
+    },
+  });
+  const tool = tools.find((tool) => tool.name === "search_files");
+  assert.ok(tool);
+  const execute = tool.execute as (input: unknown) => Promise<unknown>;
+  await execute({ pattern: "budget", target: "files", path: "reports", limit: 20, offset: 2 });
+  assert.deepEqual(calls, [
+    {
+      owner: "owner",
+      path: "/workspace/reports",
+      parameters: {
+        pattern: "budget",
+        target: "files",
+        limit: 20,
+        offset: 2,
+        order: "discovery",
+        output_mode: "content",
+        context: 0,
+      },
+    },
+  ]);
+  const invalid = (await execute({ path: "../private", pattern: "*" })) as { status: string };
+  assert.equal(invalid.status, "rejected_not_dispatched");
+  assert.equal(calls.length, 1);
+  assert.equal(effects, 0);
+  assert.equal(
+    computerTools({} as ComputerBackend, {} as never, "owner", "scope").some(
+      (t) => t.name === "search_files",
+    ),
+    false,
+    "do not advertise an unavailable backend",
+  );
+});

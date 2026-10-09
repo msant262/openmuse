@@ -116,6 +116,7 @@ export function auditedComputer(
   const cancelCommand = backend.cancel?.bind(backend);
   const mediaCommand = backend.media?.bind(backend);
   const inspectArtifact = backend.artifact?.bind(backend);
+  const searchFiles = backend.search?.bind(backend);
   const canonicalFilePath = (path: string) => {
     try {
       return workspacePath(path);
@@ -147,7 +148,7 @@ export function auditedComputer(
         owner,
         { tool: `computer.${tool}`, target: "Private workspace", summary: `Computer ${tool}` },
         async () => {
-          if (!["read", "list", "export", "stop", "cancel"].includes(tool))
+          if (!["read", "list", "search", "export", "stop", "cancel"].includes(tool))
             await runtimePause?.assertResumed(owner);
           await authorizeTaskEffect(lease ?? [], lockId);
           return physicalResources.run(
@@ -407,6 +408,15 @@ export function auditedComputer(
     });
   return {
     ...(recovery && { recovery }),
+    ...(searchFiles && {
+      search: (owner, path, parameters, options) =>
+        run(
+          owner,
+          "search",
+          () => searchFiles(owner, path, parameters, options),
+          fileResource(owner, path, "shared"),
+        ),
+    }),
     ...(backend.patch && {
       patch: (owner: string, input: Parameters<NonNullable<ComputerBackend["patch"]>>[1]) =>
         run(

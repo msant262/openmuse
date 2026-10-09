@@ -11,6 +11,7 @@ import {
   type ComputerBackend,
   commandReceiptSchema,
   computerCommandCleanupConfirmed,
+  computerSearchParameters,
 } from "./computer-contract.ts";
 import { ResourceBusyError } from "./engine/resource-leases.ts";
 import { RuntimePausedError } from "./engine/runtime-pause.ts";
@@ -65,7 +66,8 @@ export function computerTools(
     "File operation requires a file path; /workspace is a directory. Use list_files to find a file or search_saved_files for existing app attachments.",
   );
   const recovery = computer.recovery,
-    artifact = computer.artifact?.bind(computer);
+    artifact = computer.artifact?.bind(computer),
+    searchFiles = computer.search?.bind(computer);
   const readiness = (state: Awaited<ReturnType<ComputerBackend["snapshot"]>>) => {
     const { commands, ...current } = state;
     // Status is readiness, not a transcript of other tasks' scripts and data.
@@ -277,6 +279,20 @@ export function computerTools(
     tool("list_files", "List workspace files", computerPathSchema, ({ path }) =>
       computer.list(owner, path),
     ),
+    ...(searchFiles
+      ? [
+          tool(
+            "search_files",
+            "Search actual owned workspace files without a shell. target=files uses filename globs: *part* finds partial names, *.pdf finds PDFs; target=content uses line-oriented Rust/ripgrep regex, with file_glob, numbered matches, context, files_only or count. Paths may be relative to /workspace. Page at nextOffset using identical parameters; complete=false never proves absence or a full count. Does not search Drive/app attachments or export a file.",
+            computerPathSchema.extend({
+              path: computerPathSchema.shape.path.default("/workspace"),
+              ...computerSearchParameters.shape,
+            }),
+            ({ path, ...parameters }) =>
+              searchFiles(owner, path, parameters, { signal: options.signal }),
+          ),
+        ]
+      : []),
     tool("read_file", "Read a workspace UTF-8 file up to 256KB", filePathSchema, ({ path }) =>
       computer.read(owner, path),
     ),

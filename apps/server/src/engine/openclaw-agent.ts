@@ -359,6 +359,7 @@ const directTools = new Set([
   "image_generation_status",
   "view_file",
   "search_saved_files",
+  "search_files",
   "read_saved_file",
   "attach_saved_file",
   "finish_task",

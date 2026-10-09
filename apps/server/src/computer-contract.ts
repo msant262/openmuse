@@ -71,6 +71,51 @@ export type ComputerDispatchOptions = {
   /** Owned task journal context, never model-selected account/epoch/fence. */
   dispatchContext?: ExecutorDispatchContext;
 };
+export const computerSearchParameters = z.object({
+  pattern: z.string().min(1).max(1024),
+  target: z.enum(["content", "files"]).default("content"),
+  file_glob: z.string().max(256).optional(),
+  limit: z.number().int().min(1).max(500).default(50),
+  offset: z.number().int().min(0).max(100000).default(0),
+  order: z.enum(["discovery", "modified"]).default("discovery"),
+  output_mode: z.enum(["content", "files_only", "count"]).default("content"),
+  context: z.number().int().min(0).max(5).default(0),
+});
+export const computerSearchReceipt = z.object({
+  path: z.string().max(2048),
+  target: z.enum(["content", "files"]),
+  outputMode: z.enum(["content", "files_only", "count"]),
+  order: z.enum(["discovery", "modified"]),
+  results: z
+    .array(
+      z.object({
+        path: z.string().max(2048),
+        size: z.number().nonnegative().optional(),
+        modifiedAt: z.number().optional(),
+        line: z.number().int().positive().optional(),
+        content: z.string().max(2000).optional(),
+        count: z.number().int().nonnegative().optional(),
+        truncated: z.boolean().optional(),
+        sha256: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional(),
+        contextBefore: z.array(z.string().max(2000)).max(5).optional(),
+        contextAfter: z.array(z.string().max(2000)).max(5).optional(),
+      }),
+    )
+    .max(500),
+  offset: z.number().int().nonnegative(),
+  nextOffset: z.number().int().nonnegative().nullable(),
+  complete: z.boolean(),
+  totalMatches: z.number().int().nonnegative().nullable(),
+  entriesScanned: z.number().int().nonnegative(),
+  bytesRead: z.number().int().nonnegative(),
+  skippedFiles: z.number().int().nonnegative(),
+  limits: z.array(z.string().max(100)).max(10),
+  scope: z.enum(["owned_regular_files", "owned_utf8_files_up_to_256KB"]),
+  guidance: z.string().max(2000),
+});
 type BaseComputerBackend = Pick<
   ComputerService,
   | "snapshot"
@@ -86,6 +131,12 @@ type BaseComputerBackend = Pick<
   | "writeBytes"
 >;
 export type ComputerBackend = Omit<BaseComputerBackend, "execute"> & {
+  search?: (
+    owner: string,
+    path: string,
+    parameters: z.output<typeof computerSearchParameters>,
+    options?: Pick<ComputerDispatchOptions, "signal">,
+  ) => Promise<z.output<typeof computerSearchReceipt>>;
   /** Literal edits bind their write to the actual inspected source hash. */
   patch?: (
     owner: string,

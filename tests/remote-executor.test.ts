@@ -99,6 +99,73 @@ test("a failed foreground native command returns its exit receipt and permits a 
   }
 });
 
+test("workspace search retains its native inspection authority and physical audit through the production wrapper", async () => {
+  const db = await createStore();
+  try {
+    const registry = new ExecutorRegistry(db, {
+      registrations: [registration],
+      authority: authority(db),
+    });
+    const { epoch } = await registry.register(hello);
+    await registry.reconcile("lenovo-okami", {
+      epoch,
+      bootId: "boot-a",
+      operations: [],
+      contained: true,
+    });
+    const resources = new ResourceLeases(db);
+    const native = new RemoteComputerBackend(registry, {
+      executorId: "lenovo-okami",
+      context: async () => context,
+      pollMs: 1,
+    });
+    const computer = auditedComputer(native, new ActionLog(db), "native", resources, "lenovo");
+    const tool = computerTools(computer, {} as never, "owner", "search-test").find(
+      (t) => t.name === "search_files",
+    );
+    assert.ok(tool, "the production audit wrapper must not drop the search method");
+    const pending = (tool.execute as (input: unknown) => Promise<unknown>)({
+      pattern: "*budget*",
+      target: "files",
+    });
+    const [operation] = (await registry.claimOperations("lenovo-okami", epoch, { waitMs: 1000 }))
+      .operations;
+    assert.ok(operation);
+    assert.equal(operation.inspection, true);
+    assert.equal(operation.kind, "file");
+    assert.equal(operation.args.operation, "search");
+    assert.equal(operation.args.path, "/workspace");
+    const data = {
+      path: "/workspace",
+      target: "files",
+      outputMode: "content",
+      order: "discovery",
+      results: [{ path: "/workspace/budget.txt", size: 9, modifiedAt: 1 }],
+      offset: 0,
+      nextOffset: null,
+      complete: true,
+      totalMatches: 1,
+      entriesScanned: 1,
+      bytesRead: 0,
+      skippedFiles: 0,
+      limits: [],
+      scope: "owned_regular_files",
+      guidance: "Observed files only.",
+    };
+    await registry.submitReceipt("lenovo-okami", epoch, operation.id, 1, {
+      status: "succeeded",
+      data,
+    });
+    assert.deepEqual(await pending, data);
+    const holds = await db.list<{ complete: boolean }>("owner", "computer-file-holds");
+    assert.equal(holds.length, 1);
+    assert.equal(holds[0].complete, true);
+    assert.equal((await resources.listForTask(operation.id)).length, 0);
+  } finally {
+    await db.close();
+  }
+});
+
 test("native delivery requires authoritative dispatch authorization, reconciliation and concrete readiness", async () => {
   const db = await createStore();
   try {

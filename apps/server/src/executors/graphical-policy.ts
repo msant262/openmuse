@@ -110,7 +110,7 @@ export const nativeBrowserArgsSchema = z
   });
 export function nativeInspection(kind: string, args: Record<string, unknown>) {
   if (kind === "file")
-    return ["list", "read", "read_binary", "stat"].includes(String(args.operation));
+    return ["list", "search", "read", "read_binary", "stat"].includes(String(args.operation));
   if (kind === "desktop") return nativeDesktopArgsSchema.parse(args).operation === "observe";
   if (kind === "browser")
     return [

@@ -2189,3 +2189,47 @@ test("review repairs its own quotation protocol before sending a correct researc
     "only the read-only review is corrected; no executor inference or network research is requested",
   );
 });
+
+test("an empty optional proof list is missing evidence, not a provider outage, and does not mask an exact quote", async (t) => {
+  await modelFixture(t, () => undefined, {
+    researchReview: (_body, i) => ({
+      complete: true,
+      missing: [],
+      nextSteps: [],
+      accessAudit: [
+        {
+          option: "Course A",
+          access: "free",
+          sourceUrl: "https://courses.example/free",
+          quotes: [],
+          ...(i === 0 ? { quote: "Free Course" } : {}),
+        },
+      ],
+    }),
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Find a free course." });
+  const input = {
+    task,
+    summary: "Course A has free lessons.",
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    stage: "access_selection" as const,
+    proposedDocument: true,
+    signal: new AbortController().signal,
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url: "https://courses.example/free" },
+        receipt: { url: "https://courses.example/free", text: "Free Course" },
+      },
+    ] as never,
+  };
+  assert.equal((await reviewResearchDelivery(input)).complete, true);
+  const missing = await reviewResearchDelivery(input);
+  assert.equal(missing.complete, false);
+  assert.equal(missing.needsMoreResearch, true);
+  assert.match(missing.missing.join(" "), /Course A/);
+});

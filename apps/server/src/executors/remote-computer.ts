@@ -13,6 +13,8 @@ import {
   type ComputerBackend,
   type ComputerDispatchOptions,
   commandReceiptSchema,
+  computerSearchParameters,
+  computerSearchReceipt,
   mediaSchema,
 } from "../computer-contract.ts";
 import { AppError } from "../errors.ts";
@@ -466,7 +468,7 @@ export class RemoteComputerBackend implements ComputerBackend {
         kind: "file",
         capability: "files",
         capabilityVersion: 1,
-        inspection: ["list", "read", "read_binary", "stat"].includes(operation),
+        inspection: ["list", "search", "read", "read_binary", "stat"].includes(operation),
         args: { operation, path: workspacePath(path), ...extra },
       },
       options,
@@ -475,6 +477,30 @@ export class RemoteComputerBackend implements ComputerBackend {
   }
   async list(owner: string, path = "/workspace"): Promise<ComputerDirectory> {
     return directorySchema.parse(await this.file(owner, "list", path));
+  }
+  async search(
+    owner: string,
+    path: string,
+    raw: z.output<typeof computerSearchParameters>,
+    options: Pick<ComputerDispatchOptions, "signal"> = {},
+  ) {
+    const canonical = workspacePath(path);
+    const parameters = computerSearchParameters.parse(raw);
+    const result = computerSearchReceipt.parse(
+      await this.file(owner, "search", canonical, { parameters }, options),
+    );
+    if (
+      result.path !== canonical ||
+      result.results.some((item) => {
+        const observed = workspacePath(item.path);
+        return (
+          observed !== item.path ||
+          !(observed === canonical || observed.startsWith(`${canonical.replace(/\/+$/, "")}/`))
+        );
+      })
+    )
+      throw new AppError("Native file search returned a path outside the requested scope", 502);
+    return result;
   }
   async read(owner: string, path: string) {
     const result = z

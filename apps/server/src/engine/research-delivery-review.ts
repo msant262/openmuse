@@ -52,7 +52,9 @@ const decisionSchema = z.object({
         access: z.enum(["free", "paid", "trial", "unknown"]),
         sourceUrl: z.string().max(4096),
         quote: z.string().max(1500).optional(),
-        quotes: z.array(z.string().min(1).max(1500)).min(1).max(8).optional(),
+        // An empty optional list means no fragment evidence, not an outage.
+        // Positive access claims still require observed nonempty proof below.
+        quotes: z.array(z.string().max(1500)).max(8).optional(),
       }),
     )
     .optional(),
@@ -396,7 +398,9 @@ export async function reviewResearchDelivery(options: {
         const normalize = (value: string) =>
           value.normalize("NFKC").replace(/[*`]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
         const failed = (decision.accessAudit ?? []).filter((item) => {
-          const quotes = (item.quotes ?? (item.quote ? [item.quote] : [])).map(normalize);
+          const quotes = (item.quotes?.length ? item.quotes : item.quote ? [item.quote] : []).map(
+            normalize,
+          );
           return (
             item.access !== "free" ||
             !quotes.length ||

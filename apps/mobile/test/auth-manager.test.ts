@@ -194,6 +194,38 @@ test("missing credentials and absent web cookies restore as missing, rather than
   assert.equal(web.snapshot.status, "missing");
 });
 
+test("an invalid native refresh opens reconnection without discarding the saved identity or pairing automatically", async (t) => {
+  let now = 1_800_000_000_000;
+  t.mock.method(Date, "now", () => now);
+  const f = await fixture(t);
+  const paired = f.manager();
+  await paired.pair("fixture-key");
+  const identity = paired.snapshot.identity;
+  now += 900_001;
+  const pair = t.mock.method(f.transport, "pair");
+  t.mock.method(f.transport, "refresh", async () => {
+    throw new ApiError("Refresh credential is invalid", 401, "SESSION_REFRESH_INVALID");
+  });
+  const restarted = f.manager();
+  await assert.rejects(restarted.restoreOrPair(), { code: "SESSION_REFRESH_INVALID" });
+  assert.equal(restarted.snapshot.status, "unavailable");
+  assert.equal(
+    restarted.snapshot.token,
+    "",
+    "the app must show Welcome instead of mounting an unauthorized workspace",
+  );
+  assert.equal(restarted.snapshot.accessExpiresAt, 0);
+  assert.deepEqual(restarted.snapshot.identity, identity);
+  assert.equal(f.saved()?.deviceId, identity?.deviceId);
+  assert.ok(f.saved()?.pending, "retain the saved attempt for an explicit retry");
+  assert.equal(pair.mock.callCount(), 0);
+  await restarted.pair("fixture-key");
+  assert.equal(pair.mock.callCount(), 1);
+  assert.equal(restarted.snapshot.status, "paired");
+  assert.ok(restarted.snapshot.token);
+  assert.equal(f.saved()?.pending, undefined);
+});
+
 test("rotation is durable before dispatch and recovers a lost reply after app/server restart", async (t) => {
   const f = await fixture(t),
     manager = f.manager();

@@ -563,7 +563,7 @@ class Supervisor:
         return command
 
     def perform(self, operation):
-        inspection = (operation["kind"] == "file" and operation["args"].get("operation") in ("list","read","read_binary","stat")
+        inspection = (operation["kind"] == "file" and operation["args"].get("operation") in ("list","search","read","read_binary","stat")
                       or operation["kind"]=="desktop" and operation["args"].get("operation")=="observe"
                       or operation["kind"]=="browser" and operation["args"].get("operation") in ("snapshot","read","inspect","agent-screenshot","screenshot","control","downloads","download"))
         containment=(operation["kind"]=="cancel" or operation["kind"]=="session" and operation["args"].get("operation")=="stop"
@@ -668,7 +668,7 @@ class Supervisor:
             # mutation. Once handle() raises, the read has definitively failed;
             # do not freeze its task as an uncertain write. File mutations and
             # graphical/command dispatch keep their existing uncertainty rules.
-            file_read_failed = started and operation["kind"] == "file" and operation["args"].get("operation") in ("list","read","read_binary","stat")
+            file_read_failed = started and operation["kind"] == "file" and operation["args"].get("operation") in ("list","search","read","read_binary","stat")
             status = "failed" if file_read_failed else "outcome_unknown" if started else "rejected_not_dispatched"
             graphical=operation["kind"] in ("desktop","browser")
             message = "Native graphical operation could not be confirmed; inspect before repeating input" if graphical else type(error).__name__ + ": " + str(error)[:500]

@@ -476,6 +476,7 @@ export class ConversationAgent extends AbstractAgent {
       "list_computer_files",
       "read_computer_file",
       "list_files",
+      "search_files",
       "read_file",
       "list_computer_versions",
       "inspect_computer_artifact",

@@ -216,7 +216,15 @@ export class AuthManager {
     this.flight = this.refresh()
       .catch(async (error: unknown) => {
         if (code(error) === "SESSION_REVOKED") await this.confirmRevocation();
-        else this.emit(code(error) === "SESSION_REQUIRED" ? "missing" : "unavailable");
+        else {
+          if (code(error) === "SESSION_REFRESH_INVALID") {
+            // The server has rejected this credential. Do not keep mounting an
+            // unauthorized workspace instead of the existing reconnection UI.
+            // Retain private storage/identity for retry and unsent local work.
+            this.snapshot = { ...this.snapshot, token: "", accessExpiresAt: 0 };
+          }
+          this.emit(code(error) === "SESSION_REQUIRED" ? "missing" : "unavailable");
+        }
         throw error;
       })
       .finally(() => {

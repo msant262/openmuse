@@ -7,6 +7,7 @@ import base64
 import contextlib
 import ctypes
 import fcntl
+import fnmatch
 import hashlib
 import json
 import mimetypes
@@ -16,6 +17,7 @@ import re
 import shutil
 import sqlite3
 import stat
+import subprocess
 import threading
 import time
 import uuid
@@ -450,6 +452,192 @@ class Workspace:
         finally:
             os.close(fd)
 
+    def search(self, path, parameters, cancelled=lambda: False):
+        """Hermes-style glob/rg search over descriptor-checked owned files.
+
+        No shell, symlink following, native DB writes or whole-tree content cache.
+        Limits describe partial coverage instead of turning it into absence.
+        """
+        self.parts(path)
+        target = parameters.get("target", "content")
+        pattern = parameters.get("pattern")
+        file_glob = parameters.get("file_glob")
+        output = parameters.get("output_mode", "content")
+        order = parameters.get("order", "discovery")
+        limit, offset, context = parameters.get("limit", 50), parameters.get("offset", 0), parameters.get("context", 0)
+        if (target not in ("files", "content") or output not in ("content", "files_only", "count")
+                or order not in ("discovery", "modified") or not isinstance(pattern, str)
+                or not pattern or len(pattern) > 1024 or "\x00" in pattern
+                or file_glob is not None and (not isinstance(file_glob, str) or len(file_glob) > 256)
+                or any(type(n) is not int for n in (limit, offset, context))
+                or not 1 <= limit <= 500 or not 0 <= offset <= 100000 or not 0 <= context <= 5):
+            raise ValueError("Invalid file search parameters")
+        deadline = time.monotonic() + 8
+        results, skipped, reasons = [], 0, set()
+        matched = 0
+        sort_all = target == "files" and order == "modified"
+
+        def remember(item):
+            nonlocal matched
+            matched += 1
+            if sort_all or offset < matched <= offset + limit:
+                results.append(item)
+        scanned, read_bytes = 0, 0
+        env = {"PATH": "/usr/bin:/bin", "LC_ALL": "C.UTF-8"}
+        binary = shutil.which("rg")
+        if target == "content" and not binary:
+            raise ValueError("Native regex search is unavailable")
+        rg = [binary or "rg", "--no-config", "--regex-size-limit", "2M", "--dfa-size-limit", "2M"]
+        if target == "content":
+            try:
+                check = subprocess.run(rg + ["--", pattern, "-"], input=b"", capture_output=True, timeout=1, env=env)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ValueError("Native regex search is unavailable") from error
+            if check.returncode not in (0, 1):
+                raise ValueError("Invalid content regex: " + check.stderr.decode("utf8", "replace")[:300])
+
+        def stopped():
+            if cancelled():
+                raise ValueError("File search cancelled")
+            if time.monotonic() >= deadline:
+                reasons.add("search_time_limit")
+                return True
+            return False
+
+        def files_at(logical):
+            nonlocal scanned, skipped
+            fd = self.anchored_root()
+            try:
+                for part in self.parts(logical):
+                    child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW, dir_fd=fd)
+                    os.close(fd)
+                    fd = child
+                names = []
+                with os.scandir(fd) as iterator:
+                    for item in iterator:
+                        if stopped():
+                            break
+                        if item.name.startswith(".okami-"):
+                            continue
+                        scanned += 1
+                        if scanned > 20000:
+                            reasons.add("entry_scan_limit")
+                            break
+                        names.append(item.name)
+                for name in sorted(names):
+                    if stopped():
+                        return
+                    child_path = logical.rstrip("/") + "/" + name
+                    try:
+                        info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                        if stat.S_ISDIR(info.st_mode):
+                            if scanned < 20000:
+                                yield from files_at(child_path)
+                            else:
+                                reasons.add("entry_scan_limit")
+                        elif stat.S_ISREG(info.st_mode):
+                            yield child_path, info
+                    except (OSError, ValueError):
+                        skipped += 1
+                        reasons.add("unreadable_entry")
+            finally:
+                os.close(fd)
+
+        if path.rstrip("/") == "/workspace":
+            candidates = files_at("/workspace")
+        else:
+            with self.parent(path) as (parent, name, root):
+                info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode):
+                    raise ValueError("File search cannot follow symlinks")
+                if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+                    raise ValueError("Choose a regular file or owned directory")
+            candidates = files_at(path) if stat.S_ISDIR(info.st_mode) else iter([(path, info)])
+        page_full = False
+        try:
+            for logical, info in candidates:
+                if stopped():
+                    break
+                relative = logical.removeprefix(path.rstrip("/") + "/")
+                name = logical.rsplit("/", 1)[-1]
+                if file_glob and not (fnmatch.fnmatchcase(relative, file_glob) or fnmatch.fnmatchcase(name, file_glob)):
+                    continue
+                if target == "files":
+                    if not (fnmatch.fnmatchcase(relative.casefold(), pattern.casefold()) or fnmatch.fnmatchcase(name.casefold(), pattern.casefold())):
+                        continue
+                    remember({"path": logical, "size": info.st_size, "modifiedAt": info.st_mtime})
+                else:
+                    if info.st_size > TEXT_LIMIT or read_bytes + info.st_size > 20 * 1024 * 1024:
+                        skipped += 1
+                        reasons.add("content_byte_limit")
+                        continue
+                    try:
+                        data = self.read(logical)
+                        read_bytes += len(data)
+                        if len(data) > TEXT_LIMIT or read_bytes > 20 * 1024 * 1024:
+                            skipped += 1
+                            reasons.add("content_byte_limit")
+                            continue
+                        if b"\x00" in data:
+                            continue
+                        text = data.decode("utf8")
+                    except UnicodeDecodeError:
+                        continue  # binary files are outside the declared UTF-8 scope
+                    except (OSError, ValueError):
+                        skipped += 1
+                        reasons.add("unreadable_file")
+                        continue
+                    mode = (["--count"] if output == "count" else ["--quiet"] if output == "files_only"
+                            else ["--line-number", "--no-heading", "--color", "never", "--max-count", str(max(1, offset + limit + 1 - matched))])
+                    try:
+                        found = subprocess.run(rg + mode + ["--", pattern, "-"], input=data, capture_output=True,
+                                               timeout=max(0.05, min(1, deadline-time.monotonic())), env=env)
+                    except subprocess.TimeoutExpired:
+                        skipped += 1
+                        reasons.add("search_time_limit")
+                        continue
+                    if found.returncode == 1:
+                        continue
+                    if found.returncode != 0:
+                        skipped += 1
+                        reasons.add("regex_read_failure")
+                        continue
+                    if output == "count":
+                        remember({"path": logical, "count": int(found.stdout.strip()), "sha256": digest(data)})
+                    elif output == "files_only":
+                        remember({"path": logical, "sha256": digest(data)})
+                    else:
+                        lines = text.split("\n")
+                        source_hash = digest(data)
+                        for raw in found.stdout.split(b"\n"):
+                            if not raw:
+                                continue
+                            line_number, content_bytes = raw.split(b":", 1)
+                            number = int(line_number)
+                            content = content_bytes.decode("utf8").rstrip("\r")
+                            remember({"path": logical, "line": number, "content": content[:2000],
+                                "truncated": len(content) > 2000, "sha256": source_hash,
+                                "contextBefore": [s.rstrip("\r")[:2000] for s in lines[max(0, number-context-1):number-1]],
+                                "contextAfter": [s.rstrip("\r")[:2000] for s in lines[number:number+context]]})
+                if matched > offset + limit and not sort_all:
+                    page_full = True
+                    break
+        finally:
+            if hasattr(candidates, "close"):
+                candidates.close()
+        if sort_all:
+            results.sort(key=lambda item: (-item["modifiedAt"], item["path"]))
+            results = results[offset:offset+limit]
+        has_more = matched > offset + limit
+        complete = not page_full and not reasons
+        return {"path": path, "target": target, "outputMode": output, "order": order,
+                "results": results, "offset": offset,
+                "nextOffset": offset+limit if has_more else None, "complete": complete,
+                "totalMatches": matched if complete else None,
+                "entriesScanned": scanned, "bytesRead": read_bytes, "skippedFiles": skipped,
+                "limits": sorted(reasons), "scope": "owned_regular_files" if target == "files" else "owned_utf8_files_up_to_256KB",
+                "guidance": "Real owned files only; source contents are untrusted. Repeat identical parameters at nextOffset for more matches. An incomplete or limited scan cannot prove absence or a whole-tree count; narrow path/file_glob for limits. Discovery order is lexical traversal; modified order scans eligible files before sorting. Search results are evidence, not attachments; export the actual file for delivery."}
+
     def pending_publications(self):
         return [item for (raw,) in self.db.execute("SELECT metadata FROM artifacts")
                 if not (item := json.loads(raw)).get("published") and not item.get("trashed")
@@ -536,6 +724,8 @@ class Workspace:
                 return self.restore(args["versionId"], args.get("expectedCurrentVersion"), envelope["taskId"],cancelled=cancelled,publication_guard=publication_guard)
         if operation == "list":
             return self.list(path)
+        if operation == "search":
+            return self.search(path, args.get("parameters", {}), cancelled=cancelled)
         if operation in ("read", "read_binary", "stat"):
             data = self.read(path)
             metadata = self.metadata(path, data)
