@@ -826,6 +826,7 @@ export class DesktopService {
       "act",
       "navigate",
       "agent-navigate",
+      "back",
       "close",
       "upload",
       "challenge",

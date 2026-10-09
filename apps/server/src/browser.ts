@@ -1030,7 +1030,10 @@ export class BrowserService {
     // Navigation may take 60s (plus Chromium startup); public reads may wait
     // another 60s for application data. Each request needs transport headroom.
     const timeoutMs =
-      path.endsWith("/read") || path === "/sessions" || path === "/sessions/human"
+      path.endsWith("/read") ||
+      path.endsWith("/back") ||
+      path === "/sessions" ||
+      path === "/sessions/human"
         ? 90_000
         : 45_000;
     let response: Response;
@@ -1049,6 +1052,7 @@ export class BrowserService {
       });
     } catch {
       if (
+        path.endsWith("/back") ||
         path.endsWith("/upload") ||
         path.endsWith("/reviewed-act") ||
         path.endsWith("/credentials") ||
@@ -1103,8 +1107,13 @@ export class BrowserService {
           const receipt = captchaResultSchema.parse(payload);
           if (receipt.sessionId !== sessionId)
             throw new Error("Challenge receipt belongs to another session");
-        } else if (["act", "upload"].includes(endpoint)) {
-          if (snapshotSchema.parse(payload).sessionId !== sessionId)
+        } else if (["act", "upload", "back"].includes(endpoint)) {
+          const receipt = (
+            endpoint === "back"
+              ? snapshotSchema.extend({ historyMoved: z.boolean() })
+              : snapshotSchema
+          ).parse(payload);
+          if (receipt.sessionId !== sessionId)
             throw new Error("Browser action receipt belongs to another session");
         } else if (endpoint === "reviewed-act")
           z.object({ id: z.string(), status: z.literal("succeeded") }).parse(payload);
@@ -1477,6 +1486,29 @@ export class BrowserService {
           await this.ownedRequest(owner, `/sessions/${id}/snapshot`, undefined, signal)
         ).json(),
       );
+      if (value.sessionId !== id)
+        throw new BrowserError("INVALID_SESSION", "The browser returned a different session.");
+      await this.save(
+        owner,
+        {
+          id,
+          title: value.title,
+          url: value.url,
+          status: "active",
+          control: value.control,
+          updatedAt: new Date().toISOString(),
+        },
+        id,
+      );
+      return value;
+    });
+  }
+  async back(owner: string, id: string, signal?: AbortSignal) {
+    return this.serial(id, async () => {
+      await this.get(owner, id);
+      const value = snapshotSchema
+        .extend({ historyMoved: z.boolean() })
+        .parse(await (await this.ownedRequest(owner, `/sessions/${id}/back`, {}, signal)).json());
       if (value.sessionId !== id)
         throw new BrowserError("INVALID_SESSION", "The browser returned a different session.");
       await this.save(

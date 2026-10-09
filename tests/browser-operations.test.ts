@@ -30,6 +30,26 @@ const makeSnapshot = (id: string) => ({
   ],
 });
 
+test("browser back retains uncertainty when the worker omits the history receipt", async (t) => {
+  let id = "";
+  const fixture = await browserFixture(t, (path, body) => {
+    if (path === "/sessions") id = String(body.id);
+    if (path.endsWith("/back")) return { data: makeSnapshot(id) };
+    return {
+      data: {
+        id,
+        url: "https://example.com/",
+        title: "History",
+        status: "active",
+        control: "agent",
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  });
+  await fixture.service.agentSession("owner", undefined, "https://example.com/");
+  await assert.rejects(fixture.service.back("owner", id), { code: "OUTCOME_UNKNOWN" });
+});
+
 test("new chat/tasks share the owner profile, explicit foreign profiles are rejected, closed worker profile reopens", async (t) => {
   const calls: { path: string; body: Record<string, unknown> }[] = [];
   let current: {
@@ -98,8 +118,8 @@ test("owned browser tools return numbered snapshots and typed takeover errors wi
   let human = false;
   const fixture = await browserFixture(t, (path, body) => {
     if (path === "/sessions") id = String(body.id);
-    if (path.endsWith("/snapshot") || path.endsWith("/act")) {
-      if (human && path.endsWith("/act"))
+    if (path.endsWith("/snapshot") || path.endsWith("/act") || path.endsWith("/back")) {
+      if (human && (path.endsWith("/act") || path.endsWith("/back")))
         return {
           status: 409,
           data: {
@@ -110,7 +130,9 @@ test("owned browser tools return numbered snapshots and typed takeover errors wi
             },
           },
         };
-      return { data: makeSnapshot(id) };
+      return {
+        data: { ...makeSnapshot(id), ...(path.endsWith("/back") ? { historyMoved: true } : {}) },
+      };
     }
     if (path.endsWith("/agent-screenshot"))
       return {
@@ -153,7 +175,17 @@ test("owned browser tools return numbered snapshots and typed takeover errors wi
   })) as ReturnType<typeof makeSnapshot>;
   assert.equal(snapshot.elements[0].number, 1);
   assert.ok(!JSON.stringify(snapshot).includes("signature="));
+  const previous = (await execute("browser_back", {})) as ReturnType<typeof makeSnapshot> & {
+    historyMoved: boolean;
+  };
+  assert.equal(previous.sessionId, id);
+  assert.equal(previous.historyMoved, true);
+  assert.notEqual(previous.snapshotId, snapshot.snapshotId);
+  await assert.rejects(fixture.service.back("another-owner", id), { status: 404 });
   await fixture.service.control("owner", id, "human");
+  const blockedBack = (await execute("browser_back", {})) as { code: string; paused: boolean };
+  assert.equal(blockedBack.code, "BROWSER_CONTROLLED");
+  assert.equal(blockedBack.paused, true);
   const result = (await execute("browser_act", {
     act: { snapshotId: snapshot.snapshotId, element: 1, action: "fill", value: "Ana" },
   })) as { code: string; paused: boolean };

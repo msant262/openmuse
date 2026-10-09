@@ -18,6 +18,73 @@ after(async () => {
   await fixture?.close();
 });
 
+test("browser back traverses real history with fresh controls and respects human takeover", {
+  timeout: 30_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-browser-history-"));
+  const browser = await createBrowserManager({ dataDir });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/");
+    await browser.navigate(id, "https://browser.fixture.test/json-results");
+    const before = await browser.snapshot(id);
+    await browser.setControl(id, "human");
+    await assert.rejects(browser.back(id), { code: "BROWSER_CONTROLLED" });
+    assert.equal((await browser.control(id)).url, before.url);
+    await browser.setControl(id, "agent");
+    const previous = await browser.back(id);
+    assert.equal(previous.url, "https://browser.fixture.test/");
+    assert.equal(previous.historyMoved, true);
+    assert.match(previous.text, /Local fixture content/);
+    assert.notEqual(previous.snapshotId, before.snapshotId);
+    const download = previous.elements.find((element) => element.label === "Download");
+    assert.ok(download);
+    await assert.rejects(
+      browser.act(id, {
+        snapshotId: before.snapshotId,
+        element: download.number,
+        action: "click",
+      }),
+      { code: "STALE_SNAPSHOT" },
+    );
+    await browser.closeSession(id);
+    await assert.rejects(browser.back(id), { code: "SESSION_CLOSED" });
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("browser back observes same-document history and reports an exhausted history", {
+  timeout: 30_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-browser-spa-history-"));
+  const browser = await createBrowserManager({ dataDir });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/history");
+    const initial = await browser.snapshot(id);
+    const next = initial.elements.find((element) => element.label === "Next section");
+    assert.ok(next);
+    const second = await browser.act(id, {
+      snapshotId: initial.snapshotId,
+      element: next.number,
+      action: "click",
+    });
+    assert.equal(second.url, "https://browser.fixture.test/history#second");
+    const previous = await browser.back(id);
+    assert.equal(previous.url, initial.url);
+    assert.equal(previous.historyMoved, true, "SPA history has no HTTP response but still moves");
+    await browser.back(id);
+    const exhausted = await browser.back(id);
+    assert.equal(exhausted.historyMoved, false);
+    assert.equal(exhausted.url, "about:blank");
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("headless reading follows pending data requests and exposes their actual API URL", {
   timeout: 20_000,
 }, async () => {

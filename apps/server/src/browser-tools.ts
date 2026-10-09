@@ -190,6 +190,23 @@ export function browserTools(
         ),
     }),
     defineTool({
+      name: "browser_back",
+      description:
+        "Go back one entry in the personal browser's actual history. Returns fresh numbered controls and whether history moved. Respects human takeover; use the new snapshotId for subsequent actions.",
+      parameters: session.extend({
+        operationId: z
+          .string()
+          .min(1)
+          .max(120)
+          .optional()
+          .describe(
+            "Stable logical navigation ID. Reuse after resume; use a new ID for another intentional history step.",
+          ),
+      }),
+      execute: (args) =>
+        run("browser_back", args, (id) => service.back(owner, id, options.signal), undefined, true),
+    }),
+    defineTool({
       name: "browser_act",
       description:
         "Perform click/fill/select/press/scroll on one numbered element from the exact latest snapshot. Returns fresh controls. Human takeover and money approvals cannot be bypassed.",

@@ -30,6 +30,7 @@ function knownSkip(value: unknown) {
   );
 }
 const unconfirmed = (entry: Entry) => entry.status === "started" || entry.status === "uncertain";
+const historyEffect = (name: string) => name === "browser_act" || name === "browser_back";
 type Journal = { id: string; entries: Entry[] };
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
@@ -75,7 +76,7 @@ export class TaskBrowserHistory {
     return new TaskBrowserHistory(db, owner, journal);
   }
   get unconfirmedAction() {
-    return this.journal.entries.some((entry) => entry.name === "browser_act" && unconfirmed(entry));
+    return this.journal.entries.some((entry) => historyEffect(entry.name) && unconfirmed(entry));
   }
   messages(): Message[] {
     return this.journal.entries.flatMap((entry): Message[] => [
@@ -129,7 +130,18 @@ export class TaskBrowserHistory {
     return target ? digest({ target, operation }) : digest(args);
   }
   async run(name: string, args: Record<string, unknown>, operation: () => Promise<unknown>) {
-    const key = name === "browser_act" ? this.actKey(args) : undefined;
+    const key =
+      name === "browser_act"
+        ? this.actKey(args)
+        : name === "browser_back" && typeof args.operationId === "string"
+          ? `back:${args.operationId}`
+          : undefined;
+    if (historyEffect(name) && this.unconfirmedAction)
+      return {
+        outcomeUnknown: true,
+        error:
+          "An earlier browser operation has an unconfirmed outcome. Inspect the site before another action.",
+      };
     if (key) {
       const previous = this.journal.entries.find(
         (entry) =>
@@ -138,12 +150,6 @@ export class TaskBrowserHistory {
           !(entry.result as { error?: string })?.error,
       );
       if (previous) return previous.result;
-      if (this.journal.entries.some((entry) => entry.name === "browser_act" && unconfirmed(entry)))
-        return {
-          outcomeUnknown: true,
-          error:
-            "An earlier browser action has an unconfirmed outcome. Automatic browser actions are blocked for this task. Inspect the site with Take control before starting any new task.",
-        };
     }
     const entry: Entry = { id: randomUUID(), name, args, key, status: "started" };
     this.journal.entries.push(entry);
@@ -171,7 +177,7 @@ export class TaskBrowserHistory {
     entry.result = result;
     entry.status = knownSkip(result)
       ? "skipped"
-      : name === "browser_act" && failure?.error
+      : historyEffect(name) && failure?.error
         ? "uncertain"
         : "completed";
     if (entry.status === "skipped")

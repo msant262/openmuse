@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { BrowserContext, Page } from "playwright";
+import type { BrowserContext, Frame, Page } from "playwright";
 import { browserUploadSchema } from "../../../packages/domain/src/browser-file.ts";
 import { defaultSearchEndpoint, searchInputSchema } from "../../../packages/domain/src/search.ts";
 import { AgentPage, browserAction } from "./agent-page.ts";
@@ -497,6 +497,47 @@ export async function createBrowserManager(options: {
       }
       return serial(id, () => navigate(id, url, agent));
     },
+    back: (id: string) =>
+      serial(id, async () => {
+        const instance = active(id);
+        guardAgent(id);
+        if (instance.captchaActive)
+          throw new WorkerError(
+            "CHALLENGE_TOOL_REQUIRED",
+            "Resolve the current challenge or hand back control before navigating history.",
+            409,
+          );
+        await validatePage(instance);
+        await instance.agent.invalidate();
+        instance.publicData.reset();
+        guardAgent(id);
+        let historyMoved = false;
+        const navigation = (frame: Frame) => {
+          if (frame === instance.page.mainFrame()) historyMoved = true;
+        };
+        instance.page.on("framenavigated", navigation);
+        try {
+          await instance.page.goBack({ waitUntil: "domcontentloaded", timeout: 60_000 });
+        } finally {
+          instance.page.off("framenavigated", navigation);
+        }
+        try {
+          await validatePage(instance);
+        } catch (error) {
+          if (error instanceof WorkerError && error.code === "BLOCKED_URL")
+            await instance.page.goto("about:blank", { timeout: 5000 });
+          throw error;
+        }
+        const result = await instance.agent.snapshot();
+        await refresh(id);
+        return {
+          sessionId: id,
+          control: sessions.get(id)?.control ?? "agent",
+          ...result,
+          historyMoved,
+          interruptions: { ...instance.interruptions },
+        };
+      }),
     control: (id: string) =>
       serial(id, async () => {
         const session = sessions.get(id);

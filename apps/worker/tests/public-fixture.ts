@@ -111,6 +111,11 @@ export async function publicFixture() {
     if (path.startsWith("/redirect-private")) {
       response.writeHead(302, { location: "http://127.0.0.1:8790/health" });
       response.end();
+    } else if (path === "/history") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        `<title>History fixture</title><button onclick="history.pushState({}, '', '#second')">Next section</button><p>Same document navigation</p>`,
+      );
     } else if (path === "/json-results") {
       response.writeHead(200, { "content-type": "text/html" });
       response.end(

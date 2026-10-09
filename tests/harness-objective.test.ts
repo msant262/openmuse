@@ -3,6 +3,27 @@ import test from "node:test";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("research workers receive the same boundary for unstated descriptive fields as their reviewers", async (t) => {
+  const model = await modelFixture(t, () => ({
+    name: "ask_user",
+    arguments: { question: "Fixture pause" },
+  }));
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await server.agent.createTask("owner", {
+    prompt:
+      "Compare three free generative AI courses, including language, duration and certificate cost.",
+  });
+  await server.agent.worker.tick();
+  assert.ok(model.requests.length > 0);
+  assert.ok(
+    /DESCRIPTIVE_FIELD_SCOPE/.test(model.requests[0]!.body),
+    "Worker must receive descriptive-field scope",
+  );
+  assert.ok(/not stated by the consulted provider/.test(model.requests[0]!.body));
+  assert.ok(/does not waive eligibility constraints/.test(model.requests[0]!.body));
+  assert.equal((await server.agent.getTask("owner", task.id)).status, "waiting_input");
+});
+
 test("confirmed native cleanup releases a failed task's slot even when unrelated maintenance fails", async (t) => {
   const server = await taskRuntime(t);
   const task = await server.agent.createTask("owner", { prompt: "Read a public page" });

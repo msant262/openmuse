@@ -60,6 +60,7 @@ import { SkillCatalog, skillInstructions, skillTools } from "../skill-catalog.ts
 import { openclawAgent } from "./openclaw-agent.ts";
 import { buildPromisedWorkPromptSection } from "./promised-work-prompt.ts";
 import {
+  DESCRIPTIVE_FIELD_SCOPE,
   needsResearchReview,
   ResearchReviewUnavailableError,
   requiresAccessConstraintReview,
@@ -123,7 +124,7 @@ export async function executeModelTask(
   if (
     (await service.journal.operations(owner, initial.id)).some(
       (op) =>
-        op.toolName === "browser_act" &&
+        ["browser_act", "browser_back"].includes(op.toolName) &&
         ["dispatching", "running", "outcome_unknown"].includes(op.status),
     )
   )
@@ -460,6 +461,7 @@ export async function executeModelTask(
       needsMoreResearch: review.needsMoreResearch,
       accessAudit: review.accessAudit,
       requestAudit: review.requestAudit,
+      descriptiveFieldPolicy: DESCRIPTIVE_FIELD_SCOPE,
       instruction:
         "No document was rendered. accessAudit identifies each selected option's assessed eligibility and source; requestAudit distinguishes satisfied fields from actual gaps. These assessments are not new source reads. Repair the failed options and requirements while keeping supported facts. Replace an unsuitable or unconfirmed option rather than asking the person to relax clear criteria. A design change or another operationId cannot fix unchanged facts.",
     };
@@ -2606,6 +2608,9 @@ export async function executeModelTask(
         tools.map((tool) => tool.name),
       ),
     promptContext: async (selectedTools) =>
+      (requiresAccessConstraintReview(task) || config.researchReviewEnabled
+        ? `${DESCRIPTIVE_FIELD_SCOPE}\n`
+        : "") +
       (task.state.planCompletionFollowup ? `${PLAN_COMPLETION_FOLLOWUP}\n` : "") +
       (task.state.artifactSelectionFollowup
         ? "A draft file exists, but its existence alone does not complete the original request. Compare the generation brief and actual deliverable with every requested entity, value and visual form. Continue research and correct omissions using available sources; do not substitute a national summary or blank template for requested detailed data. Call finish_task with the final artifactIds and an explicit outcome: completed only when the original request is fulfilled, partial if concrete blockers remain. Reuse satisfactory files; do not repeat completed generation automatically.\n"

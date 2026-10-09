@@ -251,6 +251,8 @@ async function handle(raw: Record<string, unknown>): Promise<unknown> {
         return browser.create(id, String(body.url), true);
       case "snapshot":
         return browser.snapshot(id);
+      case "back":
+        return browser.back(id);
       case "search":
         return browser.search(id, body);
       case "read":

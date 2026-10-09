@@ -249,3 +249,52 @@ test("previously stored completed paused browser receipts normalize into truthfu
     await db.close();
   }
 });
+
+test("browser history navigation preserves unknown outcomes and never dispatches another action on resume", async () => {
+  const db = await createStore();
+  try {
+    const history = await TaskBrowserHistory.load(db, "owner", "history-navigation");
+    const result = await history.run(
+      "browser_back",
+      { operationId: "previous-page" },
+      async () => ({ error: "Response was lost", code: "OUTCOME_UNKNOWN" }),
+    );
+    assert.equal((result as { outcomeUnknown?: boolean }).outcomeUnknown, true);
+    const resumed = await TaskBrowserHistory.load(db, "owner", "history-navigation");
+    assert.equal(resumed.unconfirmedAction, true);
+    let dispatched = 0;
+    const blocked = await resumed.run("browser_back", { operationId: "another-page" }, async () => {
+      dispatched++;
+      return { historyMoved: true };
+    });
+    assert.equal(dispatched, 0);
+    assert.equal((blocked as { outcomeUnknown?: boolean }).outcomeUnknown, true);
+    await resumed.run("browser_act", { operationId: "click" }, async () => {
+      dispatched++;
+      return {};
+    });
+    assert.equal(dispatched, 0);
+  } finally {
+    await db.close();
+  }
+});
+
+test("browser history navigation replays its logical receipt without going back twice", async () => {
+  const db = await createStore();
+  try {
+    let dispatched = 0;
+    const history = await TaskBrowserHistory.load(db, "owner", "history-replay");
+    const navigate = () => {
+      dispatched++;
+      return Promise.resolve({ historyMoved: true });
+    };
+    await history.run("browser_back", { operationId: "previous-page" }, navigate);
+    const resumed = await TaskBrowserHistory.load(db, "owner", "history-replay");
+    await resumed.run("browser_back", { operationId: "previous-page" }, navigate);
+    assert.equal(dispatched, 1);
+    await resumed.run("browser_back", { operationId: "another-page" }, navigate);
+    assert.equal(dispatched, 2);
+  } finally {
+    await db.close();
+  }
+});

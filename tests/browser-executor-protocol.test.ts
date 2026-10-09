@@ -186,6 +186,7 @@ test("real worker HTTP protocol authenticates handshake and fences stale snapsho
   assert.equal(((await fresh.json()) as { error: { code: string } }).error.code, "SESSION_CLOSED"); // reached the real BrowserManager, no Chromium launch required
   const bytes = Buffer.alloc(90_000, "a");
   for (const [endpoint, payload, operationClass] of [
+    ["back", {}, "mutable"],
     ["search", { query: "source", limit: 3 }, "public_read"],
     ["challenge", { action: { action: "check" } }, "mutable"],
     [
