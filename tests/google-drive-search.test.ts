@@ -240,3 +240,141 @@ test("file searches exclude folders while folder searches keep navigable shortcu
   assert.match(files, /mimeType != 'application\/vnd.google-apps.folder'/);
   assert.match(folders, /mimeType = 'application\/vnd.google-apps.shortcut'/);
 });
+
+test("recursive file lookup follows every child page and folder shortcut even when names and presentation limits exclude directories", async () => {
+  const calls: string[] = [];
+  const result = await searchGoogleDrive(
+    driveSearchSchema.parse({
+      parentId: "root",
+      account: "work",
+      query: "permit",
+      kind: "files",
+      recursive: true,
+      limit: 1,
+    }),
+    accounts,
+    async (account, parameters) => {
+      assert.equal(account.connectionId, "work");
+      const q = String(parameters.q);
+      assert.ok(!q.includes("name contains"), "Names must not prune unrelated directory names");
+      assert.ok(!q.includes("mimeType !="), "File-only results must still traverse folders");
+      const parent = q.match(/'([^']+)' in parents/)![1];
+      calls.push(`${parent}:${parameters.pageToken ?? "first"}`);
+      if (parent === "root" && !parameters.pageToken)
+        return {
+          files: [
+            folder("docs", "Documents"),
+            { id: "root-file", name: "permit old.pdf", mimeType: "application/pdf" },
+          ],
+          nextPageToken: "root-next",
+        };
+      if (parent === "root")
+        return {
+          files: [
+            {
+              id: "link",
+              name: "More records",
+              mimeType: "application/vnd.google-apps.shortcut",
+              shortcutDetails: {
+                targetId: "docs",
+                targetMimeType: "application/vnd.google-apps.folder",
+              },
+            },
+          ],
+        };
+      if (parent === "docs" && !parameters.pageToken)
+        return {
+          files: [folder("nested", "Residence"), folder("root", "Cycle")],
+          nextPageToken: "root-next",
+        };
+      if (parent === "docs")
+        return { files: [{ id: "other", name: "invoice.pdf", mimeType: "application/pdf" }] };
+      return { files: [{ id: "latest", name: "permit.pdf", mimeType: "application/pdf" }] };
+    },
+  );
+  assert.deepEqual(calls, [
+    "root:first",
+    "root:root-next",
+    "docs:first",
+    "docs:root-next",
+    "nested:first",
+  ]);
+  assert.equal(result.complete, true);
+  assert.equal(result.fileCount, 2);
+  assert.equal(result.totalMatches, 2);
+  assert.equal(result.files[0].id, "latest");
+  assert.equal(result.truncated, true);
+  assert.equal(result.scope, "folder_tree");
+  assert.equal(result.accounts[0].foldersScanned, 3);
+});
+
+test("a failed descendant listing preserves partial matches and cannot prove folder-tree absence", async () => {
+  const result = await searchGoogleDrive(
+    driveSearchSchema.parse({ parentId: "root", account: "work", kind: "files", recursive: true }),
+    accounts,
+    async (_account, parameters) => {
+      if (String(parameters.q).includes("'root' in parents"))
+        return {
+          files: [
+            folder("denied", "Private records"),
+            { id: "file", name: "permit.pdf", mimeType: "application/pdf" },
+          ],
+        };
+      throw Object.assign(new Error("Folder access denied"), { code: "GOOGLE_FORBIDDEN" });
+    },
+  );
+  assert.equal(result.complete, false);
+  assert.equal(result.fileCount, 1);
+  assert.equal(result.accounts[0].errorCode, "GOOGLE_FORBIDDEN");
+  assert.equal(observedDriveSearch(result), false);
+  assert.equal(driveSearchSchema.safeParse({ query: "permit", recursive: true }).success, false);
+  const direct = await searchGoogleDrive(
+    driveSearchSchema.parse({ parentId: "root", account: "work" }),
+    accounts,
+    async () => ({ files: [] }),
+  );
+  assert.equal(direct.scope, "direct_children");
+});
+
+test("a Drive shortlist can be paged without native API discovery or losing later provider-page matches", async () => {
+  const read = async (_account: DriveAccount, parameters: Record<string, unknown>) =>
+    parameters.pageToken
+      ? {
+          files: [
+            { id: "b", name: "B.pdf", mimeType: "application/pdf" },
+            { id: "c", name: "C.pdf", mimeType: "application/pdf" },
+          ],
+        }
+      : { files: [{ id: "a", name: "A.pdf", mimeType: "application/pdf" }], nextPageToken: "next" };
+  const first = await searchGoogleDrive(
+    driveSearchSchema.parse({ parentId: "root", account: "work", limit: 1 }),
+    accounts,
+    read,
+  );
+  assert.equal(first.nextOffset, 1);
+  const second = await searchGoogleDrive(
+    driveSearchSchema.parse({
+      parentId: "root",
+      account: "work",
+      limit: 1,
+      offset: first.nextOffset,
+    }),
+    accounts,
+    read,
+  );
+  assert.equal(second.files[0].id, "b");
+  assert.equal(second.totalMatches, 3);
+  assert.equal(second.nextOffset, 2);
+  const last = await searchGoogleDrive(
+    driveSearchSchema.parse({
+      parentId: "root",
+      account: "work",
+      limit: 1,
+      offset: second.nextOffset,
+    }),
+    accounts,
+    read,
+  );
+  assert.equal(last.files[0].id, "c");
+  assert.equal(last.nextOffset, null);
+});

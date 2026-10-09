@@ -96,6 +96,120 @@ test("free-only recommendations repair unconfirmed access with the selected mode
   assert.equal(fixture.imageBriefRequests.length, 0);
 });
 
+test("free-course PDF content is rejected before rendering, then actual corrected bytes and pixels pass delivery", async (t) => {
+  let fileId = "",
+    receiptId = "";
+  const rendered: string[] = [];
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://courses.example/premium" } },
+        {
+          name: "create_document",
+          arguments: {
+            name: "Courses",
+            format: "pdf",
+            operationId: "unverified",
+            content: "Premium AI: free registration, full access unconfirmed.",
+          },
+        },
+        { name: "web_fetch", arguments: { url: "https://courses.example/open" } },
+        {
+          name: "create_document",
+          arguments: {
+            name: "Courses",
+            format: "pdf",
+            operationId: "verified",
+            content:
+              "# Open AI\n\nAll lessons and exercises are free with no trial or subscription. Beginner generative AI, English, two hours. Optional certificate €20.\n\nSource: https://courses.example/open",
+          },
+        },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: {
+            summary: "The verified free-course PDF is attached.",
+            artifactIds: [fileId],
+          },
+        },
+      ][i],
+    {
+      researchReview: (_body, i) =>
+        i === 0
+          ? {
+              complete: false,
+              needsMoreResearch: true,
+              missing: ["Premium AI full access is unconfirmed"],
+              nextSteps: [
+                "Read the actual free-content policy or replace this option before creating the PDF",
+              ],
+            }
+          : {
+              complete: true,
+              needsMoreResearch: false,
+              missing: [],
+              nextSteps: [],
+              accessAudit: [
+                {
+                  option: "Open AI",
+                  access: "free",
+                  sourceUrl: "https://courses.example/open",
+                  quote: "All lessons and exercises are free with no trial or subscription.",
+                },
+              ],
+            },
+    },
+  );
+  const f = await baseTaskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: false,
+  });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: url.endsWith("/premium")
+      ? "<main>Free registration; full-course access requires a paid subscription.</main>"
+      : "<main>All lessons and exercises are free with no trial or subscription. Beginner generative AI, English, two hours. Optional certificate €20.</main>",
+  }));
+  const create = f.agent.media.createDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "createDocument", async (...args: Parameters<typeof create>) => {
+    rendered.push((args[1] as { content: string }).content);
+    const result = await create(...args);
+    fileId = result.fileId;
+    return result;
+  });
+  const inspect = f.agent.media.inspectDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "inspectDocument", async (...args: Parameters<typeof inspect>) => {
+    const result = await inspect(...args);
+    receiptId = result.receiptId;
+    return result;
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt:
+      "Research a free beginner generative AI course and deliver a PDF with language, duration and optional certificate cost.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(
+    rendered.length,
+    1,
+    "unverified content must not consume rendering or visual-review work",
+  );
+  assert.ok(rendered[0].includes("Open AI"));
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.question ?? saved.result);
+  assert.equal(saved.completion?.status, "verified");
+  assert.deepEqual(saved.artifactIds, [fileId]);
+  assert.equal(
+    fixture.reviewRequests.length,
+    3,
+    "two content briefs and the actual delivered document are checked",
+  );
+});
+
 test("ordinary source lookup retains zero review calls when optional review is disabled", async (t) => {
   const fixture = await modelFixture(
     t,
@@ -219,6 +333,105 @@ test("unchanged rejected document reuses its access review, while new source and
   assert.ok(fileId);
   assert.equal(saved.artifactIds.length, 1);
   assert.notEqual(saved.artifactIds[0], fileId);
+});
+
+test("an unavailable document content check resumes exact generation once without a user answer", async (t) => {
+  let unavailable = true,
+    fileId = "",
+    receiptId = "",
+    generations = 0;
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://courses.example/open" } },
+        {
+          name: "create_document",
+          arguments: {
+            name: "Open-course",
+            format: "pdf",
+            operationId: "once",
+            content:
+              "# Open AI\n\nAll lessons and exercises are free with no trial or subscription. English, two hours, optional certificate €20.\n\nSource: https://courses.example/open",
+          },
+        },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: {
+            summary: "The verified free-course PDF is attached.",
+            artifactIds: [fileId],
+          },
+        },
+      ][i],
+    {
+      reviewErrorStatus: () => (unavailable ? 503 : undefined),
+      researchReview: () => ({
+        complete: true,
+        missing: [],
+        nextSteps: [],
+        accessAudit: [
+          {
+            option: "Open AI",
+            access: "free",
+            sourceUrl: "https://courses.example/open",
+            quote: "All lessons and exercises are free with no trial or subscription.",
+          },
+        ],
+      }),
+    },
+  );
+  const f = await baseTaskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: false,
+  });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  f.agent.config.modelProviders!.routing!.maxAttempts = 1;
+  const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "<main>All lessons and exercises are free with no trial or subscription. English, two hours, optional certificate €20.</main>",
+  }));
+  const create = f.agent.media.createDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "createDocument", async (...args: Parameters<typeof create>) => {
+    generations++;
+    const result = await create(...args);
+    fileId = result.fileId;
+    return result;
+  });
+  const inspect = f.agent.media.inspectDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "inspectDocument", async (...args: Parameters<typeof inspect>) => {
+    const result = await inspect(...args);
+    receiptId = result.receiptId;
+    return result;
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt:
+      "Research a free AI course and deliver a PDF comparing language, duration and optional certificate cost.",
+  });
+  await f.agent.worker.tick();
+  let saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "waiting_provider");
+  assert.equal(generations, 0);
+  assert.equal(saved.artifactIds.length, 0);
+  assert.ok(saved.state.pendingDocumentGeneration);
+  assert.equal(fixture.requests.length, 2);
+  unavailable = false;
+  const { sharedModelRouter } = await import("../apps/server/src/providers/model-router.ts");
+  const cooldown = sharedModelRouter(f.agent.config.modelProviders!).health.get(
+    "openai/fixture",
+  ).cooldownUntil;
+  await new Promise((resolve) => setTimeout(resolve, Math.max(0, cooldown - Date.now() + 5)));
+  await f.db.put("owner", "tasks", { ...saved, nextRunAt: new Date(0).toISOString() });
+  await f.agent.worker.tick();
+  saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.question ?? saved.result);
+  assert.equal(generations, 1);
+  assert.equal(read.mock.callCount(), 1);
+  assert.deepEqual(saved.artifactIds, [fileId]);
+  assert.equal(saved.state.pendingDocumentGeneration, null);
 });
 
 test("selection review checks the selected replacement document and omits discarded drafts", async (t) => {

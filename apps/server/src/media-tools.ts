@@ -60,7 +60,7 @@ export const imageArgs = z.object({
       "Opaque by default. Request transparency only when the user asks for a cutout or transparent background.",
     ),
 });
-const documentArgs = z
+export const documentArgs = z
   .object({
     name: z.string().trim().min(1).max(120),
     title: z.string().trim().min(1).max(200).optional(),
@@ -699,6 +699,7 @@ export function mediaTools(
     before?: () => Promise<void>;
     effectBefore?: () => Promise<void>;
     imageBrief?: (args: z.output<typeof imageArgs>) => Promise<unknown | undefined>;
+    documentBrief?: (args: z.output<typeof documentArgs>) => Promise<unknown | undefined>;
     artifact?: (id: string, replacesFileId?: string) => Promise<void>;
     revision?: () => number;
     onComputerDispatch?: (receiptId: string) => Promise<void>;
@@ -887,7 +888,11 @@ export function mediaTools(
       "create_document",
       "Compose a designed PDF or editable DOCX/PPTX from complete Markdown content, locally. Read document-design and format skill first. Supports headings, emphasis, lists, tables, quotes, owned file: images and chart/metrics/steps JSON fences. Choose design.reference from the full design_references catalog. Set layout (editorial/briefing/signal), display (serif/sans/mono), palette (paper/ink/muted/accent/surface hex colors) and rationale. Non-preset references require palette/layout/display. Optional subtitle, eyebrow, footer and cover. Text/markdown preserve exact UTF-8. Maximum120000 characters/100 PDF pages. Returns a draft attachment requiring inspect_document and visual review before completion. For a correction use replaceFileId of this task's draft plus a fresh operationId; other deliverables stay attached.",
       documentArgs,
-      (args) => media.createDocument(owner, args, scope),
+      async (args) => {
+        const brief = await options.documentBrief?.(args);
+        if (brief !== undefined) return brief;
+        return media.createDocument(owner, args, scope);
+      },
       true,
     ),
     tool(

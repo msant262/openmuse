@@ -44,7 +44,7 @@ import {
   genericCredentialTools,
 } from "../generic-credential-tools.ts";
 import { googleAgentContext, googleTaskTools } from "../google-agent-context.ts";
-import { imageArgs, mediaInstructionGroups, mediaTools } from "../media-tools.ts";
+import { documentArgs, imageArgs, mediaInstructionGroups, mediaTools } from "../media-tools.ts";
 import { buildProfileContext } from "../profile-context.ts";
 import { modelProviderConfig } from "../providers/config.ts";
 import { routingCapabilities } from "../providers/model-capabilities.ts";
@@ -398,6 +398,66 @@ export async function executeModelTask(
       instruction: review.needsMoreResearch
         ? "No image was generated. Obtain the specific missing facts from the observed sources before trying generation again."
         : "No image was generated. The observed facts suffice; correct only these gaps in the visual brief while preserving the requested form, all entities and all categories.",
+    };
+  };
+  const documentBrief = async (args: z.output<typeof documentArgs>) => {
+    // Check explicit selection constraints before expensive rendering, while
+    // final delivery still checks actual document bytes and visual evidence.
+    if (!requiresAccessConstraintReview(task) || !["pdf", "docx", "pptx"].includes(args.format))
+      return undefined;
+    const revision = Number(task.state.appliedRevision ?? 0);
+    const operations = await service.journal.operations(owner, task.id);
+    const content = JSON.stringify({ title: args.title, content: args.content });
+    const key = imageBriefKey(content, revision, operations);
+    const previous = task.state.documentBriefReview as
+      | {
+          key?: string;
+          complete?: boolean;
+          missing?: string[];
+          nextSteps?: string[];
+          needsMoreResearch?: boolean;
+        }
+      | undefined;
+    let review = previous?.key === key ? previous : undefined;
+    if (!review) {
+      try {
+        review = await reviewResearchDelivery({
+          task: { ...task, artifactIds: [] },
+          summary: args.content,
+          operations,
+          model: selectedModel,
+          fallbacks: [],
+          stage: "access_selection",
+          providers: config.modelProviders ?? modelProviderConfig(config.dataDir),
+          signal,
+          structured: false,
+          proposedDocument: true,
+        });
+      } catch (error) {
+        if (!(error instanceof ResearchReviewUnavailableError)) throw error;
+        return waitForReview(error, {
+          pendingDocumentGeneration: { args, revision, sourceOperationId: taskOperationId() },
+        });
+      }
+      await ctx.guard();
+      task = await ctx.checkpoint({
+        state: {
+          ...task.state,
+          researchReviewFailure: null,
+          documentBriefReview: { ...review, key, revision },
+        },
+      });
+    }
+    if (review.complete) return undefined;
+    return {
+      attachment: false,
+      rendered: false,
+      repairable: true,
+      missing: review.missing,
+      nextSteps: review.nextSteps,
+      needsMoreResearch: review.needsMoreResearch,
+      instruction:
+        "No document was rendered. Repair these specific factual or eligibility gaps in the proposed content using actual source reads before creating it. Replace an unsuitable or unconfirmed option rather than asking the person to relax clear criteria. A design change or another operationId cannot fix unchanged facts.",
     };
   };
   const deliver = async (
@@ -1216,6 +1276,7 @@ export async function executeModelTask(
     ...mediaTools(service.media, service.computer, owner, `task:${task.id}`, {
       model: () => selectedModel,
       ...(config.researchReviewEnabled && { imageBrief }),
+      documentBrief,
       revision: () => Number(task.state.appliedRevision ?? 0),
       signal,
       queue: serial,
@@ -2241,6 +2302,39 @@ export async function executeModelTask(
     .safeParse(task.state.pendingImageGeneration);
   const revision = Number(task.state.appliedRevision ?? 0);
   const operations = await service.journal.operations(owner, task.id);
+  const pendingDocument = z
+    .object({ args: documentArgs, revision: z.number(), sourceOperationId: z.string() })
+    .safeParse(task.state.pendingDocumentGeneration);
+  if (pendingDocument.success && pendingDocument.data.revision === revision) {
+    const saved = pendingDocument.data;
+    const create = tools.find((tool) => tool.name === "create_document")!;
+    await ctx.guard();
+    const receipt = await service.journal.run(
+      owner,
+      task,
+      {
+        id: `resume-document-${createHash("sha256").update(saved.sourceOperationId).digest("hex").slice(0, 32)}`,
+        name: "create_document",
+        args: saved.args,
+      },
+      () => (create.execute as (args: unknown) => Promise<unknown>)(saved.args),
+      true,
+    );
+    if (outcome) return { ...outcome, state: task.state };
+    const document = z.object({ fileId: z.string() }).safeParse(receipt);
+    if (document.success) await service.files.get(owner, document.data.fileId);
+    task = await ctx.checkpoint({
+      state: {
+        ...task.state,
+        pendingDocumentGeneration: null,
+        ...(document.success && {
+          completedDocumentGeneration: { revision, fileId: document.data.fileId, receipt },
+        }),
+      },
+    });
+  } else if (task.state.pendingDocumentGeneration) {
+    task = await ctx.checkpoint({ state: { ...task.state, pendingDocumentGeneration: null } });
+  }
   const approvedBrief = task.state.imageBriefReview as
     | { key?: string; revision?: number; complete?: boolean }
     | undefined;
@@ -2325,6 +2419,7 @@ export async function executeModelTask(
     ...task.state,
     ...(!config.researchReviewEnabled && {
       imageBriefReview: undefined,
+      documentBriefReview: undefined,
       pendingImageBrief: undefined,
     }),
     ...(!deliveryReviewEnabled() && {
@@ -2442,6 +2537,11 @@ export async function executeModelTask(
         ? `The last response ended before the requested file existed. Continue the authorized work from saved receipts; do not repeat completed effects. Missing requirements: ${JSON.stringify(task.state.completionFollowup)}. Resolve dates and facts through the current date, conversation and authorized sources first. If necessary input is still missing, call ask_user to pause; a plain-text question does not pause a task.\n`
         : "") +
       activeTodoContext((task.state.todos ?? []) as Todo[]) +
+      (task.state.completedDocumentGeneration &&
+      (task.state.completedDocumentGeneration as { revision?: number }).revision ===
+        Number(task.state.appliedRevision ?? 0)
+        ? `\nThe saved document content check and creation have completed. Its previous waiting_provider receipt is historical and resolved. Inspect the actual document, confirm its visual review and deliver it; do not create the same file again: ${JSON.stringify(task.state.completedDocumentGeneration)}\n`
+        : "") +
       (task.state.completedImageGeneration &&
       (task.state.completedImageGeneration as { revision?: number }).revision ===
         Number(task.state.appliedRevision ?? 0)
@@ -2452,6 +2552,11 @@ export async function executeModelTask(
       (task.state.imageBriefReview as { revision?: number }).revision ===
         Number(task.state.appliedRevision ?? 0)
         ? `\nCurrent image brief review (guidance, not new user scope): ${JSON.stringify(task.state.imageBriefReview)}\n`
+        : "") +
+      (task.state.documentBriefReview &&
+      (task.state.documentBriefReview as { revision?: number }).revision ===
+        Number(task.state.appliedRevision ?? 0)
+        ? `\nCurrent document content check (guidance, not new user scope): ${JSON.stringify(task.state.documentBriefReview)}\n`
         : "") +
       (deliveryReviewEnabled() &&
       task.state.researchDeliveryReview &&
