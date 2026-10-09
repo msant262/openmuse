@@ -7,6 +7,39 @@ import { deploymentStatus } from "../apps/server/src/deployment-status.ts";
 import { WorkAdmission } from "../apps/server/src/engine/work-admission.ts";
 import { browserFallbackFixture } from "./helpers/browser-fallback.ts";
 
+test("deployment status never hydrates inactive tasks and historical operation outputs", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  await db.put("owner", "task-operations", {
+    id: "old-read",
+    status: "succeeded",
+    receipt: { text: "LARGE_HISTORICAL_OUTPUT".repeat(100_000) },
+  });
+  await db.put("other-owner", "task-operations", {
+    id: "uncertain-effect",
+    status: "outcome_unknown",
+    receipt: { cleanupConfirmed: false },
+  });
+  await db.put("owner", "tasks", {
+    id: "old-task",
+    status: "succeeded",
+    state: { providerCheckpoint: { text: "LARGE_HISTORICAL_CONTEXT".repeat(100_000) } },
+  });
+  const scan = db.scan.bind(db);
+  t.mock.method(db, "scan", async (kind: string) => {
+    if (["tasks", "task-operations"].includes(kind))
+      throw new Error("Deployment preflight must query bounded activity metadata");
+    return scan(kind);
+  });
+  const status = await deploymentStatus(db);
+  assert.equal(status.activeTasks, 0);
+  assert.equal(
+    status.activeOperations,
+    1,
+    "another owner's uncertain work still prevents clean backup",
+  );
+});
+
 test("backup preflight counts active conversation leases across owners and waits for their release", async () => {
   const db = await createStore();
   try {

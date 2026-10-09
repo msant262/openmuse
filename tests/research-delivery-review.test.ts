@@ -426,6 +426,42 @@ test("a review cannot certify a comparison while its request audit identifies mi
   assert.equal(decision.blocked, false, "a concrete repair path keeps work active");
 });
 
+test("a valid comparison audit with more than twelve requirements is not treated as a provider outage", async (t) => {
+  const audit = Array.from({ length: 21 }, (_, i) => ({
+    requirement: `Course ${Math.floor(i / 7) + 1}, category ${i % 7}`,
+    satisfied: i !== 20,
+    evidence: i === 20 ? "The requested duration is missing" : "Observed official source content",
+  }));
+  await modelFixture(t, () => undefined, {
+    researchReview: () => ({
+      complete: true,
+      needsMoreResearch: false,
+      missing: [],
+      nextSteps: [],
+      requestAudit: audit,
+    }),
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Compare three courses across seven categories.",
+  });
+  const { reviewResearchDelivery } = await import(
+    "../apps/server/src/engine/research-delivery-review.ts"
+  );
+  const decision = await reviewResearchDelivery({
+    task,
+    summary: "The comparison is complete",
+    operations: [],
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    signal: new AbortController().signal,
+  });
+  assert.equal(decision.requestAudit.length, 21);
+  assert.equal(decision.complete, false, "the unsatisfied requirement still rejects the delivery");
+  assert.match(decision.missing.join(" "), /Course 3, category 6/);
+});
+
 test("delivery review preserves facts in the middle of a source that fits the configured model", async (t) => {
   let observed = "";
   await modelFixture(t, () => undefined, {

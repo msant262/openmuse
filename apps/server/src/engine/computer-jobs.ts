@@ -32,7 +32,7 @@ export async function reconcileWaitingComputerTasks(
     "waiting_global_pause",
     "waiting_approval",
   ]);
-  for (const { owner, value: task } of await db.scan<AgentTask>("tasks")) {
+  for (const { owner, value: task } of await db.taskMaintenanceCandidates<AgentTask>("computer")) {
     const id =
       typeof task.state.computerCleanupPendingId === "string"
         ? task.state.computerCleanupPendingId

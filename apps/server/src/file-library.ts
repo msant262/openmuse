@@ -15,6 +15,22 @@ const words = (value: string) =>
     (word) => !/^(de|da|do|das|dos|para|the|of|and|pdf|docx|pptx|txt|md)$/.test(word),
   );
 
+/** Shared bytes reader. Calling services still enforce their own owner/access boundary. */
+export async function extractDocumentText(
+  bytes: Uint8Array,
+  file: { mimeType: string; name: string },
+) {
+  if (file.mimeType === "application/pdf") return readPdfText(bytes);
+  if (file.mimeType.startsWith("application/vnd.openxmlformats-officedocument."))
+    return officeContent(bytes, file.mimeType);
+  if (file.mimeType.startsWith("text/") || /\.(md|txt|json|csv|html|xml)$/i.test(file.name))
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  throw new AppError(
+    "This format has no text reader. Use view_file for images or native media tools for audio/video.",
+    422,
+  );
+}
+
 /** Small spelling differences are candidates, never authority to select a file. */
 function match(file: Artifact, query: string) {
   if (!query) return { rank: 4, match: "recent" };
@@ -121,17 +137,7 @@ export class FileLibrary {
   async read(owner: string, args: { fileId: string; offset: number; limit: number }) {
     const file = await this.accessible(owner, args.fileId);
     const bytes = await this.files.bytes(owner, file.id);
-    let text: string;
-    if (file.mimeType === "application/pdf") text = await readPdfText(bytes);
-    else if (file.mimeType.startsWith("application/vnd.openxmlformats-officedocument."))
-      text = officeContent(bytes, file.mimeType);
-    else if (file.mimeType.startsWith("text/") || /\.(md|txt|json|csv|html|xml)$/i.test(file.name))
-      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    else
-      throw new AppError(
-        "This format has no text reader. Use view_file for images or native media tools for audio/video.",
-        422,
-      );
+    const text = await extractDocumentText(bytes, file);
     const excerpt = text.slice(args.offset, args.offset + args.limit);
     return {
       attachment: false,

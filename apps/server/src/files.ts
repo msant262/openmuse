@@ -33,7 +33,7 @@ export class Files {
       throw new AppError("Attachments must be 25 MB or smaller", 413);
     const mime = attachmentMime(name, mimeType);
     if (mime === "application/pdf")
-      return this.import(owner, name, bytes, source, undefined, operationId);
+      return this.import(owner, name, bytes, source, undefined, operationId, internal);
     if (mime.startsWith("image/") && rasterMime(bytes) !== mime)
       throw new AppError("The image content does not match its file type", 422);
     const safeName = this.safeName(name);
@@ -199,6 +199,7 @@ export class Files {
     source: string,
     parentId?: string,
     operationId: string | undefined = taskOperationId(),
+    internal = false,
   ): Promise<Artifact> {
     if (bytes.length > 10 * 1024 * 1024) throw new AppError("PDFs must be 10 MB or smaller", 413);
     const metadata = await inspectPdf(bytes);
@@ -218,6 +219,7 @@ export class Files {
       createdAt: new Date().toISOString(),
       source,
       parentId,
+      ...(internal && { internal: true }),
     };
     const directory = join(this.config.dataDir, "files");
     await mkdir(directory, { recursive: true, mode: 0o700 });

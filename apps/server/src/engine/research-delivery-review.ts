@@ -18,8 +18,8 @@ const decisionSchema = z.object({
   complete: z.boolean(),
   blocked: z.boolean().default(false),
   needsMoreResearch: z.boolean().default(true),
-  missing: z.array(z.string().max(700)).max(8),
-  nextSteps: z.array(z.string().max(700)).max(6),
+  missing: z.array(z.string().max(700)),
+  nextSteps: z.array(z.string().max(700)),
   requestAudit: z
     .array(
       z.object({
@@ -28,8 +28,7 @@ const decisionSchema = z.object({
         evidence: z.string().max(700),
       }),
     )
-    .min(1)
-    .max(12),
+    .min(1),
   accessAudit: z
     .array(
       z.object({
@@ -327,7 +326,7 @@ export async function reviewResearchDelivery(options: {
 
       signal.throwIfAborted();
       if (event.type === "TEXT_MESSAGE_CONTENT") text += event.delta;
-      if (text.length > 12_000) throw new Error("Review output exceeded its limit");
+      if (text.length > 128_000) throw new Error("Review output exceeded its limit");
     }
     const decision = decisionSchema.parse(
       JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "")),
@@ -370,7 +369,18 @@ export async function reviewResearchDelivery(options: {
   } catch (error) {
     options.signal.throwIfAborted();
     if (error instanceof ResearchReviewUnavailableError) throw error;
-    throw new ResearchReviewUnavailableError(checkpoint);
+    throw new ResearchReviewUnavailableError(
+      checkpoint,
+      undefined,
+      error instanceof z.ZodError
+        ? {
+            kind: "schema",
+            issues: error.issues
+              .map((issue) => ({ code: issue.code, path: issue.path.join(".") }))
+              .slice(0, 20),
+          }
+        : { kind: error instanceof SyntaxError ? "json" : "response" },
+    );
   }
 }
 
@@ -381,6 +391,7 @@ export class ResearchReviewUnavailableError extends Error {
   constructor(
     readonly checkpoint?: ProviderContinuationCheckpoint,
     code?: string,
+    readonly diagnostic?: { kind: string; issues?: { code: string; path: string }[] },
   ) {
     super(
       "A conferência da entrega está temporariamente indisponível. O resultado foi preservado.",

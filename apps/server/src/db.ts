@@ -57,6 +57,27 @@ export class Store {
     );
     return result.rows.map((row) => row.data as T);
   }
+  /** Routing needs a task-local predicate, never historical output payloads. */
+  async browserTaskUncertain(owner: string, taskId: string, reads: string[]) {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('uncertain',EXISTS(
+        SELECT 1 FROM records operation WHERE operation.owner=$1 AND operation.kind='task-operations'
+        AND operation.data->>'taskId'=$2 AND operation.data->>'effect'='true'
+        AND operation.data->>'toolName' ~ 'browser|desktop|command|credential'
+        AND operation.data->>'status' IN ('dispatching','running','outcome_unknown')
+        AND operation.data->>'toolName' !~ 'browser_research$'
+        AND NOT COALESCE(operation.data->>'toolName'='native.browser'
+          AND operation.data->'args'->>'operation'=ANY($3::text[])
+          AND (operation.data->'args'->>'operation'<>'open' OR EXISTS(
+            SELECT 1 FROM records parent WHERE parent.owner=operation.owner AND parent.kind='task-operations'
+            AND parent.id=operation.data->>'parentOperationId'
+            AND (parent.data->>'toolName' ~ 'browser_research$' OR parent.data->>'toolName'='search_web')
+          )),false)
+      )) AS data`,
+      [owner, taskId, reads],
+    );
+    return result.rows[0].data.uncertain === true;
+  }
   async pendingInbox<T>(now: string): Promise<{ owner: string; value: T }[]> {
     const result = await this.db.query(
       `SELECT jsonb_build_object('owner',owner,'value',data) AS data FROM records
@@ -802,14 +823,41 @@ export class Store {
     );
     return (result.rows[0]?.data as T | undefined) ?? null;
   }
-  async taskMaintenanceCandidates<T>(phase: "recovery" | "native") {
+  async taskMaintenanceCandidates<T>(phase: "recovery" | "native" | "computer") {
     const condition =
       phase === "native"
         ? "data->>'status'<>'running' AND (data->'state'->>'nativeCleanupPending'='true' OR data->'state'->>'nativeAdmissionPending'='true')"
-        : `(data->>'status'='waiting_input' AND jsonb_typeof(data->'state'->'reconcilingOperationIds')='array' AND data->'state'->'reconcilingOperationIds'<>'[]'::jsonb)
+        : phase === "computer"
+          ? `data->>'status' NOT IN ('running','queued','scheduled','waiting_job','waiting_resource','waiting_global_pause','waiting_approval')
+           AND (jsonb_typeof(data->'state'->'computerCleanupPendingId')='string'
+             OR jsonb_typeof(data->'state'->'waitingComputerCommandId')='string'
+             OR (jsonb_typeof(data->'state'->'reconcilingOperationIds')='array' AND jsonb_typeof(data->'state'->'completedComputerJob'->'id')='string'))`
+          : `(data->>'status'='waiting_input' AND jsonb_typeof(data->'state'->'reconcilingOperationIds')='array' AND data->'state'->'reconcilingOperationIds'<>'[]'::jsonb)
          OR (data->>'status'='waiting_provider' AND data->>'nextRunAt' IS NULL AND data->'state'->'providerCheckpoint'->>'code'='MODEL_PROVIDER_INTERRUPTED' AND data->'state'->'providerCheckpoint'->>'accepted'='true')`;
     const result = await this.db.query(
       `SELECT jsonb_build_object('owner',owner,'value',data) AS data FROM records WHERE kind='tasks' AND (${condition}) ORDER BY updated_at,id`,
+    );
+    return result.rows.map((row) => row.data as unknown as { owner: string; value: T });
+  }
+  /** Preflight remains global, but source histories never cross the DB boundary. */
+  async deploymentActivity<T>(kind: "tasks" | "task-operations") {
+    const projection =
+      kind === "tasks"
+        ? "jsonb_build_object('status',data->'status')"
+        : `jsonb_build_object('id',id,'status',data->'status','toolName',data->'toolName','effect',data->'effect',
+          'nativeEnvelope',jsonb_build_object('id',data->'nativeEnvelope'->'id','kind',data->'nativeEnvelope'->'kind'),
+          'receipt',jsonb_build_object('cleanupConfirmed',data->'receipt'->'cleanupConfirmed',
+            'data',jsonb_build_object('cleanupConfirmed',data->'receipt'->'data'->'cleanupConfirmed'),
+            'enabled',data->'receipt'->'enabled','provider',data->'receipt'->'provider','status',data->'receipt'->'status',
+            'workspacePath',data->'receipt'->'workspacePath','network',data->'receipt'->'network',
+            'commands',CASE WHEN jsonb_typeof(data->'receipt'->'commands')='array' THEN '[]'::jsonb ELSE NULL END,
+            'error',data->'receipt'->'error'))`;
+    const statuses =
+      kind === "tasks" ? ["running", "waiting_job"] : ["dispatching", "running", "outcome_unknown"];
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('owner',owner,'value',${projection}) AS data FROM records
+       WHERE kind=$1 AND data->>'status'=ANY($2::text[]) ORDER BY owner,id`,
+      [kind, statuses],
     );
     return result.rows.map((row) => row.data as unknown as { owner: string; value: T });
   }

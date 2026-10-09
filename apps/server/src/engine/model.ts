@@ -317,6 +317,7 @@ export async function executeModelTask(
           code: error.code,
           attempts,
           admission: error.checkpoint?.admission,
+          diagnostic: error.diagnostic,
         },
       },
     });

@@ -16,6 +16,34 @@ import type { AgentTask } from "../packages/domain/src/agent.ts";
 import type { ComputerCommand } from "../packages/domain/src/computer.ts";
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+test("computer cleanup reads only stopped tasks with pending physical work", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  await db.put("owner", "tasks", {
+    id: "historical",
+    status: "succeeded",
+    state: { providerCheckpoint: { text: "HISTORICAL_HISTORY".repeat(100_000) } },
+  });
+  await db.put("owner", "tasks", {
+    id: "hidden-cleanup",
+    historyHiddenAt: new Date().toISOString(),
+    status: "cancelled",
+    state: { computerCleanupPendingId: "pending-command" },
+  });
+  t.mock.method(db, "scan", async () => {
+    throw new Error("Cleanup must not scan historical task payloads");
+  });
+  const reads: string[] = [];
+  const computer = {
+    command: async (_owner: string, id: string) => {
+      reads.push(id);
+      return receipt(id, "running");
+    },
+  } as unknown as ComputerBackend;
+  await reconcileWaitingComputerTasks(db, computer, new WorkAdmission(db));
+  assert.deepEqual(reads, ["pending-command"]);
+  assert.equal((await db.get<AgentTask>("owner", "tasks", "hidden-cleanup"))?.status, "cancelled");
+});
 function receipt(id: string, status: ComputerCommand["status"]): ComputerCommand {
   return {
     id,

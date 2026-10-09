@@ -2,7 +2,8 @@
 export function taskActivity(name: string) {
   if (/^(todo_list|set_plan)$/.test(name)) return "Updating the plan";
   if (/^(search_web|search_drive|browser_research)$/.test(name)) return "Searching for sources";
-  if (/^(web_fetch|web_extract|read_web_data|read_web_source|read_web)$/.test(name)) return "Reading sources";
+  if (/^(web_fetch|web_extract|read_web_data|read_web_source|read_web|read_drive_file)$/.test(name))
+    return "Reading sources";
   if (/^(generate_image|image_generation_status)$/.test(name)) return "Creating the image";
   if (name === "organize_gmail") return "Organizing Gmail";
   if (name === "prepare_gmail_trash") return "Preparing the next step";

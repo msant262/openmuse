@@ -53,6 +53,12 @@ export const imageArgs = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   provider: z.enum(["auto", "chatgpt", "grok", "selected"]).default("auto"),
   aspectRatio: z.enum(["1:1", "3:4", "4:3", "9:16", "16:9"]).optional(),
+  background: z
+    .enum(["opaque", "transparent"])
+    .optional()
+    .describe(
+      "Opaque by default. Request transparency only when the user asks for a cutout or transparent background.",
+    ),
 });
 const documentArgs = z
   .object({
@@ -447,6 +453,7 @@ export class MediaService {
         provider: args.provider,
         prompt: args.prompt,
         aspectRatio: args.aspectRatio,
+        ...(args.background && { background: args.background }),
       }),
     );
     const previous = await this.db.get<Receipt>(owner, "image-generations", id);
@@ -492,6 +499,9 @@ export class MediaService {
           prompt: args.prompt,
           n: 1,
           ...(args.aspectRatio && { aspect_ratio: args.aspectRatio }),
+          ...(provider.model.startsWith("gpt-image-") && {
+            background: args.background ?? "opaque",
+          }),
           ...(!provider.model.startsWith("gpt-image-") && { response_format: "b64_json" }),
         },
         signal,

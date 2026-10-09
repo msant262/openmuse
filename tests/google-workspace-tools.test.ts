@@ -5,6 +5,7 @@ import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import { TaskWorker } from "../apps/server/src/engine/worker.ts";
 import { googleWorkspaceVerificationBinding } from "../apps/server/src/google-workspace-tools.ts";
 import type { ActionProposal } from "../packages/domain/src/index.ts";
+import { createDocumentPdf } from "../packages/integrations/src/document.ts";
 import { GoogleClient } from "../packages/integrations/src/google.ts";
 import { encryptSecret } from "../packages/integrations/src/vault.ts";
 import { modelFixture } from "./helpers/model.ts";
@@ -58,6 +59,121 @@ async function fixture(
     });
   return server;
 }
+
+test("native Drive document reading downloads actual PDF bytes without attaching them or using the asynchronous download endpoint", async (t) => {
+  const server = await fixture(t);
+  const bytes = await createDocumentPdf(
+    "Residence permit",
+    "Permit type: researcher. Expires: 2027-05-31.",
+  );
+  const calls: URL[] = [];
+  t.mock.method(server.workspace, "google", (_owner: string, connectionId?: string) => {
+    assert.equal(connectionId, "work-id");
+    return new GoogleClient({
+      getAccessToken: async () => "fixture",
+      fetch: async (raw, init) => {
+        const url = new URL(String(raw));
+        calls.push(url);
+        assert.equal(init?.method, "GET");
+        assert.equal(url.pathname, "/drive/v3/files/permit-file");
+        if (url.searchParams.get("alt") === "media")
+          return new Response(Buffer.from(bytes), {
+            headers: { "Content-Type": "application/pdf" },
+          });
+        return Response.json({
+          id: "permit-file",
+          name: "Residence permit.pdf",
+          mimeType: "application/pdf",
+          version: "1",
+          webViewLink: "https://drive.google.com/file/d/permit-file/view",
+        });
+      },
+    });
+  });
+  const input = { account: "work@example.com", fileId: "permit-file", offset: 0, limit: 10000 };
+  const result = await server.agent.googleWorkspace.readDriveFile("owner", input);
+  assert.equal(result.attachment, false);
+  assert.match(result.text, /researcher/);
+  assert.match(result.text, /2027-05-31/);
+  assert.equal(result.account, "work@example.com");
+  assert.equal(result.nextOffset, null);
+  assert.deepEqual(await server.files.bytes("owner", result.fileId), Buffer.from(bytes));
+  assert.equal((await server.files.get("owner", result.fileId)).internal, true);
+  assert.deepEqual(await server.files.list("owner"), []);
+  await server.agent.googleWorkspace.readDriveFile("owner", input);
+  assert.equal(
+    calls.filter((url) => url.searchParams.get("alt") === "media").length,
+    1,
+    "unchanged provider version reuses preserved bytes",
+  );
+  assert.equal((await server.db.list("owner", "actions")).length, 0);
+  await assert.rejects(
+    server.agent.googleWorkspace.readDriveFile("other-owner", input),
+    /disconnected/,
+  );
+});
+
+test("Drive reading exports native Docs, resolves shortcuts and invalidates preserved text after a provider version changes", async (t) => {
+  const server = await fixture(t);
+  let version = "1";
+  let exports = 0;
+  const docxMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const makeDocx = async () => {
+    const ref = await server.agent.media.createDocument(
+      "fixture-source",
+      {
+        name: "Permit",
+        format: "docx",
+        content: `Residence permit expires in version ${version}`,
+        operationId: `source-${version}`,
+      },
+      "fixture",
+    );
+    return server.files.bytes("fixture-source", ref.fileId);
+  };
+  t.mock.method(
+    server.workspace,
+    "google",
+    () =>
+      new GoogleClient({
+        getAccessToken: async () => "fixture",
+        fetch: async (raw, init) => {
+          const url = new URL(String(raw));
+          assert.equal(init?.method, "GET");
+          if (url.pathname.endsWith("/shortcut"))
+            return Response.json({
+              id: "shortcut",
+              name: "Permit link",
+              mimeType: "application/vnd.google-apps.shortcut",
+              shortcutDetails: { targetId: "native-doc" },
+            });
+          if (url.pathname.endsWith("/export")) {
+            exports++;
+            assert.equal(url.searchParams.get("mimeType"), docxMime);
+            return new Response(await makeDocx(), { headers: { "Content-Type": docxMime } });
+          }
+          return Response.json({
+            id: "native-doc",
+            name: "Permit",
+            mimeType: "application/vnd.google-apps.document",
+            version,
+          });
+        },
+      }),
+  );
+  const input = { account: "work@example.com", fileId: "shortcut", limit: 10000 };
+  const first = await server.agent.googleWorkspace.readDriveFile("owner", input);
+  assert.match(first.text, /version 1/);
+  assert.equal(first.driveFileId, "native-doc");
+  assert.equal(first.mimeType, docxMime);
+  assert.equal(first.attachment, false);
+  version = "2";
+  const latest = await server.agent.googleWorkspace.readDriveFile("owner", input);
+  assert.match(latest.text, /version 2/);
+  assert.notEqual(first.sha256, latest.sha256);
+  assert.equal(exports, 2);
+  assert.equal((await server.files.list("owner")).length, 0);
+});
 
 test("native Drive search uses the connected account authority, returns folder counts and performs only GETs", async (t) => {
   const server = await fixture(t);

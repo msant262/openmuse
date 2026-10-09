@@ -143,7 +143,7 @@ export function modelProviderConfig(
     grokFile: resolve(env.GROK_AUTH_FILE?.trim() || `${authDir}/grok.json`),
     codexFile: resolve(env.CODEX_AUTH_FILE?.trim() || `${authDir}/codex.json`),
     codexImageModel: env.CODEX_IMAGE_MODEL?.trim() || "gpt-image-2",
-    codexResponsesModel: env.CODEX_IMAGE_RESPONSES_MODEL?.trim() || "gpt-6-astra",
+    codexResponsesModel: env.CODEX_IMAGE_RESPONSES_MODEL?.trim() || "gpt-6-luna",
     openaiImageModel: env.OPENAI_IMAGE_MODEL?.trim() || undefined,
     grokImageModel: env.GROK_IMAGE_MODEL?.trim() || undefined,
     compatible: settings("OPENAI_COMPATIBLE"),

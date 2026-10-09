@@ -56,6 +56,57 @@ const research = {
   operationClass: "public_read" as const,
 };
 
+test("browser routing checks task-local uncertainty without hydrating historical receipts", async (t) => {
+  const { db, router } = await setup(t);
+  await db.put("owner", "task-operations", {
+    id: "historical",
+    taskId: "old-task",
+    effect: true,
+    toolName: "browser_act",
+    status: "outcome_unknown",
+    receipt: { text: "HISTORICAL_RECEIPT".repeat(100_000) },
+  });
+  await db.put("other-owner", "task-operations", {
+    id: "foreign",
+    taskId: "research",
+    effect: true,
+    toolName: "browser_act",
+    status: "running",
+  });
+  for (const name of ["list", "taskOperations"] as const)
+    t.mock.method(db, name, async () => {
+      throw new Error("Routing must query uncertainty, not full journal payloads");
+    });
+  assert.equal((await router.choose(research)).executorId, "lenovo");
+  await db.put("owner", "task-operations", {
+    id: "research-parent",
+    taskId: "research",
+    effect: true,
+    toolName: "browser_research",
+    status: "running",
+  });
+  await db.put("owner", "task-operations", {
+    id: "research-open",
+    taskId: "research",
+    effect: true,
+    toolName: "native.browser",
+    args: { operation: "open" },
+    parentOperationId: "research-parent",
+    status: "running",
+  });
+  assert.equal((await router.choose(research)).executorId, "lenovo");
+  await db.put("owner", "task-operations", {
+    id: "real-write",
+    taskId: "research",
+    effect: true,
+    toolName: "native.browser",
+    args: { operation: "act" },
+    parentOperationId: "research-parent",
+    status: "outcome_unknown",
+  });
+  await assert.rejects(router.choose(research), { code: "BROWSER_OUTCOME_UNKNOWN" });
+});
+
 test("a headless request never selects the native GUI, including after a VPS outage", async (t) => {
   const { router, fallback } = await setup(t);
   const request = { ...research, requiredTransport: "vps" as const };

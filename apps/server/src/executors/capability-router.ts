@@ -110,32 +110,7 @@ export class CapabilityRouter {
       );
   }
   private async uncertain(owner: string, taskId: string) {
-    const operations = await this.db.list<{
-      id: string;
-      taskId: string;
-      effect: boolean;
-      toolName: string;
-      status: string;
-      parentOperationId?: string;
-      args?: { operation?: string };
-    }>(owner, "task-operations");
-    return operations.some((operation) => {
-      if (
-        operation.taskId !== taskId ||
-        !operation.effect ||
-        !/browser|desktop|command|credential/.test(operation.toolName) ||
-        !["dispatching", "running", "outcome_unknown"].includes(operation.status)
-      )
-        return false;
-      if (operation.toolName.endsWith("browser_research")) return false;
-      if (operation.toolName === "native.browser" && reads.has(operation.args?.operation ?? "")) {
-        if (operation.args?.operation !== "open") return false;
-        const parent = operations.find((value) => value.id === operation.parentOperationId);
-        if (parent?.toolName.endsWith("browser_research") || parent?.toolName === "search_web")
-          return false;
-      }
-      return true;
-    });
+    return this.db.browserTaskUncertain(owner, taskId, [...reads]);
   }
   private async availableArtifacts(request: BrowserChoice, target: BrowserExecutor) {
     for (const requirement of request.artifactVersions) {

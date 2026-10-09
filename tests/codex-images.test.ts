@@ -223,12 +223,18 @@ test("GPT Image dispatch uses only Codex subscription credentials and produces a
     const body = JSON.parse(String(init?.body));
     assert.equal(body.store, false);
     assert.equal(body.stream, true);
-    assert.equal(body.model, "gpt-6-astra");
+    assert.equal(body.model, "gpt-6-luna");
     const currentTime = /Current UTC date and time: ([^\s]+)/.exec(body.instructions)?.[1];
     assert.ok(currentTime, "The hosted image agent needs the same current-time grounding as chat");
     assert.ok(Math.abs(Date.parse(currentTime) - Date.now()) < 60000);
     assert.deepEqual(body.tools, [
-      { type: "image_generation", model: "gpt-image-2", size: "1024x1536", output_format: "png" },
+      {
+        type: "image_generation",
+        model: "gpt-image-2",
+        size: "1024x1536",
+        output_format: "png",
+        background: "opaque",
+      },
     ]);
     return sse({ type: "response.completed", response: { status: "completed", output: [image] } });
   };
@@ -295,6 +301,43 @@ test("GPT Image rejects unsupported subscription routes without silently trying 
     return Response.json({ error: { code: "quota_exceeded" } }, { status: 429 });
   });
   await assert.rejects(provider.generate({ prompt: "test" }), /limitado/);
+  assert.equal(calls, 1);
+});
+
+test("an explicit transparent image uses the provider parameter and cannot replay an opaque intention", async (t) => {
+  const server = await taskRuntime(t);
+  const providers = modelProviderConfig(server.directory, {});
+  await writeProtected(providers.codexFile!, saved());
+  let calls = 0;
+  const media = new MediaService(
+    server.db,
+    server.files,
+    { ...server.agent.config, modelProviders: providers },
+    async (_input, init) => {
+      calls++;
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.tools[0].background, "transparent");
+      return sse({
+        type: "response.completed",
+        response: { status: "completed", output: [image] },
+      });
+    },
+  );
+  const args = {
+    prompt: "A transparent icon",
+    background: "transparent",
+    operationId: "transparent-icon",
+  };
+  await media.generatedImage("owner", "chatgpt/gpt-6-luna", args, "background-test");
+  await assert.rejects(
+    media.generatedImage(
+      "owner",
+      "chatgpt/gpt-6-luna",
+      { ...args, background: "opaque" },
+      "background-test",
+    ),
+    /different image request/,
+  );
   assert.equal(calls, 1);
 });
 

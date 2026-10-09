@@ -12,11 +12,11 @@ export async function deploymentStatus(db: Store, now = Date.now(), activeReques
     await Promise.all([
       new RuntimePause(db).get(""),
       new DeploymentMaintenance(db).current(now),
-      db.scan<AgentTask>("tasks"),
+      db.deploymentActivity<Pick<AgentTask, "status">>("tasks"),
       db.scan<{ hold?: boolean; expiresAt: string }>("work-admissions"),
       db.scan<{ hold?: boolean; expiresAt: string }>("resource-leases"),
       db.list<ExecutorDelivery>("__executors__", "deliveries"),
-      db.scan<{
+      db.deploymentActivity<{
         id: string;
         status: string;
         toolName?: string;
