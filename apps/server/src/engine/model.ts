@@ -2231,6 +2231,7 @@ export async function executeModelTask(
         deliver(summary, deliveryOutcome, artifactIds),
     ),
   ];
+  const workflowCatalog = new SkillCatalog(config, service.playbooks);
   tools.push(
     ...withInstructions(
       designReferenceTools(undefined, {
@@ -2244,7 +2245,7 @@ export async function executeModelTask(
       designReferenceInstructions,
     ),
     ...withInstructions(
-      skillTools(new SkillCatalog(config, service.playbooks), owner, {
+      skillTools(workflowCatalog, owner, {
         tools: () => tools,
         queue: serial,
         before: async () => {
@@ -2587,6 +2588,11 @@ export async function executeModelTask(
     model: config.model,
     fallbacks: config.modelFallbacks,
     providers: config.modelProviders ?? modelProviderConfig(config.dataDir),
+    skillsPrompt: () =>
+      workflowCatalog.prompt(
+        owner,
+        tools.map((tool) => tool.name),
+      ),
     promptContext: async (selectedTools) =>
       (task.state.planCompletionFollowup ? `${PLAN_COMPLETION_FOLLOWUP}\n` : "") +
       (task.state.artifactSelectionFollowup

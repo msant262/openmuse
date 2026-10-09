@@ -290,6 +290,33 @@ export function computerTools(
       ({ path, text }) => computer.write(owner, path, text),
       true,
     ),
+    ...(computer.patch
+      ? [
+          tool(
+            "patch",
+            "Replace exact text in an existing UTF-8 workspace file. Requires one unique match unless replace_all is explicitly true. Reads the current source and binds the controlled write to that exact version; preserves prior file versions and refuses concurrent changes. A patch receipt is not a downloadable attachment.",
+            computerPathSchema
+              .extend({
+                old_string: z.string().min(1).max(262144),
+                new_string: z.string().max(262144),
+                replace_all: z.boolean().default(false),
+              })
+              .refine(
+                ({ path, old_string, new_string }) =>
+                  path !== "/workspace" && old_string !== new_string,
+                "Choose a file and different old/new text.",
+              ),
+            ({ path, old_string, new_string, replace_all }) =>
+              computer.patch!(owner, {
+                path,
+                oldString: old_string,
+                newString: new_string,
+                replaceAll: replace_all,
+              }),
+            true,
+          ),
+        ]
+      : []),
     tool(
       "import_computer_file",
       "Copy any owned user attachment into /workspace",

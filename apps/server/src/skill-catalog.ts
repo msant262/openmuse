@@ -277,6 +277,39 @@ export class SkillCatalog {
     const [source, name] = parsed.split(":") as ["builtin" | "operator", string];
     return this.readFromRoot(await this.root(source, owner), source, name, new Set(toolNames));
   }
+
+  /** Bounded descriptions let the original OpenClaw selector choose a workflow.
+   * Instruction bodies and filesystem paths are never included in this catalog. */
+  async prompt(owner: string, toolNames: readonly string[]) {
+    const inventory = await this.inventory(owner, toolNames);
+    const escapeXml = (text: string) =>
+      text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const header = `${policy}\n<available_skills>`;
+    const footer = "</available_skills>";
+    const more =
+      "Additional workflows are discoverable through skills_search; omitted metadata does not imply absence.";
+    const blocks: string[] = [];
+    let size = Buffer.byteLength(`${header}\n${footer}\n${more}`);
+    for (const entry of inventory.skills) {
+      const block = [
+        "  <skill>",
+        `    <name>${escapeXml(entry.id)}</name>`,
+        `    <description>${escapeXml(entry.description)}</description>`,
+        `    <location>${escapeXml(entry.id)}</location>`,
+        "  </skill>",
+      ].join("\n");
+      const length = Buffer.byteLength(block) + 1;
+      if (size + length > 8000) break;
+      size += length;
+      blocks.push(block);
+    }
+    return [
+      header,
+      ...blocks,
+      footer,
+      ...(inventory.incomplete || blocks.length < inventory.skills.length ? [more] : []),
+    ].join("\n");
+  }
 }
 
 export function skillTools(

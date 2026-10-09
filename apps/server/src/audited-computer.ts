@@ -172,6 +172,12 @@ export function auditedComputer(
             operation,
           );
         },
+        tool === "patch"
+          ? (value) =>
+              (value as { status?: string }).status === "rejected_not_dispatched"
+                ? "rejected_not_dispatched"
+                : "succeeded"
+          : undefined,
       );
     } finally {
       try {
@@ -401,6 +407,15 @@ export function auditedComputer(
     });
   return {
     ...(recovery && { recovery }),
+    ...(backend.patch && {
+      patch: (owner: string, input: Parameters<NonNullable<ComputerBackend["patch"]>>[1]) =>
+        run(
+          owner,
+          "patch",
+          () => backend.patch!(owner, input),
+          fileResource(owner, input.path, "exclusive"),
+        ),
+    }),
     ...(backend.physicalOperation && {
       physicalOperation: backend.physicalOperation.bind(backend),
     }),

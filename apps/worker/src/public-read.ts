@@ -8,6 +8,11 @@ export function observePublicDataRequests(page: Page) {
     saturated = false;
   page.on("request", (request) => {
     if (request.method() !== "GET" || !["xhr", "fetch"].includes(request.resourceType())) return;
+    // Confirmed on IBM's completed public article: TrustArc's analytics
+    // collector can remain pending indefinitely. Only this known collection
+    // endpoint is excluded; a site's own /analytics data still gates reading.
+    const url = new URL(request.url());
+    if (url.hostname === "consent.trustarc.com" && /^\/analytics\/?$/.test(url.pathname)) return;
     if (pending.size >= 64) {
       saturated = true;
       return;

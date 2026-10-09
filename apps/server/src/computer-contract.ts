@@ -86,6 +86,24 @@ type BaseComputerBackend = Pick<
   | "writeBytes"
 >;
 export type ComputerBackend = Omit<BaseComputerBackend, "execute"> & {
+  /** Literal edits bind their write to the actual inspected source hash. */
+  patch?: (
+    owner: string,
+    input: {
+      path: string;
+      oldString: string;
+      newString: string;
+      replaceAll: boolean;
+    },
+  ) => Promise<{
+    path: string;
+    status: "succeeded" | "rejected_not_dispatched";
+    replacements?: number;
+    beforeSha256?: string;
+    afterSha256?: string;
+    dispatched?: false;
+    error?: string;
+  }>;
   /** Local configuration validation only; must not dispatch any operation. */
   assertConfigured?: () => void;
   fileBytes: (

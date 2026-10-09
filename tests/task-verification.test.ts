@@ -7,6 +7,67 @@ import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("literal edits require confirmed file changes rather than an unrequested download", async (t) => {
+  const server = await taskRuntime(t);
+  for (const prompt of [
+    "Replace the unique price in patch-note.txt",
+    "Substitua 100 por 200 no arquivo valores.txt",
+  ]) {
+    const task = await server.agent.createTask("owner", { prompt });
+    assert.ok(!task.criteria?.some((criterion) => criterion.kind === "file"));
+    assert.ok(task.criteria?.some((criterion) => criterion.id === "requested-workspace-edit"));
+    assert.notEqual(
+      (await server.agent.verification.assess("owner", task.id, 0)).status,
+      "verified",
+    );
+    const target = prompt.includes("patch-note.txt")
+      ? "/workspace/patch-note.txt"
+      : "/workspace/valores.txt";
+    for (const [status, revision, path, expected] of [
+      ["rejected_not_dispatched", 0, target, false],
+      ["outcome_unknown", 0, target, false],
+      ["succeeded", 1, target, false],
+      ["succeeded", 0, "/workspace/other.txt", false],
+      ["succeeded", 0, target, true],
+    ] as const) {
+      const op = await server.agent.journal.prepare("owner", {
+        id: `${task.id}:${status}:${revision}:${path.split("/").at(-1)}`,
+        taskId: task.id,
+        revision,
+        executorId: "vps",
+        executorEpoch: 1,
+        resourceFence: 0,
+        runToken: "test",
+        resourceLeaseIds: [],
+        createdAt: new Date().toISOString(),
+        status,
+        toolName: "patch",
+        bindingHash: "a".repeat(64),
+        effect: true,
+        args: { path: target, old_string: "100", new_string: "200" },
+        receipt: {
+          path,
+          status: "succeeded",
+          replacements: 1,
+          beforeSha256: "1".repeat(64),
+          afterSha256: "2".repeat(64),
+        },
+      });
+      assert.equal(
+        (await server.agent.verification.assess("owner", task.id, 0)).status === "verified",
+        expected,
+      );
+      await server.db.remove("owner", "task-operations", op.id);
+    }
+  }
+  assert.ok(
+    taskCriteria({
+      kind: "agent",
+      prompt: "Replace the price in values.txt and deliver the corrected file.",
+    }).some((criterion) => criterion.kind === "file"),
+  );
+});
+
 test("an explicitly requested program cannot be completed by writing its expected output", async (t) => {
   const server = await taskRuntime(t);
   const task = await server.agent.createTask("owner", {

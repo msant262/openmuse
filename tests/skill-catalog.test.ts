@@ -19,6 +19,53 @@ const skill = (
 ) =>
   `---\nname: ${name}\ndescription: A specialized report workflow\nrequired-tools: ${JSON.stringify(requiredTools)}\n---\n# ${name}\n\n${body}\n`;
 
+test("the first background inference sees the original skill-selection catalog before any skill call", async (t) => {
+  const provider = await modelFixture(t, (index) =>
+    index === 0
+      ? { name: "skills_read", arguments: { id: "builtin:research" } }
+      : { name: "finish_task", arguments: { summary: "Workflow was inspected." } },
+  );
+  const server = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  await server.agent.createTask("owner", { prompt: "Pesquise fontes oficiais sobre IA." });
+  await server.agent.worker.tick();
+  const first = JSON.parse(provider.requests[0].body);
+  assert.match(first.instructions, /Scan <available_skills> for a matching workflow/);
+  assert.match(first.instructions, /<name>builtin:research<\/name>/);
+  assert.match(first.instructions, /read the complete instructions before task actions/);
+  assert.ok(
+    !first.instructions.includes("# Research toward the user's requested outcome"),
+    "only catalog metadata is loaded before selection",
+  );
+  assert.ok(
+    provider.requests[1].body.includes("# Research toward the user's requested outcome"),
+    "the selected read returns the actual complete workflow",
+  );
+});
+
+test("the initial catalog bounds UTF-8 and XML expansion without loading workflow bodies", async (t) => {
+  const catalog = new SkillCatalog({ dataDir: "/unused" });
+  t.mock.method(catalog, "inventory", async () => ({
+    skills: Array.from({ length: 40 }, (_, i) => ({
+      id: `operator:test-${i}`,
+      name: `test-${i}`,
+      source: "operator" as const,
+      sha256: "a".repeat(64),
+      requiredTools: [],
+      description: "中文<workflow>".repeat(40),
+    })),
+    incomplete: false,
+  }));
+  const prompt = await catalog.prompt("owner", []);
+  assert.ok(Buffer.byteLength(prompt) <= 8000);
+  assert.match(prompt, /中文&lt;workflow&gt;/);
+  assert.equal(prompt.split("<available_skills>").length - 1, 1);
+  assert.match(prompt, /Additional workflows are discoverable/);
+  assert.ok(
+    !prompt.includes("sha256"),
+    "the chooser needs names and descriptions, not redundant technical metadata",
+  );
+});
+
 test("verified learned methods are discoverable and readable through real skill tools without catalog views", async (t) => {
   const f = await fixture(t);
   const task = await f.agent.taskRecord(

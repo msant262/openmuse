@@ -24,15 +24,18 @@ test("document preflight defers only file delivery while retaining factual and a
       needsMoreResearch: true,
       requestAudit: [
         {
-          requirement: "Course content and free access",
+          requirement:
+            i === 3
+              ? "scope:content — Course content and free access"
+              : "Course content and free access",
           satisfied: i !== 1,
-          scope: "content",
+          ...(i === 3 ? {} : { scope: "content" }),
           evidence: i === 1 ? "Unknown access" : "The full course is free.",
         },
         {
-          requirement: "Deliver PDF",
+          requirement: i >= 3 ? "scope:delivery — Deliver PDF" : "Deliver PDF",
           satisfied: false,
-          scope: "delivery",
+          ...(i === 3 ? {} : { scope: i === 4 ? "content" : "delivery" }),
           evidence: "PDF not yet delivered",
         },
       ],
@@ -78,7 +81,20 @@ test("document preflight defers only file delivery while retaining factual and a
   const actualDelivery = await reviewResearchDelivery(common);
   assert.equal(actualDelivery.complete, false);
   assert.ok(actualDelivery.missing.includes("Deliver PDF"));
-  assert.equal(fixture.reviewRequests.length, 3);
+  const labeledScopes = await reviewResearchDelivery({ ...common, proposedDocument: true });
+  assert.equal(
+    labeledScopes.complete,
+    true,
+    "an explicit delivery label cannot create a circular pre-render requirement",
+  );
+  assert.equal(labeledScopes.requestAudit[1].scope, "delivery");
+  const explicitContent = await reviewResearchDelivery({ ...common, proposedDocument: true });
+  assert.equal(
+    explicitContent.complete,
+    false,
+    "an explicit content field takes priority over a conflicting delivery label",
+  );
+  assert.equal(fixture.reviewRequests.length, 5);
 });
 
 test("free-only recommendations repair unconfirmed access with the selected model even when optional review is disabled", async (t) => {

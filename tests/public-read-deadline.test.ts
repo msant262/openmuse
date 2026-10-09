@@ -2,7 +2,71 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import test from "node:test";
-import { readPublicContent } from "../apps/worker/src/public-read.ts";
+import { observePublicDataRequests, readPublicContent } from "../apps/worker/src/public-read.ts";
+
+test("public reading ignores a hung TrustArc analytics collector while observing actual data", {
+  timeout: 10_000,
+}, async (t) => {
+  const workerRequire = createRequire(resolve("apps/worker/package.json"));
+  const { chromium }: typeof import("../apps/worker/node_modules/playwright/index.js") =
+    workerRequire("playwright");
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  const network = observePublicDataRequests(page);
+  await page.setContent(
+    "<main><h1>Complete course</h1><p>The complete curriculum is free.</p></main>",
+  );
+  let release!: () => Promise<void>;
+  let intercepted!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    intercepted = resolve;
+  });
+  await page.route("https://consent.trustarc.com/analytics*", async (route) => {
+    release = () => route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*" } });
+    intercepted();
+  });
+  await page.evaluate(() => {
+    void fetch("https://consent.trustarc.com/analytics?event=shown").catch(() => {});
+  });
+  await pending;
+  assert.equal(
+    network.snapshot().pending,
+    false,
+    "a collection request is not missing article data",
+  );
+  const result = await readPublicContent(page, network);
+  assert.equal(result.extraction.status, "readable");
+  await release();
+  let realRelease!: () => Promise<void>;
+  let realIntercepted!: () => void;
+  const realPending = new Promise<void>((resolve) => {
+    realIntercepted = resolve;
+  });
+  await page.route("https://course.example/analytics", async (route) => {
+    realRelease = () =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: '{"available":3}',
+      });
+    realIntercepted();
+  });
+  await page.evaluate(() => {
+    void fetch("https://course.example/analytics").catch(() => {});
+  });
+  await realPending;
+  assert.equal(
+    network.snapshot().pending,
+    true,
+    "unrecognized business data must not be discarded by a generic analytics keyword",
+  );
+  await realRelease();
+  const after = await readPublicContent(page, network);
+  assert.equal(after.extraction.status, "readable");
+  assert.ok(after.dataSources.some((source) => source.url === "https://course.example/analytics"));
+});
 
 test("a static logo placeholder does not hold a fully loaded course article for a minute", {
   timeout: 10_000,

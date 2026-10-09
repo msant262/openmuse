@@ -42,6 +42,8 @@ type Options = {
   /** Core tools backed by this owner's configured executor, visible without discovery. */
   directToolNames?: readonly string[];
   prompt: string;
+  /** Owner-scoped metadata; selected complete workflows still use host skills_read. */
+  skillsPrompt?: () => Promise<string>;
   /** Startup preflight ends locally before any model transport or host tool. */
   initializeOnly?: boolean;
   promptContext?: (selectedTools: readonly string[]) => Promise<string>;
@@ -128,6 +130,12 @@ const messageHash = (message: ModelMessage) =>
     )
     .digest("hex");
 type Runtime = CodeExecutionRuntime & {
+  buildSkillsSection(params: {
+    skillsPrompt?: string;
+    readToolName: string;
+    installedSkillSearch?: boolean;
+    installedSkillRead?: boolean;
+  }): string[];
   resolveOpenAIModelReasoningEfforts(model: {
     id: string;
     api: string;
@@ -358,6 +366,8 @@ const directTools = new Set([
   "read_tool_output",
   "read_web_source",
   "list_google_accounts",
+  "skills_search",
+  "skills_read",
 ]);
 const nativeName = (name: string) => (controls.has(name) ? name : `okami_${name}`);
 const publicName = (name: string) => name.replace(/^okami_/, "");
@@ -1205,6 +1215,16 @@ export function openclawAgent(options: Options) {
               name: "okami.harness",
               value: { runtime: "openclaw", revision: "b56ae70a5e7e302dc2165c96b60214e84e19c7b1" },
             });
+            const skillContext = options.skillsPrompt
+              ? copied
+                  .buildSkillsSection({
+                    skillsPrompt: await options.skillsPrompt(),
+                    readToolName: "skills_read",
+                    installedSkillSearch: registry.has("skills_search"),
+                    installedSkillRead: registry.has("skills_read"),
+                  })
+                  .join("\n")
+              : "";
             const result = await copied.runEmbeddedAgent({
               preparedRunAdmission: admission,
               config,
@@ -1227,7 +1247,7 @@ export function openclawAgent(options: Options) {
                   content: "Continue the accepted request from its recorded tool receipts.",
                 },
               ),
-              extraSystemPrompt: options.prompt,
+              extraSystemPrompt: `${options.prompt}${skillContext ? `\n${skillContext}` : ""}`,
               timeoutMs: 21600000,
               abortSignal: abort.signal,
               toolBindings: { okamiRunId: input.runId },

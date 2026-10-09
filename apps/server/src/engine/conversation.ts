@@ -995,12 +995,13 @@ export class ConversationAgent extends AbstractAgent {
       }),
       ...delegateTools(remoteTools),
     ];
+    const workflowCatalog = new SkillCatalog(this.service.config, this.service.playbooks);
     tools.push(
       ...designReferenceTools(undefined, {
         before: async () => browserAbort.signal.throwIfAborted(),
         recent: () => this.service.media.recentDocumentDesigns(this.owner),
       }),
-      ...skillTools(new SkillCatalog(this.service.config, this.service.playbooks), this.owner, {
+      ...skillTools(workflowCatalog, this.owner, {
         tools: () => tools,
         before: async () => browserAbort.signal.throwIfAborted(),
       }),
@@ -1060,6 +1061,11 @@ export class ConversationAgent extends AbstractAgent {
           messages: [{ role: "user" as const, content: latestText }],
         };
       },
+      skillsPrompt: () =>
+        workflowCatalog.prompt(
+          this.owner,
+          tools.filter((tool) => companionChatTools.has(tool.name)).map((tool) => tool.name),
+        ),
       promptContext: async () => {
         const [profile, reactions, taskSnapshot] = await Promise.all([
           this.service.profiles.get(this.owner, input.threadId),

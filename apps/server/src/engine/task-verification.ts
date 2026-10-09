@@ -10,6 +10,7 @@ import {
 } from "../../../../packages/domain/src/runtime.ts";
 import { inspectPdf } from "../../../../packages/integrations/src/pdf.ts";
 import { readPdfText } from "../../../../packages/integrations/src/pdf-text.ts";
+import { workspacePath } from "../computer.ts";
 import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { DocumentReview } from "../document-review.ts";
@@ -163,6 +164,29 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
   const remoteGoogleDocument =
     /\b(?:google\s*(?:drive|docs|sheets|slides)|drive|docs|sheets|slides)\b/i.test(prompt) &&
     !/\b(?:download|baixar|baixe|anexo|attachment|pdf|docx|xlsx|pptx|txt|csv)\b/i.test(prompt);
+  const literalFileEdit =
+    !remoteGoogleDocument &&
+    /\b(?:replace|patch|substitua|substituir|troque|trocar)\b/i.test(prompt) &&
+    /\b(?:arquivo|file)\b|[\w-]+\.(?:txt|csv|md|json|ya?ml|toml|ini|ts|tsx|js|jsx|py)\b/i.test(
+      prompt,
+    );
+  const fileDelivery =
+    /\b(?:deliver|download|attachment|entregue|entregar|baixe|baixar|anexe|anexo|envie|enviar)\b/i.test(
+      prompt,
+    );
+  const editTarget =
+    /\b(?:in|within|no|na|arquivo|file)\s+(?:the\s+)?["'`]?([\p{L}\p{N}_./-]+\.(?:txt|csv|md|json|ya?ml|toml|ini|ts|tsx|js|jsx|py))\b/iu.exec(
+      prompt,
+    )?.[1];
+  if (literalFileEdit)
+    criteria.push({
+      id: "requested-workspace-edit",
+      kind: "receipt",
+      effect: "external",
+      description:
+        "Apply the literal change with patch and confirm the intended file path, changed hashes and replacements. A read, rejected match, unrelated action, or promised change does not complete the edit.",
+      requiredItems: editTarget && editTarget.length <= 300 ? [editTarget] : [],
+    });
   const mailRequest =
     /\b(?:gmail|e-?mails?)\b/i.test(prompt) ||
     /caixa(?:s)?\s+(?:de\s+)?(?:entrada|principal|separada)|inbox/i.test(prompt);
@@ -253,6 +277,7 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     });
   else if (
     !remoteGoogleDocument &&
+    (!literalFileEdit || fileDelivery) &&
     /\b(pdf|docx|xlsx|pptx|txt|csv|arquivo|file|document|documento)\b/i.test(prompt)
   )
     criteria.push({
@@ -459,6 +484,7 @@ function actionMatches(
   action: ActionProposal,
   binding?: McpBinding,
 ) {
+  if (criterion.id === "requested-workspace-edit") return false;
   if (
     action.kind === "external.action" &&
     ["mcp.call", "composio.execute", "google.workspace"].includes(String(action.data.tool)) &&
@@ -562,6 +588,35 @@ function operationMatches(criterion: CompletionCriterion, op: JournalOperation, 
       Boolean(String(object(op.args)?.code).trim()) &&
       receipt.status === "completed"
     );
+  if (criterion.id === "requested-workspace-edit") {
+    const requestedPath = object(op.args)?.path;
+    if (typeof requestedPath !== "string") return false;
+    let path: string;
+    try {
+      path = workspacePath(
+        requestedPath.startsWith("/") ? requestedPath : `/workspace/${requestedPath}`,
+      );
+    } catch {
+      return false;
+    }
+    return (
+      op.toolName === "patch" &&
+      receipt.status === "succeeded" &&
+      receipt.path === path &&
+      criterion.requiredItems.every((target) =>
+        target.includes("/")
+          ? path === (target.startsWith("/") ? target : `/workspace/${target}`)
+          : path.split("/").at(-1) === target,
+      ) &&
+      typeof receipt.beforeSha256 === "string" &&
+      /^[a-f0-9]{64}$/.test(receipt.beforeSha256) &&
+      typeof receipt.afterSha256 === "string" &&
+      /^[a-f0-9]{64}$/.test(receipt.afterSha256) &&
+      receipt.beforeSha256 !== receipt.afterSha256 &&
+      Number.isSafeInteger(receipt.replacements) &&
+      Number(receipt.replacements) > 0
+    );
+  }
   if (!criterion.effect || criterion.effect === "command") {
     if (/^(run_command|run_computer_command)$/.test(op.toolName))
       return (

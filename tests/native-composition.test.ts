@@ -48,6 +48,146 @@ async function nativeRuntime(t: Parameters<typeof taskRuntime>[0], config: Parti
   return { ...server, epoch, node, session, post };
 }
 
+for (const scenario of [
+  "unique",
+  "literal",
+  "replace-all",
+  "ambiguous",
+  "missing",
+  "read-failed",
+  "write-unknown",
+] as const)
+  test(`native literal patch ${scenario} keeps source-version authority and rejects missing edits before writing`, async (t) => {
+    const path = "/workspace/patch-note.txt";
+    const original = ["ambiguous", "replace-all"].includes(scenario)
+      ? "price 100; price 100\n"
+      : "price 100\n";
+    const replacement = scenario === "literal" ? "$& $` $' $$ \\" : "200";
+    const intended = original.split("100").join(replacement);
+    const shouldWrite = ["unique", "literal", "replace-all", "write-unknown"].includes(scenario);
+    await modelFixture(t, (index) =>
+      index === 0
+        ? {
+            name: "patch",
+            arguments: {
+              path: "patch-note.txt",
+              old_string: scenario === "missing" ? "absent" : "100",
+              new_string: replacement,
+              replace_all: scenario === "replace-all",
+            },
+          }
+        : { name: "finish_task", arguments: { summary: "Patch inspection complete" } },
+    );
+    const server = await nativeRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+    const task = await server.agent.createTask("local-user", {
+      prompt:
+        scenario === "unique"
+          ? "Replace the unique price in patch-note.txt"
+          : "Apply the unique literal edit in the workspace note.",
+    });
+    const running = server.agent.worker.tick();
+    const deadline = Date.now() + 20000;
+    let read = await server.node("claim", { epoch: server.epoch, waitMs: 5000 });
+    while (!read.operations.length && Date.now() < deadline)
+      read = await server.node("claim", { epoch: server.epoch, waitMs: 5000 });
+    assert.equal(read.operations.length, 1, "patch must inspect an admitted native file");
+    assert.equal(read.operations[0].args.operation, "read");
+    assert.equal(read.operations[0].args.path, path);
+    const before = createHash("sha256").update(original).digest("hex");
+    await server.node("receipt", {
+      epoch: server.epoch,
+      operationId: read.operations[0].id,
+      sequence: 1,
+      receipt:
+        scenario === "read-failed"
+          ? { status: "failed", message: "Source does not exist" }
+          : {
+              status: "succeeded",
+              data: { path, text: original, sha256: before, version: before },
+            },
+    });
+    if (shouldWrite) {
+      const write = await server.node("claim", { epoch: server.epoch, waitMs: 5000 });
+      assert.equal(write.operations.length, 1);
+      const operation = write.operations[0];
+      assert.equal(operation.args.operation, "write");
+      assert.equal(operation.args.text, intended);
+      assert.equal(
+        operation.args.expectedVersion,
+        before,
+        "a human change after the read cannot be silently overwritten",
+      );
+      assert.equal(operation.args.captureCurrent, undefined);
+      const after = createHash("sha256").update(intended).digest("hex");
+      const artifact = {
+        artifactId: createHash("sha256").update(path).digest("hex"),
+        path,
+        sha256: after,
+        version: after,
+        size: Buffer.byteLength(intended),
+        generation: 1,
+        executorLocal: true,
+        published: false,
+        mimeType: "text/plain",
+      };
+      await server.node("receipt", {
+        epoch: server.epoch,
+        operationId: operation.id,
+        sequence: 1,
+        receipt:
+          scenario === "write-unknown"
+            ? {
+                status: "outcome_unknown",
+                message: "Write acknowledgement lost",
+                data: { cleanupConfirmed: true },
+              }
+            : { status: "succeeded", data: artifact },
+      });
+      if (scenario !== "write-unknown")
+        await server.node("artifact", { epoch: server.epoch, ...artifact });
+    }
+    await running;
+    const operations = await server.agent.journal.operations("local-user", task.id);
+    const patch = operations.find((operation) => operation.toolName === "patch");
+    assert.ok(patch);
+    assert.equal(
+      patch.status,
+      scenario === "write-unknown"
+        ? "outcome_unknown"
+        : shouldWrite
+          ? "succeeded"
+          : "rejected_not_dispatched",
+    );
+    if (scenario === "write-unknown")
+      assert.equal((await server.agent.getTask("local-user", task.id)).status, "paused");
+    else if (shouldWrite) {
+      assert.equal(
+        (patch.receipt as { replacements: number }).replacements,
+        scenario === "replace-all" ? 2 : 1,
+      );
+      if (scenario === "unique")
+        assert.equal((await server.agent.getTask("local-user", task.id)).status, "succeeded");
+      assert.equal(
+        (patch.receipt as { afterSha256: string }).afterSha256,
+        createHash("sha256").update(intended).digest("hex"),
+      );
+    } else {
+      assert.equal((patch.receipt as { dispatched: boolean }).dispatched, false);
+      assert.equal(
+        operations.filter(
+          (operation) =>
+            (operation.nativeEnvelope?.args as { operation?: string } | undefined)?.operation ===
+            "write",
+        ).length,
+        0,
+      );
+    }
+    assert.equal(
+      (await server.node("claim", { epoch: server.epoch, waitMs: 0 })).operations.length,
+      0,
+    );
+  });
+
 test("production native API creates admitted device-bound task and preserves one command across lost response", async (t) => {
   const server = await nativeRuntime(t);
   const body = { command: "printf fixture", background: true, timeoutMs: 1000 };

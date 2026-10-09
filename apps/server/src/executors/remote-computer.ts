@@ -493,6 +493,63 @@ export class RemoteComputerBackend implements ComputerBackend {
         await this.file(owner, "write", path, { text, ...(await this.expected(owner, path)) }),
       );
   }
+  async patch(
+    owner: string,
+    input: {
+      path: string;
+      oldString: string;
+      newString: string;
+      replaceAll: boolean;
+    },
+  ) {
+    const path = workspacePath(input.path);
+    const reject = (error: string) => ({
+      path,
+      status: "rejected_not_dispatched" as const,
+      dispatched: false as const,
+      error,
+    });
+    if (!input.oldString || input.oldString === input.newString)
+      return reject("Choose a nonempty old_string and a different new_string.");
+    let source: Awaited<ReturnType<typeof this.read>>;
+    try {
+      source = await this.read(owner, path);
+    } catch (error) {
+      // A native inspection cannot edit the user's file. Only handle known
+      // backend/read failures here; task cancellation and uncertain prior
+      // effects retain their ordinary exceptions. No write has been submitted.
+      if (error instanceof AppError)
+        return reject(`The source could not be read; no patch was written. ${error.message}`);
+      throw error;
+    }
+    const matches = source.text.split(input.oldString).length - 1;
+    if (!matches)
+      return reject("old_string was not found. Read the current file and use its exact text.");
+    if (matches > 1 && !input.replaceAll)
+      return reject(
+        `old_string matches ${matches} locations. Include unique surrounding text or explicitly choose replace_all.`,
+      );
+    // split/join preserves literal dollar/backslash sequences in replacement
+    // text; String.replace would interpret $&, $` and related substitutions.
+    const text = source.text.split(input.oldString).join(input.newString);
+    if (Buffer.byteLength(text) > 262144)
+      return reject("The edited text exceeds 256 KB; no patch was written.");
+    const beforeSha256 = hash(source.text),
+      afterSha256 = hash(text);
+    const receipt = await this.file(owner, "write", path, { text, expectedVersion: beforeSha256 });
+    if (
+      (receipt as { path?: string }).path !== path ||
+      (receipt as { sha256?: string }).sha256 !== afterSha256
+    )
+      throw new AppError("Native patch receipt does not confirm the intended file bytes", 502);
+    return {
+      path,
+      status: "succeeded" as const,
+      replacements: input.replaceAll ? matches : 1,
+      beforeSha256,
+      afterSha256,
+    };
+  }
   private async expected(owner: string, path: string) {
     const canonical = workspacePath(path);
     const artifacts = await this.registry.db.list<{
