@@ -306,6 +306,8 @@ test("recursive file lookup follows every child page and folder shortcut even wh
   assert.equal(result.truncated, true);
   assert.equal(result.scope, "folder_tree");
   assert.equal(result.accounts[0].foldersScanned, 3);
+  assert.equal(result.accounts[0].foldersScannedIncludesRoot, true);
+  assert.equal(result.accounts[0].descendantFolderTargetsScanned, 2);
 });
 
 test("a failed descendant listing preserves partial matches and cannot prove folder-tree absence", async () => {

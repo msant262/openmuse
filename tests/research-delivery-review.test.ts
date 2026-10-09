@@ -2061,3 +2061,131 @@ test("access review compares visible source quotes and distinguishes unknown des
   });
   assert.equal(blocked.complete, false, "a challenge or partial page cannot certify eligibility");
 });
+
+test("free-access proof accepts short exact provider offers and separated verbatim facts without inventing a combined quotation", async (t) => {
+  let inspected = false;
+  await modelFixture(t, () => undefined, {
+    researchReview: (body, i) => {
+      inspected = true;
+      const instructions = JSON.parse(body).instructions;
+      assert.match(instructions, /NAMED_FREE_OFFER/);
+      return {
+        complete: true,
+        missing: [],
+        nextSteps: [],
+        accessAudit: [
+          {
+            option: "Course A",
+            access: "free",
+            sourceUrl: "https://courses.example/a",
+            ...(i === 0
+              ? { quote: "Free Course" }
+              : {
+                  quotes: [
+                    "90 Days of Access To your Free Course",
+                    "4 Hours Of self-paced video lessons",
+                  ],
+                }),
+          },
+        ],
+      };
+    },
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Recommend a free introductory course.",
+  });
+  const common = {
+    task,
+    summary: "Course A has free access to the advertised lessons for 90 days.",
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    stage: "access_selection" as const,
+    proposedDocument: true,
+    signal: new AbortController().signal,
+  };
+  const operations = [
+    {
+      toolName: "web_fetch",
+      status: "succeeded",
+      args: { url: "https://courses.example/a" },
+      receipt: {
+        url: "https://courses.example/a",
+        text: "Free Course\n4 Hours Of self-paced video lessons\nTopics and syllabus here.\n90 Days of Access To your Free Course",
+      },
+    },
+  ];
+  assert.equal(
+    (await reviewResearchDelivery({ ...common, operations: operations as never })).complete,
+    true,
+  );
+  assert.equal(
+    (await reviewResearchDelivery({ ...common, operations: operations as never })).complete,
+    true,
+  );
+  const missing = await reviewResearchDelivery({
+    ...common,
+    operations: [
+      {
+        ...operations[0],
+        receipt: {
+          ...operations[0].receipt,
+          text: "4 Hours Of self-paced video lessons. Subscription required.",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(missing.complete, false, "all submitted quote fragments must occur in a real read");
+  assert.equal(inspected, true);
+});
+
+test("review repairs its own quotation protocol before sending a correct researched draft back to more web searches", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, {
+    researchReview: (body, i) => {
+      if (i === 1) assert.match(JSON.parse(body).instructions, /ACCESS_PROOF_PROTOCOL_REPAIR/);
+      return {
+        complete: true,
+        missing: [],
+        nextSteps: [],
+        accessAudit: [
+          {
+            option: "Open course",
+            access: "free",
+            sourceUrl: "https://courses.example/free",
+            quote:
+              i === 0 ? "The provider offers all lessons for free." : "Access to your Free Course",
+          },
+        ],
+      };
+    },
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Find a free introductory course." });
+  const decision = await reviewResearchDelivery({
+    task,
+    summary: "Open course: free access to its lessons.",
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    stage: "access_selection",
+    proposedDocument: true,
+    signal: new AbortController().signal,
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url: "https://courses.example/free" },
+        receipt: { url: "https://courses.example/free", text: "Access to your Free Course" },
+      },
+    ] as never,
+  });
+  assert.equal(decision.complete, true);
+  assert.deepEqual(decision.missing, []);
+  assert.equal(fixture.reviewRequests.length, 2);
+  assert.equal(
+    fixture.requests.length,
+    0,
+    "only the read-only review is corrected; no executor inference or network research is requested",
+  );
+});
