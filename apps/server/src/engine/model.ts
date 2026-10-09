@@ -38,6 +38,7 @@ import { type appConnectSchema, composioInstructions, composioTools } from "../c
 import { computerInstructions, computerTools } from "../computer-tools.ts";
 import { runtimeCredentialAdapterSchema } from "../credentials/contracts.ts";
 import { AppError } from "../errors.ts";
+import { FileLibrary } from "../file-library.ts";
 import {
   genericCredentialInstructions,
   genericCredentialTools,
@@ -134,8 +135,76 @@ export async function executeModelTask(
     if (!deliveryReviewEnabled()) return undefined;
     const operations = await service.journal.operations(owner, task.id);
     if (!needsResearchReview(task, operations)) return undefined;
+    const factsKey = createHash("sha256")
+      .update(
+        JSON.stringify([
+          Number(task.state.appliedRevision ?? 0),
+          selectedModel,
+          task.prompt,
+          task.state.directives,
+          researchObservations(operations)
+            .map((op) => {
+              const receipt = op.receipt as Record<string, unknown> | undefined;
+              return JSON.stringify([
+                op.toolName,
+                op.status,
+                op.args,
+                receipt?.url,
+                receipt?.text,
+                receipt?.rows,
+                receipt?.error,
+                receipt?.sources,
+                receipt?.extraction,
+              ]);
+            })
+            .filter((item, index, items) => items.indexOf(item) === index)
+            .sort(),
+          await Promise.all(
+            [...artifactIds].sort().map(async (fileId) => [
+              fileId,
+              createHash("sha256")
+                .update(await service.files.bytes(owner, fileId))
+                .digest("hex"),
+            ]),
+          ),
+        ]),
+      )
+      .digest("hex");
+    const cached = task.state.researchDeliveryReview as
+      | {
+          factsKey?: string;
+          complete?: boolean;
+          needsMoreResearch?: boolean;
+        }
+      | undefined;
+    if (
+      requiresAccessConstraintReview(task) &&
+      artifactIds.length > 0 &&
+      cached?.factsKey === factsKey &&
+      cached.complete === false &&
+      cached.needsMoreResearch === true
+    )
+      return cached as Awaited<ReturnType<typeof reviewResearchDelivery>> & {
+        attempts: number;
+        repairAttempts: number;
+        stalledAttempts: number;
+      };
+    const accessSelection = requiresAccessConstraintReview(task);
+    const documents = [];
+    if (accessSelection) {
+      const library = new FileLibrary(service.files, service.db);
+      for (const fileId of artifactIds) {
+        const file = await service.files.get(owner, fileId);
+        if (
+          file.mimeType === "application/pdf" ||
+          file.mimeType.startsWith("text/") ||
+          file.mimeType.startsWith("application/vnd.openxmlformats-officedocument.")
+        )
+          documents.push(await library.read(owner, { fileId, offset: 0, limit: 100_000 }));
+      }
+    }
     const images = [];
-    for (const fileId of config.researchReviewEnabled ? artifactIds : []) {
+    for (const fileId of config.researchReviewEnabled && !accessSelection ? artifactIds : []) {
       const file = await service.files.get(owner, fileId);
       if (!file.mimeType.startsWith("image/") || file.size > 8 * 1024 * 1024) continue;
       images.push({
@@ -149,13 +218,15 @@ export async function executeModelTask(
       summary,
       operations,
       model: selectedModel,
-      fallbacks: config.researchReviewEnabled
-        ? [...new Set([primaryModel, ...(config.modelFallbacks ?? [])])]
-        : [],
-      stage: config.researchReviewEnabled ? "delivery" : "access_selection",
+      fallbacks:
+        config.researchReviewEnabled && !accessSelection
+          ? [...new Set([primaryModel, ...(config.modelFallbacks ?? [])])]
+          : [],
+      stage: accessSelection ? "access_selection" : "delivery",
       providers: config.modelProviders ?? modelProviderConfig(config.dataDir),
       signal,
       images,
+      documents,
       structured:
         (await service.profiles.get(owner, task.originThreadId)).fields.textStyle === "structured",
     });
@@ -201,6 +272,7 @@ export async function executeModelTask(
         ...task.state,
         researchReviewHistory: reviewHistory,
         researchDeliveryReview: {
+          factsKey,
           revision,
           attempts,
           repairAttempts,
@@ -408,7 +480,7 @@ export async function executeModelTask(
       );
       const researchContinuation =
         deliveryOutcome === "partial" &&
-        (missingFiles.length > 0 || (!config.researchReviewEnabled && availableLinks.length > 0)) &&
+        (missingFiles.length > 0 || (!deliveryReviewEnabled() && availableLinks.length > 0)) &&
         task.state.researchContinuationKey !== researchKey &&
         task.evidence.some((item) => item.kind === "web");
       const unresolvedPartial =
@@ -2264,6 +2336,7 @@ export async function executeModelTask(
     contextModel: selectionContextModel(config, selection) ?? service.contextModel,
     requiredOperationIds: () => service.journal.requiredHistoryIds(owner, task.id),
     workClass: "background",
+    codeToolEffects: true,
     onProviderInterrupted: async (checkpoint) => {
       const saved = providerContinuationCheckpointSchema.parse(checkpoint);
       task = await ctx.checkpoint({ state: { ...task.state, providerCheckpoint: saved } });

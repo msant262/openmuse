@@ -128,42 +128,49 @@ export async function extractPublicSources(
   const positions: number[] = [],
     fallbackUrls: string[] = [];
   const failures = new Map<number, ExtractedPage>();
-  for (const [index, url] of urls.slice(0, 4).entries()) {
-    signal?.throwIfAborted();
-    try {
-      const page = await web.read(url, signal, { ...options, mode: "auto", render });
-      if (readablePage(page) || !render || ("spill" in page && page.spill && !page.spill.truncated))
-        fixed.set(index, page);
-      else {
-        positions.push(index);
-        fallbackUrls.push(url);
-        failures.set(index, page);
-      }
-    } catch (error) {
+  const requested = urls.slice(0, 4);
+  const reads = await Promise.all(
+    requested.map(async (url) => {
       signal?.throwIfAborted();
-      const failure = {
-        url,
-        title: "",
-        text: "",
-        truncated: false,
-        error: String(error),
-        code: error instanceof WebReadError ? error.code : undefined,
-      };
-      // Network/URL policy errors are intentionally not converted into browser work.
-      if (
-        render &&
-        error instanceof WebReadError &&
-        ["HTTP_403", "HTTP_429", "PAGE_BLOCKED", "PAGE_TOO_LARGE"].includes(error.code)
-      ) {
-        positions.push(index);
-        fallbackUrls.push(url);
-        failures.set(index, failure);
-      } else fixed.set(index, failure);
-    }
+      try {
+        const page = await web.read(url, signal, { ...options, mode: "auto", render });
+        return {
+          page,
+          fallback:
+            Boolean(render) &&
+            !readablePage(page) &&
+            !("spill" in page && page.spill && !page.spill.truncated),
+        };
+      } catch (error) {
+        signal?.throwIfAborted();
+        return {
+          page: {
+            url,
+            title: "",
+            text: "",
+            truncated: false,
+            error: String(error),
+            code: error instanceof WebReadError ? error.code : undefined,
+          },
+          // Network/URL policy failures never become browser work.
+          fallback:
+            Boolean(render) &&
+            error instanceof WebReadError &&
+            ["HTTP_403", "HTTP_429", "PAGE_BLOCKED", "PAGE_TOO_LARGE"].includes(error.code),
+        };
+      }
+    }),
+  );
+  signal?.throwIfAborted();
+  for (const [index, { page, fallback }] of reads.entries()) {
+    if (fallback) {
+      positions.push(index);
+      fallbackUrls.push(requested[index]);
+      failures.set(index, page);
+    } else fixed.set(index, page);
   }
   const rescued: ExtractedPage[] = [];
-  // Browser profile leases are exclusive. Keep rendering sequential, even if
-  // future HTTP backends support concurrent extraction.
+  // Browser profile leases are exclusive; HTTP reads above are independent.
   for (const [index, url] of fallbackUrls.entries()) {
     signal?.throwIfAborted();
     try {

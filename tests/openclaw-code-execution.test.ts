@@ -5,6 +5,7 @@ import { EventType } from "@ag-ui/core";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { lastValueFrom, toArray } from "rxjs";
 import { z } from "zod";
+import { ActionService } from "../apps/server/src/actions.ts";
 import { openclawAgent } from "../apps/server/src/engine/openclaw-agent.ts";
 import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
@@ -175,4 +176,153 @@ test("a Code Mode script cannot invoke a write tool even when that tool exists i
     ),
     JSON.stringify(events),
   );
+});
+
+test("task Code Mode calls authorized writes through the normal host boundary and reads their actual result", async (t) => {
+  await modelFixture(t, (index) =>
+    index === 0
+      ? {
+          name: "tool_call",
+          arguments: {
+            id: "okami_execute_code",
+            args: {
+              code: 'await write_note({text:"owned note"}); return await read_note({});',
+            },
+          },
+        }
+      : undefined,
+  );
+  const f = await taskRuntime(t);
+  const dispatched: string[] = [];
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers: richChatFixtureProviders(f.directory),
+    prompt: "Save and read the authorized note.",
+    codeToolEffects: true,
+    executeTool: async (call, execute) => {
+      dispatched.push(call.name);
+      return execute();
+    },
+    tools: [
+      defineTool({
+        name: "write_note",
+        description: "Write this owner's note",
+        parameters: z.object({ text: z.string() }),
+        execute: async ({ text }) => f.db.put("owner", "qa-notes", { id: "note", text }),
+      }),
+      defineTool({
+        name: "read_note",
+        description: "Read this owner's note",
+        parameters: z.object({}),
+        execute: async () => f.db.get("owner", "qa-notes", "note"),
+      }),
+    ],
+  });
+  const events = await lastValueFrom(
+    agent
+      .run({
+        threadId: randomUUID(),
+        runId: randomUUID(),
+        messages: [{ id: randomUUID(), role: "user", content: "Save my note." }],
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.deepEqual(dispatched, ["execute_code", "write_note", "read_note"]);
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === EventType.TOOL_CALL_RESULT && String(event.content).includes('"owned note"'),
+    ),
+    JSON.stringify(events),
+  );
+  assert.equal(await f.db.get("other-owner", "qa-notes", "note"), null);
+});
+
+test("task Code Mode keeps deletion awaiting user approval and stops subsequent calls", async (t) => {
+  await modelFixture(t, (index) =>
+    index === 0
+      ? {
+          name: "tool_call",
+          arguments: {
+            id: "okami_execute_code",
+            args: {
+              code: "await prepare_delete({}); return await read_note({});",
+            },
+          },
+        }
+      : undefined,
+  );
+  const f = await taskRuntime(t);
+  let paused = false,
+    deletes = 0,
+    reads = 0;
+  const actions = new ActionService(f.db, {
+    connected: async () => true,
+    execute: async () => "unused",
+  });
+  actions.registerExternal("qa.delete", async () => {
+    deletes++;
+    return "deleted";
+  });
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers: richChatFixtureProviders(f.directory),
+    prompt: "Prepare the requested deletion.",
+    codeToolEffects: true,
+    shouldContinue: () => !paused,
+    tools: [
+      defineTool({
+        name: "prepare_delete",
+        description: "Prepare deletion for approval",
+        parameters: z.object({}),
+        execute: async () => {
+          const action = await actions.proposeExternal(
+            "owner",
+            {
+              tool: "qa.delete",
+              target: "note",
+              summary: "Delete the note",
+              money: false,
+              binding: {},
+              requiresHumanApproval: true,
+            },
+            "code-delete",
+          );
+          paused = action.status === "awaiting_review";
+          return { actionId: action.id, status: action.status, approvalRequired: paused };
+        },
+      }),
+      defineTool({
+        name: "read_note",
+        description: "Read the note",
+        parameters: z.object({}),
+        execute: async () => {
+          reads++;
+          return { text: "note" };
+        },
+      }),
+    ],
+  });
+  await lastValueFrom(
+    agent
+      .run({
+        threadId: randomUUID(),
+        runId: randomUUID(),
+        messages: [{ id: randomUUID(), role: "user", content: "Delete my note." }],
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.equal(paused, true, "the code must create the ordinary approval card");
+  assert.equal(deletes, 0, "a script is not user approval");
+  assert.equal(reads, 0, "pause prevents subsequent dispatch even within the same script");
+  const proposals = await f.db.list<{ status: string }>("owner", "actions");
+  assert.equal(proposals[0].status, "awaiting_review");
 });

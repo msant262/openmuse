@@ -67,6 +67,8 @@ type Options = {
   onFileImageObserved?: (fileId: string) => Promise<void>;
   onModelSelected?: (model: ModelSelection) => void;
   workClass?: WorkClass;
+  /** Task-only Code Mode may call actions through the ordinary host policy. */
+  codeToolEffects?: boolean;
   requirements?: Partial<ModelRequirements>;
   modelRouter?: ModelRouter;
   onProviderInterrupted?: (checkpoint: ProviderContinuationCheckpoint) => Promise<void> | void;
@@ -657,6 +659,7 @@ export function openclawAgent(options: Options) {
           tools.push(
             codeExecutionTool({
               runtime: copied,
+              allowEffects: options.codeToolEffects,
               tools: () =>
                 tools
                   .filter((tool) => tool.name !== "execute_code")

@@ -756,6 +756,9 @@ export class PublicWeb {
         if (["script", "style", "input", "textarea"].includes(node.nodeName)) return false;
         const classes = `${htmlAttribute(node, "class") ?? ""} ${htmlAttribute(node, "id") ?? ""}`;
         if (/(?:advert|publicidade|(?:^|[\s_-])ads?(?:[\s_-]|$))/i.test(classes)) return false;
+        // Empty personalization cards can stay busy indefinitely after the
+        // article has loaded. They are marketing slots, not missing source data.
+        if (/journey[-_]?card/i.test(classes) && !htmlText(node).trim()) return false;
         return (
           htmlAttribute(node, "aria-busy") === "true" ||
           (/(?:^|[\s_-])(?:skeleton|placeholder|loading)(?:[\s_-]|$)/i.test(classes) &&

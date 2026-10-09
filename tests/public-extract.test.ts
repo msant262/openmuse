@@ -3,6 +3,94 @@ import test from "node:test";
 import { extractPublicSources } from "../apps/server/src/public-extract.ts";
 import { PublicWeb } from "../apps/server/src/public-web.ts";
 
+test("a readable article with an empty marketing journey card does not wait for the browser", async () => {
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: '<title>Artificial intelligence</title><main><article><h1>Artificial intelligence</h1><p>Artificial intelligence lets computers perform tasks such as recognizing patterns, learning from data and generating new content. Machine learning is a subset of artificial intelligence.</p><div class="ajo-journey-card" data-cmp-is="AjoJourneyCard" aria-busy="true"></div></article></main><script src="/marketing.js"></script>',
+    }),
+  });
+  let renders = 0;
+  const [page] = await extractPublicSources(
+    web,
+    ["https://article.example/ai"],
+    undefined,
+    async () => {
+      renders++;
+      throw new Error("A marketing card is not missing article data");
+    },
+  );
+  assert.equal(renders, 0);
+  assert.equal(page.extraction?.status, "readable");
+  assert.match(page.text, /Machine learning is a subset/);
+});
+
+test("an actual busy results region still requires rendering despite surrounding article text", async () => {
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: '<title>Results</title><main><p>This article describes the election and the schedule of the count. Current results are shown in the region below after the data service returns the latest published votes.</p><section aria-label="Current results" aria-busy="true"></section></main><script src="/results.js"></script>',
+    }),
+  });
+  let renders = 0;
+  const [page] = await extractPublicSources(
+    web,
+    ["https://article.example/results"],
+    undefined,
+    async (url) => {
+      renders++;
+      return { url, title: "Results", text: "Candidate A: 12345 votes", truncated: false };
+    },
+  );
+  assert.equal(renders, 1);
+  assert.match(page.text, /12345 votes/);
+});
+
+test("independent HTTP sources start together and retain requested order", async () => {
+  const started: string[] = [];
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async (target) => {
+      started.push(target.url.pathname);
+      if (started.length === 3) release();
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("Sources did not start concurrently")),
+          1000,
+        );
+        ready.then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+      return {
+        status: 200,
+        headers: { "content-type": "text/html" },
+        body: `<title>Source</title><main>Verified data for ${target.url.pathname}</main>`,
+      };
+    },
+  });
+  const pages = await extractPublicSources(
+    web,
+    ["https://sources.example/one", "https://sources.example/two", "https://sources.example/three"],
+    AbortSignal.timeout(2000),
+  );
+  assert.deepEqual(started, ["/one", "/two", "/three"]);
+  assert.deepEqual(
+    pages.map((page) => new URL(page.url).pathname),
+    started,
+  );
+  assert.ok(pages.every((page) => !page.error));
+});
+
 test("batch extraction preserves successes and rescues only blocked/loading pages in order", async () => {
   const renders: string[] = [];
   const web = new PublicWeb({

@@ -29,7 +29,7 @@ export const copiedHarnessToolCatalog = [
   {
     name: "execute_code",
     description:
-      "Run original isolated Code Mode JavaScript with the current owner's authorized read tools; child calls retain ordinary operation receipts.",
+      "Run original isolated Code Mode JavaScript with this run's authorized tools; task actions retain ordinary approvals and every child has its own dispatch receipt. Foreground code exposes reads only.",
   },
   { name: "tool_search", description: "Discover tools in the copied OpenClaw tool catalog." },
   { name: "tool_describe", description: "Read the exact schema of a discovered tool." },
