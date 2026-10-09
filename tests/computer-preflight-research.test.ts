@@ -133,6 +133,59 @@ test("a confirmed computer start completes its journal and permits the next auth
   assert.equal(docker.calls.filter((call) => call.args[0] === "exec").length, 1);
 });
 
+test("premature program delivery continues to actual execution without a user answer", async (t) => {
+  await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "start_computer", arguments: {} },
+        { name: "finish_task", arguments: { summary: "The program calculated 25 primes." } },
+        {
+          name: "run_computer_command",
+          arguments: { command: "python3 /workspace/primes.py", operationId: "calculate-primes" },
+        },
+        {
+          name: "finish_task",
+          arguments: { summary: "The executed program calculated 25 primes." },
+        },
+      ][i],
+  );
+  const docker = fixture({ command: async () => ok("25 primes calculated") });
+  const f = await taskRuntime(
+    t,
+    {
+      agentBackend: "model",
+      model: "openai/fixture",
+      computerEnabled: true,
+    },
+    { docker: docker.runner },
+  );
+  const task = await f.agent.createTask("owner", {
+    prompt: "Execute a program to calculate primes and deliver a TXT file with its output.",
+  });
+  const file = await f.files.importAttachment(
+    "owner",
+    "primes.txt",
+    Buffer.from("25 primes calculated"),
+    "Fixture",
+  );
+  await f.db.compareAndSwapTask("owner", task.id, { status: "queued" }, { artifactIds: [file.id] });
+  await f.agent.worker.tick();
+  const detail = await f.agent.detail("owner", task.id);
+  assert.equal(detail.task.status, "succeeded", JSON.stringify(detail.task.completion));
+  const finishes = detail.operations.filter((op) => op.toolName === "finish_task");
+  assert.equal(finishes.length, 2);
+  assert.equal((finishes[0].receipt as { repairable?: boolean }).repairable, true);
+  assert.equal(
+    detail.operations.filter(
+      (op) => op.toolName === "run_computer_command" && op.status === "succeeded",
+    ).length,
+    1,
+  );
+  assert.equal(docker.calls.filter((call) => call.args[0] === "exec").length, 1);
+  assert.equal((await f.db.list("owner", "interaction-requests")).length, 0);
+});
+
 for (const confirmation of [
   "confirmed",
   "running",

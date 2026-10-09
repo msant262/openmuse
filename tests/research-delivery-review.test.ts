@@ -114,6 +114,12 @@ test("free-course PDF content is rejected before rendering, then actual correcte
             content: "Premium AI: free registration, full access unconfirmed.",
           },
         },
+        {
+          name: "ask_user",
+          arguments: {
+            question: "Posso substituir a opção não confirmada por outro curso gratuito?",
+          },
+        },
         { name: "web_fetch", arguments: { url: "https://courses.example/open" } },
         {
           name: "create_document",
@@ -194,6 +200,11 @@ test("free-course PDF content is rejected before rendering, then actual correcte
   });
   await f.agent.worker.tick();
   const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(
+    (await f.db.list("owner", "interaction-requests")).length,
+    0,
+    "replacing the agent's unqualified choice requires no new user answer",
+  );
   assert.equal(
     rendered.length,
     1,

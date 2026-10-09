@@ -95,6 +95,21 @@ test("ordinary articles with advertising skeletons stay on HTTP", async () => {
   assert.equal(page.provenance.backend, "http");
 });
 
+test("a populated form select with placeholder styling is not a loading application", async () => {
+  const { PublicWeb, readablePage } = await import("../apps/server/src/public-web.ts");
+  const web = new PublicWeb({
+    resolve,
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: '<title>Course</title><main><h1>Generative AI course</h1><p>The full course is free to study.</p><form><select class="hs-input is-placeholder"><option>Please Select</option><option>Brazil</option></select></form></main>',
+    }),
+  });
+  const page = await web.read("https://courses.example/course");
+  assert.equal(page.extraction.status, "readable");
+  assert.equal(readablePage(page), true);
+});
+
 test("rendering that remains incomplete cannot become evidence and cancellation cannot trigger another read", async () => {
   const { PublicWeb, readablePage } = await import("../apps/server/src/public-web.ts");
   const web = new PublicWeb({

@@ -82,6 +82,10 @@ export async function readPublicContent(
           )
             return false;
           if (node.getAttribute("aria-busy") === "true") return true;
+          // Forms style their unselected default as a placeholder even after
+          // all options have loaded. Explicit aria-busy above still gates an
+          // asynchronous select; its default selection is not page loading.
+          if (node.matches("select, option")) return false;
           return (
             /(?:^|[\s_-])(?:skeleton|placeholder|loading)(?:[\s_-]|$)/i.test(node.className) &&
             node.innerText.trim().length > 0

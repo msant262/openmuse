@@ -474,6 +474,29 @@ export async function executeModelTask(
         nextSteps: ["Select the actual final files using artifactIds."],
       };
     const revision = Number(task.state.appliedRevision ?? 0);
+    if (
+      deliveryOutcome === "completed" &&
+      task.criteria?.some((criterion) => criterion.id === "requested-command")
+    ) {
+      const completion = await service.verification.assess(owner, task.id, revision, summary);
+      if (
+        completion.checks.some(
+          (check) => check.criterionId === "requested-command" && !check.passed,
+        )
+      ) {
+        task = await ctx.checkpoint({
+          completion,
+          state: { ...task.state, completionFollowup: completion.remaining },
+        });
+        return {
+          complete: false,
+          repairable: true,
+          missing: completion.remaining,
+          instruction:
+            "The requested program/command has not completed with a successful execution receipt. Continue the already authorized work using run_computer_command; start the computer if needed, execute the actual program and obtain its result. A source file or anticipated output does not prove execution. Reuse and poll pending commands; never replay an uncertain effect. If an observed blocker prevents execution, report that concrete blocker with outcome=partial rather than asking permission to do the requested work.",
+        };
+      }
+    }
     task = await ctx.checkpoint({
       state: { ...task.state, deliveryCandidateArtifactIds: selected },
     });
@@ -2129,6 +2152,42 @@ export async function executeModelTask(
             instruction:
               "Use this saved answer and continue the requested work. Do not ask it again.",
           };
+        // A failed source/content check already supplies authorized public
+        // recovery work. Asking to replace our own disqualified selection or
+        // relax the explicit constraint does not turn that work into user input.
+        const publicRecovery = [
+          task.state.documentBriefReview,
+          task.state.researchDeliveryReview,
+        ].find((review) => {
+          const decision = review as { revision?: number; complete?: boolean } | undefined;
+          return (
+            decision?.revision === Number(task.state.appliedRevision ?? 0) &&
+            decision.complete === false
+          );
+        }) as
+          | {
+              blocked?: boolean;
+              userInputRequired?: boolean;
+              missing?: string[];
+              nextSteps?: string[];
+              needsMoreResearch?: boolean;
+            }
+          | undefined;
+        if (
+          requiresAccessConstraintReview(task) &&
+          publicRecovery &&
+          !publicRecovery.userInputRequired
+        ) {
+          return {
+            paused: false,
+            repairable: true,
+            status: "continue_authorized_research",
+            missing: publicRecovery.missing,
+            nextSteps: publicRecovery.nextSteps,
+            instruction:
+              "The existing factual check identifies public research gaps, not missing private user input. Continue researching or replacing your own unqualified choices within the original request. The person already authorized selection of qualifying options; do not ask permission to replace your own selection or offer fewer items, paid/unknown options, or relaxed criteria. Preserve specifically named requirements. Recover full source text, read relevant alternatives and verify facts before rendering. If observed access/provider blockers exhaust the relevant alternatives, finish with outcome=partial and describe those concrete limitations; do not turn an incomplete selection into an approval question.",
+          };
+        }
         const request = await service.interactions.create(owner, {
           taskId: task.id,
           revision: task.attempts,
@@ -2534,7 +2593,7 @@ export async function executeModelTask(
         ? "A draft file exists, but its existence alone does not complete the original request. Compare the generation brief and actual deliverable with every requested entity, value and visual form. Continue research and correct omissions using available sources; do not substitute a national summary or blank template for requested detailed data. Call finish_task with the final artifactIds and an explicit outcome: completed only when the original request is fulfilled, partial if concrete blockers remain. Reuse satisfactory files; do not repeat completed generation automatically.\n"
         : "") +
       (task.state.completionFollowup
-        ? `The last response ended before the requested file existed. Continue the authorized work from saved receipts; do not repeat completed effects. Missing requirements: ${JSON.stringify(task.state.completionFollowup)}. Resolve dates and facts through the current date, conversation and authorized sources first. If necessary input is still missing, call ask_user to pause; a plain-text question does not pause a task.\n`
+        ? `The last response ended before all requested work was confirmed. Continue the authorized work from saved receipts; do not repeat completed effects. Missing requirements: ${JSON.stringify(task.state.completionFollowup)}. Resolve dates and facts through the current date, conversation and authorized sources first. If necessary input is still missing, call ask_user to pause; a plain-text question does not pause a task.\n`
         : "") +
       activeTodoContext((task.state.todos ?? []) as Todo[]) +
       (task.state.completedDocumentGeneration &&

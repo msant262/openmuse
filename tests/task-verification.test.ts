@@ -3,8 +3,90 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { deflateRawSync } from "node:zlib";
+import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
+
+test("an explicitly requested program cannot be completed by writing its expected output", async (t) => {
+  const server = await taskRuntime(t);
+  const task = await server.agent.createTask("owner", {
+    prompt:
+      "Execute um programa para calcular os números primos de 1 a 100 e me entregue o resultado em um arquivo TXT.",
+  });
+  const file = await server.files.importAttachment(
+    "owner",
+    "primes.txt",
+    Buffer.from(
+      "2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97",
+    ),
+    "Fixture",
+  );
+  await server.db.compareAndSwapTask(
+    "owner",
+    task.id,
+    { status: "queued" },
+    {
+      artifactIds: [file.id],
+    },
+  );
+  const before = await server.agent.verification.assess("owner", task.id, 0);
+  assert.notEqual(before.status, "verified");
+  assert.ok(
+    before.checks.some((check) => check.criterionId === "requested-command" && !check.passed),
+  );
+  for (const [name, status, exitCode, revision, expected] of [
+    ["failed", "failed", 1, 0, false],
+    ["nonzero", "succeeded", 1, 0, false],
+    ["running", "running", undefined, 0, false],
+    ["stale", "succeeded", 0, 1, false],
+    ["actual-execution", "succeeded", 0, 0, true],
+  ] as const) {
+    const op = await server.agent.journal.prepare("owner", {
+      id: name,
+      taskId: task.id,
+      revision,
+      executorId: "vps",
+      executorEpoch: 1,
+      resourceFence: 0,
+      runToken: "test",
+      resourceLeaseIds: [],
+      createdAt: new Date().toISOString(),
+      status,
+      toolName: "run_computer_command",
+      bindingHash: "a".repeat(64),
+      args: { command: "python3 /workspace/primes.py" },
+      effect: true,
+      receipt: { id: name, status, exitCode, stdout: "25 primes calculated" },
+    });
+    const assessment = await server.agent.verification.assess("owner", task.id, 0);
+    assert.equal(assessment.status === "verified", expected, name);
+    // Each case independently proves whether this receipt satisfies execution.
+    await server.db.remove("owner", "task-operations", op.id);
+  }
+});
+
+test("execution criteria distinguish running code from explaining or only writing it", () => {
+  for (const prompt of [
+    "Run a Python script and deliver its output in a TXT file.",
+    "Rode o código para calcular o resultado.",
+  ]) {
+    assert.ok(
+      taskCriteria({ kind: "agent", prompt }).some((criterion) => criterion.effect === "command"),
+      prompt,
+    );
+  }
+  for (const prompt of [
+    "Escreva um programa em Python num arquivo TXT, sem executar.",
+    "Não execute o programa, apenas explique o código.",
+    "Explain how to run a program.",
+    "Run a search and write a Python program in a TXT file, without executing it.",
+  ]) {
+    assert.ok(
+      !taskCriteria({ kind: "agent", prompt }).some((criterion) => criterion.effect === "command"),
+      prompt,
+    );
+  }
+});
 
 function officeZip(entries: Record<string, string>, advertisedSize?: number) {
   const chunks: Buffer[] = [],

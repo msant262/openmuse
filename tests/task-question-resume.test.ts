@@ -3,6 +3,55 @@ import test from "node:test";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("a source review requiring indispensable private eligibility information still allows its question", async (t) => {
+  await modelFixture(
+    t,
+    (index) =>
+      [
+        {
+          name: "ask_user",
+          arguments: {
+            question: "Em qual país você reside? A elegibilidade do curso depende da residência.",
+          },
+        },
+        {
+          name: "finish_task",
+          arguments: {
+            summary: "Não confirmei a elegibilidade sem o país de residência.",
+            outcome: "partial",
+          },
+        },
+      ][index],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Pesquise cursos gratuitos restritos a residentes no meu país, que ainda não informei.",
+  });
+  await f.db.compareAndSwapTask(
+    "owner",
+    task.id,
+    { status: "queued" },
+    {
+      state: {
+        ...task.state,
+        documentBriefReview: {
+          revision: 0,
+          complete: false,
+          userInputRequired: true,
+          missing: [
+            "The user's country of residence is indispensable to restricted-course eligibility.",
+          ],
+          nextSteps: [],
+          needsMoreResearch: false,
+        },
+      },
+    },
+  );
+  await f.agent.worker.tick();
+  assert.equal((await f.agent.getTask("owner", task.id)).status, "waiting_input");
+  assert.equal((await f.db.list("owner", "interaction-requests")).length, 1);
+});
+
 test("a repeated answered task question returns its saved answer without another input card", async (t) => {
   let phase = 0;
   let step = 0;

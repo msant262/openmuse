@@ -134,6 +134,28 @@ function deliveredOffer(source: string, report: string) {
   return [...offerAmounts(source)].some((price) => reported.has(price));
 }
 
+/** Explicit execution is an effect obligation, separate from its output file.
+ * Explaining or writing source code does not itself request execution. */
+function requestedExecution(prompt: string) {
+  return [...prompt.matchAll(/\b(?:run|execute|executa|executar|rode|roda|rodar)\b/gi)].some(
+    (match) => {
+      const index = match.index ?? 0;
+      const prefix =
+        prompt
+          .slice(0, index)
+          .split(/[.!?;\n]/)
+          .at(-1) ?? "";
+      if (
+        /(?:n[aã]o|not|don't|do not|without|sem|nunca|never)(?:\s+\S+){0,3}\s*$/i.test(prefix) ||
+        /\b(?:como|how\s+to)\s*$/i.test(prefix)
+      )
+        return false;
+      const clause = prompt.slice(index).split(/[.!?;\n]|\b(?:and|e|then|depois)\b/i)[0];
+      return /\b(?:command|comando|program|programa|script|code|c[oó]digo)\b/i.test(clause);
+    },
+  );
+}
+
 export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): CompletionCriterion[] {
   const prompt = task.prompt,
     criteria: CompletionCriterion[] = [],
@@ -306,15 +328,13 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       description: "The requested calendar event has a confirmed receipt",
       requiredItems: [],
     });
-  if (
-    /\b(command|comando)\b/i.test(prompt) &&
-    /\b(run|execute|executar|rode|rodar)\b/i.test(prompt)
-  )
+  if (requestedExecution(prompt))
     criteria.push({
       id: "requested-command",
       kind: "receipt",
       effect: "command",
-      description: "The requested command has a confirmed successful exit receipt",
+      description:
+        "Execute the requested command/program in the computer and obtain its successful exit receipt. Writing the expected output or source file alone does not prove execution.",
       requiredItems: [],
     });
   if (/\b(submit|submeta)\b/i.test(prompt) && /\b(form|formul[aá]rio)\b/i.test(prompt))

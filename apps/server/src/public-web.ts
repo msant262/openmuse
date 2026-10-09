@@ -761,7 +761,8 @@ export class PublicWeb {
         if (/journey[-_]?card/i.test(classes) && !htmlText(node).trim()) return false;
         return (
           htmlAttribute(node, "aria-busy") === "true" ||
-          (/(?:^|[\s_-])(?:skeleton|placeholder|loading)(?:[\s_-]|$)/i.test(classes) &&
+          (!["select", "option"].includes(node.nodeName) &&
+            /(?:^|[\s_-])(?:skeleton|placeholder|loading)(?:[\s_-]|$)/i.test(classes) &&
             htmlText(node).length > 0)
         );
       }).length > 0;

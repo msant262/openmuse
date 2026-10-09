@@ -1,6 +1,60 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
 import test from "node:test";
 import { readPublicContent } from "../apps/worker/src/public-read.ts";
+
+test("the actual DOM reader returns a completed article with a styled country select immediately", {
+  timeout: 10_000,
+}, async (t) => {
+  const workerRequire = createRequire(resolve("apps/worker/package.json"));
+  const { chromium }: typeof import("../apps/worker/node_modules/playwright/index.js") =
+    workerRequire("playwright");
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(
+    '<main><h1>Generative AI course</h1><p>The full course is free to study.</p><form><select class="hs-input is-placeholder"><option>Please Select</option><option>Brazil</option></select></form></main>',
+  );
+  const read = readPublicContent(page);
+  void read.catch(() => {});
+  const result = await Promise.race([
+    read,
+    new Promise<never>((_resolve, reject) =>
+      setTimeout(
+        () => reject(new Error("Completed article incorrectly waited for a country selection")),
+        2000,
+      ),
+    ),
+  ]);
+  assert.equal(result.extraction.status, "readable");
+  assert.match(result.text, /full course is free/);
+});
+
+test("an explicitly busy select remains pending until its real options arrive", {
+  timeout: 10_000,
+}, async (t) => {
+  const workerRequire = createRequire(resolve("apps/worker/package.json"));
+  const { chromium }: typeof import("../apps/worker/node_modules/playwright/index.js") =
+    workerRequire("playwright");
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(
+    '<main><p>Available courses</p><select class="is-placeholder" aria-busy="true"><option>Loading</option></select></main>',
+  );
+  await page.evaluate(() =>
+    setTimeout(() => {
+      const select = document.querySelector("select")!;
+      select.innerHTML = "<option>Verified available course</option>";
+      select.removeAttribute("aria-busy");
+    }, 400),
+  );
+  const result = await readPublicContent(page);
+  assert.equal(result.extraction.status, "readable");
+  assert.match(result.text, /Verified available course/);
+  assert.doesNotMatch(result.text, /Loading/);
+});
 
 for (const readyAt of [0, 58_000, Number.POSITIVE_INFINITY]) {
   test(`public reading gives pending data a full minute and returns early at ${readyAt}ms`, async (t) => {
