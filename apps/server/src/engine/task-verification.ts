@@ -947,6 +947,25 @@ export class TaskVerification {
           reviewed = result.passed;
           missingPages = result.missingPages;
           evidenceIds = reviewed ? result.receiptIds : [];
+          if (!reviewed) {
+            const attached = ops.find(
+              (op) =>
+                op.toolName === "attach_saved_file" &&
+                op.revision === revision &&
+                op.status === "succeeded" &&
+                object(op.receipt)?.fileId === fileId &&
+                object(op.receipt)?.sha256 === sha256 &&
+                object(op.receipt)?.attachment === true,
+            );
+            if (attached) {
+              const previous = await documentReview.previousDelivery(owner, fileId, sha256);
+              if (previous) {
+                reviewed = true;
+                missingPages = [];
+                evidenceIds = [attached.id, ...previous.receiptIds];
+              }
+            }
+          }
         }
       } catch {
         /* Unavailable or changed bytes cannot be visually verified. */

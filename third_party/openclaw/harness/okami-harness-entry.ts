@@ -13,4 +13,5 @@ export {sanitizeToolCallIdsForCloudCodeAssist} from './src/agents/tool-call-id.t
 export {getDiagnosticSessionState} from './src/logging/diagnostic-session-state.ts';
 export {appendCronStyleCurrentTimeLine} from './src/agents/current-time.ts';
 export {extractBasicHtmlContent} from './src/agents/tools/web-fetch-utils.ts';
+export {runCodeModeScriptHeadless} from './src/agents/code-mode-headless.ts';
 export {resolveOpenAIModelReasoningEfforts,resolveOpenAIReasoningEffortForModel} from './packages/ai/src/providers/openai-reasoning-effort.ts';

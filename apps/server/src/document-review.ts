@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import type { AgentTask } from "../../../packages/domain/src/agent.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
@@ -57,6 +58,34 @@ export class DocumentReview {
     private readonly db: Store,
     private readonly files: Files,
   ) {}
+
+  /** Reuse only a completed delivery's full review of these exact owned bytes. */
+  async previousDelivery(owner: string, fileId: string, sha256: string) {
+    const generations = await this.db.list<{ fileId?: string; sha256?: string; scope?: string }>(
+      owner,
+      "document-generations",
+    );
+    const generation = generations.find(
+      (entry) =>
+        entry.fileId === fileId && entry.sha256 === sha256 && entry.scope?.startsWith("task:"),
+    );
+    if (!generation?.scope) return undefined;
+    const origin = await this.db.get<AgentTask>(owner, "tasks", generation.scope.slice(5));
+    if (
+      origin?.status !== "succeeded" ||
+      origin.completion?.status !== "verified" ||
+      !origin.artifactIds.includes(fileId) ||
+      Number(origin.state.desiredRevision ?? 0) !== Number(origin.state.appliedRevision ?? 0)
+    )
+      return undefined;
+    const review = await this.check(
+      owner,
+      { scope: generation.scope, revision: Number(origin.state.appliedRevision ?? 0) },
+      fileId,
+      sha256,
+    );
+    return review.passed ? { ...review, originTaskId: origin.id } : undefined;
+  }
 
   async recordInspection(owner: string, input: z.input<typeof inspectionSchema>) {
     const args = inspectionSchema.parse(input);

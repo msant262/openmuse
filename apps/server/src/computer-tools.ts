@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import { computerCommandSchema, computerPathSchema, computerWriteSchema } from "./computer.ts";
@@ -32,6 +33,10 @@ export function computerTools(
     dispatchContext?: () => Promise<ExecutorDispatchContext>;
   } = {},
 ) {
+  const filePathSchema = computerPathSchema.refine(
+    ({ path }) => !["", "/workspace", "."].includes(posix.normalize(path).replace(/\/+$/, "")),
+    "File operation requires a file path; /workspace is a directory. Use list_files to find a file or search_saved_files for existing app attachments.",
+  );
   const recovery = computer.recovery,
     artifact = computer.artifact?.bind(computer);
   const readiness = (state: Awaited<ReturnType<ComputerBackend["snapshot"]>>) => {
@@ -173,7 +178,7 @@ export function computerTools(
     tool(
       "read_computer_file",
       "Read a UTF-8 file up to 256 KB inside /workspace",
-      computerPathSchema,
+      filePathSchema,
       async ({ path }) => computer.read(owner, path),
     ),
     ...(artifact
@@ -210,7 +215,7 @@ export function computerTools(
     tool(
       "export_computer_pdf",
       "Import a completed workspace PDF into app Files",
-      computerPathSchema,
+      filePathSchema,
       async ({ path }) => {
         const { name, bytes } = await computer.pdfBytes(owner, path);
         return files.import(owner, name, bytes, `Computer: ${path}`);
@@ -235,7 +240,7 @@ export function computerTools(
     tool("list_files", "List workspace files", computerPathSchema, ({ path }) =>
       computer.list(owner, path),
     ),
-    tool("read_file", "Read a workspace UTF-8 file up to 256KB", computerPathSchema, ({ path }) =>
+    tool("read_file", "Read a workspace UTF-8 file up to 256KB", filePathSchema, ({ path }) =>
       computer.read(owner, path),
     ),
     tool(
@@ -256,7 +261,7 @@ export function computerTools(
     tool(
       "export_computer_file",
       "Return a generated file as an owned downloadable chat attachment",
-      computerPathSchema,
+      filePathSchema,
       async ({ path }) => {
         const { name, bytes } = await computer.fileBytes(owner, path);
         const file = await files.importAttachment(owner, name, bytes, `Computer: ${path}`);

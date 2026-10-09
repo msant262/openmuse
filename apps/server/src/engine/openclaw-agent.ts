@@ -22,6 +22,7 @@ import { meetsRequirements, routingCapabilities } from "../providers/model-capab
 import type { ModelRouter } from "../providers/model-router.ts";
 import type { ModelSelection, ProviderContinuationCheckpoint } from "../providers/models.ts";
 import { continuationMessages, modelAdapter, providerConfigured } from "../providers/models.ts";
+import { type CodeExecutionRuntime, codeExecutionTool } from "./code-execution.ts";
 import type { ContextModelResolver } from "./context-budget.ts";
 import { harnessToolCatalog } from "./harness-tool-catalog.ts";
 import { resolveLiveToolResultMaxChars } from "./openclaw/tool-result-limits.ts";
@@ -124,7 +125,7 @@ const messageHash = (message: ModelMessage) =>
       }),
     )
     .digest("hex");
-type Runtime = {
+type Runtime = CodeExecutionRuntime & {
   resolveOpenAIModelReasoningEfforts(model: {
     id: string;
     api: string;
@@ -347,6 +348,9 @@ const directTools = new Set([
   "generate_image",
   "image_generation_status",
   "view_file",
+  "search_saved_files",
+  "read_saved_file",
+  "attach_saved_file",
   "finish_task",
   "todo_list",
   "read_tool_output",
@@ -650,6 +654,39 @@ export function openclawAgent(options: Options) {
               execute: async (args) => outputs.read(outputArgs.parse(args), outputBudget),
             }),
           ];
+          tools.push(
+            codeExecutionTool({
+              runtime: copied,
+              tools: () =>
+                tools
+                  .filter((tool) => tool.name !== "execute_code")
+                  .map((tool) => ({
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: schemas.get(tool.name),
+                    execute: async (id, args, fullResult) => {
+                      const native = host.tools.find(
+                        (candidate) => candidate.name === nativeName(tool.name),
+                      );
+                      if (!native) throw new Error(`Tool is unavailable: ${tool.name}`);
+                      return (
+                        native.execute as (
+                          id: string,
+                          args: unknown,
+                          signal: unknown,
+                          update: unknown,
+                          context: unknown,
+                          fullResult?: boolean,
+                        ) => Promise<unknown>
+                      )(id, args, undefined, undefined, undefined, fullResult);
+                    },
+                  })),
+              runId: input.runId,
+              sessionId: input.threadId,
+              signal: abort.signal,
+              shouldContinue: () => options.shouldContinue?.() ?? true,
+            }),
+          );
           const names = tools.map((tool) => nativeName(tool.name));
           const registry = new Set(tools.map((tool) => tool.name));
           const schemas = new Map(
@@ -752,7 +789,14 @@ export function openclawAgent(options: Options) {
               label: tool.name,
               description: tool.description,
               parameters: schemas.get(tool.name),
-              execute: async (toolCallId: string, raw: unknown) => {
+              execute: async (
+                toolCallId: string,
+                raw: unknown,
+                _signal?: unknown,
+                _onUpdate?: unknown,
+                _context?: unknown,
+                fullResult = false,
+              ) => {
                 abort.signal.throwIfAborted();
                 const parent = /^tool_call:(.*):okami_[^:]+:\d+$/.exec(toolCallId)?.[1];
                 if (parent) {
@@ -857,9 +901,15 @@ export function openclawAgent(options: Options) {
                   content: text,
                 });
                 return {
-                  content: [{ type: "text", text: outputs.live(toolCallId, contextWindow) }],
-                  details:
-                    result && typeof result === "object" && (result as { error?: unknown }).error
+                  content: [
+                    {
+                      type: "text",
+                      text: fullResult ? text : outputs.live(toolCallId, contextWindow),
+                    },
+                  ],
+                  details: fullResult
+                    ? result
+                    : result && typeof result === "object" && (result as { error?: unknown }).error
                       ? { error: String((result as { error: unknown }).error) }
                       : { status: "succeeded" },
                   isError: Boolean(

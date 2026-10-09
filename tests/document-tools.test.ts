@@ -294,6 +294,7 @@ test("text and Markdown preserve UTF-8; bounded and unsupported PDF inputs publi
 
 test("chat document authoring delegates durably and publishes only after the worker produces bytes", async (t) => {
   let phase = 0;
+  let resending = false;
   let server: Awaited<ReturnType<typeof taskRuntime>>;
   const fixture = await modelFixture(t, async (index) => {
     const names = offeredHostTools(fixture.requests[index].body);
@@ -306,6 +307,11 @@ test("chat document authoring delegates durably and publishes only after the wor
         },
       };
     if (!names.includes("finish_task")) return undefined;
+    if (resending) {
+      const file = (await server.files.list("owner"))[0];
+      if (phase++ === 0) return { name: "attach_saved_file", arguments: { fileId: file.id } };
+      return { name: "finish_task", arguments: { summary: "Aqui está o PDF original novamente." } };
+    }
     return documentWorkerCall(server, phase++, fixture.requests[index].body);
   });
   server = await taskRuntime(t, {
@@ -361,6 +367,23 @@ test("chat document authoring delegates durably and publishes only after the wor
   assert.equal(
     (await server.db.get("owner", "thread-publications", `task:${task.id}`))?.status,
     "posted",
+  );
+  resending = true;
+  phase = 0;
+  const resend = await server.agent.createTask("owner", {
+    kind: "agent",
+    prompt: "Me manda de novo o PDF que você preparou.",
+  });
+  await server.agent.worker.tick();
+  const redelivery = await server.agent.getTask("owner", resend.id);
+  assert.equal(redelivery.status, "succeeded", redelivery.error ?? redelivery.question);
+  assert.deepEqual(redelivery.artifactIds, task.artifactIds);
+  assert.equal(redelivery.completion?.status, "verified");
+  assert.equal((await server.files.list("owner")).length, 1);
+  assert.equal(
+    (await server.db.list("owner", "document-inspections")).length,
+    previews.length,
+    "unchanged bytes from a verified completed delivery need no repeated rendering",
   );
 });
 

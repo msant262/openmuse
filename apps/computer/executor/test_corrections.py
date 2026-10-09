@@ -16,6 +16,23 @@ from .job_runtime import HostBudget, JobRuntime
 
 
 class CorrectionContracts(unittest.TestCase):
+    def test_invalid_file_inspection_is_a_definite_failure_and_does_not_block_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);workspace=Workspace(root/"workspace",root/"state")
+            self.addCleanup(workspace.close)
+            supervisor,_=self.supervisor(root,workspace)
+            for index,args in enumerate(({"operation":"read_binary","path":"/workspace"},
+                                         {"operation":"read","path":"/workspace/missing.txt"})):
+                op=self.operation("bad-read-"+str(index),args=args)
+                op["inspection"]=True
+                supervisor.perform(op)
+                receipt=supervisor.journal.get(op["id"])["receipt"]
+                self.assertEqual(receipt["status"],"failed")
+                self.assertTrue(receipt["data"]["cleanupConfirmed"])
+            supervisor.perform(self.operation("recover-list",args={"operation":"list","path":"/workspace"}))
+            self.assertEqual(supervisor.journal.get("recover-list")["receipt"]["status"],"succeeded")
+            self.assertTrue(supervisor.gate.open)
+
     def test_completed_command_is_published_before_the_next_idle_long_poll(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);workspace=Workspace(root/"workspace",root/"state")

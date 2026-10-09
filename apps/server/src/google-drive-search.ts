@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { spellingDistance } from "./search-names.ts";
 
 const folderMime = "application/vnd.google-apps.folder";
 const shortcutMime = "application/vnd.google-apps.shortcut";
@@ -27,6 +28,30 @@ type DriveFile = {
   shortcutDetails?: { targetId?: string; targetMimeType?: string; targetResourceKey?: string };
 };
 type DrivePage = { files?: DriveFile[]; nextPageToken?: string; incompleteSearch?: boolean };
+type DriveCoverage = {
+  account: string;
+  connectionId: string;
+  status: string;
+  pages: number;
+  scanned: number;
+  matched: number;
+  visibility: string;
+  errorCode?: string;
+  error?: string;
+};
+export type DriveSearchResult = {
+  status: string;
+  query: string;
+  parentId?: string;
+  complete: boolean;
+  accounts: DriveCoverage[];
+  totalMatches: number;
+  returnedCount: number;
+  truncated: boolean;
+  files: (DriveFile & { account: string; connectionId: string; match: string })[];
+  guidance: string;
+  searchStrategy?: string;
+};
 export const normalizedDriveName = (name: string) =>
   name
     .normalize("NFKD")
@@ -69,6 +94,12 @@ function rankName(name: string, query: string) {
   const terms = query.match(/[\p{L}\p{N}]+/gu) ?? [];
   if (terms.length && terms.every((term) => normalized.includes(normalizedDriveName(term))))
     return 3;
+  if (
+    requested.length >= 4 &&
+    Math.abs(normalized.length - requested.length) <= 2 &&
+    spellingDistance(normalized, requested) <= 2
+  )
+    return 5;
   return 4;
 }
 
@@ -77,7 +108,8 @@ export async function searchGoogleDrive(
   accounts: DriveAccount[],
   read: (account: DriveAccount, parameters: Record<string, unknown>) => Promise<unknown>,
   signal?: AbortSignal,
-) {
+  rankingQuery = input.query,
+): Promise<DriveSearchResult> {
   const selected = input.account
     ? accounts.filter(
         (account) =>
@@ -160,14 +192,14 @@ export async function searchGoogleDrive(
             file.mimeType !== shortcutMime
           )
             continue;
-          const rank = rankName(file.name, input.query);
+          const rank = rankName(file.name, rankingQuery);
           observation.matched++;
           matches.push({
             ...file,
             account: account.account,
             connectionId: account.connectionId,
             rank,
-            match: ["exact", "name_variant", "contains", "terms", "related"][rank],
+            match: ["exact", "name_variant", "contains", "terms", "related", "approximate"][rank],
           });
         }
         // limit bounds presentation, never the number of provider pages searched.
@@ -195,6 +227,41 @@ export async function searchGoogleDrive(
   }
   const complete = coverage.every((account) => account.status === "succeeded");
   const totalMatches = coverage.reduce((count, account) => count + account.matched, 0);
+  if (complete && totalMatches === 0 && input.query && input.kind === "folders") {
+    // Provider prefix search can miss a typo anywhere in a folder name. Inspect
+    // the folder index only after all selected accounts confirm an empty query.
+    // Filtering before presentation preserves candidates on later pages.
+    const fallback = await searchGoogleDrive(
+      { ...input, query: "" },
+      selected,
+      async (account, parameters) => {
+        const page = (await read(account, parameters)) as DrivePage;
+        return {
+          ...page,
+          files: page.files?.filter((file) => rankName(file.name, input.query) !== 4),
+        };
+      },
+      signal,
+      input.query,
+    );
+    return {
+      ...fallback,
+      query: input.query,
+      searchStrategy: "name_then_folder_index",
+      accounts: fallback.accounts.map((account) => ({
+        ...account,
+        pages:
+          account.pages +
+          (coverage.find((initial) => initial.connectionId === account.connectionId)?.pages ?? 0),
+      })),
+      files: fallback.files.map((file) => ({
+        ...file,
+        match: ["exact", "name_variant", "contains", "terms", "related", "approximate"][
+          rankName(file.name, input.query)
+        ],
+      })),
+    };
+  }
   return {
     status: complete ? "succeeded" : "partial",
     query: input.query,

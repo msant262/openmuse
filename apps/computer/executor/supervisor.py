@@ -664,7 +664,12 @@ class Supervisor:
                 resource_budget=operation["resourceBudget"]
                 self.budget.release(operation["id"],self.config["executorId"],resource_budget["memoryBytes"],resource_budget["heavy"])
             if operation["kind"] in ("desktop","browser") and hasattr(error,"dispatched"):started=error.dispatched
-            status = "outcome_unknown" if started else "rejected_not_dispatched"
+            # Synchronous file inspections spawn no job and perform no external
+            # mutation. Once handle() raises, the read has definitively failed;
+            # do not freeze its task as an uncertain write. File mutations and
+            # graphical/command dispatch keep their existing uncertainty rules.
+            file_read_failed = started and operation["kind"] == "file" and operation["args"].get("operation") in ("list","read","read_binary","stat")
+            status = "failed" if file_read_failed else "outcome_unknown" if started else "rejected_not_dispatched"
             graphical=operation["kind"] in ("desktop","browser")
             message = "Native graphical operation could not be confirmed; inspect before repeating input" if graphical else type(error).__name__ + ": " + str(error)[:500]
             local_cleanup=not started or operation["kind"] in ("file","file-version") or graphical and getattr(error,"cleanup_confirmed",False)

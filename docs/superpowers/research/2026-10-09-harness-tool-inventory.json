@@ -1,0 +1,289 @@
+{
+  "capturedAt": "2026-10-09",
+  "parityApproved": false,
+  "upstream": {
+    "hermes": "e0550c97bbd916cd5ff8fa0450e6291c31921b94",
+    "openclaw": "432ade6f500de6cdb0bcd4b0948a07bf466672f1"
+  },
+  "scopeNotes": [
+    "Hermes core is the literal _HERMES_CORE_TOOLS list; tools can still be gated by their check_fns.",
+    "OpenClaw entries are literal names in non-test agents/tools source, not a claim that every tool is enabled in embedded mode.",
+    "OpenClaw coding tools and extensions are additional surfaces; this source inventory is not the complete plugin universe.",
+    "A mapped operation must pass a normal chat test and actual result verification before parity approval."
+  ],
+  "hermesCore": [
+    "web_search",
+    "web_extract",
+    "terminal",
+    "process_manage",
+    "read_file",
+    "write_file",
+    "patch",
+    "search_files",
+    "vision_analyze",
+    "image_generate",
+    "skills_list",
+    "skill_view",
+    "skill_manage",
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_type",
+    "browser_scroll",
+    "browser_back",
+    "browser_press",
+    "browser_get_images",
+    "browser_vision",
+    "browser_console",
+    "browser_cdp",
+    "browser_dialog",
+    "browser_vault_list",
+    "browser_vault_unlock",
+    "browser_vault_fill",
+    "browser_vault_save_login",
+    "browser_vault_enter_code",
+    "browser_exec",
+    "text_to_speech",
+    "todo_list",
+    "memory",
+    "session_search",
+    "clarify",
+    "execute_code",
+    "delegate_task",
+    "cronjob_manage",
+    "kanban_show",
+    "kanban_list",
+    "kanban_complete",
+    "kanban_block",
+    "kanban_request_review",
+    "kanban_request_changes",
+    "kanban_heartbeat",
+    "kanban_comment",
+    "kanban_create",
+    "kanban_link",
+    "kanban_unblock",
+    "kanban_attach",
+    "kanban_attach_url",
+    "kanban_attachments",
+    "computer_use",
+    "manage_connections"
+  ],
+  "openclawAgentToolNames": [
+    {
+      "name": "agents_list",
+      "source": "src/agents/tools/agents-list-tool.ts"
+    },
+    {
+      "name": "agents_wait",
+      "source": "src/agents/tools/agents-wait-tool.ts"
+    },
+    {
+      "name": "ask_user",
+      "source": "src/agents/tools/ask-user-tool.ts"
+    },
+    {
+      "name": "computer",
+      "source": "src/agents/tools/computer-tool.ts"
+    },
+    {
+      "name": "conversations_list",
+      "source": "src/agents/tools/conversation-tools.ts"
+    },
+    {
+      "name": "conversations_send",
+      "source": "src/agents/tools/conversation-tools.ts"
+    },
+    {
+      "name": "conversations_turn",
+      "source": "src/agents/tools/conversation-tools.ts"
+    },
+    {
+      "name": "dashboard",
+      "source": "src/agents/tools/dashboard-tool.ts"
+    },
+    {
+      "name": "decision_evaluate",
+      "source": "src/agents/tools/decision-tool.ts"
+    },
+    {
+      "name": "gateway",
+      "source": "src/agents/tools/gateway-tool.ts"
+    },
+    {
+      "name": "github_identity_status",
+      "source": "src/agents/tools/github-identity-status-tool.ts"
+    },
+    {
+      "name": "github_publish",
+      "source": "src/agents/tools/github-publish-tool.ts"
+    },
+    {
+      "name": "get_goal",
+      "source": "src/agents/tools/goal-tools.ts"
+    },
+    {
+      "name": "create_goal",
+      "source": "src/agents/tools/goal-tools.ts"
+    },
+    {
+      "name": "update_goal",
+      "source": "src/agents/tools/goal-tools.ts"
+    },
+    {
+      "name": "image_generate",
+      "source": "src/agents/tools/image-generate-tool.ts"
+    },
+    {
+      "name": "view_image",
+      "source": "src/agents/tools/image-tool.ts"
+    },
+    {
+      "name": "skills_search",
+      "source": "src/agents/tools/installed-skill-tools.ts"
+    },
+    {
+      "name": "skills_read",
+      "source": "src/agents/tools/installed-skill-tools.ts"
+    },
+    {
+      "name": "message",
+      "source": "src/agents/tools/message-tool-execution.ts"
+    },
+    {
+      "name": "mobile_ui",
+      "source": "src/agents/tools/mobile-ui-tool.ts"
+    },
+    {
+      "name": "music_generate",
+      "source": "src/agents/tools/music-generate-tool.ts"
+    },
+    {
+      "name": "nodes",
+      "source": "src/agents/tools/nodes-tool.ts"
+    },
+    {
+      "name": "openclaw",
+      "source": "src/agents/tools/openclaw-delegate-tool.ts"
+    },
+    {
+      "name": "pdf",
+      "source": "src/agents/tools/pdf-tool.ts"
+    },
+    {
+      "name": "personal_instructions",
+      "source": "src/agents/tools/personal-instructions-tool.ts"
+    },
+    {
+      "name": "plugins",
+      "source": "src/agents/tools/plugins-tool.ts"
+    },
+    {
+      "name": "portal",
+      "source": "src/agents/tools/portal-tool.ts"
+    },
+    {
+      "name": "presence",
+      "source": "src/agents/tools/presence-tool.ts"
+    },
+    {
+      "name": "progress_card",
+      "source": "src/agents/tools/progress-card-tool.ts"
+    },
+    {
+      "name": "screen",
+      "source": "src/agents/tools/screen-tool.ts"
+    },
+    {
+      "name": "secrets",
+      "source": "src/agents/tools/secrets-tool.ts"
+    },
+    {
+      "name": "session_status",
+      "source": "src/agents/tools/session-status-tool.ts"
+    },
+    {
+      "name": "sessions_history",
+      "source": "src/agents/tools/sessions-history-tool.ts"
+    },
+    {
+      "name": "sessions_list",
+      "source": "src/agents/tools/sessions-list-tool.ts"
+    },
+    {
+      "name": "sessions_search",
+      "source": "src/agents/tools/sessions-search-tool.ts"
+    },
+    {
+      "name": "sessions_send",
+      "source": "src/agents/tools/sessions-send-tool.ts"
+    },
+    {
+      "name": "sessions_spawn",
+      "source": "src/agents/tools/sessions-spawn-tool.ts"
+    },
+    {
+      "name": "sessions",
+      "source": "src/agents/tools/sessions-tool.ts"
+    },
+    {
+      "name": "sessions_yield",
+      "source": "src/agents/tools/sessions-yield-tool.ts"
+    },
+    {
+      "name": "skill_workshop",
+      "source": "src/agents/tools/skill-workshop-tool-library.ts"
+    },
+    {
+      "name": "skill_workshop",
+      "source": "src/agents/tools/skill-workshop-tool.ts"
+    },
+    {
+      "name": "structured_output",
+      "source": "src/agents/tools/structured-output-tool.ts"
+    },
+    {
+      "name": "subagents",
+      "source": "src/agents/tools/subagents-tool.ts"
+    },
+    {
+      "name": "openclaw",
+      "source": "src/agents/tools/system-agent-tool.ts"
+    },
+    {
+      "name": "suggest_task",
+      "source": "src/agents/tools/task-suggestion-tools.ts"
+    },
+    {
+      "name": "dismiss_task",
+      "source": "src/agents/tools/task-suggestion-tools.ts"
+    },
+    {
+      "name": "terminal",
+      "source": "src/agents/tools/terminal-tool.ts"
+    },
+    {
+      "name": "theme",
+      "source": "src/agents/tools/theme-tool.ts"
+    },
+    {
+      "name": "transcripts",
+      "source": "src/agents/tools/transcripts-tool.ts"
+    },
+    {
+      "name": "tts",
+      "source": "src/agents/tools/tts-tool.ts"
+    },
+    {
+      "name": "video_generate",
+      "source": "src/agents/tools/video-generate-tool.ts"
+    },
+    {
+      "name": "web_fetch",
+      "source": "src/agents/tools/web-fetch.ts"
+    },
+    {
+      "name": "web_search",
+      "source": "src/agents/tools/web-search.ts"
+    }
+  ]
+}

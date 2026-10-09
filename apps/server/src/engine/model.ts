@@ -2281,7 +2281,7 @@ export async function executeModelTask(
           execute,
           call.name === "inspect_document" ||
             (!googleWorkspaceReadTool(call.name, call.args) &&
-              !/^(web_fetch$|web_extract$|search_web$|search_tools$|describe_tools$|search_app_tools$|design_references$|skills_(list|search|read)$|confirm_document_review$|image_generation_status$|view_file$|read_|inspect_|get_|list_|computer_status|desktop_observe|browser_(research|snapshot|screenshot)|set_plan|todo_list|ask_user|finish_task|AGUI)/.test(
+              !/^(execute_code$|web_fetch$|web_extract$|search_web$|search_saved_files$|search_tools$|describe_tools$|search_app_tools$|design_references$|skills_(list|search|read)$|confirm_document_review$|image_generation_status$|view_file$|read_|inspect_|get_|list_|computer_status|desktop_observe|browser_(research|snapshot|screenshot)|set_plan|todo_list|ask_user|finish_task|AGUI)/.test(
                 call.name,
               )),
         );

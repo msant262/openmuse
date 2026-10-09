@@ -22,6 +22,29 @@ const folder = (id: string, name: string) => ({
   webViewLink: `https://drive.google.com/drive/folders/${id}`,
 });
 
+test("an empty name search recovers a misspelled folder from all accounts without treating unrelated folders as matches", async () => {
+  const calls: string[] = [];
+  const result = await searchGoogleDrive(
+    driveSearchSchema.parse({ query: "MOVIGN DE", kind: "folders", limit: 1 }),
+    accounts,
+    async (account, parameters) => {
+      const direct = String(parameters.q).includes("name contains");
+      calls.push(`${account.connectionId}:${direct ? "name" : "folder"}`);
+      if (direct) return { files: [] };
+      if (account.connectionId === "personal") return { files: [folder("unrelated", "Vacation")] };
+      if (!parameters.pageToken)
+        return { files: [folder("unrelated2", "Taxes")], nextPageToken: "last" };
+      return { files: [folder("correct", "MovingDE")] };
+    },
+  );
+  assert.ok(calls.includes("work:folder"));
+  assert.equal(result.complete, true);
+  assert.equal(result.files[0]?.id, "correct");
+  assert.equal(result.files[0].match, "approximate");
+  assert.equal(result.totalMatches, 1);
+  assert.match(result.guidance, /candidate/i);
+});
+
 test("MOVING DE finds MovingDE in the second account after an empty default account", async () => {
   const calls: string[] = [];
   const result = await searchGoogleDrive(
