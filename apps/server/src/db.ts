@@ -34,7 +34,7 @@ export class Store {
   async workspaceVersion(owner: string, resource = "agent"): Promise<string> {
     const threadId = resource.startsWith("interactions:") ? resource.slice(13) : null;
     const result = await this.db.query(
-      `SELECT jsonb_build_object('owner',(SELECT jsonb_build_array(count(*),max(updated_at)) FROM records record WHERE owner=$1 AND
+      `SELECT jsonb_build_object('projection','workspace-v2','owner',(SELECT jsonb_build_array(count(*),max(updated_at)) FROM records record WHERE owner=$1 AND
         CASE WHEN $2::text IS NOT NULL THEN
           (kind='interaction-requests' AND data->>'threadId'=$2) OR
           (kind='tasks' AND EXISTS(SELECT 1 FROM records request WHERE request.owner=$1 AND request.kind='interaction-requests'
@@ -593,6 +593,7 @@ export class Store {
     const result = await this.db.query(
       `SELECT data || jsonb_build_object('state',COALESCE(data->'state','{}'::jsonb)-ARRAY['providerCheckpoint','conversationContext','delegatedBrief']) AS data
        FROM records WHERE owner=$1 AND kind='tasks' AND data->>'deletedAt' IS NULL AND data->>'historyHiddenAt' IS NULL
+       AND data->'input'->>'internalActivity' IS DISTINCT FROM 'true' AND data->'input'->>'proactivityCycleId' IS NULL
        ORDER BY updated_at DESC,id`,
       [owner],
     );
@@ -628,6 +629,7 @@ export class Store {
     const result = await this.db.query(
       `SELECT jsonb_build_object('taskId',id,'title',data->>'title','status',data->>'status','request',data->>'prompt','result',left(data->>'result',1500)) AS data
        FROM records WHERE owner=$1 AND kind='tasks' AND data->>'originThreadId'=$2 AND data->>'deletedAt' IS NULL
+       AND data->'input'->>'internalActivity' IS DISTINCT FROM 'true' AND data->'input'->>'proactivityCycleId' IS NULL
        ORDER BY data->>'createdAt' DESC,id LIMIT 6`,
       [owner, threadId],
     );

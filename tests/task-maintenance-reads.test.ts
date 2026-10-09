@@ -100,6 +100,11 @@ test("workspace snapshots omit execution history while preserving detail, hidden
   const f = await taskRuntime(t);
   const visible = await f.agent.createTask("owner", { prompt: "Visible work" });
   const hidden = await f.agent.createTask("owner", { prompt: "Hidden active work" });
+  const internal = await f.agent.createTask("owner", {
+    prompt: "Internal learning",
+    input: { internalActivity: true },
+  });
+  await f.db.put("owner", "tasks", { ...internal, status: "running" });
   await f.db.put("owner", "tasks", {
     ...visible,
     state: {
@@ -132,7 +137,7 @@ test("workspace snapshots omit execution history while preserving detail, hidden
     JSON.stringify(snapshot),
     /PRIVATE_EXECUTION_HISTORY|PRIVATE_CONVERSATION_CONTEXT|LARGE_OLD_COMMAND_OUTPUT/,
   );
-  assert.equal(snapshot.runtimeStatus.activeTasks, 1);
+  assert.equal(snapshot.runtimeStatus.activeTasks, 2);
   assert.equal(snapshot.runtimeStatus.activeOperations, 1);
   assert.equal(snapshot.runtimeStatus.uncertainOperations, 1);
   assert.match(
