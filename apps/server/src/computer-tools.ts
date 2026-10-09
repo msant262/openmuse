@@ -283,7 +283,7 @@ export function computerTools(
       ? [
           tool(
             "search_files",
-            "Search actual owned workspace files without a shell. target=files uses filename globs: *part* finds partial names, *.pdf finds PDFs; target=content uses line-oriented Rust/ripgrep regex, with file_glob, numbered matches, context, files_only or count. Paths may be relative to /workspace. Page at nextOffset using identical parameters; complete=false never proves absence or a full count. Does not search Drive/app attachments or export a file.",
+            "Search actual owned workspace files without a shell. target=files matches plain partial names case-insensitively (budget finds annual-budget.txt) or explicit filename globs (*.pdf, report-*.txt); target=content uses line-oriented Rust/ripgrep regex, with file_glob, numbered matches, context, files_only or count. Paths may be relative to /workspace. Page at nextOffset using identical parameters; complete=false never proves absence or a full count. Does not search Drive/app attachments or export a file.",
             computerPathSchema.extend({
               path: computerPathSchema.shape.path.default("/workspace"),
               ...computerSearchParameters.shape,

@@ -768,6 +768,14 @@ export function openclawAgent(options: Options) {
             skills: { allowBundled: [], load: { watch: false } },
             logging: { level: "error", consoleLevel: "error" },
           };
+          // OpenClaw timestamps the admitted request once. Rewriting this
+          // prefix at each tool turn invalidates cached history every minute.
+          // session_status remains a live clock, including during long runs.
+          const admittedClock = copied.appendCronStyleCurrentTimeLine(
+            "Runtime clock at the start of this execution (server metadata); use session_status for the exact current time:",
+            config,
+            Date.now(),
+          );
           let messageId: string | undefined;
           let acknowledgmentBoundary: string | undefined;
           const receipts = new Map<string, DispatchReceipt>();
@@ -975,16 +983,9 @@ export function openclawAgent(options: Options) {
                 // context accounting and can reject an otherwise admitted turn.
                 const latest = await options.promptContext?.(selectedHostTools(context, registry));
                 if (latest) systemPrompts.push(latest);
-                // Reuse OpenClaw's live-time formatter at the transport boundary.
-                // Keep clock metadata out of the authoritative user transcript
-                // so follow-ups restore the same native session tree.
-                systemPrompts.push(
-                  copied.appendCronStyleCurrentTimeLine(
-                    "Live runtime clock (server metadata):",
-                    config,
-                    Date.now(),
-                  ),
-                );
+                // Each new execution gets a fresh timestamp, without mutating
+                // the cacheable instructions between its ordinary tool turns.
+                systemPrompts.push(admittedClock);
                 const acknowledged =
                   options.finalResponseWhen?.() && options.finalResponseContext
                     ? await options.finalResponseContext()

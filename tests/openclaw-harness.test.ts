@@ -66,6 +66,48 @@ test("the copied model reasoning contract reaches the actual provider request", 
   );
 });
 
+test("tool turns keep the admitted clock prefix stable while session status still reads the live time", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-06T02:15:00Z") });
+  const fixture = await modelFixture(t, (index) => {
+    if (index !== 0) return undefined;
+    t.mock.timers.setTime(Date.parse("2026-10-06T02:16:00Z"));
+    return { name: "session_status", arguments: {} };
+  });
+  const f = await taskRuntime(t);
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers: richChatFixtureProviders(f.directory),
+    toolSearch: false,
+    prompt: "Resolve the current time with session status when needed.",
+    tools: [],
+  });
+  const events = await lastValueFrom(
+    agent
+      .run({
+        threadId: randomUUID(),
+        runId: randomUUID(),
+        messages: [{ id: randomUUID(), role: "user", content: "Check the time." }],
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR));
+  assert.equal(fixture.requests.length, 2);
+  const [first, second] = fixture.requests.map((request) => JSON.parse(request.body));
+  assert.equal(
+    second.instructions,
+    first.instructions,
+    "a minute rollover must not rewrite the prefix before the entire tool history",
+  );
+  const receipt = second.input.find(
+    (item: { type: string }) => item.type === "function_call_output",
+  );
+  assert.match(receipt.output, /Reference UTC: 2026-10-06 02:16 UTC/);
+});
+
 test("the copied temporal context reaches the model and rolls over without a host date prompt", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-05T23:59:00Z") });
   const fixture = await modelFixture(t, () => undefined, { text: () => "Recorded answer." });

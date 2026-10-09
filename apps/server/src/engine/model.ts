@@ -416,6 +416,8 @@ export async function executeModelTask(
           missing?: string[];
           nextSteps?: string[];
           needsMoreResearch?: boolean;
+          accessAudit?: Awaited<ReturnType<typeof reviewResearchDelivery>>["accessAudit"];
+          requestAudit?: Awaited<ReturnType<typeof reviewResearchDelivery>>["requestAudit"];
         }
       | undefined;
     let review = previous?.key === key ? previous : undefined;
@@ -456,8 +458,10 @@ export async function executeModelTask(
       missing: review.missing,
       nextSteps: review.nextSteps,
       needsMoreResearch: review.needsMoreResearch,
+      accessAudit: review.accessAudit,
+      requestAudit: review.requestAudit,
       instruction:
-        "No document was rendered. Repair these specific factual or eligibility gaps in the proposed content using actual source reads before creating it. Replace an unsuitable or unconfirmed option rather than asking the person to relax clear criteria. A design change or another operationId cannot fix unchanged facts.",
+        "No document was rendered. accessAudit identifies each selected option's assessed eligibility and source; requestAudit distinguishes satisfied fields from actual gaps. These assessments are not new source reads. Repair the failed options and requirements while keeping supported facts. Replace an unsuitable or unconfirmed option rather than asking the person to relax clear criteria. A design change or another operationId cannot fix unchanged facts.",
     };
   };
   const deliver = async (
@@ -650,6 +654,8 @@ export async function executeModelTask(
         missing: review.missing,
         nextSteps: review.nextSteps,
         needsMoreResearch: review.needsMoreResearch,
+        accessAudit: review.accessAudit,
+        requestAudit: review.requestAudit,
         instruction: review.needsMoreResearch
           ? "Repair these specific gaps using available observed sources. A partial outcome does not bypass viable recovery."
           : "The facts are sufficient. Repair only the listed delivery problems. Preserve the requested geographic form and every requested value; do not replace a geographic map with a grid. Inspect the actual corrected file and select only final deliverables with artifactIds. Do not repeat finish without correcting the listed gaps.",

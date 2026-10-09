@@ -232,6 +232,14 @@ test("free-course PDF content is rejected before rendering, then actual correcte
               complete: false,
               needsMoreResearch: true,
               missing: ["Premium AI full access is unconfirmed"],
+              accessAudit: [
+                {
+                  option: "Premium AI",
+                  access: "unknown",
+                  sourceUrl: "https://courses.example/premium",
+                  quote: "Free registration; full-course access requires a paid subscription.",
+                },
+              ],
               nextSteps: [
                 "Read the actual free-content policy or replace this option before creating the PDF",
               ],
@@ -295,6 +303,24 @@ test("free-course PDF content is rejected before rendering, then actual correcte
     "unverified content must not consume rendering or visual-review work",
   );
   assert.ok(rendered[0].includes("Open AI"));
+  const rejectedOutput = JSON.parse(fixture.requests[2].body)
+    .input.filter((item: { type: string }) => item.type === "function_call_output")
+    .at(-1);
+  assert.ok(rejectedOutput);
+  const rejection = JSON.parse(rejectedOutput.output);
+  assert.deepEqual(
+    rejection.accessAudit,
+    [
+      {
+        option: "Premium AI",
+        access: "unknown",
+        sourceUrl: "https://courses.example/premium",
+        quote: "Free registration; full-course access requires a paid subscription.",
+      },
+    ],
+    "the worker must receive the existing per-option assessment instead of guessing what to research again",
+  );
+  assert.ok(rejection.requestAudit?.length);
   assert.equal(saved.status, "succeeded", saved.error ?? saved.question ?? saved.result);
   assert.equal(saved.completion?.status, "verified");
   assert.deepEqual(saved.artifactIds, [fileId]);
@@ -378,6 +404,14 @@ test("unchanged rejected document reuses its access review, while new source and
               needsMoreResearch: true,
               missing: ["Premium AI free access unconfirmed"],
               nextSteps: ["Read the observed Open AI alternative and replace the comparison"],
+              accessAudit: [
+                {
+                  option: "Premium AI",
+                  access: "unknown",
+                  sourceUrl: "https://courses.example/premium",
+                  quote: "Certificate requires PRO; access unconfirmed.",
+                },
+              ],
             }
           : {
               complete: true,
@@ -425,6 +459,11 @@ test("unchanged rejected document reuses its access review, while new source and
     "same rejected bytes cannot trigger a second reviewer call",
   );
   assert.equal((saved.state.researchDeliveryReview as { attempts: number }).attempts, 2);
+  const rejectedOutput = JSON.parse(fixture.requests[3].body)
+    .input.filter((item: { type: string }) => item.type === "function_call_output")
+    .at(-1);
+  assert.ok(rejectedOutput);
+  assert.equal(JSON.parse(rejectedOutput.output).accessAudit?.[0]?.option, "Premium AI");
   assert.ok(fileId);
   assert.equal(saved.artifactIds.length, 1);
   assert.notEqual(saved.artifactIds[0], fileId);

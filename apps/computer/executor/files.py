@@ -472,6 +472,7 @@ class Workspace:
                 or any(type(n) is not int for n in (limit, offset, context))
                 or not 1 <= limit <= 500 or not 0 <= offset <= 100000 or not 0 <= context <= 5):
             raise ValueError("Invalid file search parameters")
+        filename_pattern = pattern if any(c in pattern for c in "*?[") else "*" + pattern + "*"
         deadline = time.monotonic() + 8
         results, skipped, reasons = [], 0, set()
         matched = 0
@@ -563,7 +564,7 @@ class Workspace:
                 if file_glob and not (fnmatch.fnmatchcase(relative, file_glob) or fnmatch.fnmatchcase(name, file_glob)):
                     continue
                 if target == "files":
-                    if not (fnmatch.fnmatchcase(relative.casefold(), pattern.casefold()) or fnmatch.fnmatchcase(name.casefold(), pattern.casefold())):
+                    if not (fnmatch.fnmatchcase(relative.casefold(), filename_pattern.casefold()) or fnmatch.fnmatchcase(name.casefold(), filename_pattern.casefold())):
                         continue
                     remember({"path": logical, "size": info.st_size, "modifiedAt": info.st_mtime})
                 else:

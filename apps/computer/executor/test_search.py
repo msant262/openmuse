@@ -27,6 +27,17 @@ class WorkspaceSearch(unittest.TestCase):
             self.assertTrue(final["complete"])
             self.assertEqual(final["totalMatches"], 1005)
 
+    def test_plain_filename_fragments_match_partial_names_without_model_glob_syntax(self):
+        with tempfile.TemporaryDirectory() as temp:
+            ws = self.workspace(temp)
+            (ws.root / "checagem-edicao-reteste.txt").write_text("O orçamento é 200 euros.")
+            (ws.root / "unrelated.txt").write_text("Other content")
+            result = ws.search("/workspace", {"target": "files", "pattern": "CHECAG", "output_mode": "files_only"})
+            self.assertTrue(result["complete"])
+            self.assertEqual([x["path"] for x in result["results"]], ["/workspace/checagem-edicao-reteste.txt"])
+            explicit = ws.search("/workspace", {"target": "files", "pattern": "checagem-*.txt"})
+            self.assertEqual([x["path"] for x in explicit["results"]], ["/workspace/checagem-edicao-reteste.txt"])
+
     def test_content_regex_search_has_real_lines_context_hash_and_file_filter(self):
         with tempfile.TemporaryDirectory() as temp:
             ws = self.workspace(temp)
