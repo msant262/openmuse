@@ -1,6 +1,7 @@
 import { captchaActionSchema } from "../../../../packages/domain/src/credential-challenge.ts";
 import { BrowserError } from "../browser-contract.ts";
 import { browserInstructions, browserTools } from "../browser-tools.ts";
+import { calendarRequestContext } from "../calendar-request-context.ts";
 import { designReferenceInstructions, designReferenceTools } from "../design-catalog.ts";
 import { desktopInstructions, desktopTools } from "../desktop-tools.ts";
 import { DocumentReview, documentReviewArgs } from "../document-review.ts";
@@ -2765,6 +2766,12 @@ export async function executeModelTask(
     delegatedBrief: task.state.conversationContext ? undefined : task.state.delegatedBrief,
   };
   const pythonExecutor = service.computer.python?.bind(service.computer);
+  let originalCalendarContext = calendarRequestContext(task.prompt, task.createdAt);
+  if (originalCalendarContext && task.originThreadId && task.originMessageId) {
+    const message = await service.inbox.get(owner, task.originThreadId, task.originMessageId);
+    if (message?.text.trim() === task.prompt.trim())
+      originalCalendarContext = calendarRequestContext(task.prompt, message.createdAt);
+  }
   const agent = openclawAgent({
     dataDir: config.dataDir,
     projectToolResult: (name, result, contextTokens) =>
@@ -3012,6 +3019,7 @@ export async function executeModelTask(
       "\n" +
       buildPromisedWorkPromptSection().join("\n") +
       (await humanizerContext(config, owner)) +
+      (Number(task.state.appliedRevision ?? 0) === 0 ? originalCalendarContext : "") +
       (await googleAgentContext(service.workspace, owner, selectedTools, task.prompt)) +
       `\nConnected image capabilities (server data): ${JSON.stringify(await service.media.imageCapabilities(selectedModel))}` +
       `\nDirections applied at revision ${Number(task.state.appliedRevision ?? 0)}: ${JSON.stringify(task.state.directives ?? [])}` +
