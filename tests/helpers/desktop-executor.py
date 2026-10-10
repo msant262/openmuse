@@ -28,7 +28,7 @@ class Transport:
         if "error" in slot:raise RuntimeError(slot["error"])
         return slot["data"]
 class Device:
-    def __init__(self):self.events=[];self.fail_reset=False;self.fail_browser=False;self.uploaded=None
+    def __init__(self):self.events=[];self.fail_reset=False;self.fail_browser=False;self.uploaded=None;self.dialog=None;self.dialog_responses=[]
     def capture(self):return session["width"],session["height"],b"\xee"*(session["width"]*session["height"]*3)
     def event(self,*event):
         self.events.append(event)
@@ -51,12 +51,18 @@ class Browser:
         if kind=="images":return {"sessionId":session["browserSessionId"],"url":"https://example.org/images","observedAt":"2026-10-03T00:00:00.000Z","images":[{"src":"https://example.org/course.svg","alt":"Course cover","width":320,"height":180,"frameUrl":"https://example.org/images"}],"total":1,"nextOffset":None,"partial":False}
         if kind=="downloads":return {"downloads":[download],"failures":[]}
         if kind=="download":return {**download,"base64":base64.b64encode(csv).decode()}
+        if kind in ("dialog", "reviewed-dialog"):
+            if not device.dialog or body["dialogId"] != device.dialog["id"]:raise ValueError("Dialog changed")
+            if body["accept"] and (kind != "reviewed-dialog" or not body.get("approvalId")):raise ValueError("Approval missing")
+            device.dialog_responses.append({"dialogId":body["dialogId"],"accept":body["accept"]})
+            device.dialog=None
+            return {"sessionId":session["browserSessionId"],"snapshotId":str(uuid.uuid4()),"url":"https://example.org/upload","title":"Fixture upload","text":"Document deleted" if body["accept"] else "Document preserved","truncated":False,"truncatedElements":False,"control":"agent","elements":[],"response":device.dialog_responses[-1]}
         if kind in ("snapshot","upload","back"):
             if kind=="upload":
                 blob=base64.b64decode(body["base64"],validate=True)
                 if len(blob)!=body["size"] or hashlib.sha256(blob).hexdigest()!=body["sha256"]:raise ValueError("Upload bytes changed")
                 device.uploaded=body["sha256"]
-            return {"sessionId":session["browserSessionId"],"snapshotId":str(uuid.uuid4()),"url":"https://example.org/upload","title":"Fixture upload","text":"Upload data","truncated":False,"truncatedElements":False,"control":"agent","elements":[{"number":1,"tag":"input","type":"file","role":"input","label":"Upload data","disabled":False,"frameUrl":"https://example.org/upload"}],**({"historyMoved":True} if kind=="back" else {})}
+            return {"sessionId":session["browserSessionId"],"snapshotId":str(uuid.uuid4()),"url":"https://example.org/upload","title":"Fixture upload","text":"Upload data","truncated":False,"truncatedElements":False,"control":"agent","elements":[{"number":1,"tag":"input","type":"file","role":"input","label":"Upload data","disabled":False,"frameUrl":"https://example.org/upload"}],**({"historyMoved":True} if kind=="back" else {}),**({"dialog":device.dialog,"elements":[]} if device.dialog else {})}
         return {"id":session["browserSessionId"],"url":"https://example.org/upload","title":"Fixture upload","status":"active","updatedAt":"2026-10-03T00:00:00.000Z","control":"agent"}
 broker=DesktopBroker(init["executorId"],init["hostId"],session,DesktopDriver(device,session["sessionGeneration"]),browser=Browser())
 class Desktop:
@@ -84,7 +90,8 @@ def call(value):
     try:
         if value["command"]=="perform":
             supervisor.perform(value["operation"]);supervisor.flush();result=journal.get(value["operation"]["id"])
-        elif value["command"]=="state":result={"events":device.events,"journal":journal.manifest(),"control":broker.control,"uploaded":device.uploaded,"browserEnvelopes":[json.loads(row[0]) for row in journal.db.execute("SELECT envelope FROM operations WHERE json_extract(envelope,'$.kind')='browser'")]}
+        elif value["command"]=="pendingDialog":device.dialog=value["dialog"];result={"accepted":True}
+        elif value["command"]=="state":result={"events":device.events,"journal":journal.manifest(),"control":broker.control,"uploaded":device.uploaded,"dialog":device.dialog,"dialogResponses":device.dialog_responses,"browserEnvelopes":[json.loads(row[0]) for row in journal.db.execute("SELECT envelope FROM operations WHERE json_extract(envelope,'$.kind')='browser'")]}
         elif value["command"]=="pause":result=supervisor.gate.pause(value["pause"])
         elif value["command"]=="failure":
             device.fail_reset=value.get("reset",False);device.fail_browser=value.get("browser",False);result={"accepted":True}

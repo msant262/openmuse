@@ -71,7 +71,7 @@ export class ActionService {
   private readonly external = new Map<string, ExternalExecutor>();
   private readonly externalDenials = new Map<
     string,
-    (owner: string, binding: unknown) => Promise<string>
+    (owner: string, binding: unknown, proposal: ActionProposal) => Promise<string>
   >();
   private readonly decisions = new Set<Promise<ActionProposal>>();
   private closing = false;
@@ -87,7 +87,7 @@ export class ActionService {
   }
   registerExternalDenial(
     tool: string,
-    dismiss: (owner: string, binding: unknown) => Promise<string>,
+    dismiss: (owner: string, binding: unknown, proposal: ActionProposal) => Promise<string>,
   ) {
     this.externalDenials.set(tool, dismiss);
   }
@@ -354,7 +354,7 @@ export class ActionService {
         try {
           if (!bound || bound.hash !== claimed.hash)
             throw new AppError("The declined action binding changed", 409);
-          claimed.result = await dismiss(owner, bound.binding);
+          claimed.result = await dismiss(owner, bound.binding, claimed);
         } catch (error) {
           claimed.error = `The action was declined, but its browser dialog could not be dismissed: ${error instanceof Error ? error.message : "browser unavailable"}`;
         }

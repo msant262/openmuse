@@ -26,7 +26,7 @@ import {
   signBrowserAuthorization,
 } from "../../../packages/domain/src/browser-payment.ts";
 import { captchaResultSchema } from "../../../packages/domain/src/credential-challenge.ts";
-import type { BrowserSession } from "../../../packages/domain/src/index.ts";
+import type { ActionProposal, BrowserSession } from "../../../packages/domain/src/index.ts";
 import type { ResourceLease } from "../../../packages/domain/src/runtime.ts";
 import { type SearchInput, searchResultSchema } from "../../../packages/domain/src/search.ts";
 import { ActionLog, auditTarget } from "./action-log.ts";
@@ -148,6 +148,27 @@ export class BrowserService {
   private router?: CapabilityRouter;
   private native?: DesktopService;
   private actions?: ActionService;
+  private nativeActionExecution?: (
+    owner: string,
+    proposal: ActionProposal,
+    decision: "approve" | "deny",
+    execute: () => Promise<string>,
+  ) => Promise<string>;
+  configureNativeActionExecution(execute: NonNullable<BrowserService["nativeActionExecution"]>) {
+    this.nativeActionExecution = execute;
+  }
+  private async reviewedResponse(
+    owner: string,
+    sessionId: string,
+    proposal: ActionProposal,
+    decision: "approve" | "deny",
+    execute: () => Promise<string>,
+  ) {
+    if (!this.native || !(await this.usesNative(owner, sessionId))) return execute();
+    if (!this.nativeActionExecution)
+      throw new AppError("Native reviewed execution is unavailable", 503);
+    return this.nativeActionExecution(owner, proposal, decision, execute);
+  }
   private readonly log: ActionLog;
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly assets: BrowserAssets;
@@ -576,66 +597,68 @@ export class BrowserService {
         })
         .strict()
         .parse(raw);
-      return this.runAutomated(
-        owner,
-        undefined,
-        binding.sessionId,
-        undefined,
-        undefined,
-        true,
-        (id) =>
-          this.serial(id, async () => {
-            await this.get(owner, id);
-            const current = snapshotSchema.parse(
-              await (await this.ownedRequest(owner, `/sessions/${id}/snapshot`)).json(),
-            );
-            if (
-              current.sessionId !== id ||
-              current.url !== binding.url ||
-              JSON.stringify(current.dialog) !== JSON.stringify(binding.dialog)
-            )
-              throw new BrowserError(
-                "STALE_DIALOG",
-                "The reviewed dialog or page changed. Read a fresh snapshot before preparing another review.",
-                409,
-                id,
+      return this.reviewedResponse(owner, binding.sessionId, proposal, "approve", () =>
+        this.runAutomated(
+          owner,
+          undefined,
+          binding.sessionId,
+          undefined,
+          undefined,
+          true,
+          (id) =>
+            this.serial(id, async () => {
+              await this.get(owner, id);
+              const current = snapshotSchema.parse(
+                await (await this.ownedRequest(owner, `/sessions/${id}/snapshot`)).json(),
               );
-            if (proposal.taskId) {
-              const task = await this.db.get<{ status: string }>(owner, "tasks", proposal.taskId);
-              if (!task || !["running", "waiting_approval"].includes(task.status))
-                throw new AppError("Task was cancelled or paused before dialog dispatch", 409);
-            }
-            const input = reviewedBrowserDialogInputSchema.parse({
-              ...binding.input,
-              approvalId: proposal.id,
-            });
-            await beforeDispatch();
-            const result = snapshotSchema
-              .extend({ response: z.object({ dialogId: z.uuid(), accept: z.boolean() }) })
-              .parse(
-                await (
-                  await this.ownedRequest(owner, `/sessions/${id}/reviewed-dialog`, input)
-                ).json(),
-              );
-            if (
-              result.sessionId !== id ||
-              result.response.dialogId !== input.dialogId ||
-              result.response.accept !== input.accept
-            )
-              throw new BrowserError(
-                "OUTCOME_UNKNOWN",
-                "The dialog response did not return a matching execution receipt. Inspect the site before repeating it.",
-                409,
-                id,
-              );
-            return JSON.stringify(result);
-          }),
-        undefined,
-        undefined,
-        { taskId: proposal.taskId },
+              if (
+                current.sessionId !== id ||
+                current.url !== binding.url ||
+                JSON.stringify(current.dialog) !== JSON.stringify(binding.dialog)
+              )
+                throw new BrowserError(
+                  "STALE_DIALOG",
+                  "The reviewed dialog or page changed. Read a fresh snapshot before preparing another review.",
+                  409,
+                  id,
+                );
+              if (proposal.taskId) {
+                const task = await this.db.get<{ status: string }>(owner, "tasks", proposal.taskId);
+                if (!task || !["running", "waiting_approval"].includes(task.status))
+                  throw new AppError("Task was cancelled or paused before dialog dispatch", 409);
+              }
+              const input = reviewedBrowserDialogInputSchema.parse({
+                ...binding.input,
+                approvalId: proposal.id,
+              });
+              await beforeDispatch();
+              const result = snapshotSchema
+                .extend({ response: z.object({ dialogId: z.uuid(), accept: z.boolean() }) })
+                .parse(
+                  await (
+                    await this.ownedRequest(owner, `/sessions/${id}/reviewed-dialog`, input)
+                  ).json(),
+                );
+              if (
+                result.sessionId !== id ||
+                result.response.dialogId !== input.dialogId ||
+                result.response.accept !== input.accept
+              )
+                throw new BrowserError(
+                  "OUTCOME_UNKNOWN",
+                  "The dialog response did not return a matching execution receipt. Inspect the site before repeating it.",
+                  409,
+                  id,
+                );
+              return JSON.stringify(result);
+            }),
+          undefined,
+          undefined,
+          { taskId: proposal.taskId },
+        ),
       );
     });
-    actions.registerExternalDenial("browser.dialog", async (owner, raw) => {
+    actions.registerExternalDenial("browser.dialog", async (owner, raw, proposal) => {
       const binding = z
         .object({
           sessionId: z.uuid(),
@@ -645,14 +668,8 @@ export class BrowserService {
         })
         .strict()
         .parse(raw);
-      return this.runAutomated(
-        owner,
-        undefined,
-        binding.sessionId,
-        undefined,
-        undefined,
-        true,
-        (id) =>
+      return this.reviewedResponse(owner, binding.sessionId, proposal, "deny", () =>
+        this.runAutomated(owner, undefined, binding.sessionId, undefined, undefined, true, (id) =>
           this.serial(id, async () => {
             const current = snapshotSchema.parse(
               await (await this.ownedRequest(owner, `/sessions/${id}/snapshot`)).json(),
@@ -683,6 +700,7 @@ export class BrowserService {
               );
             return JSON.stringify(result);
           }),
+        ),
       );
     });
     actions.registerExternal("browser.act", async (owner, raw, proposal, beforeDispatch) => {

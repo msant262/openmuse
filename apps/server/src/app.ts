@@ -66,6 +66,7 @@ import type {
 } from "./executors/protocol.ts";
 import { ExecutorRegistry } from "./executors/registry.ts";
 import { RemoteComputerBackend } from "./executors/remote-computer.ts";
+import { ReviewedNativeActions } from "./executors/reviewed-actions.ts";
 import { executorRoutes } from "./executors/routes.ts";
 import { fileVersionRoutes } from "./file-versions.ts";
 import { Files } from "./files.ts";
@@ -416,6 +417,12 @@ export async function createApp(
     agent.configureNativeExecution((owner, task, context) =>
       manualNative.execute(owner, task, context),
     );
+  if (config.computerBackend === "native") {
+    const reviewedNative = new ReviewedNativeActions(agent);
+    browser.configureNativeActionExecution((owner, proposal, decision, execute) =>
+      reviewedNative.run(owner, proposal, decision, execute),
+    );
+  }
   const inbox = agent.inbox;
   const threads = config.intelligenceApiKey?.trim()
     ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey.trim() })

@@ -4,6 +4,7 @@ import type { ResourceLease, ResourceRequest } from "../../../../packages/domain
 import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
+import type { NativeActionExecution } from "../executors/reviewed-actions.ts";
 import { backgroundFailure } from "../log.ts";
 import { ResourceBusyError, ResourceLeases } from "./resource-leases.ts";
 import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
@@ -141,6 +142,45 @@ export class TaskWorker {
       if (this.inFlight.get(task.id) === pending) this.inFlight.delete(task.id);
     }
   }
+  /** Exact human review uses ordinary pause/lease/heartbeat authority. It is
+   * independent of desktop inspection and never resumes a model task. */
+  async runReviewedAction(owner: string, task: AgentTask, execute: TaskHandler): Promise<void> {
+    const record = await this.db.get<NativeActionExecution>(
+      owner,
+      "native-action-executions",
+      task.id,
+    );
+    const action = record
+      ? await this.db.get<{ hash: string; status: string; kind: string }>(
+          owner,
+          "actions",
+          record.actionId,
+        )
+      : undefined;
+    if (
+      !record ||
+      !action ||
+      action.hash !== record.hash ||
+      action.kind !== "external.action" ||
+      action.status !== (record.decision === "approve" ? "executing" : "denied") ||
+      task.status !== "paused" ||
+      task.attempts !== 0 ||
+      task.input.internalActivity !== true
+    )
+      throw new AppError("Native review execution requires an exact claimed private action", 403);
+    await this.pause.assertResumed(owner);
+    if (this.stopping || this.active.has(task.id) || this.inFlight.has(task.id))
+      throw new ResourceBusyError([]);
+    if (!(await this.admission.claim(task.id, "background", task.id)))
+      throw new ResourceBusyError([]);
+    const pending = this.run(owner, task, execute);
+    this.inFlight.set(task.id, pending);
+    try {
+      await pending;
+    } finally {
+      if (this.inFlight.get(task.id) === pending) this.inFlight.delete(task.id);
+    }
+  }
   tick(): Promise<void> {
     const pending = this.tickInternal();
     this.pendingTicks.add(pending);
@@ -165,6 +205,9 @@ export class TaskWorker {
         if (this.stopping) break;
         const task = record.value;
         if (await this.db.get(record.owner, "desktop-viewer-sessions", task.id)) continue;
+        // An interrupted review cannot be replayed by model execution. Its
+        // native receipt is reconciled by the existing executor authority.
+        if (await this.db.get(record.owner, "native-action-executions", task.id)) continue;
         if (this.inFlight.has(task.id) || this.active.has(task.id)) continue;
         if (task.status === "paused") {
           if (
