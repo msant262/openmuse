@@ -899,6 +899,115 @@ test("a researched PDF has one factual check on its actual reviewed bytes, not a
   assert.deepEqual(saved.artifactIds, [fileId]);
 });
 
+test("final PDF review recovers the fetched FAQ beyond a requested excerpt without a second fetch or changing the journal", async (t) => {
+  const url = "https://courses.example/beginners";
+  const freeProof =
+    "All lessons in Beginners AI are free; the optional certificate requires a non-refundable fee.";
+  let fileId = "",
+    receiptId = "";
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url, maxChars: 6000 } },
+        {
+          name: "create_document",
+          arguments: {
+            name: "Beginners-AI",
+            format: "pdf",
+            operationId: "faq-comparison",
+            content: `# Beginners AI\n\nFree lessons. English, two hours. Optional certificate: paid; price not published.\n\nSource: ${url}`,
+          },
+        },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: { summary: "The course PDF is attached.", artifactIds: [fileId] },
+        },
+      ][i],
+    {
+      researchReview: (body) => {
+        const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
+        const source = input.observations.find((op: { tool: string }) => op.tool === "web_fetch");
+        assert.ok(
+          source.text.includes(freeProof),
+          "the reviewer receives the FAQ already preserved beyond 6,000 characters",
+        );
+        assert.equal(source.truncated, false);
+        assert.equal(source.sourceRecovery.networkRead, false);
+        assert.equal(source.sourceRecovery.sha256, source.spill.sha256);
+        assert.match(input.documents[0].text, /Optional certificate: paid/);
+        return {
+          complete: true,
+          missing: [],
+          nextSteps: [],
+          accessAudit: [
+            { option: "Beginners AI", access: "free", sourceUrl: url, quote: freeProof },
+          ],
+        };
+      },
+    },
+  );
+  const f = await baseTaskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: false,
+  });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  const read = t.mock.method(f.agent.web, "document", async () => ({
+    url,
+    contentType: "text/html",
+    body: `<main><h1>Beginners AI</h1><p>English. Two hours.</p><h2>Another course: Advanced AI Pro</h2><p>Get this other course with a subscription.</p><p>${"Student review. ".repeat(900)}</p><h2>Beginners AI FAQ</h2><p>${freeProof}</p></main>`,
+  }));
+  const create = f.agent.media.createDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "createDocument", async (...args: Parameters<typeof create>) => {
+    const result = await create(...args);
+    fileId = result.fileId;
+    return result;
+  });
+  const inspect = f.agent.media.inspectDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "inspectDocument", async (...args: Parameters<typeof inspect>) => {
+    const result = await inspect(...args);
+    receiptId = result.receiptId;
+    return result;
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt:
+      "Research a free beginner AI course and deliver a PDF comparing language, duration and whether its certificate is paid.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.question ?? saved.result);
+  assert.equal(saved.completion?.status, "verified");
+  assert.equal(
+    fixture.reviewRequests.length,
+    1,
+    "an exact quote from the recovered FAQ needs no proof correction call",
+  );
+  assert.equal(read.mock.callCount(), 1);
+  const operations = await f.agent.journal.operations("owner", task.id);
+  const fetched = operations.find((op) => op.toolName === "web_fetch")!.receipt as {
+    text: string;
+    truncated: boolean;
+    spill: { fileId: string };
+    sourceRecovery?: unknown;
+  };
+  assert.equal(
+    fetched.text.length,
+    6000,
+    "the actual caller's requested excerpt remains immutable",
+  );
+  assert.equal(fetched.truncated, true);
+  assert.equal(
+    fetched.sourceRecovery,
+    undefined,
+    "hydration is only a review projection, not a rewritten receipt",
+  );
+  assert.ok(fetched.spill.fileId);
+  assert.equal((await f.db.list("owner", "interaction-requests")).length, 0);
+});
+
 test("an unavailable final document check resumes its saved reviewed file without generating or reading again", async (t) => {
   let unavailable = true,
     fileId = "",

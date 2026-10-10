@@ -69,6 +69,7 @@ import {
   researchObservations,
   reviewResearchDelivery,
 } from "./research-delivery-review.ts";
+import { recoverResearchSources } from "./research-source-recovery.ts";
 import type { AgentService } from "./service.ts";
 import { TaskBudgetExhaustedError } from "./task-actor.ts";
 import { taskEvidenceContext } from "./task-evidence-context.ts";
@@ -141,8 +142,17 @@ export async function executeModelTask(
     config.researchReviewEnabled || requiresAccessConstraintReview(task);
   const reviewDelivery = async (summary: string, artifactIds = task.artifactIds) => {
     if (!deliveryReviewEnabled()) return undefined;
-    const operations = await service.journal.operations(owner, task.id);
-    if (!needsResearchReview(task, operations)) return undefined;
+    const recordedOperations = await service.journal.operations(owner, task.id);
+    if (!needsResearchReview(task, recordedOperations)) return undefined;
+    const operations = await recoverResearchSources(
+      service.files,
+      owner,
+      recordedOperations,
+      routingCapabilities(
+        selectedModel,
+        config.modelProviders ?? modelProviderConfig(config.dataDir),
+      ).capabilities.contextTokens,
+    );
     const factsKey = createHash("sha256")
       .update(
         JSON.stringify([
@@ -163,6 +173,13 @@ export async function executeModelTask(
                 receipt?.error,
                 receipt?.sources,
                 receipt?.extraction,
+                receipt?.spill,
+                receipt?.sourceRecovery,
+                receipt?.truncated,
+                receipt?.sourceLength,
+                receipt?.found,
+                receipt?.query,
+                receipt?.sha256,
               ]);
             })
             .filter((item, index, items) => items.indexOf(item) === index)
