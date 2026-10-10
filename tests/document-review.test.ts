@@ -10,7 +10,7 @@ import { tanstackAgent } from "../apps/server/src/engine/tanstack-agent.ts";
 import { modelProviderConfig } from "../apps/server/src/providers/config.ts";
 import { LocalThreads } from "../apps/server/src/threads.ts";
 import { createDocumentPdf } from "../packages/integrations/src/document.ts";
-import { modelFixture } from "./helpers/model.ts";
+import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -42,6 +42,19 @@ test("document review needs image dispatch, exact scope/revision, full page cove
       rendererVersion: "test-1",
     });
   const first = await record([1, 2]);
+  assert.equal(
+    (await review.pendingAssessment("owner", scope, preview.id, [document.id]))?.receiptId,
+    first.receiptId,
+  );
+  assert.equal(
+    await review.pendingAssessment("other-owner", scope, preview.id, [document.id]),
+    undefined,
+  );
+  assert.equal(
+    await review.pendingAssessment("owner", { ...scope, revision: 1 }, preview.id, [document.id]),
+    undefined,
+  );
+  assert.equal(await review.pendingAssessment("owner", scope, preview.id, []), undefined);
   await assert.rejects(
     review.confirm("owner", scope, { receiptId: "a".repeat(64), passed: true, issues: [] }),
     (error: Error) =>
@@ -73,6 +86,10 @@ test("document review needs image dispatch, exact scope/revision, full page cove
     ),
   );
   await review.confirm("owner", scope, { receiptId: first.receiptId, passed: true, issues: [] });
+  assert.equal(
+    await review.pendingAssessment("owner", scope, preview.id, [document.id]),
+    undefined,
+  );
   assert.deepEqual((await review.check("owner", scope, document.id, sha256)).missingPages, [3]);
   const last = await record([3]);
   await assert.rejects(
@@ -87,6 +104,11 @@ test("document review needs image dispatch, exact scope/revision, full page cove
     passed: false,
     issues: ["Page 3 label overlaps a table"],
   });
+  assert.equal(
+    await review.pendingAssessment("owner", scope, preview.id, [document.id]),
+    undefined,
+    "a failed visual assessment releases tools for correction instead of trapping the reviewer",
+  );
   assert.equal((await review.check("owner", scope, document.id, sha256)).passed, false);
   assert.equal(
     (await review.check("owner", { ...scope, revision: 3 }, document.id, sha256)).passed,
@@ -307,6 +329,17 @@ test("worker replaces a failed reviewed draft, reviews the replacement pixels an
     }
     if (index === 2 || index === 5) {
       assert.match(fixture.requests[index].body, /data:image\/png;base64,/);
+      const request = JSON.parse(fixture.requests[index].body);
+      assert.deepEqual(
+        request.tools.map((tool: { name: string }) => tool.name),
+        ["tool_call"],
+        "assess the displayed pages before resuming unrelated work",
+      );
+      assert.equal(request.tool_choice, "required");
+      assert.equal(
+        request.tools[0].parameters.properties.id.const,
+        "okami_confirm_document_review",
+      );
       const receipts = await server.db.list<{ id: string; fileId: string }>(
         "owner",
         "document-inspections",
@@ -323,6 +356,8 @@ test("worker replaces a failed reviewed draft, reviews the replacement pixels an
       };
     }
     if (index === 3) {
+      const offered = offeredHostTools(fixture.requests[index].body);
+      assert.ok(offered.includes("create_document") || offered.includes("search_tools"));
       assert.equal((await server.agent.verification.assess("owner", taskId, 0)).status, "partial");
       assert.equal(await server.db.get("owner", "thread-publications", `task:${taskId}`), null);
       return {
@@ -389,4 +424,112 @@ test("worker replaces a failed reviewed draft, reviews the replacement pixels an
   assert.ok(history.includes("O documento revisado está pronto."));
   assert.ok(!history.includes(firstFileId));
   assert.ok(inspections.every((entry) => !history.includes(entry.previewFileId)));
+});
+
+test("worker assesses every displayed batch of a long document and rejects an unrelated write before assessment", async (t) => {
+  let server: Awaited<ReturnType<typeof taskRuntime>>;
+  let taskId = "",
+    attemptedDetour = false;
+  const create = {
+    name: "Guia.pdf",
+    format: "pdf",
+    title: "Guia de estudo",
+    design: { cover: false },
+    content: Array.from(
+      { length: 14 },
+      (_, i) =>
+        `## Etapa ${i + 1}\n\n${Array.from(
+          { length: 8 },
+          () =>
+            "Reserve um período para praticar o que foi aprendido. Revise o resultado, anote as dúvidas e verifique as fontes antes de continuar para a próxima etapa.",
+        ).join("\n\n")}`,
+    ).join("\n\n"),
+    operationId: "long-draft",
+  };
+  const fixture = await modelFixture(t, async (index) => {
+    if (index === 0) return { name: "create_document", arguments: create };
+    const task = await server.agent.getTask("owner", taskId);
+    const inspections = await server.db.list<{ id: string; pages: number[]; pageCount: number }>(
+      "owner",
+      "document-inspections",
+    );
+    const latest = inspections[0];
+    const confirmed = latest && (await server.db.get("owner", "document-reviews", latest.id));
+    if (latest && !confirmed) {
+      const request = JSON.parse(fixture.requests[index].body);
+      assert.equal(request.tools.length, 1);
+      assert.equal(
+        request.tools[0].parameters.properties.id.const,
+        "okami_confirm_document_review",
+      );
+      assert.equal(
+        request.tools[0].parameters.properties.args.properties.receiptId.const,
+        latest.id,
+      );
+      assert.match(fixture.requests[index].body, /data:image\/png;base64,/);
+      if (!attemptedDetour) {
+        attemptedDetour = true;
+        return {
+          name: "create_document",
+          arguments: { ...create, content: "Unrelated replacement", operationId: "detour" },
+        };
+      }
+      return {
+        name: "confirm_document_review",
+        arguments: { receiptId: latest.id, passed: true, issues: [] },
+      };
+    }
+    const nextPage = latest ? latest.pages.at(-1)! + 1 : 1;
+    if (!latest || nextPage <= latest.pageCount)
+      return {
+        name: "inspect_document",
+        arguments: { fileId: task.artifactIds[0], startPage: nextPage, pageCount: 2 },
+      };
+    return {
+      name: "finish_task",
+      arguments: { summary: "O guia revisado está pronto.", artifactIds: task.artifactIds },
+    };
+  });
+  server = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    modelProviders: modelProviderConfig("/tmp/document-batches", {
+      ...process.env,
+      MODEL_CAPABILITIES: JSON.stringify({
+        "openai/fixture": {
+          tools: true,
+          vision: true,
+          structuredOutput: true,
+          contextTokens: 131072,
+        },
+      }),
+    }),
+  });
+  const task = await server.agent.createTask("owner", { prompt: "Crie um guia completo em PDF." });
+  taskId = task.id;
+  await server.agent.worker.tick();
+  const saved = await server.agent.getTask("owner", taskId);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.question);
+  assert.equal(saved.completion?.status, "verified");
+  assert.equal(saved.artifactIds.length, 1);
+  const inspections = await server.db.list<{ id: string; pages: number[]; pageCount: number }>(
+    "owner",
+    "document-inspections",
+  );
+  assert.ok(inspections[0].pageCount > 4, "exercise multiple batches beyond one renderer call");
+  const reviews = await server.db.list<{ id: string; passed: boolean }>(
+    "owner",
+    "document-reviews",
+  );
+  assert.equal(reviews.length, inspections.length);
+  assert.ok(reviews.every((review) => review.passed));
+  const operations = (await server.agent.detail("owner", taskId)).operations;
+  const writes = operations.filter((op) => op.toolName === "create_document");
+  assert.equal(writes.filter((op) => op.status === "succeeded").length, 1);
+  assert.equal(
+    (await server.db.list("owner", "document-generations")).length,
+    1,
+    "the detour is rejected before it can author a second document",
+  );
+  t.diagnostic(`Confirmed ${inspections[0].pageCount} pages in ${inspections.length} batches.`);
 });

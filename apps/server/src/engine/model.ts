@@ -47,6 +47,7 @@ import {
 import { googleAgentContext, googleTaskTools } from "../google-agent-context.ts";
 import { documentArgs, imageArgs, mediaInstructionGroups, mediaTools } from "../media-tools.ts";
 import { buildProfileContext } from "../profile-context.ts";
+import { browserImageReference } from "../providers/browser-images.ts";
 import { modelProviderConfig } from "../providers/config.ts";
 import { routingCapabilities } from "../providers/model-capabilities.ts";
 import type { ProviderContinuationCheckpoint } from "../providers/models.ts";
@@ -2577,6 +2578,29 @@ export async function executeModelTask(
       task = await ctx.checkpoint({ state: { ...task.state, providerCheckpoint: null } });
     },
     shouldContinue: () => !outcome,
+    requiredToolTurn: async (messages) => {
+      const image = browserImageReference(messages);
+      if (
+        !image?.file ||
+        !routingCapabilities(
+          selectedModel,
+          config.modelProviders ?? modelProviderConfig(config.dataDir),
+        ).capabilities.vision
+      )
+        return undefined;
+      const assessment = await documentReview.pendingAssessment(
+        owner,
+        { scope: `task:${task.id}`, revision: Number(task.state.appliedRevision ?? 0) },
+        image.id,
+        task.artifactIds,
+      );
+      if (!assessment) return undefined;
+      return {
+        name: "confirm_document_review",
+        parameters: documentReviewArgs.safeExtend({ receiptId: z.literal(assessment.receiptId) }),
+        instructions: `Assess the actual document preview in this inference and call confirm_document_review for ${JSON.stringify(assessment)}. Report passed:true only if these displayed pages have no concrete delivery defect; otherwise report passed:false with the defects. This records your assessment, never automatic approval. After this assessment the full authorized tool catalog is available again for corrections, remaining pages or delivery.`,
+      };
+    },
     executeTool: async (call, execute) => {
       try {
         const title = taskActivity(call.name);

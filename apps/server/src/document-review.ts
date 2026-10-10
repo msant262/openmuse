@@ -59,6 +59,30 @@ export class DocumentReview {
     private readonly files: Files,
   ) {}
 
+  /** Pending assessment of the exact preview supplied to the upcoming model turn. */
+  async pendingAssessment(
+    owner: string,
+    scope: DocumentReviewScope,
+    previewFileId: string,
+    fileIds: readonly string[],
+  ) {
+    if (!fileIds.length) return undefined;
+    const receipt = await this.db.pendingDocumentAssessment<Inspection>(
+      owner,
+      scope.scope,
+      scope.revision,
+      previewFileId,
+      fileIds,
+    );
+    if (
+      !receipt ||
+      hash(await this.files.bytes(owner, receipt.fileId)) !== receipt.sha256 ||
+      hash(await this.files.bytes(owner, receipt.previewFileId)) !== receipt.previewSha256
+    )
+      return undefined;
+    return { receiptId: receipt.id, fileId: receipt.fileId, pages: receipt.pages };
+  }
+
   /** Reuse only a completed delivery's full review of these exact owned bytes. */
   async previousDelivery(owner: string, fileId: string, sha256: string) {
     const generations = await this.db.list<{ fileId?: string; sha256?: string; scope?: string }>(

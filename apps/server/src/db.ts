@@ -57,6 +57,30 @@ export class Store {
     );
     return result.rows.map((row) => row.data as T);
   }
+  /** One currently displayed assessment, without loading historical owner documents. */
+  async pendingDocumentAssessment<T>(
+    owner: string,
+    scope: string,
+    revision: number,
+    previewFileId: string,
+    fileIds: readonly string[],
+  ): Promise<T | undefined> {
+    const result = await this.db.query(
+      `SELECT inspection.data FROM records inspection
+       WHERE inspection.owner=$1 AND inspection.kind='document-inspections'
+       AND inspection.data->>'scope'=$2 AND inspection.data->>'revision'=$3
+       AND inspection.data->>'previewFileId'=$4 AND inspection.data->>'fileId'=ANY($5::text[])
+       AND NOT EXISTS(SELECT 1 FROM records review WHERE review.owner=inspection.owner
+         AND review.kind='document-reviews' AND review.id=inspection.id
+         AND review.data->>'scope'=inspection.data->>'scope'
+         AND review.data->>'revision'=inspection.data->>'revision'
+         AND review.data->>'sha256'=inspection.data->>'sha256'
+         AND review.data->>'previewSha256'=inspection.data->>'previewSha256')
+       ORDER BY inspection.data->>'createdAt' DESC,inspection.id LIMIT 1`,
+      [owner, scope, String(revision), previewFileId, [...fileIds]],
+    );
+    return result.rows[0]?.data as T | undefined;
+  }
   /** Routing needs a task-local predicate, never historical output payloads. */
   async browserTaskUncertain(owner: string, taskId: string, reads: string[]) {
     const result = await this.db.query(

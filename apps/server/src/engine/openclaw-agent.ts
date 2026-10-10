@@ -57,6 +57,10 @@ type Options = {
     execute: () => Promise<unknown>,
   ) => Promise<unknown>;
   onMessages?: (messages: ModelMessage[], phase: string) => Promise<void>;
+  /** A pending host assessment owns one inference; its result restores ordinary tools. */
+  requiredToolTurn?: (
+    messages: readonly ModelMessage[],
+  ) => Promise<{ name: string; parameters: SchemaInput; instructions: string } | undefined>;
   onText?: (delta: string) => void;
   shouldContinue?: () => boolean;
   finalResponseWhen?: () => boolean;
@@ -778,6 +782,7 @@ export function openclawAgent(options: Options) {
           );
           let messageId: string | undefined;
           let acknowledgmentBoundary: string | undefined;
+          let requiredTurn: Awaited<ReturnType<NonNullable<Options["requiredToolTurn"]>>>;
           const receipts = new Map<string, DispatchReceipt>();
           let transportError: unknown;
           let contextInterruption: ProviderContinuationCheckpoint | undefined;
@@ -881,7 +886,13 @@ export function openclawAgent(options: Options) {
                   ...(messageId ? { parentMessageId: messageId } : {}),
                 });
                 emit({ type: EventType.TOOL_CALL_ARGS, toolCallId, delta: JSON.stringify(raw) });
-                const execute = () => (tool.execute as (args: unknown) => Promise<unknown>)(raw);
+                const execute = () => {
+                  if (requiredTurn && tool.name !== requiredTurn.name)
+                    throw new Error(
+                      `Record the pending assessment with ${requiredTurn.name} before continuing. ${requiredTurn.instructions}`,
+                    );
+                  return (tool.execute as (args: unknown) => Promise<unknown>)(raw);
+                };
                 const dispatch = () =>
                   options.executeTool
                     ? options.executeTool(
@@ -1015,13 +1026,51 @@ export function openclawAgent(options: Options) {
                   name: publicName(tool.name),
                   inputSchema: tool.parameters,
                 }));
-                const selected = acknowledged
-                  ? available.filter(
-                      (tool) =>
-                        controls.has(tool.name) ||
-                        options.finalResponseTools?.().includes(tool.name),
-                    )
-                  : available;
+                requiredTurn = acknowledged
+                  ? undefined
+                  : await options.requiredToolTurn?.(messages);
+                if (requiredTurn) systemPrompts.push(requiredTurn.instructions);
+                const requiredName = requiredTurn?.name;
+                const requiredTool =
+                  requiredName && tools.find((tool) => tool.name === requiredName);
+                if (requiredTurn && !requiredTool)
+                  throw new Error(`Required assessment tool is unavailable: ${requiredTurn.name}`);
+                const directAssessment = available.some((tool) => tool.name === requiredName);
+                const assessmentName = directAssessment ? requiredName : "tool_call";
+                if (
+                  requiredTurn &&
+                  !directAssessment &&
+                  !available.some((tool) => tool.name === "tool_call")
+                )
+                  throw new Error(
+                    `Required assessment dispatcher is unavailable: ${requiredTurn.name}`,
+                  );
+                const selected =
+                  requiredTurn && requiredTool
+                    ? [
+                        {
+                          name: assessmentName!,
+                          description: requiredTool.description,
+                          inputSchema: directAssessment
+                            ? convertSchemaToJsonSchema(requiredTurn.parameters)
+                            : {
+                                type: "object",
+                                properties: {
+                                  id: { type: "string", const: nativeName(requiredTurn.name) },
+                                  args: convertSchemaToJsonSchema(requiredTurn.parameters),
+                                },
+                                required: ["id", "args"],
+                                additionalProperties: false,
+                              },
+                        },
+                      ]
+                    : acknowledged
+                      ? available.filter(
+                          (tool) =>
+                            controls.has(tool.name) ||
+                            options.finalResponseTools?.().includes(tool.name),
+                        )
+                      : available;
                 let contextOverflow: string | undefined;
                 let contextFloor = options.requirements?.contextTokens ?? 0;
                 const adapter = modelAdapter(
@@ -1046,12 +1095,31 @@ export function openclawAgent(options: Options) {
                     harnessDeadlineMs: 21_600_000,
                     modelOptions: (spec) => {
                       const route = reasoningModel(spec);
-                      if (!route || !copied.resolveOpenAIModelReasoningEfforts(route)) return {};
-                      const effort = copied.resolveOpenAIReasoningEffortForModel({
-                        model: route,
-                        effort: streamOptions.reasoning ?? "medium",
-                      });
-                      return effort ? { reasoning: { effort } } : {};
+                      const effort =
+                        route && copied.resolveOpenAIModelReasoningEfforts(route)
+                          ? copied.resolveOpenAIReasoningEffortForModel({
+                              model: route,
+                              effort: streamOptions.reasoning ?? "medium",
+                            })
+                          : undefined;
+                      const provider = modelSpec(spec).provider;
+                      return {
+                        ...(effort ? { reasoning: { effort } } : {}),
+                        ...(requiredTurn
+                          ? provider === "anthropic"
+                            ? { tool_choice: { type: "tool", name: assessmentName } }
+                            : ["google", "gemini", "google-gemini"].includes(provider)
+                              ? {
+                                  toolConfig: {
+                                    functionCallingConfig: {
+                                      mode: "ANY",
+                                      allowedFunctionNames: [assessmentName],
+                                    },
+                                  },
+                                }
+                              : { tool_choice: "required", parallel_tool_calls: false }
+                          : {}),
+                      };
                     },
                     contextEstimate: (request) => {
                       // Native compaction reduces history, not the host's fixed
