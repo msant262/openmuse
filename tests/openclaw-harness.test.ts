@@ -20,6 +20,7 @@ import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
 test("the copied model reasoning contract reaches the actual provider request", async (t) => {
+  const completedModels: string[] = [];
   const fixture = await modelFixture(t, () => undefined, {
     text: () => "Ready.",
     errorStatus: (index) => (index === 2 ? 503 : undefined),
@@ -37,6 +38,9 @@ test("the copied model reasoning contract reaches the actual provider request", 
       providers: richChatFixtureProviders(f.directory, ["openai/gpt-6-luna", "openai/fixture"]),
       prompt: "Answer the request.",
       tools: [],
+      onModelCompleted: async (model) => {
+        completedModels.push(model);
+      },
     });
     const events = await lastValueFrom(
       agent
@@ -63,6 +67,11 @@ test("the copied model reasoning contract reaches the actual provider request", 
     JSON.parse(fixture.requests[3].body).reasoning,
     undefined,
     "a fallback receives its own supported parameters, not the primary model's contract",
+  );
+  assert.deepEqual(
+    completedModels,
+    ["openai/gpt-6-luna", "openai/fixture", "openai/fixture"],
+    "completed inference records the accepting fallback, not the rejected primary",
   );
 });
 

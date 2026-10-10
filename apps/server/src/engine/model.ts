@@ -583,6 +583,40 @@ export async function executeModelTask(
         researchContinuation ||
         unresolvedPartial
       ) {
+        const availableFiles = [];
+        if (authoringContinuation && selected.length === 0)
+          for (const fileId of task.artifactIds.toReversed()) {
+            try {
+              const file = await service.files.get(owner, fileId);
+              if (
+                !missingFiles.some((check) => {
+                  const criterion = task.criteria?.find((item) => item.id === check.criterionId);
+                  return (
+                    (!criterion?.referenceId || criterion.referenceId === fileId) &&
+                    (!criterion?.format ||
+                      (criterion.format === "image/*"
+                        ? file.mimeType.startsWith("image/")
+                        : file.mimeType === criterion.format))
+                  );
+                })
+              )
+                continue;
+              if (
+                (await service.files.bytes(owner, fileId)).length !== file.size ||
+                file.size === 0
+              )
+                continue;
+              availableFiles.push({
+                fileId,
+                name: file.name,
+                mimeType: file.mimeType,
+                size: file.size,
+              });
+            } catch (error) {
+              if (!(error instanceof AppError) || error.status !== 404) throw error;
+            }
+          }
+        const selectionContinuation = availableFiles.length > 0;
         task = await ctx.checkpoint({
           completion,
           state: {
@@ -599,7 +633,13 @@ export async function executeModelTask(
           complete: false,
           repairable: true,
           missing: completion.remaining,
-          ...(authoringContinuation && { continuation: "artifact_authoring" }),
+          ...(authoringContinuation && {
+            continuation: selectionContinuation ? "artifact_selection" : "artifact_authoring",
+          }),
+          ...(selectionContinuation && {
+            availableFiles,
+            previousReview: task.state.researchDeliveryReview,
+          }),
           ...(researchContinuation && {
             unreadSourceLinks: availableLinks,
           }),
@@ -608,7 +648,9 @@ export async function executeModelTask(
           }),
           instruction:
             (authoringContinuation
-              ? 'The requested file has not been created. This missing file receipt does not establish missing source facts. Resume the latest draft with read_tool_output({"tool":"create_document","part":"arguments","pointer":"/content"}) when available, then create the requested file with create_document. Keep supported facts and apply any specific content preflight corrections; do not restart research just because the attachment is missing. The final delivery review checks the actual file against the evidence and original requirements. '
+              ? selectionContinuation
+                ? "The task already has the existing drafts listed in availableFiles, newest first, but you selected no file. Select the intended final file with artifactIds. This list proves availability, not factual or visual approval: preserve previousReview corrections, update an actual draft only where needed, and complete its inspection. Do not regenerate an unchanged file to fix an empty selection. The final review still checks the selected bytes and original requirements. "
+                : 'The requested file has not been created. This missing file receipt does not establish missing source facts. Resume the latest draft with read_tool_output({"tool":"create_document","part":"arguments","pointer":"/content"}) when available, then create the requested file with create_document. Keep supported facts and apply any specific content preflight corrections; do not restart research just because the attachment is missing. The final delivery review checks the actual file against the evidence and original requirements. '
               : "") +
             (unresolvedPartial
               ? "You declared this same delivery partial, and no source evidence or selected artifact has changed since then. Changing only outcome to completed cannot resolve the missing requirements. Continue the research or correct the artifact; if the concrete paths remain blocked, report partial honestly. "
@@ -655,11 +697,14 @@ export async function executeModelTask(
         missing: review.missing,
         nextSteps: review.nextSteps,
         needsMoreResearch: review.needsMoreResearch,
+        accessGaps: review.accessGaps,
         accessAudit: review.accessAudit,
         requestAudit: review.requestAudit,
-        instruction: review.needsMoreResearch
-          ? "Repair these specific gaps using available observed sources. A partial outcome does not bypass viable recovery."
-          : "The observed sources suffice. Apply the listed corrections to the actual selected deliverable, preserving the original requested content and format. Changing the completion summary does not update an existing file. Create the corrected version, inspect it and select only final deliverables with artifactIds. Do not repeat finish without correcting the listed gaps.",
+        instruction: review.accessGaps?.length
+          ? "Resolve every accessGap in the actual selected content. Keep qualified options and verified descriptive facts. Reuse qualified alternatives already read; verify new evidence only where necessary. A paid, trial-only or unconfirmed option cannot remain in a free-only comparison with a caveat. Complete the listed content corrections, then inspect and select the corrected file. Do not repeat finish with the same unqualified selection."
+          : review.needsMoreResearch
+            ? "Repair these specific gaps using available observed sources. A partial outcome does not bypass viable recovery."
+            : "The observed sources suffice. Apply the listed corrections to the actual selected deliverable, preserving the original requested content and format. Changing the completion summary does not update an existing file. Create the corrected version, inspect it and select only final deliverables with artifactIds. Do not repeat finish without correcting the listed gaps.",
       };
     }
     const finished = await service.finish(
@@ -2616,6 +2661,23 @@ export async function executeModelTask(
     },
     onModelSelected: (model) => {
       selectedModel = `${model.provider}/${model.model}`;
+    },
+    onModelCompleted: async (model) => {
+      await ctx.guard();
+      const previous = task.state.executorModelExecution as
+        | { models?: string[]; completedResponses?: number }
+        | undefined;
+      task = await ctx.checkpoint({
+        state: {
+          ...task.state,
+          executorModelExecution: {
+            models: [...new Set([...(previous?.models ?? []), model])],
+            completedResponses: (previous?.completedResponses ?? 0) + 1,
+            lastModel: model,
+            lastCompletedAt: new Date().toISOString(),
+          },
+        },
+      });
     },
     loadFileImage: (id) => service.files.imageContent(owner, id),
     onFileImageObserved: (id) =>

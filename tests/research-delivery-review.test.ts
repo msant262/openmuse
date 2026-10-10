@@ -15,6 +15,274 @@ function taskRuntime(
   return baseTaskRuntime(t, { ...config, researchReviewEnabled: true }, options);
 }
 
+test("an incomplete access audit exposes every unknown selection even when its repair flag claims sources suffice", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, {
+    researchReview: () => ({
+      complete: false,
+      needsMoreResearch: false,
+      missing: ["Replace the general AI course with a generative AI course"],
+      nextSteps: ["Edit the PDF's third row"],
+      accessAudit: [
+        {
+          option: "Preview course",
+          access: "unknown",
+          sourceUrl: "https://academy.example/preview",
+          quote: "Preview",
+        },
+        {
+          option: "Unconfirmed course",
+          access: "unknown",
+          sourceUrl: "https://academy.example/unconfirmed",
+          quote: "Sign in",
+        },
+        {
+          option: "Open foundations",
+          access: "free",
+          sourceUrl: "https://academy.example/foundations",
+          quote: "All course content is free.",
+        },
+      ],
+    }),
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Compare three free beginner generative AI courses.",
+  });
+  const decision = await reviewResearchDelivery({
+    task,
+    summary: "Three free courses.",
+    model: "openai/fixture",
+    stage: "access_selection",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    signal: new AbortController().signal,
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: {},
+        receipt: { url: "https://academy.example/preview", text: "Preview" },
+      },
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: {},
+        receipt: { url: "https://academy.example/unconfirmed", text: "Sign in" },
+      },
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: {},
+        receipt: {
+          url: "https://academy.example/foundations",
+          text: "All course content is free.",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(decision.complete, false);
+  assert.equal(decision.needsMoreResearch, true);
+  assert.match(decision.missing.join(" "), /Preview course/);
+  assert.match(decision.missing.join(" "), /Unconfirmed course/);
+  assert.match(decision.nextSteps.join(" "), /Preview course/);
+  assert.match(decision.nextSteps.join(" "), /Unconfirmed course/);
+  assert.equal(
+    fixture.reviewRequests.length,
+    1,
+    "normalizing a contradictory decision adds no model call",
+  );
+});
+
+test("an existing unselected PDF is recovered by its actual ID without another generation or bypassing its review", async (t) => {
+  let fileId = "",
+    receiptId = "",
+    generations = 0;
+  const url = "https://courses.example/open";
+  const fixture = await modelFixture(
+    t,
+    (i) => {
+      if (i === 5) {
+        const messages = JSON.parse(fixture.requests[i].body).input;
+        const output = JSON.parse(
+          messages.findLast((item: { type: string }) => item.type === "function_call_output")
+            .output,
+        );
+        assert.equal(output.continuation, "artifact_selection");
+        assert.deepEqual(
+          output.availableFiles.map((file: { fileId: string }) => file.fileId),
+          [fileId],
+        );
+        assert.equal(output.availableFiles[0].mimeType, "application/pdf");
+        assert.doesNotMatch(
+          output.instruction,
+          /file has not been created|then create the requested file/i,
+        );
+        assert.equal(
+          fixture.reviewRequests.length,
+          0,
+          "an empty selection is not the selected content",
+        );
+      }
+      return [
+        { name: "web_fetch", arguments: { url } },
+        {
+          name: "create_document",
+          arguments: {
+            name: "Open-course",
+            format: "pdf",
+            operationId: "once",
+            content: `# Open AI\n\nAll lessons are free. Two hours, English. Optional certificate: paid.\n\nSource: ${url}`,
+          },
+        },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: { summary: "The comparison is ready.", artifactIds: [], outcome: "partial" },
+        },
+        {
+          name: "finish_task",
+          arguments: { summary: "The comparison PDF is attached.", artifactIds: [fileId] },
+        },
+      ][i];
+    },
+    {
+      researchReview: () => ({
+        complete: true,
+        missing: [],
+        nextSteps: [],
+        accessAudit: [
+          { option: "Open AI", access: "free", sourceUrl: url, quote: "All lessons are free." },
+        ],
+      }),
+    },
+  );
+  const f = await baseTaskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: false,
+  });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  await f.files.importAttachment("another-owner", "Private.txt", Buffer.from("Private"), "private");
+  await f.files.importAttachment("owner", "Unrelated.txt", Buffer.from("Other task"), "other task");
+  t.mock.method(f.agent.web, "document", async () => ({
+    url,
+    contentType: "text/html",
+    body: "<main>All lessons are free. Two hours, English. Optional certificate: paid.</main>",
+  }));
+  const create = f.agent.media.createDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "createDocument", async (...args: Parameters<typeof create>) => {
+    const result = await create(...args);
+    fileId = result.fileId;
+    generations++;
+    return result;
+  });
+  const inspect = f.agent.media.inspectDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "inspectDocument", async (...args: Parameters<typeof inspect>) => {
+    const result = await inspect(...args);
+    receiptId = result.receiptId;
+    return result;
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt:
+      "Research a free AI course and deliver a PDF comparing duration, language and certificate cost.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.question ?? saved.result);
+  assert.equal(saved.completion?.status, "verified");
+  assert.equal(generations, 1);
+  assert.equal(fixture.reviewRequests.length, 1);
+  assert.deepEqual(saved.artifactIds, [fileId]);
+  assert.deepEqual((saved.state.executorModelExecution as { models: string[] }).models, [
+    "openai/fixture",
+  ]);
+  assert.equal((saved.state.researchDeliveryReview as { model: string }).model, "openai/fixture");
+});
+
+test("incomplete access normalization preserves exhausted paths and existing-evidence repairs while rejecting fabricated free proof", async (t) => {
+  const sourceUrl = "https://academy.example/course";
+  const decisions = [
+    {
+      complete: false,
+      blocked: true,
+      needsMoreResearch: false,
+      missing: ["Authorized sources exhausted"],
+      nextSteps: [],
+      accessAudit: [{ option: "Unavailable course", access: "unknown", sourceUrl }],
+    },
+    {
+      complete: false,
+      needsMoreResearch: false,
+      missing: ["Correct the selected options"],
+      nextSteps: ["Use the already verified alternative"],
+      accessAudit: [
+        { option: "Subscription course", access: "paid", sourceUrl },
+        { option: "Trial course", access: "trial", sourceUrl },
+      ],
+    },
+    {
+      complete: false,
+      needsMoreResearch: true,
+      missing: ["Correct duration"],
+      nextSteps: ["Correct the duration cell"],
+      accessAudit: [
+        {
+          option: "Fabricated free course",
+          access: "free",
+          sourceUrl,
+          quote: "All content is free without a subscription.",
+        },
+      ],
+    },
+  ];
+  const fixture = await modelFixture(t, () => undefined, {
+    researchReview: (_body, i) => decisions[i],
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Compare free generative AI courses." });
+  const common = {
+    task,
+    summary: "Draft comparison",
+    model: "openai/fixture",
+    stage: "access_selection" as const,
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    signal: new AbortController().signal,
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: {},
+        receipt: { url: sourceUrl, text: "Preview. Subscribe for the full course." },
+      },
+    ] as never,
+  };
+  const exhausted = await reviewResearchDelivery(common);
+  assert.equal(exhausted.blocked, true);
+  assert.equal(exhausted.needsMoreResearch, false);
+  assert.deepEqual(exhausted.nextSteps, []);
+  assert.match(exhausted.missing.join(" "), /Unavailable course/);
+  const repair = await reviewResearchDelivery(common);
+  assert.equal(repair.complete, false);
+  assert.equal(
+    repair.needsMoreResearch,
+    false,
+    "known paid/trial access can be replaced using an already verified alternative",
+  );
+  assert.match(repair.nextSteps.join(" "), /Subscription course/);
+  assert.match(repair.nextSteps.join(" "), /Trial course/);
+  const fabricated = await reviewResearchDelivery(common);
+  assert.equal(fabricated.complete, false);
+  assert.match(fabricated.missing.join(" "), /Fabricated free course/);
+  assert.equal(fabricated.accessGaps.length, 1);
+  assert.equal(
+    fixture.reviewRequests.length,
+    3,
+    "an already incomplete review does not add an expensive proof-only retry",
+  );
+});
+
 test("factual review retains source truncation and exact recovery metadata instead of presenting excerpts as whole pages", async (t) => {
   await modelFixture(t, () => undefined, {
     researchReview: (body) => {

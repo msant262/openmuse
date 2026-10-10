@@ -72,6 +72,7 @@ type Options = {
   loadFileImage?: BrowserImageLoader;
   onFileImageObserved?: (fileId: string) => Promise<void>;
   onModelSelected?: (model: ModelSelection) => void;
+  onModelCompleted?: (model: string) => Promise<void>;
   workClass?: WorkClass;
   /** Task-only Code Mode may call actions through the ordinary host policy. */
   codeToolEffects?: boolean;
@@ -1254,6 +1255,7 @@ export function openclawAgent(options: Options) {
                   });
                 }
                 await options.onProviderRecovered?.();
+                await options.onModelCompleted?.(selectedTransportModel);
                 transportError = undefined;
                 message.stopReason = calls.size ? "toolUse" : "stop";
                 stream.push({ type: "done", reason: message.stopReason, message });

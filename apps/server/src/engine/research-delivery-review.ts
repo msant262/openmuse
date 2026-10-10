@@ -378,11 +378,14 @@ export async function reviewResearchDelivery(options: {
     if (contextEstimate(request()) <= context || perSourceBudget === 128) break;
     perSourceBudget = Math.max(128, Math.floor(perSourceBudget * 0.75));
   }
+  let reviewModel = options.model;
   const adapter = modelAdapter(
     options.model,
     options.fallbacks,
     options.providers,
-    undefined,
+    (model) => {
+      reviewModel = `${model.provider}/${model.model}`;
+    },
     undefined,
     undefined,
     {
@@ -410,6 +413,7 @@ export async function reviewResearchDelivery(options: {
         JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "")),
       );
       const unsatisfied = decision.requestAudit.filter((item) => !item.satisfied);
+      const accessGaps: NonNullable<typeof decision.accessAudit> = [];
       // A pre-render review cannot wait for the renderer's own future receipt.
       // Only explicitly deferred delivery failures qualify; content/access
       // failures keep blocking, and final delivery retains its independent checks.
@@ -431,7 +435,11 @@ export async function reviewResearchDelivery(options: {
           !decision.missing.includes(item.requirement)
         )
           decision.missing.push(item.requirement);
-      if (options.stage === "access_selection" && decision.complete) {
+      if (
+        options.stage === "access_selection" &&
+        (decision.complete || decision.accessAudit?.length)
+      ) {
+        const accepted = decision.complete;
         const normalizeRaw = (value: string) =>
           value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
         const normalize = (value: string) =>
@@ -471,6 +479,7 @@ export async function reviewResearchDelivery(options: {
           );
         });
         if (
+          accepted &&
           proofAttempt === 0 &&
           failed.length &&
           failed.every(
@@ -492,21 +501,39 @@ export async function reviewResearchDelivery(options: {
           );
           continue;
         }
-        if (!decision.accessAudit?.length || failed.length) {
+        if ((accepted && !decision.accessAudit?.length) || failed.length) {
+          accessGaps.push(...failed);
+          const exhausted = !accepted && decision.blocked && !decision.nextSteps.length;
           decision.complete = false;
-          decision.blocked = false;
-          decision.needsMoreResearch = true;
-          decision.missing.push(
-            `Observed confirmation of full free access is missing for ${failed.length ? failed.map((item) => item.option).join(", ") : "the selected options"}.`,
-          );
-          decision.nextSteps.push(
-            "Read an actual pricing/FAQ or free-content policy for every selected option and verify full content access separately from optional certificate costs. Select a verified alternative when access is paid, trial-only or unconfirmed. A missing price or a search snippet cannot establish free access; update the actual document, not only the completion summary.",
-          );
+          for (const item of failed)
+            decision.missing.push(
+              `Observed confirmation of full free access is missing for ${item.option}.`,
+            );
+          if (!decision.accessAudit?.length)
+            decision.missing.push(
+              "Observed confirmation of full free access is missing for the selected options.",
+            );
+          if (!exhausted) {
+            decision.blocked = false;
+            // An unrelated wording rejection must not hide unknown eligibility.
+            // A known paid/trial selection may instead be replaced using already
+            // observed alternatives; do not force new research for that repair.
+            if (accepted || failed.some((item) => item.access === "unknown"))
+              decision.needsMoreResearch = true;
+            for (const item of failed)
+              decision.nextSteps.push(
+                `Resolve full free access for ${item.option}: ${item.access}${item.access === "free" ? " (source proof is missing or invalid)" : ""}. Keep qualified options. Reuse an observed verified alternative or verify the provider page in accessGaps. Replace paid, trial-only or unconfirmed selections; a caveat is insufficient. Update the selected file, not only its summary.`,
+              );
+            if (!decision.accessAudit?.length)
+              decision.nextSteps.push(
+                "Verify every selected option's full free-content access on an actual provider page, separately from optional certificate costs. Use exact observed evidence; a missing price or search snippet is not proof.",
+              );
+          }
         }
       }
       if (decision.missing.length) decision.complete = false;
       if (decision.nextSteps.length) decision.blocked = false;
-      return decision;
+      return { ...decision, accessGaps, model: reviewModel };
     }
     throw new Error("Review proof correction exhausted");
   } catch (error) {
