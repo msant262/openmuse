@@ -10,6 +10,7 @@ import { chromium } from "playwright";
 import { signBrowserAuthorization } from "../../../packages/domain/src/browser-payment.ts";
 import { createBrowserManager } from "../src/browser.ts";
 import { BrowserDialogs } from "../src/browser-dialogs.ts";
+import { nativeBrowserFailure } from "../src/native-errors.ts";
 import { publicFixture } from "./public-fixture.ts";
 
 let fixture: Awaited<ReturnType<typeof publicFixture>>;
@@ -119,7 +120,20 @@ test("real browser dialogs remain pending and ordinary prompts resume without re
     );
     const observed = await browser.snapshot(id);
     assert.equal(observed.dialog?.id, pending.dialog.id);
-    await assert.rejects(browser.back(id), { code: "BROWSER_DIALOG_PENDING" });
+    await assert.rejects(browser.back(id), (error: unknown) => {
+      const failure = nativeBrowserFailure(
+        { operation: "perform", envelope: { args: { operation: "back", body: {} } } },
+        error,
+      );
+      assert.equal(failure.code, "BROWSER_DIALOG_PENDING");
+      assert.equal(
+        failure.dispatched,
+        false,
+        "a pending dialog guard cannot become an uncertain navigation",
+      );
+      assert.equal(failure.cleanupConfirmed, true);
+      return true;
+    });
     await assert.rejects(browser.dialog(id, { dialogId: randomUUID(), accept: true }), {
       code: "STALE_DIALOG",
     });

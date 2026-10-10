@@ -12,6 +12,8 @@ import {
   nativeInspection,
 } from "../apps/server/src/executors/graphical-policy.ts";
 import type { Files } from "../apps/server/src/files.ts";
+import { WorkerError } from "../apps/worker/src/errors.ts";
+import { nativeBrowserFailure } from "../apps/worker/src/native-errors.ts";
 import { browserDiagnosticInspection } from "../packages/domain/src/browser-diagnostics.ts";
 
 test("native diagnostic inspection validates concrete commands before granting reading authority", () => {
@@ -129,4 +131,24 @@ test("native errors confirm no input cleanup only for validated diagnostic reads
     false,
   );
   assert.equal(browserDiagnosticInspection(request("act", {})), false);
+});
+
+test("native pending-dialog preflight preserves recovery while mutable failures retain uncertainty", () => {
+  const request = {
+    operation: "perform",
+    envelope: { args: { operation: "navigate", body: { url: "https://example.com/" } } },
+  };
+  const pending = nativeBrowserFailure(request, new WorkerError("BROWSER_DIALOG_PENDING", "guard"));
+  assert.equal(pending.dispatched, false);
+  assert.equal(pending.cleanupConfirmed, true);
+  assert.match(pending.message, /browser_snapshot/);
+  for (const error of [
+    new Error("lost response"),
+    new WorkerError("OUTCOME_UNKNOWN", "input may have occurred"),
+    { code: "BROWSER_DIALOG_PENDING" },
+  ]) {
+    const uncertain = nativeBrowserFailure(request, error);
+    assert.equal(uncertain.dispatched, true);
+    assert.equal(uncertain.cleanupConfirmed, false);
+  }
 });

@@ -6,11 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { chromium } from "playwright";
-import { browserDiagnosticInspection } from "../../../packages/domain/src/browser-diagnostics.ts";
 import { nativeDownloadLimit } from "../../../packages/domain/src/browser-file.ts";
 import { createBrowserManager } from "./browser.ts";
 import { WorkerError } from "./errors.ts";
 import { type NativeBrowserConfig, nativeLaunchOptions } from "./native-config.ts";
+import { nativeBrowserFailure } from "./native-errors.ts";
 
 type Envelope = {
   executorEpoch: number;
@@ -357,12 +357,7 @@ const server = createServer((connection) => {
         });
       } catch (error) {
         respond({
-          error: {
-            message: "Native browser operation failed",
-            code: error instanceof WorkerError ? error.code : "BROWSER_FAILED",
-            dispatched: !browserDiagnosticInspection(raw),
-            cleanupConfirmed: browserDiagnosticInspection(raw),
-          },
+          error: nativeBrowserFailure(raw, error),
         });
       }
     })();
