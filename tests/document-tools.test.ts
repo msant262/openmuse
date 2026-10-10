@@ -376,7 +376,16 @@ test("chat document authoring delegates durably and publishes only after the wor
   });
   await server.agent.worker.tick();
   const redelivery = await server.agent.getTask("owner", resend.id);
-  assert.equal(redelivery.status, "succeeded", redelivery.error ?? redelivery.question);
+  assert.equal(
+    redelivery.status,
+    "succeeded",
+    JSON.stringify({
+      error: redelivery.error,
+      question: redelivery.question,
+      completion: redelivery.completion,
+      artifactIds: redelivery.artifactIds,
+    }),
+  );
   assert.deepEqual(redelivery.artifactIds, task.artifactIds);
   assert.equal(redelivery.completion?.status, "verified");
   assert.equal((await server.files.list("owner")).length, 1);

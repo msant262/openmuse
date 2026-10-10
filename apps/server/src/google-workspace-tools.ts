@@ -6,6 +6,7 @@ import type {
   GoogleMailDraftSummary,
 } from "../../../packages/domain/src/google-mail-draft.ts";
 import { type ActionProposal, emailDraftSchema } from "../../../packages/domain/src/index.ts";
+import { GoogleApiError } from "../../../packages/integrations/src/google.ts";
 import {
   decodeMimeHeader,
   parseAddressList,
@@ -17,6 +18,7 @@ import {
 import type { ActionService } from "./actions.ts";
 import { bindingHash } from "./conversation-inbox.ts";
 import type { Store } from "./db.ts";
+import type { DriveRemoval } from "./drive-removal.ts";
 import { authorizeTaskEffect } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
 import { extractDocumentText } from "./file-library.ts";
@@ -118,6 +120,7 @@ type Binding = {
   mailBefore?: MailSnapshot[];
   mailLabelNames?: string[];
   mailSelection?: MailSelection;
+  driveBefore?: { id: string; name: string };
 };
 const digest = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
 let pinnedCatalog: GoogleWorkspaceCatalog | undefined;
@@ -366,6 +369,16 @@ export class GoogleWorkspaceHarness {
       )
         throw new AppError("Google action binding changed", 409);
       const input = googleExecuteSchema.parse(binding.input);
+      const driveRemovalRequested =
+        input.toolId === "drive.files.delete" ||
+        (input.toolId === "drive.files.update" &&
+          (input.body as { trashed?: unknown } | undefined)?.trashed === true);
+      const driveBefore = binding.driveBefore;
+      if (driveRemovalRequested && (!driveBefore || driveBefore.id !== input.parameters.fileId))
+        throw new AppError(
+          "This Drive approval has no verified file identity. Prepare a new approval for the selected file before removing it.",
+          409,
+        );
       await this.authority(owner, input.toolId, binding.connectionId);
       const upload = await this.upload(owner, input);
       if (upload && digest(upload.bytes) !== binding.uploadSha256)
@@ -395,6 +408,50 @@ export class GoogleWorkspaceHarness {
           }
         }
       } else data = await client.workspaceRequest(request);
+      let driveRemoval: DriveRemoval | undefined;
+      if (driveRemovalRequested && driveBefore) {
+        try {
+          let absent = false;
+          let after: { id?: string; trashed?: boolean } | undefined;
+          try {
+            after = (await client.workspaceRequest(
+              this.catalog.prepare({
+                toolId: "drive.files.get",
+                parameters: {
+                  fileId: driveBefore.id,
+                  fields: "id,name,trashed",
+                  supportsAllDrives: true,
+                },
+              }),
+            )) as typeof after;
+          } catch (error) {
+            if (
+              input.toolId === "drive.files.delete" &&
+              error instanceof GoogleApiError &&
+              [404, 410].includes(error.status)
+            )
+              absent = true;
+            else throw error;
+          }
+          if (
+            input.toolId === "drive.files.delete"
+              ? !absent
+              : after?.id !== driveBefore.id || after?.trashed !== true
+          )
+            throw new Error(
+              "Google Drive did not confirm the requested file removal; inspect its current state before repeating the operation",
+            );
+          driveRemoval = {
+            verified: true,
+            ...driveBefore,
+            trashed: !absent,
+            deleted: absent,
+          };
+        } catch (error) {
+          if (error instanceof Error) Object.assign(error, { outcomeUnknown: true });
+          throw error;
+        }
+      }
       let mailChange: MailChange | undefined;
       if (gmailMessageMutation(input.toolId)) {
         if (!binding.mailBefore)
@@ -420,6 +477,7 @@ export class GoogleWorkspaceHarness {
       const result = {
         status: "succeeded",
         ...(mailChange ? { mailChange } : {}),
+        ...(driveRemoval ? { driveRemoval } : {}),
         ...(binding.mailSelection
           ? {
               mailSelection: {
@@ -704,6 +762,7 @@ export class GoogleWorkspaceHarness {
     let targetVersion: string | undefined;
     let mailBefore: MailSnapshot[] | undefined;
     let mailLabelNames: string[] | undefined;
+    let driveBefore: Binding["driveBefore"];
     if (gmailMessageMutation(input.toolId)) {
       const body = input.body as
         | { ids?: string[]; addLabelIds?: string[]; removeLabelIds?: string[] }
@@ -792,8 +851,17 @@ export class GoogleWorkspaceHarness {
             toolId: "drive.files.get",
             parameters: { fileId: input.parameters.fileId, fields: "id,name" },
           }),
-        )) as { name?: string };
+        )) as { id?: string; name?: string };
       if (file.name) display.resourceName = file.name;
+      if (
+        input.toolId === "drive.files.delete" ||
+        (input.toolId === "drive.files.update" &&
+          (input.body as { trashed?: unknown } | undefined)?.trashed === true)
+      ) {
+        if (file.id !== input.parameters.fileId || typeof file.name !== "string")
+          throw new AppError("Google Drive did not return the selected file identity", 502);
+        driveBefore = { id: file.id, name: file.name };
+      }
     }
     const binding: Binding = {
       input,
@@ -805,6 +873,7 @@ export class GoogleWorkspaceHarness {
       ...(targetVersion ? { targetVersion } : {}),
       ...(mailBefore ? { mailBefore, mailLabelNames } : {}),
       ...(options.mailSelection ? { mailSelection: options.mailSelection } : {}),
+      ...(driveBefore ? { driveBefore } : {}),
       ...(upload ? { uploadSha256: digest(upload.bytes) } : {}),
     };
     if (options.draftCardId) {

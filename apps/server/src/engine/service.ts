@@ -44,6 +44,7 @@ import { credentialHttpRequestSchema } from "../credentials/generic-contracts.ts
 import type { CredentialLoginService } from "../credentials/login.ts";
 import type { Store } from "../db.ts";
 import type { DesktopService } from "../desktop-service.ts";
+import { confirmedDriveRemoval } from "../drive-removal.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
 import type { MailChange } from "../gmail-changes.ts";
@@ -2148,6 +2149,42 @@ export class AgentService {
         : language.startsWith("de")
           ? "Das angeforderte Bild konnte nicht erstellt werden. Es wurde keine Bilddatei geliefert."
           : "I couldn't generate the requested image. No image file was delivered.";
+    }
+    if (
+      completion.status === "verified" &&
+      task.criteria?.length &&
+      task.criteria.every((criterion) => criterion.effect === "drive.delete")
+    ) {
+      const language = (await this.profiles.get(owner, task.originThreadId)).fields.language;
+      const groups = new Map<string, Map<string, { id: string; name: string; deleted: boolean }>>();
+      for (const id of new Set(completion.checks.flatMap((check) => check.evidenceIds))) {
+        const action = await this.db.get<ActionProposal>(owner, "actions", id);
+        if (!action || action.taskId !== task.id) continue;
+        const removal = confirmedDriveRemoval(
+          action,
+          await googleWorkspaceVerificationBinding(this.db, owner, action),
+        );
+        if (!removal) continue;
+        const files = groups.get(removal.account) ?? new Map();
+        files.set(removal.id, removal);
+        groups.set(removal.account, files);
+      }
+      const summaries: string[] = [];
+      for (const [account, files] of groups) {
+        const names = new Map<string, number>();
+        for (const file of files.values()) names.set(file.name, (names.get(file.name) ?? 0) + 1);
+        const listed = [...names]
+          .map(([name, count]) => `“${name}”${count > 1 ? ` (${count})` : ""}`)
+          .join("; ");
+        const deleted = [...files.values()].filter((file) => file.deleted).length;
+        const trashed = files.size - deleted;
+        summaries.push(
+          language.startsWith("pt")
+            ? `Conta: ${account}. ${[trashed ? `${trashed} arquivo${trashed === 1 ? "" : "s"} enviado${trashed === 1 ? "" : "s"} à lixeira` : "", deleted ? `${deleted} arquivo${deleted === 1 ? "" : "s"} excluído${deleted === 1 ? "" : "s"} permanentemente` : ""].filter(Boolean).join("; ")}. Arquivos: ${listed}. Estado conferido no Google Drive.`
+            : `Account: ${account}. ${trashed} file${trashed === 1 ? "" : "s"} moved to trash; ${deleted} permanently deleted. Files: ${listed}. State verified in Google Drive.`,
+        );
+      }
+      if (summaries.length) result = summaries.join("\n\n");
     }
     if (
       completion.status === "verified" &&

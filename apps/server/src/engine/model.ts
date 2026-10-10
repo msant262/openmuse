@@ -485,6 +485,34 @@ export async function executeModelTask(
     const revision = Number(task.state.appliedRevision ?? 0);
     if (
       deliveryOutcome === "completed" &&
+      task.criteria?.some((criterion) => criterion.effect === "drive.delete")
+    ) {
+      const completion = await service.verification.assess(owner, task.id, revision, summary);
+      if (
+        completion.checks.some(
+          (check) =>
+            !check.passed &&
+            task.criteria?.some(
+              (criterion) =>
+                criterion.id === check.criterionId && criterion.effect === "drive.delete",
+            ),
+        )
+      ) {
+        task = await ctx.checkpoint({
+          completion,
+          state: { ...task.state, completionFollowup: completion.remaining },
+        });
+        return {
+          complete: false,
+          repairable: true,
+          missing: completion.remaining,
+          instruction:
+            "The requested Drive removal is incomplete. Continue the existing authorized selection from its original file IDs and confirmed receipts. Prepare the next remaining file's exact approval card; do not ask for the request again or replay a completed removal. Read search shortlist pages when coverage is incomplete. A search, prepared approval or partial selection is not a completed deletion. Report an actual blocker with outcome=partial only when the available native tools cannot resolve it.",
+        };
+      }
+    }
+    if (
+      deliveryOutcome === "completed" &&
       task.criteria?.some((criterion) => criterion.id === "requested-command")
     ) {
       const completion = await service.verification.assess(owner, task.id, revision, summary);
@@ -2611,6 +2639,9 @@ export async function executeModelTask(
         tools.map((tool) => tool.name),
       ),
     promptContext: async (selectedTools) =>
+      (service.composio && !appCatalog
+        ? "The optional app catalog is unavailable. Never request a Composio platform API key. Use configured native tools for the request instead.\n"
+        : "") +
       (requiresAccessConstraintReview(task) || config.researchReviewEnabled
         ? `${DESCRIPTIVE_FIELD_SCOPE}\n`
         : "") +

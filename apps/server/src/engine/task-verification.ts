@@ -16,6 +16,7 @@ import { commandReceiptSchema, computerSearchReceipt } from "../computer-contrac
 import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { DocumentReview } from "../document-review.ts";
+import { driveRemovalEvidence, driveRemovalRequest } from "../drive-removal.ts";
 import type { Files } from "../files.ts";
 import { verifiedGmailOrganization } from "../gmail-organization.ts";
 import { observedDriveSearch } from "../google-drive-search.ts";
@@ -184,7 +185,7 @@ function requestedExecution(prompt: string) {
  * before demanding an attachment; a filename lookup can finish with its answer. */
 function requestedFileOutput(prompt: string, mailRequest = false) {
   const requests = prompt.matchAll(
-    /\b(?:create|generate|produce|build|make|write|draft|export|deliver|download|attach|save|crie|cria|criar|gere|gera|gerar|produza|faça|faz|fazer|monte|montar|elabore|elaborar|escreva|escrever|redija|exporte|exportar|entregue|entregar|baixe|baixar|anexe|anexar|salve|salvar)\b|\b(?:quero|want|need|preciso)\s+(?:(?:um|uma|a|an|the|o|new|novo|nova)\s+)*(?:pdf|docx|xlsx|pptx|txt|csv|arquivo|file|documento|document|resultado|result|output)\b/gi,
+    /\b(?:create|generate|produce|build|make|write|draft|export|deliver|download|attach|save|resend|redeliver|crie|cria|criar|gere|gera|gerar|produza|faça|faz|fazer|monte|montar|elabore|elaborar|escreva|escrever|redija|exporte|exportar|entregue|entregar|baixe|baixar|anexe|anexar|salve|salvar|mande|manda|mandar|reenvie|reenviar)\b|\b(?:quero|want|need|preciso)\s+(?:(?:um|uma|a|an|the|o|new|novo|nova)\s+)*(?:pdf|docx|xlsx|pptx|txt|csv|arquivo|file|documento|document|resultado|result|output)\b/gi,
   );
   return [...requests].some((match) => {
     // Writing an email about an existing document creates a Gmail draft, not a
@@ -251,6 +252,18 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       description:
         "Apply the literal change with patch and confirm the intended file path, changed hashes and replacements. A read, rejected match, unrelated action, or promised change does not complete the edit.",
       requiredItems: editTarget && editTarget.length <= 300 ? [editTarget] : [],
+    });
+  const driveRemoval = driveRemovalRequest(task.prompt);
+  if (driveRemoval)
+    criteria.push({
+      id: driveRemoval.allMatches
+        ? "requested-drive-selection-deletion"
+        : "requested-drive-deletion",
+      kind: "receipt",
+      effect: "drive.delete",
+      description:
+        "Remove every requested Drive file only after human approval and confirm its state by provider readback. Search metadata or one removal cannot complete a group. Continue from the original selected IDs without repeating confirmed changes.",
+      requiredItems: [],
     });
   const mailRequest =
     /\b(?:gmail|e-?mails?)\b/i.test(prompt) ||
@@ -855,6 +868,7 @@ export class TaskVerification {
     );
     const criteria = task.criteria ?? taskCriteria(task);
     const requestedContent = requiredContent(task.prompt);
+    const driveMissing: string[] = [];
     const checks = await Promise.all(
       criteria.map(async (criterion) => {
         const literal =
@@ -980,7 +994,20 @@ export class TaskVerification {
               }
             }
           else if (criterion.kind === "receipt") {
-            if (criterion.effect === "email.organize")
+            if (criterion.effect === "drive.delete") {
+              const removal = driveRemovalEvidence(
+                task.prompt,
+                ops.filter((op) => op.revision === revision),
+                receipts.filter(
+                  (action) =>
+                    action.taskId === taskId &&
+                    (action.dispatchedRevision ?? action.preparedRevision ?? 0) === revision,
+                ),
+                bindings,
+              );
+              evidenceIds = removal.complete ? removal.evidenceIds : [];
+              if (!removal.complete) driveMissing.push(...removal.missing);
+            } else if (criterion.effect === "email.organize")
               evidenceIds = await verifiedGmailOrganization(this.db, owner, taskId, revision);
             else
               evidenceIds = receipts
@@ -1169,6 +1196,7 @@ export class TaskVerification {
     const remaining = criteria
       .filter((_, index) => !checks[index].passed)
       .map((criterion) => criterion.description);
+    remaining.push(...driveMissing);
     // Only server-authored designed documents opt into this newer delivery contract.
     // Existing forms, imports and text files retain their established verification.
     const designed = (

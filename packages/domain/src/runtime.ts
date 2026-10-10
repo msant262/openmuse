@@ -387,6 +387,7 @@ export const completionCriterionSchema = z
         "calendar.create",
         "calendar.update",
         "calendar.delete",
+        "drive.delete",
         "command",
         "browser",
         "external",
