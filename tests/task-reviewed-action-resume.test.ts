@@ -6,6 +6,7 @@ import {
   REVIEWED_ACTION_REPORT,
 } from "../apps/server/src/engine/reviewed-action-context.ts";
 import type { ActionProposal } from "../packages/domain/src/index.ts";
+import { reviewedRemoval } from "./helpers/browser-removal.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
@@ -248,42 +249,11 @@ test("a resumed model corrects obsolete approval prose without dispatching the c
   const task = await server.agent.createTask("owner", {
     prompt: "Delete the document on this page: https://example.com/document",
   });
-  const action = {
-    id: "approved-dialog",
-    taskId: task.id,
-    kind: "external.action",
-    status: "succeeded",
-    dispatchedRevision: 0,
-    preparedRevision: 0,
-    data: { tool: "browser.dialog" },
-    result: JSON.stringify({
-      sessionId: "own-session",
-      snapshotId: "own-snapshot",
-      url: "https://example.com/document",
-      title: "Own document",
-      text: "Document deleted. Deletions: 1.",
-      response: { dialogId: "own-dialog", accept: true },
-    }),
-  };
+  const { action, privateBinding, operations: prepared } = reviewedRemoval(task.id);
   await server.db.put("owner", "actions", action);
+  await server.db.put("owner", "external-action-bindings", privateBinding);
   await server.db.put("owner", "tasks", { ...task, actionId: action.id });
-  await server.agent.journal.prepare("owner", {
-    id: "observed-page",
-    taskId: task.id,
-    revision: 0,
-    bindingHash: "a".repeat(64),
-    executorId: "vps",
-    executorEpoch: 1,
-    resourceFence: 0,
-    status: "succeeded",
-    toolName: "browser_snapshot",
-    args: {},
-    effect: false,
-    runToken: "fixture",
-    resourceLeaseIds: [],
-    createdAt: new Date().toISOString(),
-    receipt: JSON.parse(action.result),
-  });
+  for (const operation of prepared) await server.agent.journal.prepare("owner", operation);
   await server.agent.worker.tick();
   const saved = await server.agent.getTask("owner", task.id);
   assert.equal(saved.status, "succeeded", saved.error ?? saved.question);
@@ -293,7 +263,7 @@ test("a resumed model corrects obsolete approval prose without dispatching the c
   assert.equal(operations.filter((op) => op.toolName === "finish_task").length, 2);
   assert.equal(
     operations.filter((op) => op.toolName.startsWith("browser_") && op.effect).length,
-    0,
+    2,
   );
   const publications = await server.db.list<{ text: string }>("owner", "thread-publications");
   assert.ok(publications.every((p) => !/aguardando sua aprovação/.test(p.text)));

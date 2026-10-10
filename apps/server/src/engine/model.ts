@@ -575,6 +575,29 @@ export async function executeModelTask(
     }
     if (
       deliveryOutcome === "completed" &&
+      task.criteria?.some((criterion) => criterion.id === "requested-browser-deletion")
+    ) {
+      const completion = await service.verification.assess(owner, task.id, revision, summary);
+      if (
+        completion.checks.some(
+          (check) => check.criterionId === "requested-browser-deletion" && !check.passed,
+        )
+      ) {
+        task = await ctx.checkpoint({
+          completion,
+          state: { ...task.state, completionFollowup: completion.remaining },
+        });
+        return {
+          complete: false,
+          repairable: true,
+          missing: completion.remaining,
+          instruction:
+            "The requested browser deletion is incomplete. A visit or page read is not a deletion. Continue the authorized work from the owned snapshots and exact reviewed action. If the approved response already dispatched, read the same page to observe its final deletion confirmation; never repeat that deletion or prepare another approval just to repair the report. An awaiting review pauses at the native approval boundary. If the site or adapter cannot provide a bound approved removal and observed result, report that concrete blocker with outcome=partial instead of claiming success or asking for the original request again.",
+        };
+      }
+    }
+    if (
+      deliveryOutcome === "completed" &&
       task.criteria?.some((criterion) => criterion.id === "requested-command")
     ) {
       const completion = await service.verification.assess(owner, task.id, revision, summary);

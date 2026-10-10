@@ -29,6 +29,7 @@ import {
   googleWorkspaceVerificationBinding,
 } from "../google-workspace-tools.ts";
 import { readablePage } from "../public-web.ts";
+import { browserRemovalEvidence, browserRemovalRequest } from "./browser-removal.ts";
 import { claimsPendingReview, REVIEWED_ACTION_REPORT } from "./reviewed-action-context.ts";
 import type { JournalOperation, TaskJournal } from "./task-journal.ts";
 import { officeContent } from "./task-office.ts";
@@ -274,6 +275,15 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       requiredItems: name ? (name.match(/[\s\S]{1,300}/g) ?? []) : [],
     });
   }
+  if (browserRemovalRequest(task.prompt))
+    criteria.push({
+      id: "requested-browser-deletion",
+      kind: "receipt",
+      effect: "browser",
+      description:
+        "Delete the requested resource on its page with a human-approved, bound browser response and a new explicit deletion confirmation in the resulting page. A visit, read, unanswered or refused dialog, unrelated change or promise cannot complete the task. Inspect the actual result after approval; do not repeat an already dispatched deletion.",
+      requiredItems: [],
+    });
   if (literalFileEdit)
     criteria.push({
       id: "requested-workspace-edit",
@@ -718,6 +728,7 @@ function actionMatches(
   return true;
 }
 function operationMatches(criterion: CompletionCriterion, op: JournalOperation, prompt: string) {
+  if (criterion.id === "requested-browser-deletion") return false;
   const codeMode = criterion.effect === "command" && op.toolName === "execute_code";
   if (
     (!op.effect && !codeMode) ||
@@ -1160,7 +1171,17 @@ export class TaskVerification {
               );
               evidenceIds = removal.complete ? removal.evidenceIds : [];
               if (!removal.complete) driveMissing.push(...removal.missing);
-            } else if (criterion.effect === "email.organize")
+            } else if (criterion.id === "requested-browser-deletion")
+              evidenceIds = await browserRemovalEvidence(
+                this.db,
+                owner,
+                taskId,
+                revision,
+                task.prompt,
+                ops,
+                receipts,
+              );
+            else if (criterion.effect === "email.organize")
               evidenceIds = await verifiedGmailOrganization(this.db, owner, taskId, revision);
             else
               evidenceIds = receipts
