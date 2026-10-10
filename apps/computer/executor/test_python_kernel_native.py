@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from .job_runtime import JobRuntime
-from .python_kernel_native import NativePythonLauncher, ManagedPythonLaunchers
+from .python_kernel_native import NativePythonLauncher, ManagedPythonLaunchers, stop_python_unit
 from .job_runtime import HostBudget, host_snapshot
 from .supervisor import Journal
 from .user_session import UserSession
@@ -112,6 +112,49 @@ class NativePythonLauncherTests(unittest.TestCase):
             handle = self.launcher(self.scope, "@@sentinel@@")
         self.assertFalse(handle.stop())
         self.assertEqual(len(self.launcher.units), 1)
+
+    def frozen_unit(self, observed_group=None, remains_populated=False):
+        self.runtime.cgroup_root = Path(self.directory.name) / "cgroups"
+        group = "/okami.slice/okami-bots.slice/okami-bots-u1003.slice/okami-python-" + "c" * 64 + ".service"
+        directory = self.runtime.cgroup_root / group.lstrip("/")
+        directory.mkdir(parents=True)
+        (directory.parent / "cgroup.freeze").write_text("1")
+        (directory / "cgroup.kill").write_text("")
+        (directory / "cgroup.events").write_text("populated 1\nfrozen 1\n")
+        sibling = directory.parent / "unrelated.service"
+        sibling.mkdir()
+        (sibling / "cgroup.events").write_text("populated 1\nfrozen 1\n")
+        calls = []
+        def runner(args):
+            calls.append(args)
+            if args[1] == "stop":
+                raise subprocess.CalledProcessError(1, args, stderr="Cannot perform operation on frozen unit")
+            killed = (directory / "cgroup.kill").read_text() == "1"
+            if killed and not remains_populated:
+                (directory / "cgroup.events").write_text("populated 0\nfrozen 1\n")
+            return "LoadState=loaded\nActiveState=" + ("failed" if killed and not remains_populated else "active") + "\nControlGroup=" + (observed_group or group) + "\n"
+        self.runtime.runner = runner
+        return directory, sibling, calls
+
+    def test_frozen_owned_unit_is_killed_without_thawing_its_parent_or_sibling(self):
+        directory, sibling, calls = self.frozen_unit()
+        self.assertTrue(stop_python_unit(self.runtime, "node", directory.name))
+        self.assertEqual((directory / "cgroup.kill").read_text(), "1")
+        self.assertEqual((directory.parent / "cgroup.freeze").read_text(), "1")
+        self.assertIn("populated 1", (sibling / "cgroup.events").read_text())
+        self.assertFalse(any(args[1] == "thaw" for args in calls))
+
+    def test_mismatched_systemd_group_is_never_killed(self):
+        directory, sibling, _ = self.frozen_unit(observed_group="/okami.slice/okami-bots.slice/unrelated.service")
+        self.assertFalse(stop_python_unit(self.runtime, "node", directory.name))
+        self.assertEqual((directory / "cgroup.kill").read_text(), "")
+        self.assertIn("populated 1", (sibling / "cgroup.events").read_text())
+
+    def test_kill_request_without_observed_teardown_retains_uncertainty(self):
+        directory, _, _ = self.frozen_unit(remains_populated=True)
+        with patch("executor.python_kernel_native.time.monotonic", side_effect=[0, 6]):
+            self.assertFalse(stop_python_unit(self.runtime, "node", directory.name))
+        self.assertEqual((directory / "cgroup.kill").read_text(), "1")
 
     def managed(self):
         journal = Journal(Path(self.directory.name) / "journal.sqlite")

@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 import threading
+import time
 
 from .filesystem import open_directory
 from .python_kernel import KernelProcess, RUNNER_PATH
@@ -24,15 +25,41 @@ def stop_python_unit(runtime, executor_id, unit, process=None):
         raise ValueError("Invalid owned Python unit")
     expected = (runtime.cgroup_root / "okami.slice" / "okami-bots.slice"
                 / runtime.sessions.slice(executor_id) / unit)
+    expected_group = "/" + str(expected.relative_to(runtime.cgroup_root))
     try:
+        stopped = True
         try: runtime.runner(["systemctl", "stop", unit])
-        except subprocess.CalledProcessError: pass
-        try:
-            observed = runtime.runner(["systemctl", "show", unit, "--property=LoadState,ActiveState,ControlGroup"])
-        except subprocess.CalledProcessError as error:
-            observed = error.stdout or ""
-            if isinstance(observed, bytes): observed = observed.decode(errors="replace")
-        fields = dict(line.split("=", 1) for line in observed.splitlines() if "=" in line)
+        except subprocess.CalledProcessError: stopped = False
+        def observe():
+            try:
+                observed = runtime.runner(["systemctl", "show", unit, "--property=LoadState,ActiveState,ControlGroup"])
+            except subprocess.CalledProcessError as error:
+                observed = error.stdout or ""
+                if isinstance(observed, bytes): observed = observed.decode(errors="replace")
+            fields = dict(line.split("=", 1) for line in observed.splitlines() if "=" in line)
+            if fields.get("ControlGroup") and fields["ControlGroup"] != expected_group:
+                raise ValueError("Owned Python unit has an unexpected cgroup")
+            return fields
+        fields = observe()
+        if (not stopped and fields.get("ActiveState") == "active"
+                and fields.get("ControlGroup") == expected_group and runtime.populated(expected_group)):
+            # systemd refuses StopUnit while the watchdog has frozen the account.
+            # Kill only this root-recorded unit through cgroup v2; never thaw the
+            # account or resume an uncertain process to make shutdown possible.
+            directory = open_directory(expected)
+            try:
+                kill = os.open("cgroup.kill", os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+                try:
+                    if os.write(kill, b"1") != 1: return False
+                finally: os.close(kill)
+            finally: os.close(directory)
+            deadline = time.monotonic() + 5
+            while True:
+                fields = observe()
+                if (fields.get("LoadState") == "not-found" or fields.get("ActiveState") in ("inactive", "failed")) and not runtime.populated(expected_group):
+                    break
+                if time.monotonic() >= deadline: return False
+                time.sleep(.05)
         if not (fields.get("LoadState") == "not-found" or fields.get("ActiveState") in ("inactive", "failed")):
             return False
         if process is not None: process.wait(timeout=10)
