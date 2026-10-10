@@ -14,13 +14,14 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from executor.files import Workspace
 from executor.python_kernel import KernelProcess, RUNNER_PATH
 from executor.python_transport import NativePythonJobs
-from executor.supervisor import Gate, Journal
+from executor.supervisor import Gate, Journal, Supervisor
 
 directory = Path(sys.argv[1])
 registered = sys.argv[2:] == ["--registered"]
@@ -43,7 +44,7 @@ if registered:
     account["workspace"] = str(workspace)
     anchors = [open_directory(account["home"]), open_directory(workspace)]
     runtime = JobRuntime(UserSession({config["executorId"]: account}), executor_id=config["executorId"],
-                         home_fd=anchors[0], workspace_fd=anchors[1])
+                         home_fd=anchors[0], workspace_fd=anchors[1], state_root=directory / "jobs")
     snapshot = lambda: host_snapshot(config["hostId"], accounts=accounts.values())
     budget = HostBudget(snapshot()["memoryTotalBytes"], config.get("reserveBytes", 4 * 1024**3),
         state_path=Path("/var/lib/okami-executor") / ("host-" + config["hostId"] + "-resources.sqlite"))
@@ -171,9 +172,38 @@ try:
                 if not fresh:
                     publish()
                     value = {"replayed": True}
-                elif operation["kind"] == "command":
+                elif operation["kind"] == "command" and operation["capability"] == "python":
                     jobs.start(operation)
                     value = {"started": True}
+                elif operation["kind"] == "command":
+                    if registered:
+                        resource = operation["resourceBudget"]
+                        observed = snapshot()
+                        budget.admit(operation["id"], resource["memoryBytes"], resource["heavy"],
+                            observed["memoryAvailableBytes"], observed.get("unmanagedAccountBytes", 0),
+                            observed.get("managedSessionBytes", 0), "lenovo-okami")
+                        runtime.launch({**operation, "args": {**operation["args"], "memoryMaxBytes": resource["memoryBytes"]}})
+                        deadline = time.monotonic() + operation["args"]["timeoutMs"] / 1000 + 5
+                        while True:
+                            observed = runtime.inspect(operation["id"])
+                            if observed.get("cleanupConfirmed") is True:
+                                break
+                            assert time.monotonic() < deadline
+                            time.sleep(.05)
+                        status = observed["status"]
+                        value = Supervisor.command_receipt(None, operation, status, {**observed, **runtime.output(operation["id"])})
+                        journal.receipt(operation["id"], {"status": status, "data": value})
+                        runtime.release(operation["id"])
+                        budget.release(operation["id"], "lenovo-okami", resource["memoryBytes"], resource["heavy"])
+                    else:
+                        completed = subprocess.run(["/usr/bin/bash", "-lc", operation["args"]["command"]],
+                            cwd=workspace, capture_output=True, text=True, timeout=operation["args"]["timeoutMs"] / 1000,
+                            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
+                        status = "succeeded" if completed.returncode == 0 else "failed"
+                        value = Supervisor.command_receipt(None, operation, status, {"stdout": completed.stdout,
+                            "stderr": completed.stderr, "exitCode": completed.returncode, "cleanupConfirmed": True})
+                        journal.receipt(operation["id"], {"status": status, "data": value})
+                    publish()
                 elif operation["kind"] == "cancel":
                     target = journal.get(operation["args"]["operationId"])["operation"]
                     assert all(target[key] == operation[key] for key in ("executorId", "taskId", "resourceKey"))

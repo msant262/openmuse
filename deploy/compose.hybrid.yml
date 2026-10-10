@@ -18,6 +18,8 @@ services:
       COMPUTER_ENABLED: "true"
       NATIVE_EXECUTOR_ID: ${NATIVE_EXECUTOR_ID:?Set the registered Lenovo executor ID}
       NATIVE_EXECUTOR_REGISTRATIONS_FILE: /run/secrets/native-executors.json
+      NATIVE_PYTHON_ENABLED: ${NATIVE_PYTHON_ENABLED:-false}
+      NATIVE_PYTHON_MEMORY_MB: ${NATIVE_PYTHON_MEMORY_MB:-512}
       BROWSER_FALLBACK_ENABLED: "true"
       BROWSER_EXECUTOR_ID: openmuse-server
       RESOURCE_HOST_ID: openmuse-server

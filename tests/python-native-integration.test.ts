@@ -474,3 +474,102 @@ test("an API-owned cancellation stops the actual Python process and retains the 
     },
   );
 });
+
+test("a Python callback runs the original native command tool while its own cell waits", {
+  timeout: 45_000,
+}, async (t) => {
+  await pythonRuntime(
+    t,
+    async ({ server, registry, task, operation }) => {
+      const native = await peer(registry, operation);
+      try {
+        const backend = new RemoteComputerBackend(registry, {
+          executorId: operation.executorId,
+          pythonEnabled: true,
+          pollMs: 5,
+          context: (owner, id, request) =>
+            currentExecutorContext(
+              owner,
+              id,
+              request?.kind === "command" ? { memoryBytes: 3 * 1024 ** 3, heavy: true } : undefined,
+              currentComputerResourceScope(owner),
+            ),
+        });
+        const computer = auditedComputer(
+          backend,
+          new ActionLog(server.db),
+          "native",
+          server.agent.resourceLeases,
+          "lenovo",
+        );
+        const tool = computerTools(computer, server.files, "owner", "nested-native-command").find(
+          (entry) => entry.name === "run_computer_command",
+        );
+        assert.ok(tool?.execute);
+        let calls = 0;
+        const driven = dispatchPythonRequests(
+          registry,
+          "owner",
+          operation,
+          {
+            shouldContinue: () => true,
+            call: (parent, request) =>
+              withNativePythonHostCall(
+                server.agent.journal,
+                "owner",
+                parent,
+                pythonRpcWire(request),
+                () =>
+                  server.agent.journal.run(
+                    "owner",
+                    task,
+                    {
+                      id: `nested-native:${pythonHostCallId(parent.id, request)}`,
+                      toolCallId: pythonHostCallId(parent.id, request),
+                      name: request.name,
+                      args: request.args,
+                    },
+                    async () => {
+                      calls++;
+                      return (tool.execute as (args: unknown) => Promise<unknown>)(request.args);
+                    },
+                    true,
+                  ),
+              ),
+          },
+          5,
+        );
+        await native.start();
+        const observed = await driven;
+        assert.equal(observed.status, "succeeded", JSON.stringify(observed));
+        assert.equal(calls, 1);
+        assert.match(
+          (await backend.command("owner", operation.id)).stdout,
+          /nested-status succeeded 0[\s\S]*126/,
+        );
+        const operations = await server.agent.journal.operations("owner", task.id);
+        const child = operations.find(
+          (op) =>
+            op.nativeEnvelope?.capability === "command" && op.nativeEnvelope?.kind === "command",
+        );
+        assert.ok(child);
+        assert.equal(child.status, "succeeded");
+        assert.equal(child.nativeEnvelope?.resourceKey, "cpu-heavy:lenovo");
+        const session = operations.find((op) => op.id === operation.id);
+        assert.equal(session?.status, "succeeded");
+        assert.equal(
+          (await server.db.list("owner", "computer-command-holds")).filter((hold) => !hold.complete)
+            .length,
+          0,
+        );
+      } finally {
+        await native.close();
+      }
+    },
+    ["run_computer_command"],
+    {
+      timeoutMs: 15_000,
+      code: "from hermes_tools import run_computer_command\nreceipt = run_computer_command({'command': 'printf 126', 'cwd': '/workspace', 'timeoutMs': 10000, 'background': False, 'operationId': 'owned-nested-command'})\nprint('nested-status', receipt['status'], receipt['exitCode'])\nprint(receipt['stdout'])",
+    },
+  );
+});

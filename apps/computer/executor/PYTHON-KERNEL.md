@@ -122,7 +122,11 @@ endpoints, M3/M4 task authority, the original computer export/Files publisher,
 native Gate/Journal/PythonJobs and real interpreters. They verify complete
 20,000-item RPC results, exact attachment bytes, long-output export, same-ID
 delivery without another effect, host-review stopping later source lines and
-an API-owned cancellation retaining its interrupted outcome. Test provider and
+an API-owned cancellation retaining its interrupted outcome. A nested ordinary
+native command also runs through the original computer tool, M3/M4 task journal,
+separate CPU-heavy lease and physical command budget while its Python cell waits.
+The four cases pass both locally and with actual registered systemd units.
+Test provider and
 review values remain fixtures. The default OS launcher is local; the opt-in
 registered-unit run uses root-owned staged sources, the actual registered
 user/cgroup/RAM reservation and a private QA workspace, with no production
