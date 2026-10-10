@@ -700,6 +700,9 @@ export class BrowserService {
               );
             return JSON.stringify(result);
           }),
+          undefined,
+          undefined,
+          { taskId: proposal.taskId },
         ),
       );
     });

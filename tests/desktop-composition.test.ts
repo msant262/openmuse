@@ -12,7 +12,7 @@ import type { DesktopFrame } from "../packages/domain/src/desktop.ts";
 import { hello, nodeToken, registration } from "./helpers/executors.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
-async function fixture(t: Parameters<typeof taskRuntime>[0]) {
+async function fixture(t: Parameters<typeof taskRuntime>[0], browserFallbackEnabled = false) {
   const runtimeCleanup: (() => Promise<void>)[] = [];
   const server = await taskRuntime(
     { after: (close: () => Promise<void>) => runtimeCleanup.push(close) } as unknown as Parameters<
@@ -24,6 +24,7 @@ async function fixture(t: Parameters<typeof taskRuntime>[0]) {
       nativeExecutorId: registration.executorId,
       nativeExecutors: [{ ...registration, owner: "local-user" }],
       taskWorkerEnabled: false,
+      browserFallbackEnabled,
     },
   );
   const session = {
@@ -769,7 +770,7 @@ test("trusted native viewer imports completed browser files under its existing i
 
 for (const decision of ["approve", "deny"] as const)
   test(`native browser dialog ${decision} executes from a real admitted task and never repeats the decision`, async (t) => {
-    const server = await fixture(t);
+    const server = await fixture(t, true);
     const browser = server.agent.browser;
     const dialogId = randomUUID();
     await server.call("pendingDialog", {
@@ -795,7 +796,7 @@ for (const decision of ["approve", "deny"] as const)
           browser.runAutomated(
             owner,
             task.id,
-            server.session.browserSessionId,
+            undefined,
             undefined,
             undefined,
             true,
@@ -811,14 +812,18 @@ for (const decision of ["approve", "deny"] as const)
     });
     await server.agent.worker.tick();
     const current = await server.agent.getTask("local-user", task.id);
-    assert.equal(current.status, "waiting_approval");
+    assert.equal(current.status, "waiting_approval", current.error ?? JSON.stringify(current));
     const proposal = await server.db.get<import("../packages/domain/src/index.ts").ActionProposal>(
       "local-user",
       "actions",
       current.actionId!,
     );
     assert.ok(proposal);
-    assert.equal((await server.call("state")).dialogResponses.length, 0);
+    const preparedState = await server.call("state");
+    assert.equal(preparedState.dialogResponses.length, 0);
+    const opensBeforeDecision = preparedState.browserEnvelopes.filter(
+      (op: ExecutorOperation) => op.args.operation === "open",
+    ).length;
     const outcome = await server.actions.decide("local-user", proposal.id, proposal.hash, decision);
     assert.equal(outcome.status, decision === "approve" ? "succeeded" : "denied", outcome.error);
     assert.equal(
@@ -827,6 +832,11 @@ for (const decision of ["approve", "deny"] as const)
       "native dismissal also needs trusted execution provenance",
     );
     const state = await server.call("state");
+    assert.equal(
+      state.browserEnvelopes.filter((op: ExecutorOperation) => op.args.operation === "open").length,
+      opensBeforeDecision,
+      "a review must answer the existing dialog without reopening its page",
+    );
     assert.equal(state.dialog, null);
     assert.deepEqual(state.dialogResponses, [{ dialogId, accept: decision === "approve" }]);
     const delivery = state.browserEnvelopes.find(
