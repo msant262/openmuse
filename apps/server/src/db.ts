@@ -230,6 +230,15 @@ export class Store {
       ...(result.rows.length > options.limit ? { nextCursor: entries.at(-1)?.id } : {}),
     };
   }
+  async learnedProcedureIds(owner: string, prefix: string): Promise<string[]> {
+    const result = await this.db.query(
+      `SELECT to_jsonb(id) AS data FROM records WHERE owner=$1 AND kind='playbooks'
+       AND id LIKE ($2 || '%') AND data->'versions'->-1->>'learned'='true'
+       ORDER BY id LIMIT 2`,
+      [owner, prefix],
+    );
+    return result.rows.map((row) => row.data as unknown as string);
+  }
   async procedureUsage(owner: string, id: string, version?: number) {
     const result = await this.db.query(
       `WITH runs AS (SELECT data FROM records WHERE owner=$1 AND kind='playbook-runs' AND data->>'procedureId'=$2 AND ($3::text IS NULL OR data->>'procedureVersion'=$3)),

@@ -27,6 +27,14 @@ export class Playbooks {
   catalog(owner: string, raw: unknown = {}) {
     return this.service.db.procedureCatalog(owner, procedureCatalogSchema.parse(raw));
   }
+  async resolveSkillReference(owner: string, reference: string) {
+    const prefix = /^ref-([a-f0-9]{16})$/.exec(reference)?.[1];
+    if (!prefix) return reference;
+    const ids = await this.service.db.learnedProcedureIds(owner, prefix);
+    if (!ids.length) throw new AppError("Procedure not found", 404);
+    if (ids.length !== 1) throw new AppError("Ambiguous skill reference; use its full ID", 409);
+    return ids[0];
+  }
   async read(owner: string, raw: unknown, viewKey?: string) {
     const input = procedureReadSchema.parse(raw);
     const record = await this.get(owner, input.id);

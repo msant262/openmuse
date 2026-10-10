@@ -466,8 +466,9 @@ export async function executeModelTask(
       accessAudit: review.accessAudit,
       requestAudit: review.requestAudit,
       descriptiveFieldPolicy: DESCRIPTIVE_FIELD_SCOPE,
-      instruction:
-        "No document was rendered. accessAudit identifies each selected option's assessed eligibility and source; requestAudit distinguishes satisfied fields from actual gaps. These assessments are not new source reads. Repair the failed options and requirements while keeping supported facts. Replace an unsuitable or unconfirmed option rather than asking the person to relax clear criteria. A design change or another operationId cannot fix unchanged facts.",
+      instruction: review.needsMoreResearch
+        ? "No document was rendered. accessAudit identifies each selected option's assessed eligibility and source; requestAudit distinguishes satisfied fields from actual gaps. These assessments are not new source reads. Repair the failed options and requirements while keeping supported facts. Replace an unsuitable or unconfirmed option rather than asking the person to relax clear criteria. A design change or another operationId cannot fix unchanged facts."
+        : "No document was rendered. The observed sources suffice; correct only the content gaps in missing and nextSteps using those saved observations. Keep qualified options and supported facts. Recover full source text with read_tool_output if needed, then retry create_document with corrected content. Do not restart research or ask permission to correct your own text. Preserve the original requirements.",
     };
   };
   const deliver = async (
@@ -2230,11 +2231,16 @@ export async function executeModelTask(
           return {
             paused: false,
             repairable: true,
-            status: "continue_authorized_research",
+            status:
+              publicRecovery.needsMoreResearch === false
+                ? "continue_document_repair"
+                : "continue_authorized_research",
             missing: publicRecovery.missing,
             nextSteps: publicRecovery.nextSteps,
             instruction:
-              "The existing factual check identifies public research gaps, not missing private user input. Continue researching or replacing your own unqualified choices within the original request. The person already authorized selection of qualifying options; do not ask permission to replace your own selection or offer fewer items, paid/unknown options, or relaxed criteria. Preserve specifically named requirements. Recover full source text, read relevant alternatives and verify facts before rendering. If observed access/provider blockers exhaust the relevant alternatives, finish with outcome=partial and describe those concrete limitations; do not turn an incomplete selection into an approval question.",
+              publicRecovery.needsMoreResearch === false
+                ? "The observed sources already suffice. Correct only the content gaps in missing and nextSteps using the saved observations, then retry the document. Keep qualified options and supported facts. Do not restart research or ask permission to correct your own text; the original request authorizes this correction. Recover full source text with read_tool_output if needed and preserve the original requirements."
+                : "The existing factual check identifies public research gaps, not missing private user input. Continue researching or replacing your own unqualified choices within the original request. The person already authorized selection of qualifying options; do not ask permission to replace your own selection or offer fewer items, paid/unknown options, or relaxed criteria. Preserve specifically named requirements. Recover full source text, read relevant alternatives and verify facts before rendering. If observed access/provider blockers exhaust the relevant alternatives, finish with outcome=partial and describe those concrete limitations; do not turn an incomplete selection into an approval question.",
           };
         }
         const request = await service.interactions.create(owner, {

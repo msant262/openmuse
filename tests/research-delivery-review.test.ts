@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { reviewResearchDelivery } from "../apps/server/src/engine/research-delivery-review.ts";
+import { FileLibrary } from "../apps/server/src/file-library.ts";
 import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime as baseTaskRuntime } from "./helpers/task-runtime.ts";
 
@@ -178,6 +179,118 @@ test("free-only recommendations repair unconfirmed access with the selected mode
   assert.match(saved.result ?? "", /complete course is free/);
   assert.equal(saved.question, "");
   assert.equal(fixture.imageBriefRequests.length, 0);
+});
+
+test("a document wording repair stays a content correction through an unnecessary user question", async (t) => {
+  let fileId = "",
+    receiptId = "";
+  const content = (certificate: string) =>
+    `# Open AI\n\nAll lessons are free. The optional certificate ${certificate}.\n\nSource: https://courses.example/open`;
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://courses.example/open" } },
+        {
+          name: "create_document",
+          arguments: {
+            name: "Comparison",
+            format: "pdf",
+            content: content("is free"),
+            operationId: "incorrect",
+          },
+        },
+        {
+          name: "ask_user",
+          arguments: { question: "Posso continuar pesquisando e trocar o curso?" },
+        },
+        {
+          name: "create_document",
+          arguments: {
+            name: "Comparison",
+            format: "pdf",
+            content: content("costs €20"),
+            operationId: "corrected",
+          },
+        },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: { summary: "Comparison attached.", artifactIds: [fileId] },
+        },
+      ][i],
+    {
+      researchReview: (_body, i) => ({
+        complete: i !== 0,
+        needsMoreResearch: false,
+        missing: i === 0 ? ["The certificate price in the document is incorrect"] : [],
+        nextSteps:
+          i === 0
+            ? ["Correct only the certificate price to €20 using the already read source"]
+            : [],
+        accessAudit: [
+          {
+            option: "Open AI",
+            access: "free",
+            sourceUrl: "https://courses.example/open",
+            quote: "All lessons are free.",
+          },
+        ],
+      }),
+    },
+  );
+  const f = await baseTaskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: false,
+  });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "<main>All lessons are free. The optional certificate costs €20.</main>",
+  }));
+  const create = f.agent.media.createDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "createDocument", async (...args: Parameters<typeof create>) => {
+    const result = await create(...args);
+    fileId = result.fileId;
+    return result;
+  });
+  const inspect = f.agent.media.inspectDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "inspectDocument", async (...args: Parameters<typeof inspect>) => {
+    const result = await inspect(...args);
+    receiptId = result.receiptId;
+    return result;
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Research a free AI course and deliver a PDF with its certificate price.",
+  });
+  await f.agent.worker.tick();
+  const operations = await f.agent.journal.operations("owner", task.id);
+  const correction = operations.find((op) => op.toolName === "create_document")?.receipt as {
+    instruction: string;
+    needsMoreResearch: boolean;
+  };
+  const question = operations.find((op) => op.toolName === "ask_user")?.receipt as {
+    status: string;
+    instruction: string;
+  };
+  assert.equal(correction.needsMoreResearch, false);
+  assert.doesNotMatch(correction.instruction, /Replace an unsuitable|Repair the failed options/);
+  assert.equal(question.status, "continue_document_repair");
+  assert.doesNotMatch(question.instruction, /Continue researching or replacing/);
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.question ?? saved.result);
+  assert.equal(read.mock.callCount(), 1);
+  assert.equal((await f.db.list("owner", "interaction-requests")).length, 0);
+  const extracted = await new FileLibrary(f.agent.files, f.db).read("owner", {
+    fileId,
+    offset: 0,
+    limit: 10000,
+  });
+  assert.match(extracted.text, /certificate costs €20/);
+  assert.equal(fixture.reviewRequests.length, 3);
 });
 
 test("free-course PDF content is rejected before rendering, then actual corrected bytes and pixels pass delivery", async (t) => {

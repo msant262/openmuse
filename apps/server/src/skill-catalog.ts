@@ -93,7 +93,7 @@ function learnedSkill(procedure: ProcedureVersion, tools: ReadonlySet<string>): 
 export class SkillCatalog {
   constructor(
     readonly config: Pick<Config, "dataDir">,
-    private readonly learned?: Pick<Playbooks, "catalog" | "read">,
+    private readonly learned?: Pick<Playbooks, "catalog" | "read" | "resolveSkillReference">,
   ) {}
 
   private async root(source: "builtin" | "operator", owner: string) {
@@ -231,14 +231,25 @@ export class SkillCatalog {
     if (this.learned) {
       let cursor: string | undefined;
       let scanned = 0;
+      const referenceCounts = new Map<string, number>();
       do {
-        const page = await this.learned.catalog(owner, { cursor, limit: 30 });
+        // Archived identities still reserve their reference; an old checkpoint
+        // must never silently select a different colliding workflow.
+        const page = await this.learned.catalog(owner, {
+          cursor,
+          limit: 30,
+          includeArchived: true,
+        });
         for (const entry of page.entries) {
           if (++scanned > maxDirectories) {
             incomplete = true;
             break;
           }
           if (!entry.learned) continue;
+          if (/^[a-f0-9]{64}$/.test(entry.id)) {
+            const reference = entry.id.slice(0, 16);
+            referenceCounts.set(reference, (referenceCounts.get(reference) ?? 0) + 1);
+          }
           try {
             const {
               content: _content,
@@ -257,6 +268,11 @@ export class SkillCatalog {
         }
         cursor = page.nextCursor ?? undefined;
       } while (cursor && scanned <= maxDirectories);
+      for (const metadata of skills) {
+        const id = /^learned:([a-f0-9]{64})$/.exec(metadata.id)?.[1];
+        if (id && !incomplete && referenceCounts.get(id.slice(0, 16)) === 1)
+          metadata.id = `learned:ref-${id.slice(0, 16)}`;
+      }
     }
     return { skills, incomplete };
   }
@@ -265,14 +281,15 @@ export class SkillCatalog {
     const parsed = skillId.parse(id);
     if (parsed.startsWith("learned:")) {
       if (!this.learned) throw new Error("Learned skills unavailable");
-      const procedure = await this.learned.read(owner, { id: parsed.slice("learned:".length) });
+      const id = await this.learned.resolveSkillReference(owner, parsed.slice("learned:".length));
+      const procedure = await this.learned.read(owner, { id });
       const result = learnedSkill(procedure, new Set(toolNames));
       await this.learned.read(
         owner,
         { id: procedure.id, version: procedure.version },
         `skill-read:${randomUUID()}`,
       );
-      return result;
+      return { ...result, id: parsed };
     }
     const [source, name] = parsed.split(":") as ["builtin" | "operator", string];
     return this.readFromRoot(await this.root(source, owner), source, name, new Set(toolNames));

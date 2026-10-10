@@ -98,9 +98,12 @@ test("verified learned methods are discoverable and readable through real skill 
     },
     [task.id],
   );
-  const id = `learned:${saved.id}`;
+  const legacyId = `learned:${saved.id}`;
   const found = await f.call("skills_search", { query: "Rail comparison" });
-  assert.ok(found.skills.some((s: { id: string }) => s.id === id));
+  const selected = found.skills.find((s: { name: string }) => s.name === saved.title);
+  assert.ok(selected);
+  assert.match(selected.id, /^learned:ref-[a-f0-9]{16}$/);
+  const id = selected.id;
   assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 0);
   const read = await f.call("skills_read", { id });
   assert.equal(read.source, "learned");
@@ -111,9 +114,12 @@ test("verified learned methods are discoverable and readable through real skill 
   assert.equal(read.truncated, false);
   assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 1);
   const catalog = new SkillCatalog(f.agent.config, f.agent.playbooks);
+  const legacyRead = await catalog.read("owner", legacyId, ["read_runtime"]);
+  assert.equal(legacyRead.content, read.content, "old checkpoints still read the same method");
+  assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 2);
   await assert.rejects(catalog.read("other-owner", id, ["read_runtime"]), /not found/i);
   await assert.rejects(catalog.read("owner", id, []), /Ineligible/);
-  assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 1);
+  assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 2);
   assert.ok(!(await catalog.inventory("owner", [])).skills.some((s) => s.id === id));
   await f.agent.playbooks.manage("owner", saved.id, {
     requestId: "archive-method",
@@ -123,7 +129,49 @@ test("verified learned methods are discoverable and readable through real skill 
   });
   assert.ok(!(await f.call("skills_list")).skills.some((s: { id: string }) => s.id === id));
   await assert.rejects(catalog.read("owner", id, ["read_runtime"]), /Ineligible/);
-  assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 1);
+  assert.equal((await f.agent.playbooks.usage("owner", saved.id)).views, 2);
+});
+
+test("ambiguous learned skill references never choose a method or cross owners", async (t) => {
+  const f = await fixture(t);
+  const prefix = "a".repeat(16);
+  const firstId = prefix + "1".repeat(48);
+  const secondId = prefix + "2".repeat(48);
+  const record = (id: string, title: string) => ({
+    id,
+    version: 1,
+    versions: [
+      {
+        id,
+        title,
+        version: 1,
+        learned: true,
+        lifecycle: "active" as const,
+        savedAt: new Date().toISOString(),
+        binding: "b".repeat(64),
+        requestId: id,
+        sourceTaskId: "fixture",
+        inputs: [],
+        steps: [`Read ${title}.`],
+        verification: ["Check the observed result."],
+        requiredTools: ["read_runtime"],
+      },
+    ],
+  });
+  await f.db.put("owner", "playbooks", record(firstId, "First method"));
+  await f.db.put("other-owner", "playbooks", record(secondId, "Other person's method"));
+  const catalog = new SkillCatalog(f.agent.config, f.agent.playbooks);
+  const shortId = `learned:ref-${prefix}`;
+  assert.match((await catalog.read("owner", shortId, ["read_runtime"])).content, /First method/);
+  await f.db.put("owner", "playbooks", record(secondId, "Second method"));
+  await assert.rejects(catalog.read("owner", shortId, ["read_runtime"]), /ambiguous/i);
+  const inventory = await catalog.inventory("owner", ["read_runtime"]);
+  assert.ok(inventory.skills.some((s) => s.id === `learned:${firstId}`));
+  assert.ok(inventory.skills.some((s) => s.id === `learned:${secondId}`));
+  assert.match(
+    (await catalog.read("owner", `learned:${secondId}`, ["read_runtime"])).content,
+    /Second method/,
+  );
 });
 
 async function fixture(t: TestContext) {
