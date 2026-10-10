@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import { browserDiagnosticInspection } from "../packages/domain/src/browser-diagnostics.ts";
 import type { BrowserService } from "../apps/server/src/browser.ts";
 import type { ComputerBackend } from "../apps/server/src/computer-contract.ts";
 import { computerTools } from "../apps/server/src/computer-tools.ts";
@@ -70,4 +71,26 @@ test("the actual diagnostics tools participate in progressive schema discovery",
     2,
   );
   assert.match(JSON.stringify(described), /DOM.getDocument/);
+});
+
+test("native errors confirm no input cleanup only for validated diagnostic reads", () => {
+  const request = (operation: string, body: unknown) => ({
+    operation: "perform",
+    envelope: { args: { operation, body } },
+  });
+  assert.equal(browserDiagnosticInspection(request("cdp", { method: "Browser.getVersion" })), true);
+  assert.equal(browserDiagnosticInspection(request("console", {})), true);
+  assert.equal(
+    browserDiagnosticInspection(
+      request("cdp", { method: "Page.navigate", params: { url: "https://example.com/" } }),
+    ),
+    false,
+  );
+  assert.equal(
+    browserDiagnosticInspection(
+      request("cdp", { method: "Browser.getVersion", params: { expression: "fetch('/delete')" } }),
+    ),
+    false,
+  );
+  assert.equal(browserDiagnosticInspection(request("act", {})), false);
 });

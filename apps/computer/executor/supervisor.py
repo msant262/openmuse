@@ -148,6 +148,22 @@ class Journal:
                     "data":{**((receipt or {}).get("data") or {}),"cleanupConfirmed":True,"cleanupOperationId":reset["id"]},
                     "message":"Fixed desktop session inputs were released; earlier effects remain uncertain"})
 
+    def diagnostic_cleanup(self):
+        """Reconcile a blocked version read; preserve its original uncertain result.
+
+        Browser.getVersion has no input/site effect. This narrow upgrade never
+        replays it and does not clear arbitrary earlier graphical operations.
+        """
+        with self.lock:
+            if getattr(self,"_diagnostic_cleanup_done",False):return
+            rows=self.db.execute("SELECT id,envelope,receipt FROM operations WHERE json_extract(envelope,'$.kind')='browser' AND json_extract(envelope,'$.args.operation')='cdp' AND json_extract(envelope,'$.args.body.method')='Browser.getVersion' AND json_extract(receipt,'$.status')='outcome_unknown' AND json_extract(receipt,'$.data.code')='BROWSER_CONTROLLED' AND COALESCE(json_extract(receipt,'$.data.cleanupConfirmed'),0)!=1").fetchall()
+            for operation_id,envelope,raw in rows:
+                operation=json.loads(envelope);receipt=json.loads(raw);args=operation.get("args",{});body=args.get("body",{})
+                if (operation.get("kind")!="browser" or args.get("operation")!="cdp" or body.get("method")!="Browser.getVersion" or body.get("params",{})!={} or set(body)-{"method","params"}
+                        or receipt.get("status")!="outcome_unknown" or receipt.get("data",{}).get("code")!="BROWSER_CONTROLLED" or receipt.get("data",{}).get("cleanupConfirmed") is True):continue
+                self.receipt(operation_id,{**receipt,"data":{**receipt.get("data",{}),"cleanupConfirmed":True,"cleanupReason":"Read-only Browser.getVersion required no input cleanup"}})
+            self._diagnostic_cleanup_done=True
+
     def recover(self):
         with self.lock:
             rows = self.db.execute("SELECT id,receipt,envelope FROM operations").fetchall()
@@ -471,6 +487,7 @@ class Supervisor:
 
     def connect(self):
         self.gate.close("reconnect")
+        self.journal.diagnostic_cleanup()
         hello = {"hostId":self.config["hostId"], "executorId":self.config["executorId"],
                  "osAccountId":str(self.sessions.account(self.config["executorId"])["uid"]), "bootId":self.boot_id,
                  "instanceId":self.instance_id,
@@ -565,7 +582,7 @@ class Supervisor:
     def perform(self, operation):
         inspection = (operation["kind"] == "file" and operation["args"].get("operation") in ("list","search","read","read_binary","stat")
                       or operation["kind"]=="desktop" and operation["args"].get("operation")=="observe"
-                      or operation["kind"]=="browser" and operation["args"].get("operation") in ("snapshot","read","inspect","agent-screenshot","screenshot","control","downloads","download"))
+                      or operation["kind"]=="browser" and operation["args"].get("operation") in ("snapshot","images","console","cdp","read","inspect","agent-screenshot","screenshot","control","downloads","download"))
         containment=(operation["kind"]=="cancel" or operation["kind"]=="session" and operation["args"].get("operation")=="stop"
                      or operation["kind"]=="desktop" and operation["args"].get("operation")=="reset")
         if not self.journal.receive(operation):

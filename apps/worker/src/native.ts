@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { chromium } from "playwright";
+import { browserDiagnosticInspection } from "../../../packages/domain/src/browser-diagnostics.ts";
 import { nativeDownloadLimit } from "../../../packages/domain/src/browser-file.ts";
 import { createBrowserManager } from "./browser.ts";
 import { WorkerError } from "./errors.ts";
@@ -344,17 +345,20 @@ const server = createServer((connection) => {
       connection.end(Buffer.concat([prefix, bytes]));
     };
     void (async () => {
+      let raw: unknown;
       try {
+        const request = JSON.parse(buffer.subarray(4, expected + 4).toString("utf8"));
+        raw = request;
         respond({
-          data: await handle(JSON.parse(buffer.subarray(4, expected + 4).toString("utf8"))),
+          data: await handle(request),
         });
       } catch (error) {
         respond({
           error: {
             message: "Native browser operation failed",
             code: error instanceof WorkerError ? error.code : "BROWSER_FAILED",
-            dispatched: true,
-            cleanupConfirmed: false,
+            dispatched: !browserDiagnosticInspection(raw),
+            cleanupConfirmed: browserDiagnosticInspection(raw),
           },
         });
       }

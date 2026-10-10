@@ -275,6 +275,57 @@ test("console and CDP observations require typed current receipts, retained logs
   }
 });
 
+test("a requested installed browser version cannot complete from a page title or console alone", async (t) => {
+  const runtime = await taskRuntime(t);
+  const task = await runtime.agent.createTask("owner", {
+    prompt: "Abra example.com no computador do agente e confira a versão do navegador usado.",
+  });
+  assert.ok(task.criteria?.some((c) => c.id === "requested-browser-version"));
+  const operation = {
+    id: `${task.id}:version`,
+    taskId: task.id,
+    revision: 0,
+    executorId: "native",
+    executorEpoch: 1,
+    resourceFence: 0,
+    runToken: "test",
+    resourceLeaseIds: [],
+    createdAt: new Date().toISOString(),
+    status: "succeeded",
+    bindingHash: "a".repeat(64),
+    effect: false,
+    args: { command: { method: "Browser.getVersion" } },
+    toolName: "browser_cdp",
+  };
+  const base = {
+    sessionId: randomUUID(),
+    url: "https://example.com/",
+    observedAt: new Date().toISOString(),
+  };
+  for (const [label, receipt, expected] of [
+    ["console only", { ...base, entries: [], dropped: 0, nextAfter: null, cleared: false }, false],
+    ["missing version", { ...base, method: "Browser.getVersion", result: {} }, false],
+    [
+      "actual version",
+      { ...base, method: "Browser.getVersion", result: { product: "Chrome/150.0.0.1" } },
+      true,
+    ],
+  ] as const) {
+    await runtime.db.put("owner", "task-operations", {
+      ...operation,
+      toolName: label === "console only" ? "browser_console" : "browser_cdp",
+      receipt,
+    });
+    const assessed = await runtime.agent.verification.assess(
+      "owner",
+      task.id,
+      0,
+      "The installed browser is Chrome 150.0.0.1.",
+    );
+    assert.equal(assessed.status === "verified", expected, label);
+  }
+});
+
 test("owned native search observations verify a lookup, including bounded positive matches, without accepting incomplete absence", async (t) => {
   const runtime = await taskRuntime(t);
   const task = await runtime.agent.createTask("owner", {

@@ -150,3 +150,25 @@ test("console secrets are masked both before capture and when a credential is re
   assert.equal(result.entries.length, 2);
   assert.equal(result.entries[0].text, "password=[redacted]");
 });
+
+test("read-only CDP does not consume the native input fence", { timeout: 30_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "okami-cdp-authority-"));
+  let denyInput = false;
+  const browser = await createBrowserManager({
+    dataDir: directory,
+    beforeEffect: () => {
+      if (denyInput) throw new Error("input fence differs from inspection fence");
+    },
+  });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/diagnostics");
+    denyInput = true;
+    const version = await browser.cdp(id, { method: "Browser.getVersion" });
+    assert.match(String(version.result.product), /Chrome/);
+    await assert.rejects(browser.navigate(id, "https://browser.fixture.test/"), /input fence/);
+  } finally {
+    await browser.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

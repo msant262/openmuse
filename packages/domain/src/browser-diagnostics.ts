@@ -80,3 +80,19 @@ export const browserCdpSchema = z.object({
   method: z.enum(browserCdpInputSchema.options.map((option) => option.shape.method.value)),
   result: z.record(z.string(), z.unknown()),
 });
+
+/** Exact private worker routes whose failures cannot mean browser input ran. */
+export function browserDiagnosticInspection(raw: unknown) {
+  const request = z
+    .object({
+      operation: z.literal("perform"),
+      envelope: z.object({
+        args: z.object({ operation: z.enum(["console", "cdp"]), body: z.unknown() }),
+      }),
+    })
+    .safeParse(raw);
+  if (!request.success) return false;
+  const { operation, body } = request.data.envelope.args;
+  return (operation === "cdp" ? browserCdpInputSchema : browserConsoleInputSchema).safeParse(body)
+    .success;
+}

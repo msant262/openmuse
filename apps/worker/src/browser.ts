@@ -190,8 +190,8 @@ export async function createBrowserManager(options: {
     }
     return list;
   }
-  function guardAgent(id: string) {
-    options.beforeEffect?.();
+  function guardAgent(id: string, effect = true) {
+    if (effect) options.beforeEffect?.();
     if (sessions.get(id)?.control === "human")
       throw new WorkerError(
         "BROWSER_CONTROLLED",
@@ -608,7 +608,7 @@ export async function createBrowserManager(options: {
             "Choose a supported CDP inspection command. Use browser actions for site changes.",
             422,
           );
-        guardAgent(id);
+        guardAgent(id, false);
         const instance = active(id);
         await validatePage(instance);
         await instance.agent.prepareProgrammaticObservation();

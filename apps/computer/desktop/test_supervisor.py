@@ -18,6 +18,21 @@ def operation(identity, session="display", generation="generation", revision=1, 
 
 
 class SupervisorDesktopTests(unittest.TestCase):
+    def test_blocked_browser_version_read_reconciles_cleanup_without_replaying_or_faking_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            journal=Journal(Path(temporary)/"journal.sqlite");self.addCleanup(journal.close)
+            for identity,method in [("version","Browser.getVersion"),("mutation","Page.navigate")]:
+                value=operation(identity);value["kind"]="browser";value["args"].update(operation="cdp",body={"method":method,"params":{}})
+                journal.receive(value);journal.receipt(identity,{"status":"outcome_unknown","message":"Original failed read","data":{"code":"BROWSER_CONTROLLED","cleanupConfirmed":False}})
+            original=journal.get("mutation")
+            journal.diagnostic_cleanup()
+            receipt=journal.get("version")
+            self.assertEqual(receipt["receipt"]["status"],"outcome_unknown")
+            self.assertEqual(receipt["receipt"]["message"],"Original failed read")
+            self.assertTrue(receipt["receipt"]["data"]["cleanupConfirmed"])
+            self.assertEqual(journal.get("mutation"),original)
+            journal.diagnostic_cleanup();self.assertEqual(journal.get("version"),receipt)
+
     def test_cold_desktop_waits_only_before_socket_connection_and_respects_gate(self):
         client=DesktopClient("node",{"uid":1003})
         gate=SimpleNamespace(quarantined=False,open=True,clock=lambda:0,deadline=40)

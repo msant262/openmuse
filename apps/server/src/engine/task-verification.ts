@@ -511,6 +511,19 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       description: "A current offer with an observed price or discount from a source page",
       requiredItems: [],
     });
+  if (
+    /\b(?:vers[aã]o\s+(?:do|desse|deste|de)\s+navegador|browser\s+version|version\s+of\s+(?:the|my|your)\s+browser)\b/i.test(
+      prompt,
+    ) &&
+    /\b(?:computador|agente|usado|installed|computer|my|your)\b/i.test(prompt)
+  )
+    criteria.push({
+      id: "requested-browser-version",
+      kind: "observation",
+      description:
+        "Report the exact installed browser version from a current Browser.getVersion receipt. A title or console read does not establish the version.",
+      requiredItems: [],
+    });
   return criteria.length
     ? criteria
     : [
@@ -1086,6 +1099,7 @@ export class TaskVerification {
             evidenceIds = task.evidence
               .filter(
                 (evidence) =>
+                  criterion.id !== "requested-browser-version" &&
                   (evidence.revision ?? 0) === revision &&
                   Boolean(evidence.acquiredAt) &&
                   Boolean(evidence.excerpt.trim()) &&
@@ -1140,6 +1154,22 @@ export class TaskVerification {
                     const protocol = browserCdpSchema.safeParse(op.receipt);
                     const command = (op.args as { command?: { method?: string } }).command;
                     if (!protocol.success || protocol.data.method !== command?.method) return false;
+                  }
+                  if (criterion.id === "requested-browser-version") {
+                    const protocol = browserCdpSchema.safeParse(op.receipt);
+                    if (
+                      op.toolName !== "browser_cdp" ||
+                      !protocol.success ||
+                      protocol.data.method !== "Browser.getVersion"
+                    )
+                      return false;
+                    const product = protocol.data.result.product;
+                    if (
+                      typeof product !== "string" ||
+                      !/^\S+\/\d+(?:\.\d+)*$/.test(product) ||
+                      !(delivery ?? task.result ?? "").includes(product.split("/")[1])
+                    )
+                      return false;
                   }
                   if (op.toolName === "run_computer_command") {
                     const command = commandReceiptSchema.safeParse(op.receipt);
