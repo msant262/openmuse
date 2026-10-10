@@ -182,11 +182,20 @@ function requestedExecution(prompt: string) {
 
 /** File mentions identify input material too. Require a positive output request
  * before demanding an attachment; a filename lookup can finish with its answer. */
-function requestedFileOutput(prompt: string) {
+function requestedFileOutput(prompt: string, mailRequest = false) {
   const requests = prompt.matchAll(
     /\b(?:create|generate|produce|build|make|write|draft|export|deliver|download|attach|save|crie|cria|criar|gere|gera|gerar|produza|faça|faz|fazer|monte|montar|elabore|elaborar|escreva|escrever|redija|exporte|exportar|entregue|entregar|baixe|baixar|anexe|anexar|salve|salvar)\b|\b(?:quero|want|need|preciso)\s+(?:(?:um|uma|a|an|the|o|new|novo|nova)\s+)*(?:pdf|docx|xlsx|pptx|txt|csv|arquivo|file|documento|document|resultado|result|output)\b/gi,
   );
   return [...requests].some((match) => {
+    // Writing an email about an existing document creates a Gmail draft, not a
+    // new file. Independent create/attach requests still qualify on their own.
+    if (
+      mailRequest &&
+      /^\s+(?:(?:a|an|the|um|uma|o|meu|minha)\s+)*(?:e-?mail|gmail|reply|resposta)\b/i.test(
+        prompt.slice((match.index ?? 0) + match[0].length),
+      )
+    )
+      return false;
     const prefix =
       prompt
         .slice(0, match.index)
@@ -199,10 +208,20 @@ function requestedFileOutput(prompt: string) {
   });
 }
 
+/** Quoted subject/body fields are literal mail content, not task instructions.
+ * Keep other quoted values (filenames, event titles) available for matching. */
+function mailInstructionText(prompt: string) {
+  if (!/\b(?:gmail|e-?mails?)\b/i.test(prompt)) return prompt;
+  return prompt.replace(
+    /\b(?:assunto|subject|mensagem|message|corpo|body|texto|text|dizendo|saying|contendo|containing)\s*[:=]?\s*(?:“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'|`[^`]*`)/gi,
+    (field) => field.replace(/(?:“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'|`[^`]*`)/, " "),
+  );
+}
+
 export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): CompletionCriterion[] {
-  const prompt = task.prompt,
+  const prompt = mailInstructionText(task.prompt),
     criteria: CompletionCriterion[] = [],
-    content = requiredContent(prompt).items;
+    content = requiredContent(task.prompt).items;
   const remoteGoogleDocument =
     /\b(?:google\s*(?:drive|docs|sheets|slides)|drive|docs|sheets|slides)\b/i.test(prompt) &&
     !/\b(?:download|baixar|baixe|anexo|attachment|pdf|docx|xlsx|pptx|txt|csv)\b/i.test(prompt);
@@ -266,15 +285,19 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     });
   const explicitSend = [
     ...prompt.matchAll(/\b(?:send|envie|envia|enviar|mande|manda|mandar)\b/gi),
-  ].some(
-    (match) =>
-      !/(?:n[aã]o|not|don't|do not|without|sem|nunca|never)(?:\s+\S+){0,3}\s*$/i.test(
-        prompt
-          .slice(Math.max(0, (match.index ?? 0) - 60), match.index)
-          .split(/[.!?;\n]/)
-          .at(-1) ?? "",
-      ),
-  );
+  ].some((match) => {
+    const prefix =
+      prompt
+        .slice(Math.max(0, (match.index ?? 0) - 100), match.index)
+        .split(/[.!?;\n]/)
+        .at(-1) ?? "";
+    return !(
+      /(?:n[aã]o|not|don't|do not|without|sem|nunca|never)(?:\s+\S+){0,3}\s*$/i.test(prefix) ||
+      /\b(?:acabei|acabamos|acabou|acabaram)\s+de\s*$|\b(?:was|were)\s+(?:told|asked)\s+to\s*$/i.test(
+        prefix,
+      )
+    );
+  });
   const nativeGmailDraft =
     mailRequest &&
     !explicitSend &&
@@ -320,7 +343,7 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
   else if (
     !remoteGoogleDocument &&
     (!literalFileEdit || fileDelivery) &&
-    requestedFileOutput(prompt) &&
+    requestedFileOutput(prompt, mailRequest) &&
     /\b(pdf|docx|xlsx|pptx|txt|csv|arquivo|file|document|documento)\b/i.test(prompt)
   )
     criteria.push({

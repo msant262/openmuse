@@ -370,6 +370,73 @@ test("ordinary write and reply requests require a real draft; negated sending ne
   );
 });
 
+test("the reported email request completes after one saved draft and a prose ending without demanding a document", async (t) => {
+  const draft = {
+    to: ["msant262@gmail.com"],
+    subject: "Confirmação de recebimento",
+    body: "Olá, esta mensagem confirma o recebimento do documento. Obrigado!",
+  };
+  const model = await modelFixture(
+    t,
+    (index) =>
+      index === 0
+        ? {
+            name: "save_gmail_draft",
+            arguments: { account: "work@example.com", draft, operationId: "reported-draft" },
+          }
+        : undefined,
+    { text: () => "O e-mail está salvo como rascunho. Não foi enviado." },
+  );
+  const server = await fixture(t, "money", { agentBackend: "model", model: "openai/fixture" });
+  const writes: Request[] = [];
+  t.mock.method(
+    server.workspace,
+    "google",
+    (
+      _owner: string,
+      connectionId?: string,
+      signal?: AbortSignal,
+      beforeWrite?: () => Promise<void>,
+    ) => {
+      assert.equal(connectionId, "work-id");
+      return new GoogleClient({
+        signal,
+        beforeWrite,
+        getAccessToken: async () => "fixture",
+        fetch: async (url, init) => {
+          const request = new Request(url, init);
+          if (request.method === "GET") return Response.json({ emailAddress: "work@example.com" });
+          writes.push(request);
+          return Response.json({ id: "actual-provider-draft" });
+        },
+      });
+    },
+  );
+  const task = await server.agent.createTask("owner", {
+    prompt:
+      "Na minha conta work@example.com, escreva um e-mail para msant262@gmail.com com o assunto ‘Confirmação de recebimento’ e a mensagem ‘Olá, esta mensagem confirma o recebimento do documento. Obrigado!’.",
+  });
+  await server.agent.worker.tick();
+  const detail = await server.agent.detail("owner", task.id);
+  assert.equal(detail.task.status, "succeeded", JSON.stringify(detail.task.completion));
+  assert.equal(detail.task.completion?.status, "verified");
+  assert.equal(model.requests.length, 2, "no artificial file-selection continuation");
+  assert.equal(writes.length, 1, "a prose ending neither sends nor duplicates the draft");
+  assert.equal(new URL(writes[0].url).pathname, "/gmail/v1/users/me/drafts");
+  const artifact = detail.artifacts.find(
+    (item) => typeof item.data.nativeGoogleDraftId === "string",
+  );
+  assert.ok(artifact);
+  const card = await server.agent.googleWorkspace.mailDraft(
+    "owner",
+    String(artifact.data.nativeGoogleDraftId),
+  );
+  assert.equal(card.status, "saved");
+  assert.equal(card.gmailDraftId, "actual-provider-draft");
+  assert.equal(card.draft.body, draft.body);
+  assert.equal(card.collapsed, false, "the composed email is available for the human to review");
+});
+
 test("draft execution applies optional defaults at the runtime boundary, not only in advertised schemas", async (t) => {
   const server = await fixture(t);
   let writes = 0;

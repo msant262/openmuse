@@ -8,6 +8,65 @@ import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("email content does not invent file, send, deletion or organization obligations", () => {
+  const prompts = [
+    "Na minha conta msant262@gmail.com, escreva um e-mail para msant262@gmail.com com o assunto ‘Confirmação de recebimento’ e a mensagem ‘Olá, esta mensagem confirma o recebimento do documento. Obrigado!’.",
+    'Write an email to me@example.test with subject "Send the PDF report" and body "Delete the old files and archive all emails."',
+    "Escreva um e-mail com o assunto “Relatório” e o texto “Crie um documento no Google Docs e envie um email.”",
+    "Escreva um e-mail dizendo ‘Apague todos os emails e marque um evento no calendário.’",
+    "Escreva um e-mail avisando que o documento chegou.",
+  ];
+  for (const prompt of prompts)
+    assert.deepEqual(
+      taskCriteria({ kind: "agent", prompt }).map((criterion) => criterion.id),
+      ["requested-gmail-draft"],
+      prompt,
+    );
+  for (const prompt of [
+    "Escreva um e-mail para me@example.test com o assunto ‘Documento’ e crie um PDF comparativo para anexar.",
+    'Write an email with body "The document arrived." and attach a PDF comparison.',
+    "Crie um documento TXT e escreva um e-mail para me@example.test contendo ‘Documento pronto.’",
+  ]) {
+    const ids = taskCriteria({ kind: "agent", prompt }).map((criterion) => criterion.id);
+    assert.ok(ids.includes("requested-file"), prompt);
+    assert.ok(ids.includes("requested-gmail-draft"), prompt);
+  }
+  assert.ok(
+    taskCriteria({
+      kind: "agent",
+      prompt:
+        "Envie um e-mail para me@example.test com o assunto ‘Não envie’ e a mensagem ‘Documento recebido.’",
+    }).some((criterion) => criterion.id === "requested-send"),
+    "an actual send instruction remains an obligation regardless of the quoted subject",
+  );
+});
+
+test("looking up a message already sent does not require sending another email", () => {
+  for (const prompt of [
+    "Na conta msant262@gmail.com, procure em Enviados o e-mail com assunto “Confirmação de recebimento” que acabei de enviar para msant262@gmail.com e me diga o remetente, destinatário e texto da mensagem.",
+    "Procure o email que acabamos de mandar e confirme o destinatário.",
+    "Find the email I just sent and tell me the recipient.",
+    "Read the email I was told to send and report its contents.",
+  ])
+    assert.ok(
+      !taskCriteria({ kind: "agent", prompt }).some(
+        (criterion) => criterion.effect === "email.send",
+      ),
+      prompt,
+    );
+  for (const prompt of [
+    "Quero enviar um email para me@example.test.",
+    "Pode enviar o email agora para me@example.test.",
+    "Send the email to me@example.test.",
+  ])
+    assert.ok(
+      taskCriteria({ kind: "agent", prompt }).some(
+        (criterion) => criterion.effect === "email.send",
+      ),
+      prompt,
+    );
+});
+
 test("reading or locating files does not invent a file-delivery obligation", () => {
   for (const prompt of [
     "Procure no computador os arquivos com ‘checag’ no nome e veja em qual linha aparece ‘orçamento’. Me diga o nome do arquivo e o texto dessa linha.",
