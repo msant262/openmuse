@@ -219,7 +219,11 @@ function mailInstructionText(prompt: string) {
 }
 
 export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): CompletionCriterion[] {
-  const prompt = mailInstructionText(task.prompt),
+  // Account selectors and resource URLs are identifiers, not product/action
+  // instructions. In particular, gmail.com must not turn an event into mail.
+  const prompt = mailInstructionText(task.prompt)
+      .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, " ")
+      .replace(/https?:\/\/[^\s<>"'“”‘’]+/gi, " "),
     criteria: CompletionCriterion[] = [],
     content = requiredContent(task.prompt).items;
   const remoteGoogleDocument =
@@ -400,7 +404,7 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       kind: "receipt",
       effect: "email.send",
       description: "The requested email has a confirmed receipt for its recipients",
-      requiredItems: [...new Set(prompt.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi) ?? [])],
+      requiredItems: [...new Set(task.prompt.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi) ?? [])],
     });
   if (
     (/\b(calendar|calend[aá]rio|event|evento)\b/i.test(prompt) ||
@@ -417,6 +421,27 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       kind: "receipt",
       effect: "calendar.create",
       description: "The requested calendar event has a confirmed receipt",
+      requiredItems: [],
+    });
+  const deleteCalendar = [
+    ...prompt.matchAll(
+      /\b(?:delete|remove|apague|apaga|apagar|exclua|excluir|exclui|deleta|deletar|remova|remover)\b/gi,
+    ),
+  ].some((match) => {
+    const clause = prompt.slice((match.index ?? 0) + match[0].length).split(/[.!?;\n]/)[0];
+    const target =
+      /\b(?:e-?mails?|mensagens?|messages?|arquivos?|files?|documentos?|documents?|eventos?|events?|compromissos?|appointments?)\b/i.exec(
+        clause,
+      );
+    return Boolean(target && /^(?:event|evento|compromisso|appointment)/i.test(target[0]));
+  });
+  if (deleteCalendar)
+    criteria.push({
+      id: "requested-calendar-deletion",
+      kind: "receipt",
+      effect: "calendar.delete",
+      description:
+        "Delete the requested calendar event only after human approval and obtain its confirmed provider receipt. Finding the event or preparing an approval alone does not complete deletion.",
       requiredItems: [],
     });
   if (requestedExecution(prompt))

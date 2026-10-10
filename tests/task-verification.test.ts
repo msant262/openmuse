@@ -8,6 +8,54 @@ import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("account addresses and resource URLs do not turn Calendar or Drive requests into Gmail work", () => {
+  for (const prompt of [
+    "Na agenda da conta msant262@gmail.com, exclua o compromisso “Okami validação de agenda 10 outubro” de amanhã.",
+    "Delete tomorrow's event from the calendar of person@gmail.com.",
+    "Na agenda de person@gmail.com, exclua o compromisso e escreva a confirmação.",
+    "Remova do Drive da conta person@gmail.com o arquivo antigo.",
+    "Remova do Drive o arquivo https://drive.google.com/file/d/gmail/view.",
+  ])
+    assert.ok(
+      !taskCriteria({ kind: "agent", prompt }).some((criterion) =>
+        criterion.effect?.startsWith("email."),
+      ),
+      prompt,
+    );
+  assert.deepEqual(
+    taskCriteria({
+      kind: "agent",
+      prompt:
+        "Na agenda da conta msant262@gmail.com, exclua o compromisso “Okami validação de agenda 10 outubro” de amanhã.",
+    }).map((criterion) => criterion.effect),
+    ["calendar.delete"],
+  );
+  const mail = taskCriteria({
+    kind: "agent",
+    prompt: "Envie um e-mail para person@gmail.com.",
+  });
+  assert.deepEqual(mail.find((criterion) => criterion.effect === "email.send")?.requiredItems, [
+    "person@gmail.com",
+  ]);
+  assert.ok(
+    taskCriteria({
+      kind: "agent",
+      prompt: "Na conta person@gmail.com, exclua todos os e-mails antigos.",
+    }).some((criterion) => criterion.effect === "email.delete"),
+  );
+  for (const prompt of [
+    "Exclua o e-mail com o convite do evento na minha agenda.",
+    "Delete the email about tomorrow's calendar event.",
+    "Remova do Drive o arquivo com a lista de eventos.",
+  ])
+    assert.ok(
+      !taskCriteria({ kind: "agent", prompt }).some(
+        (criterion) => criterion.effect === "calendar.delete",
+      ),
+      prompt,
+    );
+});
+
 test("email content does not invent file, send, deletion or organization obligations", () => {
   const prompts = [
     "Na minha conta msant262@gmail.com, escreva um e-mail para msant262@gmail.com com o assunto ‘Confirmação de recebimento’ e a mensagem ‘Olá, esta mensagem confirma o recebimento do documento. Obrigado!’.",
