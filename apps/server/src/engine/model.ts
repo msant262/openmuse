@@ -183,12 +183,15 @@ export async function executeModelTask(
           needsMoreResearch?: boolean;
         }
       | undefined;
+    // Both missing research and wording defects belong to the selected bytes.
+    // Retrying finish with a different summary cannot repair that document or
+    // invite a nondeterministic second reviewer to accept the same defect.
+    // New source evidence, selected bytes, model or user revision changes the key.
     if (
       requiresAccessConstraintReview(task) &&
       artifactIds.length > 0 &&
       cached?.factsKey === factsKey &&
-      cached.complete === false &&
-      cached.needsMoreResearch === true
+      cached.complete === false
     )
       return cached as Awaited<ReturnType<typeof reviewResearchDelivery>> & {
         attempts: number;
@@ -660,7 +663,7 @@ export async function executeModelTask(
         requestAudit: review.requestAudit,
         instruction: review.needsMoreResearch
           ? "Repair these specific gaps using available observed sources. A partial outcome does not bypass viable recovery."
-          : "The facts are sufficient. Repair only the listed delivery problems. Preserve the requested geographic form and every requested value; do not replace a geographic map with a grid. Inspect the actual corrected file and select only final deliverables with artifactIds. Do not repeat finish without correcting the listed gaps.",
+          : "The observed sources suffice. Apply the listed corrections to the actual selected deliverable, preserving the original requested content and format. Changing the completion summary does not update an existing file. Create the corrected version, inspect it and select only final deliverables with artifactIds. Do not repeat finish without correcting the listed gaps.",
       };
     }
     const finished = await service.finish(
@@ -2235,7 +2238,7 @@ export async function executeModelTask(
     ),
     tool(
       "finish_task",
-      "Deliver the completed result after inspecting actual files against the original request. Select only the final intended files with artifactIds; omit rejected drafts. Use partial only after concrete viable research paths are exhausted. A geographic map must preserve real geographic outlines, not a grid of region cards.",
+      "Deliver the completed result after inspecting actual files against the original request, including its requested content and format. Select only the final intended files with artifactIds; omit rejected drafts. Use partial only after concrete viable research paths are exhausted.",
       z.object({
         summary: z.string().min(1).max(8000),
         outcome: z.enum(["completed", "partial"]).default("completed"),

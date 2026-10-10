@@ -469,6 +469,106 @@ test("unchanged rejected document reuses its access review, while new source and
   assert.notEqual(saved.artifactIds[0], fileId);
 });
 
+test("wording-only rejection remains bound to the actual document until its bytes or evidence change", async (t) => {
+  let originalFile = "";
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://courses.example/open" } },
+        {
+          name: "create_document",
+          arguments: {
+            name: "Comparison.md",
+            format: "markdown",
+            content: "Open AI: all lessons are free. The certificate is free.",
+            operationId: "draft",
+          },
+        },
+        { name: "finish_task", arguments: { summary: "Free course and certificate attached." } },
+        {
+          name: "finish_task",
+          arguments: {
+            summary: "Corrected comparison attached: Open AI is free; certificate €20.",
+          },
+        },
+        {
+          name: "finish_task",
+          arguments: { summary: "The PDF was corrected. The optional certificate costs €20." },
+        },
+        {
+          name: "create_document",
+          arguments: {
+            name: "Comparison.md",
+            format: "markdown",
+            content: "Open AI: all lessons are free. The optional certificate costs €20.",
+            operationId: "corrected",
+            replaceFileId: originalFile,
+          },
+        },
+        { name: "finish_task", arguments: { summary: "Corrected comparison attached." } },
+      ][i],
+    {
+      researchReview: (_body, i) => ({
+        complete: i !== 0,
+        needsMoreResearch: false,
+        missing: i === 0 ? ["The document wrongly calls the certificate free"] : [],
+        nextSteps: i === 0 ? ["Correct the document: the certificate costs €20"] : [],
+        accessAudit: [
+          {
+            option: "Open AI",
+            access: "free",
+            sourceUrl: "https://courses.example/open",
+            quote: "All lessons are free.",
+          },
+        ],
+      }),
+    },
+  );
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "<main>All lessons are free. The optional certificate costs €20.</main>",
+  }));
+  const importFile = f.files.importAttachment.bind(f.files);
+  t.mock.method(f.files, "importAttachment", async (...args: Parameters<typeof importFile>) => {
+    const file = await importFile(...args);
+    if (!originalFile && file.name === "Comparison.md") originalFile = file.id;
+    return file;
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Compare a free AI course in a Markdown document and state the certificate price.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(
+    saved.status,
+    "succeeded",
+    JSON.stringify({
+      result: saved.result,
+      completion: saved.completion,
+      review: saved.state.researchDeliveryReview,
+      operations: (await f.agent.journal.operations("owner", task.id)).map((op) => ({
+        name: op.toolName,
+        args: op.args,
+        status: op.status,
+        receipt: op.receipt,
+      })),
+    }),
+  );
+  assert.notEqual(
+    saved.artifactIds[0],
+    originalFile,
+    "promising a correction cannot deliver the previously rejected document",
+  );
+  assert.equal(fixture.reviewRequests.length, 2, "unchanged rejected bytes reuse their rejection");
+  const document = await f.files.bytes("owner", saved.artifactIds[0]);
+  assert.match(Buffer.from(document).toString(), /certificate costs €20/);
+  for (const i of [3, 4, 5])
+    assert.match(fixture.requests[i].body, /Correct the document: the certificate costs €20/);
+});
+
 test("an unavailable document content check resumes exact generation once without a user answer", async (t) => {
   let unavailable = true,
     fileId = "",
