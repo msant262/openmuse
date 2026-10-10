@@ -118,6 +118,7 @@ export function browserTools(
           ...([
             "STALE_BROWSER_BINDING",
             "PUBLIC_RESEARCH_ONLY",
+            "INVALID_BROWSER_OPERATION",
             "BROWSER_ACCOUNT_MISMATCH",
             "BROWSER_LOGIN_REQUIRED",
             "BROWSER_ARTIFACT_UNAVAILABLE",

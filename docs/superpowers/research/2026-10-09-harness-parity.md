@@ -280,3 +280,24 @@ The identical course/PDF task `a155a94df5aa7b295f6f7d9946c52620799e50897a5502589
 **Whole-harness acceptance remains open.** The passing lookups do not certify research/PDF latency, memory, Workspace effects, mobile performance or the other unimplemented upstream surfaces.
 
 The shared descriptive-field worker/reviewer regression group passed **43/43**, including the new initial-worker prompt check, false free-access rejection and source-bound proof tests. Root TypeScript passed after the shared-policy change. Fixture prompt tests verify the host boundary; they do not establish ordinary course-PDF completion.
+
+
+## Browser-history and descriptive-policy publication
+
+The pre-change ordinary course/PDF diagnostic `a155a94df5aa7b295f6f7d9946c52620799e50897a5502589ca30ce674c18b52` was canceled only after 618.630 seconds and 87 operations, with zero delivered artifacts. Its complete pre-cancel trace was retained remotely and copied locally. It failed acceptance.
+
+Commit `130448c7` is now published to the API (`sha256:bc18298cf9d0e4a826202921ed5b711134beb270c9cebc4e04046f864b0cfab1`), VPS browser worker (`sha256:5f9b5edff0399d5823e9d953a0a92dcb3efa6bb865d6d96e19ab56d26281c3b3`) and 33 compiled native browser files. Native publication preserved all 952 prior journal operations and both configuration files; the native Python helper was unchanged.
+
+The initial API/browser handoff safely reverted because its environment check compared an ordered JSON list. Both images had identical default environment values and the existing container matched the declared Compose values. The retry compares environment names and values, preserving the entire mapping; it completed in 30.97 seconds with unchanged browser mounts, configuration, database, runtime pause revision and 35 historical uncertain operations. Both connected Google accounts remain present. Native publication and API/browser publication used separate drained maintenance intervals.
+
+New ordinary chats are repeating the identical course-PDF request and requesting actual browser navigation to two public pages followed by returning to the previous page. Neither task is accepted yet. **Whole-harness acceptance remains open.**
+
+## Native history contract and visible source proof — 2026-10-10
+
+The ordinary browser-history task `aa9c455296d03eccdff54d7083d321851271ec04c74d5d955cd6857aa05e87cb` opened both public pages, then paused: the native host enum omitted `back`. Validation rejected the operation before any native envelope was created, but effect authority had already been acquired, leaving two uncertain journal records. They remain preserved. The host now accepts the actual native opcode and validates browser request arguments before acquiring dispatch authority. Upload input uses the byte-bearing request contract, while staged native delivery keeps its private one-use reference; the complete regression caught and corrected an initial mix-up between these contracts. Full typed transport/native composition/browser protocol tests passed **17/17**, with the new missing-opcode and pre-dispatch rejection cases reproduced before repair. Root TypeScript passed.
+
+The ordinary three-free-course diagnostic `d6406171c4618cc2a6932e61b5671f7af09d577db73c4f089cf689c2f12705ed` completed without operator answers in **605.527 seconds**, with 51 recorded operations and two artifacts. It was already succeeded when collection ran; no cancellation occurred. Its created three-page PDF contains actual comparison text and links (56,600 bytes, SHA-256 `562af4f53c541ecbcd6ed6c502e7777ab392710755029ea412e2da31850559c8`). This is **not accepted for latency**, final eligibility or clean single-report delivery. The trace and actual document are preserved.
+
+Its repeated final rejection exposed a parser defect: `Our no-cost [Introduction to Generative AI](...) course...` is visible sentence text, but the host searched for the plain quotation inside raw link markup. Source proof now parses visible Markdown link/emphasis text while preserving all intervening words. Tests retain rejection of preview qualifications, different linked course names and fabricated claims. A second defect let a valid `quotes` or `evidence` list hide an invalid simultaneous primary `quote`; all supplied proof fields are now checked against their own successfully read source URLs. Both defects were reproduced before repair. The complete Markdown-parser research suite passed **38/38** before the additional primary-quote fix; that fix has its own focused access/provenance regression. These checks do not certify live pricing or ordinary production latency. Publication and fresh ordinary browser/research repeats are required.
+
+**Whole-harness acceptance remains open.**

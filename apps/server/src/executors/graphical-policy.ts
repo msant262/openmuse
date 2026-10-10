@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { nativeUploadReferenceSchema } from "../../../../packages/domain/src/browser-file.ts";
+import {
+  browserUploadSchema,
+  nativeUploadReferenceSchema,
+} from "../../../../packages/domain/src/browser-file.ts";
 import {
   desktopActionSchema,
   desktopFrameBindingSchema,
@@ -55,59 +58,67 @@ export const nativeDesktopArgsSchema = z.discriminatedUnion("operation", [
     })
     .strict(),
 ]);
-export const nativeBrowserArgsSchema = z
-  .object({
-    ...session,
-    browserSessionId: z.uuid(),
-    actor: z.literal("agent"),
-    operation: z.enum([
-      "open",
-      "snapshot",
-      "read",
-      "inspect",
-      "act",
-      "agent-screenshot",
-      "screenshot",
-      "control",
-      "close",
-      "downloads",
-      "download",
-      "upload",
-      "search",
-      "credentials",
-      "challenge",
-    ]),
-    body: z.record(z.string(), z.unknown()),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    const schema =
-      value.operation === "upload"
-        ? nativeUploadReferenceSchema
-        : value.operation === "search"
-          ? searchInputSchema
-          : value.operation === "download"
-            ? z.object({ downloadId: z.uuid() }).strict()
-            : undefined;
-    if (schema && !schema.safeParse(value.body).success)
-      context.addIssue({ code: "custom", message: "Invalid bounded native browser operation" });
-    if (
-      value.operation === "credentials" &&
-      !z
-        .object({
-          grantId: z.uuid(),
-          origin: z.url(),
-          adapterId: z.string().min(1).max(120),
-          challengeId: z.uuid().optional(),
-        })
-        .strict()
-        .safeParse(value.body).success
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Native credentials require a trusted one-use grant",
-      });
-  });
+const browserArgsSchema = (uploadSchema: z.ZodType) =>
+  z
+    .object({
+      ...session,
+      browserSessionId: z.uuid(),
+      actor: z.literal("agent"),
+      operation: z.enum([
+        "open",
+        "back",
+        "snapshot",
+        "read",
+        "inspect",
+        "act",
+        "agent-screenshot",
+        "screenshot",
+        "control",
+        "close",
+        "downloads",
+        "download",
+        "upload",
+        "search",
+        "credentials",
+        "challenge",
+      ]),
+      body: z.record(z.string(), z.unknown()),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      const schema =
+        value.operation === "back"
+          ? z.object({}).strict()
+          : value.operation === "upload"
+            ? uploadSchema
+            : value.operation === "search"
+              ? searchInputSchema
+              : value.operation === "download"
+                ? z.object({ downloadId: z.uuid() }).strict()
+                : undefined;
+      if (schema && !schema.safeParse(value.body).success)
+        context.addIssue({ code: "custom", message: "Invalid bounded native browser operation" });
+      if (
+        value.operation === "credentials" &&
+        !z
+          .object({
+            grantId: z.uuid(),
+            origin: z.url(),
+            adapterId: z.string().min(1).max(120),
+            challengeId: z.uuid().optional(),
+          })
+          .strict()
+          .safeParse(value.body).success
+      )
+        context.addIssue({
+          code: "custom",
+          message: "Native credentials require a trusted one-use grant",
+        });
+    });
+// Upload bytes are validated before staging; only the one-use reference crosses
+// the native transport and participates in executor authority checks.
+export const nativeBrowserRequestArgsSchema = browserArgsSchema(browserUploadSchema);
+export const nativeBrowserArgsSchema = browserArgsSchema(nativeUploadReferenceSchema);
 export function nativeInspection(kind: string, args: Record<string, unknown>) {
   if (kind === "file")
     return ["list", "search", "read", "read_binary", "stat"].includes(String(args.operation));

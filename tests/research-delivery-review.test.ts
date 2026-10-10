@@ -2179,6 +2179,123 @@ test("free-access proof accepts short exact provider offers and separated verbat
   assert.equal(inspected, true);
 });
 
+test("free-access proof matches visible linked text without dropping intervening qualifications", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, {
+    researchReview: () => ({
+      complete: true,
+      missing: [],
+      nextSteps: [],
+      accessAudit: [
+        {
+          option: "Introduction to AI",
+          access: "free",
+          sourceUrl: "https://courses.example/offer",
+          quote: "Our no-cost Introduction to AI course is a great place to start.",
+        },
+      ],
+    }),
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Find a free introductory AI course." });
+  const common = {
+    task,
+    summary: "Introduction to AI: free course access.",
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    stage: "access_selection" as const,
+    signal: new AbortController().signal,
+  };
+  const review = (text: string) =>
+    reviewResearchDelivery({
+      ...common,
+      operations: [
+        {
+          toolName: "web_fetch",
+          status: "succeeded",
+          args: { url: "https://courses.example/offer" },
+          receipt: { url: "https://courses.example/offer", text },
+        },
+      ] as never,
+    });
+  assert.equal(
+    (
+      await review(
+        "Our no-cost [Introduction to AI](https://courses.example/ai?source=blog) course is a great place to start.",
+      )
+    ).complete,
+    true,
+  );
+  assert.equal(
+    fixture.reviewRequests.length,
+    1,
+    "visible Markdown link labels need no model protocol retry",
+  );
+  assert.equal(
+    (
+      await review(
+        "Our no-cost [Introduction to AI](https://courses.example/ai) PREVIEW ONLY course is a great place to start.",
+      )
+    ).complete,
+    false,
+  );
+  assert.equal(
+    (
+      await review(
+        "Our no-cost [Different course](https://courses.example/Introduction-to-AI) course is a great place to start.",
+      )
+    ).complete,
+    false,
+  );
+});
+
+test("a valid additional access fragment cannot mask a fabricated primary quotation", async (t) => {
+  let additional: { quotes?: string[]; evidence?: { sourceUrl: string; quote: string }[] } = {
+    quotes: ["45 minutes"],
+  };
+  await modelFixture(t, () => undefined, {
+    researchReview: () => ({
+      complete: true,
+      missing: [],
+      nextSteps: [],
+      accessAudit: [
+        {
+          option: "Open course",
+          access: "free",
+          sourceUrl: "https://courses.example/free",
+          quote: "The complete course is free.",
+          ...additional,
+        },
+      ],
+    }),
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Find a free AI course." });
+  const common = {
+    task,
+    summary: "Open course: free access.",
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    stage: "access_selection" as const,
+    signal: new AbortController().signal,
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url: "https://courses.example/free" },
+        receipt: {
+          url: "https://courses.example/free",
+          text: "45 minutes. Free registration; paid lessons.",
+        },
+      },
+    ] as never,
+  };
+  assert.equal((await reviewResearchDelivery(common)).complete, false);
+  additional = { evidence: [{ sourceUrl: "https://courses.example/free", quote: "45 minutes" }] };
+  assert.equal((await reviewResearchDelivery(common)).complete, false);
+});
+
 test("review repairs its own quotation protocol before sending a correct researched draft back to more web searches", async (t) => {
   const fixture = await modelFixture(t, () => undefined, {
     researchReview: (body, i) => {

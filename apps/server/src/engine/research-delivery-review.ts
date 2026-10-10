@@ -1,6 +1,7 @@
 import { dirname } from "node:path";
 import type { ContentPart, TextOptions } from "@tanstack/ai";
 import { resolveDebugOption } from "@tanstack/ai/adapter-internals";
+import { Lexer, type Token } from "marked";
 import { z } from "zod";
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
 import { type ModelProviderConfig, orderedModels } from "../providers/config.ts";
@@ -76,6 +77,17 @@ const researchTools = new Set([
   "search_web",
   "browser_research",
 ]);
+function visibleSourceText(tokens: Token[]): string {
+  return tokens
+    .map((token) => {
+      // Link destinations interrupt the extracted Markdown but are not visible
+      // sentence text. Retain every label and qualification in source order.
+      if (["link", "strong", "em", "del"].includes(token.type) && "tokens" in token && token.tokens)
+        return visibleSourceText(token.tokens);
+      return token.raw;
+    })
+    .join("");
+}
 export function researchObservations(operations: JournalOperation[]) {
   return operations
     .filter((op) => researchTools.has(op.toolName))
@@ -404,28 +416,37 @@ export async function reviewResearchDelivery(options: {
           decision.missing.push(item.requirement);
       if (options.stage === "access_selection" && decision.complete) {
         const normalize = (value: string) =>
-          value.normalize("NFKC").replace(/[*`]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+          visibleSourceText(Lexer.lexInline(value))
+            .normalize("NFKC")
+            .replace(/[*`]/g, "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
+        const normalizedSources = observations.map((source) => ({
+          ...source,
+          normalizedText: normalize(source.text),
+        }));
         const failed = (decision.accessAudit ?? []).filter((item) => {
-          const evidence = item.evidence?.length
-            ? item.evidence
-            : (item.quotes?.length ? item.quotes : item.quote ? [item.quote] : []).map((quote) => ({
-                sourceUrl: item.sourceUrl,
-                quote,
-              }));
+          const evidence = [...(item.quote ? [item.quote] : []), ...(item.quotes ?? [])]
+            .map((quote) => ({
+              sourceUrl: item.sourceUrl,
+              quote,
+            }))
+            .concat(item.evidence ?? []);
           return (
             item.access !== "free" ||
             !evidence.length ||
             evidence.some(
               ({ sourceUrl, quote }) =>
                 !normalize(quote) ||
-                !observations.some(
+                !normalizedSources.some(
                   (source) =>
                     source.tool !== "search_web" &&
                     source.status === "succeeded" &&
                     !source.error &&
                     (source.extraction as { status?: string } | undefined)?.status !== "partial" &&
                     source.url === sourceUrl &&
-                    normalize(source.text).includes(normalize(quote)),
+                    source.normalizedText.includes(normalize(quote)),
                 ),
             )
           );

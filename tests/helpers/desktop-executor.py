@@ -50,12 +50,12 @@ class Browser:
         if kind=="search":return {"query":body["query"],"status":"ok","sources":[{"title":"Fixture source","url":"https://example.org/source","snippet":"index result"}],"observedAt":"2026-10-03T00:00:00.000Z","truncated":False,"provenance":{"backend":"browser","provider":"duckduckgo-html","searchUrl":"https://html.duckduckgo.com/html/","sessionId":session["browserSessionId"],"fullPagesRead":False}}
         if kind=="downloads":return {"downloads":[download],"failures":[]}
         if kind=="download":return {**download,"base64":base64.b64encode(csv).decode()}
-        if kind in ("snapshot","upload"):
+        if kind in ("snapshot","upload","back"):
             if kind=="upload":
                 blob=base64.b64decode(body["base64"],validate=True)
                 if len(blob)!=body["size"] or hashlib.sha256(blob).hexdigest()!=body["sha256"]:raise ValueError("Upload bytes changed")
                 device.uploaded=body["sha256"]
-            return {"sessionId":session["browserSessionId"],"snapshotId":str(uuid.uuid4()),"url":"https://example.org/upload","title":"Fixture upload","text":"Upload data","truncated":False,"truncatedElements":False,"control":"agent","elements":[{"number":1,"tag":"input","type":"file","role":"input","label":"Upload data","disabled":False,"frameUrl":"https://example.org/upload"}]}
+            return {"sessionId":session["browserSessionId"],"snapshotId":str(uuid.uuid4()),"url":"https://example.org/upload","title":"Fixture upload","text":"Upload data","truncated":False,"truncatedElements":False,"control":"agent","elements":[{"number":1,"tag":"input","type":"file","role":"input","label":"Upload data","disabled":False,"frameUrl":"https://example.org/upload"}],**({"historyMoved":True} if kind=="back" else {})}
         return {"id":session["browserSessionId"],"url":"https://example.org/upload","title":"Fixture upload","status":"active","updatedAt":"2026-10-03T00:00:00.000Z","control":"agent"}
 broker=DesktopBroker(init["executorId"],init["hostId"],session,DesktopDriver(device,session["sessionGeneration"]),browser=Browser())
 class Desktop:

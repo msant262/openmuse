@@ -160,6 +160,61 @@ async function fixture(t: Parameters<typeof taskRuntime>[0]) {
   return { ...server, node, post, epoch, auth, session, call };
 }
 
+test("native browser history traverses the real typed transport and records its guarded effect", async (t) => {
+  const server = await fixture(t);
+  assert.ok(server.desktop);
+  const desktop = server.desktop;
+  server.agent.configureNativeExecution(async (owner, task) => {
+    const receipt = await server.agent.journal.run(
+      owner,
+      task,
+      { id: "back", name: "browser_back", args: { operationId: "previous-page" } },
+      async () =>
+        (
+          await desktop.browserRequest(
+            owner,
+            `/sessions/${server.session.browserSessionId}/back`,
+            {},
+          )
+        ).json(),
+      true,
+    );
+    assert.equal((receipt as { historyMoved: boolean }).historyMoved, true);
+    return { status: "succeeded" };
+  });
+  const task = await server.agent.createTask("local-user", {
+    prompt: "Native browser history transport fixture",
+  });
+  await server.agent.worker.tick();
+  const operations = await server.agent.journal.operations("local-user", task.id);
+  const native = operations.find((operation) => operation.nativeEnvelope?.kind === "browser");
+  assert.ok(native, "Actual native browser delivery must be created");
+  assert.equal((native.args as { operation: string }).operation, "back");
+  assert.equal(native.effect, true);
+  assert.equal(native.status, "succeeded");
+});
+
+test("invalid browser operations are rejected before acquiring native dispatch authority", async (t) => {
+  const server = await fixture(t);
+  assert.ok(server.desktop);
+  const before = await server.call("state");
+  for (const [operation, body] of [
+    ["back", { approved: true }],
+    ["unsupported-operation", {}],
+  ] as const) {
+    await assert.rejects(
+      server.desktop.browserRequest(
+        "local-user",
+        `/sessions/${server.session.browserSessionId}/${operation}`,
+        body,
+      ),
+      { code: "INVALID_BROWSER_OPERATION" },
+    );
+  }
+  const after = await server.call("state");
+  assert.deepEqual(after.browserEnvelopes, before.browserEnvelopes);
+});
+
 test("production desktop viewer uses interactive admission with four busy tasks, private frames and device-bound human input", async (t) => {
   const server = await fixture(t);
   let release = () => {};

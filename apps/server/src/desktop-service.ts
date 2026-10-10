@@ -29,7 +29,7 @@ import { ResourceBusyError, ResourceLeases } from "./engine/resource-leases.ts";
 import { RuntimePause } from "./engine/runtime-pause.ts";
 import { authorizeTaskEffect, currentTaskScope, taskOperationId } from "./engine/task-journal.ts";
 import { AppError } from "./errors.ts";
-import { nativeInspection } from "./executors/graphical-policy.ts";
+import { nativeBrowserRequestArgsSchema, nativeInspection } from "./executors/graphical-policy.ts";
 import type { ExecutorDispatchContext, ExecutorRequest } from "./executors/protocol.ts";
 import type { ExecutorRegistry } from "./executors/registry.ts";
 
@@ -821,6 +821,24 @@ export class DesktopService {
     }
     if (["input", "control", "reviewed-act"].includes(operation))
       throw new AppError("Use the authenticated desktop viewer for native input and control", 409);
+    const operationBody = operation === "download" ? { downloadId: match![3] } : (body ?? {});
+    if (
+      !nativeBrowserRequestArgsSchema.safeParse({
+        sessionId: session.id,
+        sessionGeneration: session.sessionGeneration,
+        controlRevision: 0,
+        browserSessionId: session.browserSessionId,
+        actor: "agent",
+        operation,
+        body: operationBody,
+      }).success
+    )
+      throw new BrowserError(
+        "INVALID_BROWSER_OPERATION",
+        "Unsupported browser operation or arguments; nothing was dispatched.",
+        400,
+        session.browserSessionId,
+      );
     const effect = [
       "open",
       "act",
@@ -846,7 +864,7 @@ export class DesktopService {
             browserSessionId: session.browserSessionId,
             actor: "agent",
             controlRevision: state.revision,
-            body: operation === "download" ? { downloadId: match![3] } : (body ?? {}),
+            body: operationBody,
           },
           signal,
         ),
