@@ -66,7 +66,7 @@ const decisionSchema = z.object({
 });
 
 export const DESCRIPTIVE_FIELD_SCOPE =
-  "DESCRIPTIVE_FIELD_SCOPE. Distinguish selection constraints from descriptive comparison fields. When a user requests language, duration or certificate cost without imposing a value, an honest explicit 'not stated by the consulted provider' satisfies reporting that field after the relevant source has been read; do not require an undocumented value, a certificate where none is offered, or a fixed duration for self-paced lessons. Reject invented values. This does not waive eligibility constraints such as free access, a specified language, maximum price, required certification or a deadline. Do not turn omitted optional information into an endless search or ask the user to authorize an honest unknown.";
+  "DESCRIPTIVE_FIELD_SCOPE. Distinguish selection constraints from descriptive comparison fields. When a user requests language, duration or certificate cost without imposing a value, an honest explicit 'not stated by the consulted provider' satisfies reporting that field after the relevant source has been read; do not require an undocumented value, a certificate where none is offered, or a fixed duration for self-paced lessons. An unknown or unpublished amount does not make a known billing condition unknown: if the source requires a certificate fee, the answer must say the certificate is paid even when its exact price is absent. Distinguish fee status from fee amount and free course content from paid credentials. Report conflicting published durations with their labels instead of silently choosing one or inventing an explanation. Reject invented values. This does not waive eligibility constraints such as free access, a specified language, maximum price, required certification or a deadline. Do not turn omitted optional information into an endless search or ask the user to authorize an honest unknown.";
 
 const researchTools = new Set([
   "web_fetch",
@@ -253,14 +253,8 @@ export async function reviewResearchDelivery(options: {
   const reviewInput = {
     stage: options.stage ?? "delivery",
     proposedDocument: options.proposedDocument === true,
-    originalRequest: options.task.prompt,
-    responseCriteria: options.task.criteria?.filter((criterion) => criterion.kind === "response"),
-    conversationContext: options.task.state.conversationContext,
-    appliedUserDirections: options.task.state.directives,
-    userAnswers: options.task.state.interactionAnswer ?? options.task.state.answer,
     currentTimeUTC: new Date().toISOString(),
     artifacts: options.task.artifactIds,
-    documents: options.documents,
     reviewedImageIds: options.images?.map((image) => image.fileId),
     artifactCreation: options.operations
       .filter((op) => {
@@ -273,9 +267,17 @@ export async function reviewResearchDelivery(options: {
         );
       })
       .map((op) => ({ tool: op.toolName, args: op.args, status: op.status, receipt: op.receipt })),
-    structuredReplies: options.structured,
-    proposedAnswer: options.summary,
     observations,
+    // Keep the actual selected answer and request together after potentially
+    // long source reads. Available facts must not impersonate delivered claims.
+    originalRequest: options.task.prompt,
+    responseCriteria: options.task.criteria?.filter((criterion) => criterion.kind === "response"),
+    conversationContext: options.task.state.conversationContext,
+    appliedUserDirections: options.task.state.directives,
+    userAnswers: options.task.state.interactionAnswer ?? options.task.state.answer,
+    structuredReplies: options.structured,
+    documents: options.documents,
+    proposedAnswer: options.summary,
   };
   const signal = AbortSignal.any([options.signal, AbortSignal.timeout(90_000)]);
   const imageParts: ContentPart[] = (options.images ?? []).flatMap((image) => [
@@ -299,6 +301,7 @@ export async function reviewResearchDelivery(options: {
     systemPrompts: [
       "USER_INPUT_BOUNDARY. Include userInputRequired:boolean in the decision. Set it true only if the original request depends on indispensable private information or a choice only this person can supply, and explain exactly what is missing in missing. Unknown public facts, selecting another qualifying recommendation, permission to continue already authorized work, and relaxing explicit criteria never require user input. Preserve original named requirements; do not ask to change the person's request just because the current choices fail it. Otherwise set userInputRequired=false. This factual review does not approve external effects.",
       DESCRIPTIVE_FIELD_SCOPE,
+      "DELIVERED_CONTENT_GROUNDING. For each content requestAudit item, first quote the relevant actual proposedAnswer or selected document text in evidence, then compare that delivered claim with source facts. A fact appearing in observations is available evidence, not proof the answer contains it. Never describe a source claim as something the document says. If the document calls certificate payment unknown but the source explicitly requires a fee, mark that requirement unsatisfied. If the document omits a published duration conflict, require a concrete correction. Set needsMoreResearch=false when the existing sources suffice to correct these errors, and direct edits to the existing content instead of new searches. An otherwise useful document still fails if any requested field contradicts or omits known source facts.",
       "SOURCE_COMPLETENESS. Truncated or excerpted source text cannot establish absence of requested facts or justify 'not stated'/'not published' for an unread relevant section. Preserve this distinction even when the excerpt itself fits the model context. When a requested field is missing from such an excerpt, give a specific read-only recovery step: search the existing spill.fileId with read_web_source for the selected course/entity title and inspect the matching section, or continue its returned nextOffset. If no preserved source is available, read the relevant existing source. Do not restart broad searches, replace qualified options or demand unrelated sections. An explicit unknown is valid after the relevant section has actually been read; do not require invented values or endless research.",
       ...(options.stage === "access_selection"
         ? [

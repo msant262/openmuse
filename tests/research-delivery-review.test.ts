@@ -69,6 +69,70 @@ test("factual review retains source truncation and exact recovery metadata inste
   assert.equal(decision.needsMoreResearch, false);
 });
 
+test("document review distinguishes the actual delivered claim from a source's known fee and unpublished price", async (t) => {
+  const draft = "Open course. Certificate: payment conditions are not stated; check enrollment.";
+  const sourceText =
+    "All course lessons are free. A non-refundable fee applies to the completion certificate. The fee amount is not published.";
+  await modelFixture(t, () => undefined, {
+    researchReview: (body) => {
+      const wire = JSON.parse(body);
+      const input = JSON.parse(wire.input[0].content[0].text);
+      assert.equal(input.proposedAnswer, draft);
+      assert.equal(input.observations[0].text, sourceText);
+      const keys = Object.keys(input);
+      assert.ok(
+        keys.indexOf("observations") < keys.indexOf("proposedAnswer"),
+        "the selected answer remains distinct and visible after long source evidence",
+      );
+      assert.match(wire.instructions, /DELIVERED_CONTENT_GROUNDING/);
+      assert.match(
+        wire.instructions,
+        /(?:unknown|unpublished).*amount.*(?:known|published).*billing/i,
+      );
+      return {
+        complete: false,
+        needsMoreResearch: false,
+        requestAudit: [
+          {
+            requirement: "Say whether the certificate is paid",
+            scope: "content",
+            satisfied: false,
+            evidence:
+              "The draft calls payment conditions unknown, although the source explicitly states a certificate fee.",
+          },
+        ],
+        missing: ["The selected draft omits the known certificate fee"],
+        nextSteps: ["Correct the existing certificate cell to paid; leave only its amount unknown"],
+      };
+    },
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Compare a free course and say whether its certificate is paid.",
+  });
+  const decision = await reviewResearchDelivery({
+    task,
+    summary: draft,
+    proposedDocument: true,
+    stage: "access_selection",
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url: "https://academy.example/course" },
+        receipt: { url: "https://academy.example/course", text: sourceText, truncated: false },
+      },
+    ] as Parameters<typeof reviewResearchDelivery>[0]["operations"],
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    signal: new AbortController().signal,
+  });
+  assert.equal(decision.complete, false);
+  assert.equal(decision.needsMoreResearch, false);
+  assert.match(decision.nextSteps[0], /Correct the existing certificate cell/);
+});
+
 test("document preflight defers only file delivery while retaining factual and access failures", async (t) => {
   const fixture = await modelFixture(t, () => undefined, {
     researchReview: (_body, i) => ({
