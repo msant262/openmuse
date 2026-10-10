@@ -6,6 +6,83 @@ import { encryptSecret } from "../packages/integrations/src/vault.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("a natural planilha request delivers its confirmed sheet link and correct account without another model call", async (t) => {
+  const fixture = await modelFixture(t, (index) =>
+    index === 0
+      ? {
+          name: "execute_google_workspace_tool",
+          arguments: {
+            toolId: "sheets.spreadsheets.create",
+            account: "work@example.com",
+            body: { properties: { title: "Resumo" } },
+            operationId: "create-sheet",
+          },
+        }
+      : {
+          name: "finish_task",
+          arguments: {
+            outcome: "completed",
+            summary:
+              "Planilha salva: [Abrir](https://docs.google.com/spreadsheets/d/sheet-native-id/edit?authuser=wrong%40example.com)",
+          },
+        },
+  );
+  const encryptionKey = randomBytes(32).toString("base64");
+  const server = await taskRuntime(t, {
+    mode: "live",
+    agentBackend: "model",
+    model: "openai/fixture",
+    encryptionKey,
+    approvalPolicy: "money",
+  });
+  await server.db.put("owner", "credentials", {
+    id: "google",
+    connectionId: "sheets-google",
+    secret: encryptSecret(
+      JSON.stringify({
+        connectionId: "sheets-google",
+        account: "work@example.com",
+        accessToken: "private-google-access",
+        refreshToken: "private-google-refresh",
+        expiresAt: Date.now() + 3600000,
+        scopes: ["https://www.googleapis.com/auth/drive"],
+      }),
+      encryptionKey,
+    ),
+  });
+  let writes = 0;
+  t.mock.method(server.workspace, "google", (_owner: string, connectionId?: string) => {
+    assert.equal(connectionId, "sheets-google");
+    return new GoogleClient({
+      getAccessToken: async () => "fixture",
+      fetch: async (url, init) => {
+        const request = new Request(url, init);
+        assert.equal(request.method, "POST");
+        assert.deepEqual(await request.json(), { properties: { title: "Resumo" } });
+        writes++;
+        return Response.json({ spreadsheetId: "sheet-native-id" });
+      },
+    });
+  });
+  const task = await server.agent.createTask("owner", {
+    prompt: "Na conta work@example.com, crie uma planilha chamada Resumo e me entregue o link.",
+  });
+  assert.ok(!task.criteria?.some((criterion) => criterion.id === "requested-google-document"));
+  await server.agent.worker.tick();
+  const finished = await server.agent.getTask("owner", task.id);
+  assert.equal(finished.status, "succeeded", finished.error ?? finished.result);
+  assert.equal(
+    finished.result,
+    "Planilha salva: [Abrir](https://docs.google.com/spreadsheets/d/sheet-native-id/edit?authuser=work%40example.com)",
+  );
+  assert.equal(writes, 1);
+  assert.equal(
+    fixture.requests.length,
+    2,
+    "delivery uses existing receipts without another model turn",
+  );
+});
+
 test("a worker discovers native Gmail and reads the requested account without a browser credential", async (t) => {
   const fixture = await modelFixture(t, (index) => {
     if (index === 0) {
@@ -157,8 +234,7 @@ test("the copied worker discovers Google Workspace, creates and edits a remote D
       name: "finish_task",
       arguments: {
         outcome: "completed",
-        summary:
-          "Documento criado no Google Docs, editado e lido: https://docs.google.com/document/d/doc-google-id/edit",
+        summary: "Documento criado no Google Docs, editado e lido.",
       },
     },
   ];
@@ -238,6 +314,11 @@ test("the copied worker discovers Google Workspace, creates and edits a remote D
   assert.deepEqual(
     requests.map((request) => request.method),
     ["POST", "POST", "GET"],
+  );
+  assert.match(
+    finished.result ?? "",
+    /https:\/\/docs\.google\.com\/document\/d\/doc-google-id\/edit\?authuser=work%40example\.com/,
+    "the actual saved document is delivered even when the model omits its link",
   );
   assert.equal((await server.db.list("owner", "google-workspace-receipts")).length, 2);
   const operations = await server.agent.journal.operations("owner", task.id);

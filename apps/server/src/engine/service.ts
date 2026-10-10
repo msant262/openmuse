@@ -2025,6 +2025,45 @@ export class AgentService {
     // TaskContext executes under an owner; deterministic workflows pass it
     // explicitly, model calls do likewise. Do not infer owner from model data.
     if (!owner) throw new Error("Completion requires the authenticated task owner");
+    {
+      // Actual successful writes determine document delivery, including natural
+      // requests for a planilha/apresentação without a Google product name.
+      const operations = await this.journal.operations(owner, task.id);
+      const actionIds = operations.flatMap((operation) => {
+        if (operation.status !== "succeeded" || !operation.effect) return [];
+        const receipt = operation.receipt as { actionId?: unknown } | undefined;
+        return typeof receipt?.actionId === "string" ? [receipt.actionId] : [];
+      });
+      const links = await this.googleWorkspace.deliveryLinks(
+        owner,
+        task.id,
+        Number(task.state.appliedRevision ?? 0),
+        actionIds,
+      );
+      const missing = links.filter((link) => {
+        const target = new URL(link.url);
+        let present = false;
+        result = result.replace(/https:\/\/[^\s<>()[\]]+/g, (candidate) => {
+          try {
+            const url = new URL(candidate);
+            if (
+              url.origin !== target.origin ||
+              url.pathname !== target.pathname ||
+              url.username ||
+              url.password
+            )
+              return candidate;
+            present = true;
+            return link.url;
+          } catch {
+            return candidate;
+          }
+        });
+        return !present;
+      });
+      if (missing.length)
+        result += `\n\n${missing.map((link) => `[Abrir no ${link.title}](${link.url})`).join("\n\n")}`;
+    }
     const textPlan = textPlanDelivery(task, result);
     if (textPlan) {
       const artifact = await this.artifact(

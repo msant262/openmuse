@@ -1013,6 +1013,41 @@ export class GoogleWorkspaceHarness {
     await options.draftCard?.(id);
     return { ...result, draftCard: card };
   }
+  /** Deliver links from confirmed task writes, without another provider/model
+   * call. Pending, foreign-task and unbound action results are not documents. */
+  async deliveryLinks(owner: string, taskId: string, revision: number, actionIds: string[]) {
+    const links = new Map<string, { title: string; url: string }>();
+    const definitions: Record<string, { id: string; path: string; title: string }> = {
+      docs: { id: "documentId", path: "document", title: "Google Docs" },
+      sheets: { id: "spreadsheetId", path: "spreadsheets", title: "Google Sheets" },
+      slides: { id: "presentationId", path: "presentation", title: "Google Slides" },
+    };
+    for (const id of new Set(actionIds)) {
+      const action = await this.db.get<ActionProposal>(owner, "actions", id);
+      if (
+        action?.status !== "succeeded" ||
+        action.taskId !== taskId ||
+        Number(action.dispatchedRevision ?? 0) !== revision
+      )
+        continue;
+      const binding = await googleWorkspaceVerificationBinding(this.db, owner, action);
+      if (!binding) continue;
+      const service = binding.tool.split(".")[0];
+      const definition = definitions[service];
+      if (!definition) continue;
+      const result = JSON.parse(action.result ?? "null");
+      const data = result?.data;
+      const args: Record<string, unknown> = binding.args;
+      const resourceId = data?.[definition.id] ?? args[definition.id];
+      if (typeof resourceId !== "string" || !/^[\w-]+$/.test(resourceId)) continue;
+      // A returned resource must agree with an existing target in the binding.
+      if (args[definition.id] && args[definition.id] !== resourceId) continue;
+      const url = new URL(`https://docs.google.com/${definition.path}/d/${resourceId}/edit`);
+      if (typeof result.account === "string") url.searchParams.set("authuser", result.account);
+      links.set(url.toString(), { title: definition.title, url: url.toString() });
+    }
+    return [...links.values()];
+  }
   async mailDraft(owner: string, id: string): Promise<GoogleMailDraft> {
     let saved = await this.db.get<GoogleMailDraft & { raw: string; lastOperationId?: string }>(
       owner,

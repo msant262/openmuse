@@ -1134,8 +1134,9 @@ test("cloud document writing requires a confirmed native Google receipt with the
   });
   assert.equal(task.criteria?.[0].id, "requested-google-document");
   assert.deepEqual(task.criteria?.[0].requiredItems, ["Texto confirmado. Criado e salvo."]);
+  const actionIds: string[] = [];
   const worker = new TaskWorker(server.db, async (owner, running) => {
-    await server.agent.googleWorkspace.execute(
+    const created = await server.agent.googleWorkspace.execute(
       owner,
       {
         toolId: "docs.documents.create",
@@ -1146,11 +1147,13 @@ test("cloud document writing requires a confirmed native Google receipt with the
       },
       { taskId: running.id },
     );
+    assert.ok("actionId" in created);
+    actionIds.push(created.actionId);
     assert.notEqual(
       (await server.agent.verification.assess(owner, running.id, 0)).status,
       "verified",
     );
-    await server.agent.googleWorkspace.execute(
+    const edited = await server.agent.googleWorkspace.execute(
       owner,
       {
         toolId: "docs.documents.batchUpdate",
@@ -1165,10 +1168,51 @@ test("cloud document writing requires a confirmed native Google receipt with the
       },
       { taskId: running.id },
     );
+    assert.ok("actionId" in edited);
+    actionIds.push(edited.actionId);
     assert.equal((await server.agent.verification.assess(owner, running.id, 0)).status, "verified");
     return { status: "succeeded", result: "Documento escrito e confirmado" };
   });
   await worker.tick();
   await worker.stop();
   assert.equal((await server.agent.detail("owner", task.id)).task.status, "succeeded");
+  const links = () => server.agent.googleWorkspace.deliveryLinks("owner", task.id, 0, actionIds);
+  assert.deepEqual(await links(), [
+    {
+      title: "Google Docs",
+      url: "https://docs.google.com/document/d/full-document-id/edit?authuser=work%40example.com",
+    },
+  ]);
+  for (const [owner, taskId, revision] of [
+    ["other-owner", task.id, 0],
+    ["owner", "other-task", 0],
+    ["owner", task.id, 1],
+  ] as const)
+    assert.deepEqual(
+      await server.agent.googleWorkspace.deliveryLinks(owner, taskId, revision, actionIds),
+      [],
+    );
+  for (const id of actionIds) {
+    const action = await server.db.get<ActionProposal>("owner", "actions", id);
+    assert.ok(action);
+    await server.db.put("owner", "actions", { ...action, status: "awaiting_review" });
+    assert.deepEqual(
+      await server.agent.googleWorkspace.deliveryLinks("owner", task.id, 0, [id]),
+      [],
+    );
+    await server.db.put("owner", "actions", {
+      ...action,
+      result: JSON.stringify({ data: { documentId: "invented-id" } }),
+    });
+    assert.deepEqual(
+      await server.agent.googleWorkspace.deliveryLinks("owner", task.id, 0, [id]),
+      [],
+    );
+    await server.db.put("owner", "actions", action);
+  }
+  assert.equal(
+    (await links()).length,
+    1,
+    "only original, matching provider receipts are deliverable",
+  );
 });
