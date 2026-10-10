@@ -15,22 +15,25 @@ import type { delegatedContext } from "./delegated-context.ts";
 import { openclawContextEstimator } from "./openclaw-agent.ts";
 import type { JournalOperation } from "./task-journal.ts";
 
+// chatStream enforces the complete response budget before JSON parsing. Keep
+// valid audit prose and source quotes intact inside that budget: a longer
+// explanation is not a provider failure and must not trigger timed retries.
 const decisionSchema = z.object({
   complete: z.boolean(),
   draftEligible: z.boolean().optional(),
   blocked: z.boolean().default(false),
   needsMoreResearch: z.boolean().default(true),
   userInputRequired: z.boolean().default(false),
-  missing: z.array(z.string().max(700)),
-  nextSteps: z.array(z.string().max(700)),
+  missing: z.array(z.string()),
+  nextSteps: z.array(z.string()),
   requestAudit: z
     .array(
       z
         .object({
-          requirement: z.string().max(700),
+          requirement: z.string(),
           scope: z.enum(["content", "delivery"]).optional(),
           satisfied: z.boolean(),
-          evidence: z.string().max(700),
+          evidence: z.string(),
         })
         .transform((item) => ({
           ...item,
@@ -50,15 +53,15 @@ const decisionSchema = z.object({
   accessAudit: z
     .array(
       z.object({
-        option: z.string().min(1).max(300),
+        option: z.string().min(1),
         access: z.enum(["free", "paid", "trial", "unknown"]),
         sourceUrl: z.string().max(4096),
-        quote: z.string().max(1500).optional(),
+        quote: z.string().optional(),
         // An empty optional list means no fragment evidence, not an outage.
         // Positive access claims still require observed nonempty proof below.
-        quotes: z.array(z.string().max(1500)).max(8).optional(),
+        quotes: z.array(z.string()).max(8).optional(),
         evidence: z
-          .array(z.object({ sourceUrl: z.string().max(4096), quote: z.string().max(1500) }))
+          .array(z.object({ sourceUrl: z.string().max(4096), quote: z.string() }))
           .max(12)
           .optional(),
       }),

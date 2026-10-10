@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { reviewResearchDelivery } from "../apps/server/src/engine/research-delivery-review.ts";
+import {
+  ResearchReviewUnavailableError,
+  reviewResearchDelivery,
+} from "../apps/server/src/engine/research-delivery-review.ts";
 import { FileLibrary } from "../apps/server/src/file-library.ts";
 import { modelFixture, offeredHostTools } from "./helpers/model.ts";
 import { taskRuntime as baseTaskRuntime } from "./helpers/task-runtime.ts";
@@ -14,6 +17,108 @@ function taskRuntime(
 ) {
   return baseTaskRuntime(t, { ...config, researchReviewEnabled: true }, options);
 }
+
+test("a detailed review preserves its audit and repairs without per-field retry failures", async (t) => {
+  const requirement = "Compare the requested course fields. ".repeat(30);
+  const evidence = "The selected document omits the published certificate fee. ".repeat(30);
+  const nextStep = "State that the certificate is paid while the lessons are free. ".repeat(30);
+  const fixture = await modelFixture(t, () => undefined, {
+    researchReview: () => ({
+      complete: false,
+      needsMoreResearch: false,
+      missing: [requirement],
+      nextSteps: [nextStep],
+      requestAudit: [{ requirement, evidence, satisfied: false }],
+    }),
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Compare the course costs." });
+  const decision = await reviewResearchDelivery({
+    task,
+    summary: "Course comparison.",
+    operations: [],
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    signal: new AbortController().signal,
+  });
+  assert.equal(decision.complete, false);
+  assert.equal(decision.needsMoreResearch, false);
+  assert.equal(decision.requestAudit[0].requirement, requirement);
+  assert.equal(decision.requestAudit[0].evidence, evidence);
+  assert.equal(decision.nextSteps[0], nextStep);
+  assert.equal(decision.missing[0], requirement);
+  assert.equal(fixture.reviewRequests.length, 1);
+});
+
+test("a long observed access quotation remains bound to its actual source", async (t) => {
+  const option = "Open generative AI curriculum for beginners. ".repeat(10);
+  const quote = "All lessons in this course are free to study. ".repeat(45);
+  const url = "https://academy.example/open";
+  const fixture = await modelFixture(t, () => undefined, {
+    researchReview: () => ({
+      complete: true,
+      needsMoreResearch: false,
+      missing: [],
+      nextSteps: [],
+      requestAudit: [{ requirement: option, evidence: quote, satisfied: true }],
+      accessAudit: [
+        { option, access: "free", sourceUrl: url, evidence: [{ sourceUrl: url, quote }] },
+      ],
+    }),
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Find a free generative AI course." });
+  const decision = await reviewResearchDelivery({
+    task,
+    summary: option,
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url },
+        receipt: { url, text: quote, truncated: false },
+      },
+    ] as never,
+    stage: "access_selection",
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    signal: new AbortController().signal,
+  });
+  assert.equal(decision.complete, true);
+  assert.equal(decision.accessAudit?.[0].option, option);
+  assert.equal(decision.accessAudit?.[0].evidence?.[0].quote, quote);
+  assert.deepEqual(decision.accessGaps, []);
+  assert.equal(fixture.reviewRequests.length, 1);
+});
+
+test("removing per-field limits keeps the whole review response bounded", async (t) => {
+  await modelFixture(t, () => undefined, {
+    researchReview: () => ({
+      complete: true,
+      needsMoreResearch: false,
+      missing: [],
+      nextSteps: [],
+      requestAudit: [{ requirement: "Course", evidence: "x".repeat(128_001), satisfied: true }],
+    }),
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Compare the course costs." });
+  await assert.rejects(
+    reviewResearchDelivery({
+      task,
+      summary: "Course comparison.",
+      operations: [],
+      model: "openai/fixture",
+      providers: f.agent.config.modelProviders!,
+      structured: false,
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) =>
+      error instanceof ResearchReviewUnavailableError && error.diagnostic?.kind === "response",
+  );
+});
 
 test("an incomplete access audit exposes every unknown selection even when its repair flag claims sources suffice", async (t) => {
   const fixture = await modelFixture(t, () => undefined, {
