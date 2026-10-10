@@ -178,12 +178,26 @@ export function tanstackAgent(options: {
       const progressWarnings = new Set<string>();
       const outputTool = defineTool({
         ...harnessToolCatalog[0],
-        parameters: z.object({
-          toolCallId: z.string().min(1).max(500),
-          part: z.enum(["result", "arguments"]).default("result"),
-          offset: z.number().int().nonnegative().default(0),
-          limit: z.number().int().min(2).max(8000).default(4000),
-        }),
+        parameters: z
+          .object({
+            toolCallId: z.string().min(1).max(500).optional(),
+            tool: z
+              .string()
+              .trim()
+              .min(1)
+              .max(200)
+              .optional()
+              .describe(
+                "Exact producing tool name; selects its latest preserved output in this task instead of copying a call ID.",
+              ),
+            part: z.enum(["result", "arguments"]).default("result"),
+            offset: z.number().int().nonnegative().default(0),
+            limit: z.number().int().min(2).max(8000).default(4000),
+          })
+          .refine(
+            (args) => Boolean(args.toolCallId) !== Boolean(args.tool),
+            "Choose toolCallId or tool, not both",
+          ),
         execute: async (args) => outputStore.readTool(args),
       });
       // Build the system prompt like the classic mode. It does not forward system messages.

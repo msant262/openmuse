@@ -469,7 +469,7 @@ export async function executeModelTask(
       descriptiveFieldPolicy: DESCRIPTIVE_FIELD_SCOPE,
       instruction: review.needsMoreResearch
         ? "No document was rendered. accessAudit identifies each selected option's assessed eligibility and source; requestAudit distinguishes satisfied fields from actual gaps. These assessments are not new source reads. Repair the failed options and requirements while keeping supported facts. Replace an unsuitable or unconfirmed option rather than asking the person to relax clear criteria. A design change or another operationId cannot fix unchanged facts."
-        : "No document was rendered. The observed sources suffice; correct only the content gaps in missing and nextSteps using those saved observations. Keep qualified options and supported facts. Recover full source text with read_tool_output if needed, then retry create_document with corrected content. Do not restart research or ask permission to correct your own text. Preserve the original requirements.",
+        : "No document was rendered. The observed sources suffice; correct only the content gaps in missing and nextSteps using those saved observations. Keep qualified options and supported facts. Recover your latest proposed content using read_tool_output (tool=create_document, part=arguments, pointer=/content) if needed, then retry create_document with corrected content. Do not restart research or ask permission to correct your own text. Preserve the original requirements.",
     };
   };
   const deliver = async (
@@ -610,9 +610,15 @@ export async function executeModelTask(
       const unreadAggregation = Boolean(
         data?.aggregation && data.truncated && typeof data.nextOffset === "number",
       );
+      // A missing file is an authoring gap, not proof of missing public facts.
+      // The content preflight and final fact review still validate evidence;
+      // do not send a ready draft back through unrelated navigation links.
+      const authoringContinuation =
+        missingFiles.length > 0 && deliveryReviewEnabled() && !unreadAggregation;
       const researchContinuation =
         deliveryOutcome === "partial" &&
-        (missingFiles.length > 0 || (!deliveryReviewEnabled() && availableLinks.length > 0)) &&
+        !deliveryReviewEnabled() &&
+        (missingFiles.length > 0 || availableLinks.length > 0) &&
         task.state.researchContinuationKey !== researchKey &&
         task.evidence.some((item) => item.kind === "web");
       const unresolvedPartial =
@@ -621,6 +627,7 @@ export async function executeModelTask(
         JSON.stringify(task.state.researchContinuationArtifactIds) === JSON.stringify(selected);
       if (
         (missingFiles.length > 0 && deliveryOutcome === "completed") ||
+        authoringContinuation ||
         unreadAggregation ||
         researchContinuation ||
         unresolvedPartial
@@ -641,6 +648,7 @@ export async function executeModelTask(
           complete: false,
           repairable: true,
           missing: completion.remaining,
+          ...(authoringContinuation && { continuation: "artifact_authoring" }),
           ...(researchContinuation && {
             unreadSourceLinks: availableLinks,
           }),
@@ -648,6 +656,9 @@ export async function executeModelTask(
             availableData: { request: lastDataRead?.args, nextOffset: data?.nextOffset },
           }),
           instruction:
+            (authoringContinuation
+              ? 'The requested file has not been created. This missing file receipt does not establish missing source facts. Resume the latest draft with read_tool_output({"tool":"create_document","part":"arguments","pointer":"/content"}) when available, then create the requested file with create_document. Keep supported facts and apply any specific content preflight corrections; do not restart research just because the attachment is missing. The content preflight and final delivery review still check the evidence and original requirements. '
+              : "") +
             (unresolvedPartial
               ? "You declared this same delivery partial, and no source evidence or selected artifact has changed since then. Changing only outcome to completed cannot resolve the missing requirements. Continue the research or correct the artifact; if the concrete paths remain blocked, report partial honestly. "
               : "") +
@@ -2240,7 +2251,7 @@ export async function executeModelTask(
             nextSteps: publicRecovery.nextSteps,
             instruction:
               publicRecovery.needsMoreResearch === false
-                ? "The observed sources already suffice. Correct only the content gaps in missing and nextSteps using the saved observations, then retry the document. Keep qualified options and supported facts. Do not restart research or ask permission to correct your own text; the original request authorizes this correction. Recover full source text with read_tool_output if needed and preserve the original requirements."
+                ? "The observed sources already suffice. Correct only the content gaps in missing and nextSteps using the saved observations, then retry the document. Keep qualified options and supported facts. Do not restart research or ask permission to correct your own text; the original request authorizes this correction. Recover your latest proposed content using read_tool_output (tool=create_document, part=arguments, pointer=/content) if needed and preserve the original requirements."
                 : "The existing factual check identifies public research gaps, not missing private user input. Continue researching or replacing your own unqualified choices within the original request. The person already authorized selection of qualifying options; do not ask permission to replace your own selection or offer fewer items, paid/unknown options, or relaxed criteria. Preserve specifically named requirements. Recover full source text, read relevant alternatives and verify facts before rendering. If observed access/provider blockers exhaust the relevant alternatives, finish with outcome=partial and describe those concrete limitations; do not turn an incomplete selection into an approval question.",
           };
         }

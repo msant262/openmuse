@@ -874,6 +874,83 @@ test("access review cannot certify free access from absence of pricing or a fabr
   assert.match(decision.missing.join(" "), /Premium AI/);
 });
 
+test("a missing researched file continues authoring without treating navigation links as missing facts", async (t) => {
+  const content = "Open AI: all lessons are free; two hours. Source: https://courses.example/open";
+  const fixture = await modelFixture(
+    t,
+    (i) => {
+      if (i === 2) {
+        const input = JSON.parse(fixture.requests[i].body).input;
+        const previous = JSON.parse(
+          input.findLast((item: { type: string }) => item.type === "function_call_output").output,
+        );
+        assert.equal(previous.complete, false);
+        assert.equal(previous.repairable, true);
+        assert.equal(previous.unreadSourceLinks, undefined);
+        assert.match(previous.instruction, /create.*file|create_document/i);
+        assert.ok(offeredHostTools(fixture.requests[i].body).includes("web_fetch"));
+        assert.equal(fixture.reviewRequests.length, 0, "do not review a nonexistent document");
+      }
+      return [
+        { name: "web_fetch", arguments: { url: "https://courses.example/open" } },
+        {
+          name: "finish_task",
+          arguments: {
+            outcome: "partial",
+            summary: "Research is ready; I still need to create the file.",
+          },
+        },
+        {
+          name: "create_document",
+          arguments: { name: "Course.md", format: "markdown", content, operationId: "course" },
+        },
+        { name: "finish_task", arguments: { summary: "The course comparison is attached." } },
+      ][i];
+    },
+    {
+      researchReview: (body) => {
+        const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
+        assert.equal(input.documents.length, 1);
+        assert.equal(input.documents[0].text, content);
+        return {
+          complete: true,
+          needsMoreResearch: false,
+          missing: [],
+          nextSteps: [],
+          accessAudit: [
+            {
+              option: "Open AI",
+              access: "free",
+              sourceUrl: "https://courses.example/open",
+              quote: "All lessons are free.",
+            },
+          ],
+        };
+      },
+    },
+  );
+  const f = await baseTaskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: false,
+  });
+  t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: '<main>Open AI. All lessons are free. Two hours. <a href="/privacy">Privacy</a></main>',
+  }));
+  const task = await f.agent.createTask("owner", {
+    prompt:
+      "Pesquise um curso gratuito introdutório e entregue um arquivo Markdown com sua duração.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.result);
+  assert.equal(saved.completion?.status, "verified");
+  assert.equal(saved.artifactIds.length, 1);
+  assert.equal(fixture.reviewRequests.length, 1);
+});
+
 test("free-access delivery reaches its focused review instead of treating unrelated navigation as unfinished research", async (t) => {
   let reviews = 0;
   await modelFixture(
@@ -2640,28 +2717,37 @@ test("review repairs its own quotation protocol before sending a correct researc
 
 test("free-access proof binds a provider policy and named catalogue entry to their separate observed pages", async (t) => {
   const fixture = await modelFixture(t, () => undefined, {
-    researchReview: () => ({
-      complete: true,
-      missing: [],
-      nextSteps: [],
-      accessAudit: [
-        {
-          option: "Introductory AI",
-          access: "free",
-          sourceUrl: "https://academy.example/catalogue",
-          evidence: [
-            {
-              sourceUrl: "https://academy.example/policy",
-              quote: "Every course in our learning catalogue is free.",
-            },
-            {
-              sourceUrl: "https://academy.example/catalogue",
-              quote: "Introductory AI — three hours, all learners.",
-            },
-          ],
-        },
-      ],
-    }),
+    researchReview: (body) => {
+      const instructions = JSON.parse(body).instructions;
+      assert.ok(
+        instructions.includes(
+          '"sourceUrl":string,"evidence":[{"sourceUrl":string,"quote":string}]',
+        ),
+        "the actual reviewer output contract must admit page-bound fragments without requiring a redundant primary quotation",
+      );
+      return {
+        complete: true,
+        missing: [],
+        nextSteps: [],
+        accessAudit: [
+          {
+            option: "Introductory AI",
+            access: "free",
+            sourceUrl: "https://academy.example/catalogue",
+            evidence: [
+              {
+                sourceUrl: "https://academy.example/policy",
+                quote: "Every course in our learning catalogue is free.",
+              },
+              {
+                sourceUrl: "https://academy.example/catalogue",
+                quote: "Introductory AI — three hours, all learners.",
+              },
+            ],
+          },
+        ],
+      };
+    },
   });
   const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
   const task = await f.agent.createTask("owner", {

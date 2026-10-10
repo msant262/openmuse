@@ -116,6 +116,77 @@ function creation(
   ];
 }
 
+test("named output recovery reads the latest matching draft in this run without an opaque call ID", () => {
+  const store = new ToolOutputStore();
+  store.observe([
+    ...creation("tool_call:call_old:okami_create_document:1", file("a"), "Previous draft"),
+    ...creation("tool_call:call_current:okami_create_document:8", file("b"), "Corrected draft"),
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        { id: "call_after", type: "function", function: { name: "search_web", arguments: "{}" } },
+      ],
+    },
+    {
+      role: "tool",
+      toolCallId: "call_after",
+      content: JSON.stringify({ sources: [{ title: "Another source" }] }),
+    },
+  ]);
+  const recovered = store.readTool({
+    tool: "create_document",
+    part: "arguments",
+    pointer: "/content",
+    offset: 0,
+    limit: 100,
+  });
+  assert.ok("content" in recovered, JSON.stringify(recovered));
+  assert.equal(recovered.content, "Corrected draft");
+  assert.equal(recovered.toolCallId, "tool_call:call_current:okami_create_document:8");
+  store.observe(creation("tool_call:call_newer:okami_create_document:9", file("c"), "Newer draft"));
+  assert.equal(
+    store.read({
+      tool: "create_document",
+      part: "arguments",
+      pointer: "/content",
+      offset: 0,
+      limit: 100,
+    }).content,
+    "Newer draft",
+  );
+  assert.equal(
+    store.read({
+      toolCallId: recovered.toolCallId,
+      part: "arguments",
+      pointer: "/content",
+      offset: 0,
+      limit: 100,
+    }).content,
+    "Corrected draft",
+    "a canonical returned ID pins later reads even after a newer draft exists",
+  );
+  assert.equal(
+    store.read({
+      toolCallId: "tool_call:call_old:okami_create_document:1",
+      part: "arguments",
+      pointer: "/content",
+      offset: 0,
+      limit: 100,
+    }).content,
+    "Previous draft",
+  );
+  assert.ok(
+    "error" in
+      new ToolOutputStore().readTool({
+        tool: "create_document",
+        part: "arguments",
+        offset: 0,
+        limit: 100,
+      }),
+  );
+});
+
 test("only a confirmed replacement compacts historical authoring source while receipts and current content stay exact", () => {
   const source = "Original authoring source. ".repeat(500);
   const messages: ModelMessage[] = [

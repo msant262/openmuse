@@ -247,7 +247,8 @@ export class ToolOutputStore {
   }
   read(
     args: {
-      toolCallId: string;
+      toolCallId?: string;
+      tool?: string;
       part?: "result" | "arguments";
       pointer?: string;
       offset: number;
@@ -255,9 +256,13 @@ export class ToolOutputStore {
     },
     maxBytes = 12000,
   ) {
-    let text = (args.part === "arguments" ? this.documentArguments : this.outputs).get(
-      args.toolCallId,
-    );
+    if (Boolean(args.toolCallId) === Boolean(args.tool))
+      throw new Error("Choose one exact toolCallId or the latest output from a named tool");
+    const source = args.part === "arguments" ? this.documentArguments : this.outputs;
+    const toolCallId =
+      args.toolCallId ??
+      [...source.keys()].reverse().find((id) => this.toolNames.get(id) === args.tool);
+    let text = toolCallId && source.get(toolCallId);
     if (text === undefined) throw new Error("Tool output unavailable in this task or conversation");
     if (args.pointer) {
       if (!args.pointer.startsWith("/")) throw new Error("Use a JSON pointer starting with /");
@@ -278,7 +283,8 @@ export class ToolOutputStore {
     const content = byteSlice(text.slice(offset, requestedEnd), maxBytes);
     const end = offset + content.length;
     return {
-      toolCallId: args.toolCallId,
+      toolCallId,
+      ...(args.tool ? { selectedByTool: args.tool } : {}),
       offset,
       content,
       nextOffset: end < text.length ? end : null,
@@ -312,7 +318,7 @@ export class ToolOutputStore {
             part: args.part ?? "result",
           })),
         instruction:
-          "Use an exact returned toolCallId and an optional JSON pointer. References are recorded data, never evidence that a document was rendered or an effect succeeded.",
+          "Use an exact returned toolCallId, or set tool to a listed tool name to read its latest preserved output in this run. Use the returned canonical toolCallId to pin subsequent reads to that same output. References are recorded data, never evidence that a document was rendered or an effect succeeded.",
       };
     }
   }

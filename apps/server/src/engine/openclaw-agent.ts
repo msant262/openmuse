@@ -657,13 +657,32 @@ export function openclawAgent(options: Options) {
           const outputBudget = resolveLiveToolResultMaxChars({
             contextWindowTokens: contextWindow,
           });
-          const outputArgs = z.object({
-            toolCallId: z.string().min(1).max(500),
-            part: z.enum(["result", "arguments"]).default("result"),
-            offset: z.number().int().nonnegative().default(0),
-            pointer: z.string().max(2000).optional(),
-            limit: z.number().int().min(2).max(outputBudget).default(Math.min(16000, outputBudget)),
-          });
+          const outputArgs = z
+            .object({
+              toolCallId: z.string().min(1).max(500).optional(),
+              tool: z
+                .string()
+                .trim()
+                .min(1)
+                .max(200)
+                .optional()
+                .describe(
+                  "Exact producing tool name; selects its latest preserved output in this task instead of copying a call ID.",
+                ),
+              part: z.enum(["result", "arguments"]).default("result"),
+              offset: z.number().int().nonnegative().default(0),
+              pointer: z.string().max(2000).optional(),
+              limit: z
+                .number()
+                .int()
+                .min(2)
+                .max(outputBudget)
+                .default(Math.min(16000, outputBudget)),
+            })
+            .refine(
+              (args) => Boolean(args.toolCallId) !== Boolean(args.tool),
+              "Choose toolCallId or tool, not both",
+            );
           const tools: ToolDefinition[] = [
             ...options.tools,
             defineTool({
