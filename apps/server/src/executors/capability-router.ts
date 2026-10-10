@@ -11,6 +11,8 @@ const reads = new Set([
   "read",
   "snapshot",
   "images",
+  "console",
+  "cdp",
   "agent-screenshot",
   "screenshot",
   "inspect",

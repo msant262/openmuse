@@ -206,6 +206,75 @@ test("actual page-image observations verify a read while partial, malformed or s
   }
 });
 
+test("console and CDP observations require typed current receipts, retained logs and the requested command", async (t) => {
+  const runtime = await taskRuntime(t);
+  const task = await runtime.agent.createTask("owner", {
+    prompt: "Inspect my browser page for JavaScript errors.",
+  });
+  const base = {
+    sessionId: randomUUID(),
+    url: "https://example.com/",
+    observedAt: new Date().toISOString(),
+  };
+  const log = {
+    ...base,
+    entries: [
+      {
+        sequence: 1,
+        source: "exception",
+        level: "error",
+        text: "Observed JavaScript error",
+        recordedAt: new Date().toISOString(),
+        truncated: false,
+      },
+    ],
+    nextAfter: null,
+    dropped: 0,
+    cleared: false,
+  };
+  const protocol = { ...base, method: "Browser.getVersion", result: { product: "Chrome/fixture" } };
+  const operation = {
+    id: `${task.id}:diagnostics`,
+    taskId: task.id,
+    revision: 0,
+    executorId: "native",
+    executorEpoch: 1,
+    resourceFence: 0,
+    runToken: "test",
+    resourceLeaseIds: [],
+    createdAt: new Date().toISOString(),
+    status: "succeeded",
+    bindingHash: "a".repeat(64),
+    effect: false,
+    args: { command: { method: "Browser.getVersion" } },
+  };
+  for (const [label, toolName, receipt, changes, expected] of [
+    ["console", "browser_console", log, {}, true],
+    ["dropped", "browser_console", { ...log, dropped: 1 }, {}, false],
+    ["malformed-console", "browser_console", { entries: log.entries }, {}, false],
+    ["CDP", "browser_cdp", protocol, {}, true],
+    ["wrong-command", "browser_cdp", { ...protocol, method: "DOM.getDocument" }, {}, false],
+    ["malformed-CDP", "browser_cdp", { result: protocol.result }, {}, false],
+    ["failed", "browser_cdp", protocol, { status: "failed" }, false],
+    ["old-revision", "browser_cdp", protocol, { revision: 1 }, false],
+    ["other-task", "browser_cdp", protocol, { taskId: "other" }, false],
+  ] as const) {
+    await runtime.db.put("owner", "task-operations", {
+      ...operation,
+      toolName,
+      receipt,
+      ...changes,
+    });
+    const assessed = await runtime.agent.verification.assess(
+      "owner",
+      task.id,
+      0,
+      "The browser inspection has current observed results.",
+    );
+    assert.equal(assessed.status === "verified", expected, `${label}: ${JSON.stringify(assessed)}`);
+  }
+});
+
 test("owned native search observations verify a lookup, including bounded positive matches, without accepting incomplete absence", async (t) => {
   const runtime = await taskRuntime(t);
   const task = await runtime.agent.createTask("owner", {

@@ -15,7 +15,7 @@
     "dev:mobile": "pnpm --dir apps/mobile start",
     "dev:web": "pnpm --dir apps/mobile web",
     "test": "pnpm build:harness && tsx --test tests/*.test.ts apps/mobile/test/*.test.ts",
-    "test:browser": "node --experimental-strip-types --test apps/worker/tests/lifecycle.test.ts apps/worker/tests/agent-page.test.ts apps/worker/tests/payments.test.ts",
+    "test:browser": "node --experimental-strip-types --test apps/worker/tests/lifecycle.test.ts apps/worker/tests/agent-page.test.ts apps/worker/tests/payments.test.ts apps/worker/tests/browser-diagnostics.test.ts",
     "typecheck": "tsc --noEmit && pnpm --dir apps/mobile typecheck",
     "lint": "biome check .",
     "format": "biome check --write .",

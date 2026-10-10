@@ -2,10 +2,15 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserContext, Frame, Page } from "playwright";
+import {
+  browserCdpInputSchema,
+  browserConsoleInputSchema,
+} from "../../../packages/domain/src/browser-diagnostics.ts";
 import { browserUploadSchema } from "../../../packages/domain/src/browser-file.ts";
 import { browserImagesInputSchema } from "../../../packages/domain/src/browser-images.ts";
 import { defaultSearchEndpoint, searchInputSchema } from "../../../packages/domain/src/search.ts";
 import { AgentPage, browserAction } from "./agent-page.ts";
+import { BrowserDiagnostics } from "./browser-diagnostics.ts";
 import { BrowserChallenge } from "./challenge.ts";
 import {
   type CredentialLoginInput,
@@ -45,6 +50,7 @@ type Running = {
   downloadError?: boolean;
   agent: AgentPage;
   challenge: BrowserChallenge;
+  diagnostics: BrowserDiagnostics;
   captchaActive?: boolean;
   interruptions: {
     popupsBlocked: number;
@@ -392,6 +398,7 @@ export async function createBrowserManager(options: {
         pending: new Set(),
         agent: new AgentPage(page, options.protect),
         challenge: new BrowserChallenge(page),
+        diagnostics: new BrowserDiagnostics(page),
         interruptions: { popupsBlocked: 0, dialogsDismissed: 0 },
       };
       running.set(id, instance);
@@ -572,6 +579,50 @@ export async function createBrowserManager(options: {
           interruptions: { ...instance.interruptions },
         };
       }),
+    console: (id: string, raw: unknown = {}) =>
+      serial(id, async () => {
+        const checked = browserConsoleInputSchema.safeParse(raw);
+        if (!checked.success)
+          throw new WorkerError(
+            "INVALID_BROWSER_DIAGNOSTICS",
+            "Use console after, limit and clear; caller scripts are not console reads.",
+            422,
+          );
+        const instance = active(id);
+        await validatePage(instance);
+        await instance.agent.prepareProgrammaticObservation();
+        const result = instance.diagnostics.console(checked.data);
+        return {
+          sessionId: id,
+          url: instance.page.url(),
+          observedAt: new Date().toISOString(),
+          ...result,
+        };
+      }),
+    cdp: (id: string, raw: unknown) =>
+      serial(id, async () => {
+        const checked = browserCdpInputSchema.safeParse(raw);
+        if (!checked.success)
+          throw new WorkerError(
+            "INVALID_BROWSER_DIAGNOSTICS",
+            "Choose a supported CDP inspection command. Use browser actions for site changes.",
+            422,
+          );
+        guardAgent(id);
+        const instance = active(id);
+        await validatePage(instance);
+        await instance.agent.prepareProgrammaticObservation();
+        const result = await instance.diagnostics.cdp(checked.data);
+        await validatePage(instance);
+        await instance.agent.prepareProgrammaticObservation();
+        return {
+          sessionId: id,
+          url: instance.page.url(),
+          observedAt: new Date().toISOString(),
+          method: checked.data.method,
+          result,
+        };
+      }),
     images: (id: string, raw: unknown = {}) =>
       serial(id, async () => {
         const checked = browserImagesInputSchema.safeParse(raw);
@@ -723,6 +774,7 @@ export async function createBrowserManager(options: {
         const instance = active(id);
         await validatePage(instance);
         const input: CredentialLoginInput = credentialLoginInputSchema.parse(raw);
+        instance.diagnostics.protectSecrets(input.fields.map((field) => field.value));
         const result = await credentialLogin(instance.page, input, {
           sessionId: id,
           ...(options.native ? { sessionGeneration: options.native.sessionGeneration } : {}),

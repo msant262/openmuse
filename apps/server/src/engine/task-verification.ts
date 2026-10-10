@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import type { AgentArtifact, AgentTask } from "../../../../packages/domain/src/agent.ts";
 import { rasterMime } from "../../../../packages/domain/src/attachments.ts";
+import {
+  browserCdpSchema,
+  browserConsoleSchema,
+} from "../../../../packages/domain/src/browser-diagnostics.ts";
 import { browserImagesSchema } from "../../../../packages/domain/src/browser-images.ts";
 import type { ActionProposal, Artifact } from "../../../../packages/domain/src/index.ts";
 import {
@@ -1101,7 +1105,7 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|search_files$|run_computer_command$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot|get_images))/.test(
+                    !/^(execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|search_files$|run_computer_command$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot|get_images|console|cdp)$)/.test(
                       op.toolName,
                     ) ||
                     !useful(op.receipt) ||
@@ -1127,6 +1131,15 @@ export class TaskVerification {
                   if (op.toolName === "browser_get_images") {
                     const images = browserImagesSchema.safeParse(op.receipt);
                     if (!images.success || images.data.partial) return false;
+                  }
+                  if (op.toolName === "browser_console") {
+                    const console = browserConsoleSchema.safeParse(op.receipt);
+                    if (!console.success || console.data.dropped > 0) return false;
+                  }
+                  if (op.toolName === "browser_cdp") {
+                    const protocol = browserCdpSchema.safeParse(op.receipt);
+                    const command = (op.args as { command?: { method?: string } }).command;
+                    if (!protocol.success || protocol.data.method !== command?.method) return false;
                   }
                   if (op.toolName === "run_computer_command") {
                     const command = commandReceiptSchema.safeParse(op.receipt);

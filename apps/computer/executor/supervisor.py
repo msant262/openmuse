@@ -141,7 +141,7 @@ class Journal:
                 if (operation_id==reset["id"] or operation["executorId"]!=reset["executorId"]
                         or any(operation["args"].get(key)!=reset["args"].get(key) for key in ("sessionId","sessionGeneration"))
                         or operation["args"].get("controlRevision",0)>=reset["args"]["controlRevision"]
-                        or operation["args"].get("operation") in ("observe","reset","snapshot","images","read","inspect","agent-screenshot","screenshot","control","downloads","download")
+                        or operation["args"].get("operation") in ("observe","reset","snapshot","images","console","cdp","read","inspect","agent-screenshot","screenshot","control","downloads","download")
                         or receipt and (receipt["status"] not in ("running","outcome_unknown") or receipt.get("data",{}).get("cleanupConfirmed") is True)):
                     continue
                 self.receipt(operation_id,{**(receipt or {}),"status":"outcome_unknown",

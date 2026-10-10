@@ -111,6 +111,21 @@ export async function publicFixture() {
     if (path.startsWith("/redirect-private")) {
       response.writeHead(302, { location: "http://127.0.0.1:8790/health" });
       response.end();
+    } else if (path === "/diagnostics-flood") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        `<title>Bounded logs</title><script>for (let i = 0; i < 1005; i++) console.log('entry ' + i); console.log('x'.repeat(9000));</script>`,
+      );
+    } else if (path === "/diagnostics") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        `<title>Diagnostics fixture</title><main id="answer">Actual Chromium content</main><script>console.log('fixture log'); console.warn('fixture warning'); setTimeout(() => { throw new Error('fixture exception'); }, 10);</script>`,
+      );
+    } else if (path === "/protected-diagnostics") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        '<title>Protected fixture</title><input type="password" value="private-fixture-value">',
+      );
     } else if (path === "/images") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(

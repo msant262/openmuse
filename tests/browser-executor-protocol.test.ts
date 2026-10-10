@@ -189,6 +189,8 @@ test("real worker HTTP protocol authenticates handshake and fences stale snapsho
     ["back", {}, "mutable"],
     ["search", { query: "source", limit: 3 }, "public_read"],
     ["images", { offset: 0, limit: 2 }, "authenticated_read"],
+    ["console", { after: 0, limit: 2, clear: false }, "authenticated_read"],
+    ["cdp", { method: "Browser.getVersion" }, "authenticated_read"],
     ["challenge", { action: { action: "check" } }, "mutable"],
     [
       "upload",

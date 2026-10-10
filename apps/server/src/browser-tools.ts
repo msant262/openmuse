@@ -1,5 +1,9 @@
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
+import {
+  browserCdpInputSchema,
+  browserConsoleInputSchema,
+} from "../../../packages/domain/src/browser-diagnostics.ts";
 import { browserImagesInputSchema } from "../../../packages/domain/src/browser-images.ts";
 import type { ResourceLease } from "../../../packages/domain/src/runtime.ts";
 import type { BrowserService } from "./browser.ts";
@@ -186,6 +190,29 @@ export function browserTools(
         run("browser_get_images", args, (id) =>
           service.images(owner, id, { offset: args.offset, limit: args.limit }, options.signal),
         ),
+    }),
+    defineTool({
+      name: "browser_console",
+      description:
+        "Read actual console messages and JavaScript exceptions from the current owned browser page. Use after/nextAfter to page through retained entries. dropped reports older messages lost to the bounded buffer. clear clears only this page's log buffer. Does not execute caller scripts; protected credential pages require masked snapshots.",
+      parameters: browserConsoleInputSchema.extend({ sessionId: z.uuid().optional() }),
+      execute: (args) =>
+        run("browser_console", args, (id) =>
+          service.diagnosticConsole(
+            owner,
+            id,
+            { after: args.after, limit: args.limit, clear: args.clear },
+            options.signal,
+          ),
+        ),
+    }),
+    defineTool({
+      name: "browser_cdp",
+      description:
+        "Send a supported read-only Chromium DevTools inspection command to the owned current page: browser version, layout, performance, DOM nodes/selectors/HTML or accessibility tree. Node IDs belong to this session. Cannot execute scripts, read cookies, select other targets or change sites. Use browser_act for reviewed site actions. Protected credential pages require masked snapshots.",
+      parameters: session.extend({ command: browserCdpInputSchema }),
+      execute: (args) =>
+        run("browser_cdp", args, (id) => service.cdp(owner, id, args.command, options.signal)),
     }),
     defineTool({
       name: "browser_navigate",

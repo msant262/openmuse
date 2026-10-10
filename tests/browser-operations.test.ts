@@ -89,6 +89,95 @@ test("browser image tool binds the owner and validates actual paginated worker o
   await assert.rejects(fixture.service.images("owner", id), { code: "INVALID_SESSION" });
 });
 
+test("browser diagnostic tools dispatch validated owner-bound protocol commands and console observations", async (t) => {
+  let id = "",
+    foreign = false,
+    wrongMethod = false;
+  const calls: { path: string; body: Record<string, unknown> }[] = [];
+  const fixture = await browserFixture(t, (path, body) => {
+    if (path === "/sessions") id = String(body.id);
+    const observation = {
+      sessionId: foreign ? randomUUID() : id,
+      url: "https://example.com/",
+      observedAt: new Date().toISOString(),
+    };
+    if (path.endsWith("/console")) {
+      calls.push({ path, body });
+      return {
+        data: {
+          ...observation,
+          entries: [
+            {
+              sequence: 1,
+              source: "exception",
+              level: "error",
+              text: "Real worker exception",
+              recordedAt: new Date().toISOString(),
+              truncated: false,
+            },
+          ],
+          nextAfter: null,
+          dropped: 0,
+          cleared: false,
+        },
+      };
+    }
+    if (path.endsWith("/cdp")) {
+      calls.push({ path, body });
+      return {
+        data: {
+          ...observation,
+          method: wrongMethod ? "DOM.getDocument" : body.method,
+          result: { product: "Chrome/fixture" },
+        },
+      };
+    }
+    return {
+      data: {
+        id,
+        url: "https://example.com/",
+        title: "Diagnostics",
+        status: "active",
+        control: "agent",
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  });
+  await fixture.service.agentSession("owner", undefined, "https://example.com/");
+  const tools = browserTools(fixture.service, "owner");
+  const console = tools.find((tool) => tool.name === "browser_console");
+  const cdp = tools.find((tool) => tool.name === "browser_cdp");
+  assert.ok(console?.execute && cdp?.execute);
+  const consoleInput = { sessionId: id, limit: 2 };
+  const log = (await console.execute(consoleInput)) as { entries: { text: string }[] };
+  assert.equal(log.entries[0].text, "Real worker exception");
+  const cdpInput = { sessionId: id, command: { method: "Browser.getVersion" as const } };
+  const version = (await cdp.execute(cdpInput)) as { result: { product: string } };
+  assert.equal(version.result.product, "Chrome/fixture");
+  assert.deepEqual(
+    calls.map((call) => call.body),
+    [
+      { after: 0, limit: 2, clear: false },
+      { method: "Browser.getVersion", params: {} },
+    ],
+  );
+  await assert.rejects(fixture.service.diagnosticConsole("other-owner", id), { status: 404 });
+  await assert.rejects(
+    fixture.service.cdp("owner", id, {
+      method: "Browser.getVersion",
+      params: { expression: "fetch('/delete')" },
+    } as never),
+  );
+  assert.equal(calls.length, 2);
+  foreign = true;
+  await assert.rejects(fixture.service.diagnosticConsole("owner", id), { code: "INVALID_SESSION" });
+  foreign = false;
+  wrongMethod = true;
+  await assert.rejects(fixture.service.cdp("owner", id, { method: "Browser.getVersion" }), {
+    code: "INVALID_SESSION",
+  });
+});
+
 test("browser back retains uncertainty when the worker omits the history receipt", async (t) => {
   let id = "";
   const fixture = await browserFixture(t, (path, body) => {

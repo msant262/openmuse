@@ -255,6 +255,10 @@ async function handle(raw: Record<string, unknown>): Promise<unknown> {
         return browser.back(id);
       case "images":
         return browser.images(id, body);
+      case "console":
+        return browser.console(id, body);
+      case "cdp":
+        return browser.cdp(id, body);
       case "search":
         return browser.search(id, body);
       case "read":

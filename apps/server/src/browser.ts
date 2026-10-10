@@ -3,6 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { attachmentMime } from "../../../packages/domain/src/attachments.ts";
 import {
+  browserCdpInputSchema,
+  browserCdpSchema,
+  browserConsoleInputSchema,
+  browserConsoleSchema,
+} from "../../../packages/domain/src/browser-diagnostics.ts";
+import {
   browserBodyHash,
   signBrowserExecutor,
 } from "../../../packages/domain/src/browser-executor.ts";
@@ -1527,6 +1533,49 @@ export class BrowserService {
       );
       if (value.sessionId !== id)
         throw new BrowserError("INVALID_SESSION", "The browser returned a different session.");
+      return value;
+    });
+  }
+  async diagnosticConsole(
+    owner: string,
+    id: string,
+    input: z.input<typeof browserConsoleInputSchema> = {},
+    signal?: AbortSignal,
+  ) {
+    return this.serial(id, async () => {
+      await this.get(owner, id);
+      const value = browserConsoleSchema.parse(
+        await (
+          await this.ownedRequest(
+            owner,
+            `/sessions/${id}/console`,
+            browserConsoleInputSchema.parse(input),
+            signal,
+          )
+        ).json(),
+      );
+      if (value.sessionId !== id)
+        throw new BrowserError("INVALID_SESSION", "The browser returned a different session.");
+      return value;
+    });
+  }
+  async cdp(
+    owner: string,
+    id: string,
+    input: z.input<typeof browserCdpInputSchema>,
+    signal?: AbortSignal,
+  ) {
+    return this.serial(id, async () => {
+      await this.get(owner, id);
+      const request = browserCdpInputSchema.parse(input);
+      const value = browserCdpSchema.parse(
+        await (await this.ownedRequest(owner, `/sessions/${id}/cdp`, request, signal)).json(),
+      );
+      if (value.sessionId !== id || value.method !== request.method)
+        throw new BrowserError(
+          "INVALID_SESSION",
+          "The browser returned a different session or protocol command.",
+        );
       return value;
     });
   }

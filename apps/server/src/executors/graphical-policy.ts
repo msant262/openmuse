@@ -1,5 +1,9 @@
 import { z } from "zod";
 import {
+  browserCdpInputSchema,
+  browserConsoleInputSchema,
+} from "../../../../packages/domain/src/browser-diagnostics.ts";
+import {
   browserUploadSchema,
   nativeUploadReferenceSchema,
 } from "../../../../packages/domain/src/browser-file.ts";
@@ -70,6 +74,8 @@ const browserArgsSchema = (uploadSchema: z.ZodType) =>
         "back",
         "snapshot",
         "images",
+        "console",
+        "cdp",
         "read",
         "inspect",
         "act",
@@ -93,13 +99,17 @@ const browserArgsSchema = (uploadSchema: z.ZodType) =>
           ? z.object({}).strict()
           : value.operation === "images"
             ? browserImagesInputSchema
-            : value.operation === "upload"
-              ? uploadSchema
-              : value.operation === "search"
-                ? searchInputSchema
-                : value.operation === "download"
-                  ? z.object({ downloadId: z.uuid() }).strict()
-                  : undefined;
+            : value.operation === "console"
+              ? browserConsoleInputSchema
+              : value.operation === "cdp"
+                ? browserCdpInputSchema
+                : value.operation === "upload"
+                  ? uploadSchema
+                  : value.operation === "search"
+                    ? searchInputSchema
+                    : value.operation === "download"
+                      ? z.object({ downloadId: z.uuid() }).strict()
+                      : undefined;
       if (schema && !schema.safeParse(value.body).success)
         context.addIssue({ code: "custom", message: "Invalid bounded native browser operation" });
       if (
@@ -131,6 +141,8 @@ export function nativeInspection(kind: string, args: Record<string, unknown>) {
     return [
       "snapshot",
       "images",
+      "console",
+      "cdp",
       "read",
       "inspect",
       "agent-screenshot",

@@ -314,6 +314,24 @@ export class AgentPage {
     await this.applySensitiveMarks();
     await this.refreshProtection();
   }
+  async prepareProgrammaticObservation() {
+    await this.prepareObservation();
+    // Raw DOM and console results cannot apply the numbered snapshot's masks.
+    // Refuse this surface while any frame contains protected credential fields.
+    for (const frame of this.page.frames()) {
+      if (
+        frame.isDetached() ||
+        (await frame
+          .locator('input[type="password"], [data-openmuse-credential-sensitive="true"]')
+          .count())
+      )
+        throw new WorkerError(
+          "SENSITIVE_PROGRAMMATIC_OBSERVATION",
+          "Use the masked browser snapshot while credential fields are present.",
+          409,
+        );
+    }
+  }
   private async applySensitiveMarks() {
     if (!this.sensitiveSelectors.size) return;
     for (const frame of this.page.frames()) {
