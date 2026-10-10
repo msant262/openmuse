@@ -532,87 +532,111 @@ test("calendar deletion displays the actual event and dispatches only after an e
   assert.equal(writes[0].headers.get("if-match"), '"version-one"');
 });
 
-test("Calendar approval resumes from its bound receipt and replaces stale waiting prose without repeating deletion", async (t) => {
-  const model = await modelFixture(
-    t,
-    (index) =>
-      index === 0
-        ? {
-            name: "execute_google_workspace_tool",
-            arguments: {
-              toolId: "calendar.events.delete",
-              account: "work@example.com",
-              parameters: { calendarId: "primary", eventId: "test-event" },
-              operationId: "calendar-delete-resume",
-            },
-          }
-        : undefined,
-    { text: () => "A exclusão está aguardando sua aprovação no cartão de confirmação." },
-  );
-  const server = await fixture(t, "money", { agentBackend: "model", model: "openai/fixture" });
-  let deletes = 0;
-  t.mock.method(
-    server.workspace,
-    "google",
-    (
-      _owner: string,
-      connectionId?: string,
-      signal?: AbortSignal,
-      beforeWrite?: () => Promise<void>,
-    ) => {
-      assert.equal(connectionId, "work-id");
-      return new GoogleClient({
-        signal,
-        beforeWrite,
-        getAccessToken: async () => "fixture",
-        fetch: async (url, init) => {
-          assert.match(String(url), /\/calendar\/v3\/calendars\/primary\/events\/test-event/);
-          if (init?.method === "GET")
-            return Response.json({
-              id: "test-event",
-              summary: "Okami validação de agenda 10 outubro",
-              etag: '"version-one"',
-              start: { dateTime: "2026-10-11T15:00:00+02:00", timeZone: "Europe/Berlin" },
-              end: { dateTime: "2026-10-11T15:30:00+02:00" },
-            });
-          assert.equal(init?.method, "DELETE");
-          deletes++;
-          return new Response(null, { status: 204 });
-        },
-      });
-    },
-  );
-  const task = await server.agent.createTask("owner", {
-    prompt:
-      "Na agenda da conta work@example.com, exclua o compromisso “Okami validação de agenda 10 outubro” de amanhã.",
+for (const missingFile of [false, true])
+  test(`Calendar approval resumes from its bound receipt ${missingFile ? "without hiding an undelivered file" : "and replaces stale waiting prose without repeating deletion"}`, async (t) => {
+    const model = await modelFixture(
+      t,
+      (index) =>
+        index === 0
+          ? {
+              name: "execute_google_workspace_tool",
+              arguments: {
+                toolId: "calendar.events.delete",
+                account: "work@example.com",
+                parameters: { calendarId: "primary", eventId: "test-event" },
+                operationId: "calendar-delete-resume",
+              },
+            }
+          : undefined,
+      { text: () => "A exclusão está aguardando sua aprovação no cartão de confirmação." },
+    );
+    const server = await fixture(t, "money", { agentBackend: "model", model: "openai/fixture" });
+    let deletes = 0;
+    t.mock.method(
+      server.workspace,
+      "google",
+      (
+        _owner: string,
+        connectionId?: string,
+        signal?: AbortSignal,
+        beforeWrite?: () => Promise<void>,
+      ) => {
+        assert.equal(connectionId, "work-id");
+        return new GoogleClient({
+          signal,
+          beforeWrite,
+          getAccessToken: async () => "fixture",
+          fetch: async (url, init) => {
+            assert.match(String(url), /\/calendar\/v3\/calendars\/primary\/events\/test-event/);
+            if (init?.method === "GET")
+              return Response.json({
+                id: "test-event",
+                summary: "Okami validação de agenda 10 outubro",
+                etag: '"version-one"',
+                start: { dateTime: "2026-10-11T15:00:00+02:00", timeZone: "Europe/Berlin" },
+                end: { dateTime: "2026-10-11T15:30:00+02:00" },
+              });
+            assert.equal(init?.method, "DELETE");
+            deletes++;
+            return new Response(null, { status: 204 });
+          },
+        });
+      },
+    );
+    const task = await server.agent.createTask("owner", {
+      prompt:
+        "Na agenda da conta work@example.com, exclua o compromisso “Okami validação de agenda 10 outubro” de amanhã." +
+        (missingFile ? " Entregue também um arquivo CSV com o resultado." : ""),
+    });
+    await server.agent.worker.tick();
+    const pending = await server.agent.getTask("owner", task.id);
+    assert.equal(pending.status, "waiting_approval");
+    assert.equal(deletes, 0);
+    assert.equal(
+      (await server.agent.verification.assess("owner", task.id, 0)).status,
+      "unverified",
+    );
+    assert.ok(pending.actionId);
+    const action = await server.db.get<ActionProposal>("owner", "actions", pending.actionId);
+    assert.ok(action);
+    await server.actions.decide("owner", action.id, action.hash, "approve");
+    await server.agent.worker.tick();
+    const finished = await server.agent.getTask("owner", task.id);
+    if (missingFile) {
+      assert.equal(finished.status, "queued", JSON.stringify(finished.completion));
+      assert.equal(deletes, 1);
+      assert.equal(model.requests.length, 2);
+      assert.notEqual(finished.completion?.status, "verified");
+      assert.ok(
+        finished.completion?.checks.some(
+          (check) =>
+            !check.passed &&
+            finished.criteria?.some(
+              (criterion) => criterion.id === check.criterionId && criterion.kind === "file",
+            ),
+        ),
+      );
+      return;
+    }
+    assert.equal(finished.status, "succeeded", JSON.stringify(finished.completion));
+    assert.equal(deletes, 1);
+    assert.equal(model.requests.length, 2);
+    assert.ok(finished.result);
+    assert.doesNotMatch(finished.result, /aguardando|waiting|approv/i);
+    assert.match(finished.result, /Okami validação de agenda 10 outubro/);
+    assert.match(finished.result, /work@example.com/);
+    assert.equal(finished.criteria?.[0].effect, "calendar.delete");
+    assert.deepEqual(finished.completion?.checks[0].evidenceIds, [action.id]);
+    await server.db.put("owner", "actions", {
+      ...action,
+      status: "succeeded",
+      result: '{"changed":true}',
+    });
+    assert.equal(
+      (await server.agent.verification.assess("owner", task.id, 0)).status,
+      "unverified",
+    );
   });
-  await server.agent.worker.tick();
-  const pending = await server.agent.getTask("owner", task.id);
-  assert.equal(pending.status, "waiting_approval");
-  assert.equal(deletes, 0);
-  assert.equal((await server.agent.verification.assess("owner", task.id, 0)).status, "unverified");
-  assert.ok(pending.actionId);
-  const action = await server.db.get<ActionProposal>("owner", "actions", pending.actionId);
-  assert.ok(action);
-  await server.actions.decide("owner", action.id, action.hash, "approve");
-  await server.agent.worker.tick();
-  const finished = await server.agent.getTask("owner", task.id);
-  assert.equal(finished.status, "succeeded", JSON.stringify(finished.completion));
-  assert.equal(deletes, 1);
-  assert.equal(model.requests.length, 2);
-  assert.ok(finished.result);
-  assert.doesNotMatch(finished.result, /aguardando|waiting|approv/i);
-  assert.match(finished.result, /Okami validação de agenda 10 outubro/);
-  assert.match(finished.result, /work@example.com/);
-  assert.equal(finished.criteria?.[0].effect, "calendar.delete");
-  assert.deepEqual(finished.completion?.checks[0].evidenceIds, [action.id]);
-  await server.db.put("owner", "actions", {
-    ...action,
-    status: "succeeded",
-    result: '{"changed":true}',
-  });
-  assert.equal((await server.agent.verification.assess("owner", task.id, 0)).status, "unverified");
-});
 
 for (const outcome of ["completed", "partial"] as const)
   test(`Drive cleanup resumes and reports confirmed removals when the model ends with ${outcome}`, async (t) => {

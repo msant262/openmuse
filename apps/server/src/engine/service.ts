@@ -84,6 +84,7 @@ import { executeModelTask } from "./model.ts";
 import { MonitorObservations, type MonitorPage } from "./monitor-observations.ts";
 import { nativeWebMarkdown, stopOpenclawHarness } from "./openclaw-agent.ts";
 import { ResourceLeases } from "./resource-leases.ts";
+import { claimsPendingReview, REVIEWED_ACTION_REPORT } from "./reviewed-action-context.ts";
 import { RuntimePause } from "./runtime-pause.ts";
 import { TaskActor, TaskBudgetExhaustedError } from "./task-actor.ts";
 import { taskEventOperations } from "./task-event-operations.ts";
@@ -2084,21 +2085,39 @@ export class AgentService {
         artifactIds: [...new Set([...task.artifactIds, artifact.id])],
       });
     }
-    const completion = await this.verification.assess(
+    let completion = await this.verification.assess(
       owner,
       task.id,
       Number(task.state.appliedRevision ?? 0),
       result,
     );
+    const removalOnly =
+      !!task.criteria?.length &&
+      (task.criteria.every((criterion) => criterion.effect === "drive.delete") ||
+        task.criteria.every((criterion) => criterion.effect === "calendar.delete"));
+    const staleRemovalReport =
+      removalOnly &&
+      claimsPendingReview(result) &&
+      completion.checks.some(
+        (check) => check.criterionId === REVIEWED_ACTION_REPORT && !check.passed,
+      );
+    if (staleRemovalReport) {
+      // Verify every actual requirement independently of obsolete model prose.
+      // Only a fully verified removal may use the bound receipt summary below;
+      // missing effects, current reviews and uncertain operations remain blocked.
+      const effects = await this.verification.assess(
+        owner,
+        task.id,
+        Number(task.state.appliedRevision ?? 0),
+        "",
+      );
+      if (effects.status === "verified") completion = effects;
+    }
     // A model can resume with stale approval-waiting prose after all requested
     // removals are confirmed. For removal-only tasks, the independently verified
     // effects and receipt-derived summary determine delivery. Other requirements
     // and incomplete/uncertain removals retain the explicit partial outcome.
-    const confirmedRemovalOnly =
-      completion.status === "verified" &&
-      !!task.criteria?.length &&
-      (task.criteria.every((criterion) => criterion.effect === "drive.delete") ||
-        task.criteria.every((criterion) => criterion.effect === "calendar.delete"));
+    const confirmedRemovalOnly = completion.status === "verified" && removalOnly;
     if (deliveryOutcome === "partial" && !confirmedRemovalOnly) {
       completion.status = completion.status === "unverified" ? "unverified" : "partial";
       completion.checks.push({ criterionId: "requested-outcome", passed: false, evidenceIds: [] });
@@ -2268,6 +2287,13 @@ export class AgentService {
       }
       if (summaries.length) result = summaries.join("\n\n");
     }
+    if (staleRemovalReport)
+      completion = await this.verification.assess(
+        owner,
+        task.id,
+        Number(task.state.appliedRevision ?? 0),
+        result,
+      );
     await context.event(
       "result",
       completion.status === "verified" ? "Work completed" : "Partial delivery",

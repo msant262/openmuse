@@ -526,9 +526,19 @@ export async function executeModelTask(
     const revision = Number(task.state.appliedRevision ?? 0);
     if (claimsPendingReview(summary)) {
       const completion = await service.verification.assess(owner, task.id, revision, summary);
+      const removalOnly =
+        !!task.criteria?.length &&
+        (task.criteria.every((criterion) => criterion.effect === "drive.delete") ||
+          task.criteria.every((criterion) => criterion.effect === "calendar.delete"));
       if (
         completion.checks.some(
           (check) => check.criterionId === REVIEWED_ACTION_REPORT && !check.passed,
+        ) &&
+        // finish derives the final removal report from its bound receipts and
+        // verifies that report again. Every other requirement must already pass.
+        !(
+          removalOnly &&
+          (await service.verification.assess(owner, task.id, revision, "")).status === "verified"
         )
       ) {
         task = await ctx.checkpoint({
