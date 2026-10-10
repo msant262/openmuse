@@ -248,6 +248,31 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     /\b(?:in|within|no|na|arquivo|file)\s+(?:the\s+)?["'`]?([\p{L}\p{N}_./-]+\.(?:txt|csv|md|json|ya?ml|toml|ini|ts|tsx|js|jsx|py))\b/iu.exec(
       prompt,
     )?.[1];
+  const browserRename =
+    /\b(?:rename|renomeie|renomear|renomeia)\b/i.test(prompt) &&
+    /\b(?:page|p[aá]gina|site|browser|navegador)\b/i.test(prompt) &&
+    /https?:\/\//i.test(task.prompt);
+  if (browserRename) {
+    const match =
+      /\b(?:rename|renomeie|renomear|renomeia)\b[\s\S]*?\b(?:to|para)\s+(?:“([^”]+)”|‘([^’]+)’|"([^"]+)"|'([^']+)'|([^\n]+))/i.exec(
+        prompt,
+      );
+    const name = (
+      match?.[1] ??
+      match?.[2] ??
+      match?.[3] ??
+      match?.[4] ??
+      match?.[5]?.replace(/[:\s]+$/, "")
+    )?.trim();
+    criteria.push({
+      id: "requested-browser-rename",
+      kind: "receipt",
+      effect: "browser",
+      description:
+        "Rename the document on the requested page and observe its actual saved name. An unanswered dialog, input argument, page read or promised rename cannot complete the task.",
+      requiredItems: name ? (name.match(/[\s\S]{1,300}/g) ?? []) : [],
+    });
+  }
   if (literalFileEdit)
     criteria.push({
       id: "requested-workspace-edit",
@@ -378,7 +403,10 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     (!nativeGmailDraft && content.length > 0) ||
     task.kind === "plan" ||
     task.kind === "finance" ||
-    /\b(report|relat[oó]rio|comparison|compara[çc][aã]o|plan|plano)\b/i.test(prompt) ||
+    ((!browserRename || requestedFileOutput(prompt, mailRequest)) &&
+      /\b(report|relat[oó]rio|comparison|compara[çc][aã]o|plan|plano)\b/i.test(
+        prompt.replace(/“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'|`[^`]*`/g, " "),
+      )) ||
     (!nativeGmailDraft &&
       /\b(write|draft|redija|escreva|prepare)\b/i.test(prompt) &&
       /\b(email|e-mail)\b/i.test(prompt))
@@ -764,7 +792,13 @@ function operationMatches(criterion: CompletionCriterion, op: JournalOperation, 
         typeof receipt.sessionId === "string" &&
         typeof receipt.url === "string" &&
         typeof receipt.text === "string" &&
-        /\b(sent|submitted|success|confirmed|receipt|enviado|conclu[ií]do)\b/i.test(receipt.text)
+        (criterion.id === "requested-browser-rename"
+          ? criterion.requiredItems.length > 0 &&
+            criterion.requiredItems.every((item) => String(receipt.text).includes(item)) &&
+            (op.toolName === "browser_dialog" || object(object(op.args)?.act)?.action === "click")
+          : /\b(sent|submitted|success|confirmed|receipt|enviado|conclu[ií]do)\b/i.test(
+              receipt.text,
+            ))
       );
   // Connector writes and email/calendar tools carry a linked ActionProposal;
   // its typed binding and confirmed outcome are checked above.

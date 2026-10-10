@@ -117,6 +117,77 @@ test("a reviewed browser click with a pending confirmation cannot certify comple
   assert.ok(pending.remaining.some((text) => /dialog/i.test(text)));
 });
 
+test("renaming a document on a page requires the observed new name, without inventing a report", async (t) => {
+  const server = await taskRuntime(t);
+  const prompt =
+    "Abra esta página e renomeie o documento para “Relatório trimestral”: https://example.com/document";
+  const task = await server.agent.createTask("owner", { prompt });
+  assert.ok(task.criteria?.some((c) => c.effect === "browser"));
+  assert.ok(!task.criteria?.some((c) => c.kind === "artifact" || c.kind === "file"));
+  assert.ok(
+    !taskCriteria({
+      kind: "agent",
+      prompt:
+        "Abra esta página e renomeie o documento para Relatório trimestral: https://example.com/document",
+    }).some((c) => c.kind === "artifact"),
+  );
+  assert.ok(
+    !taskCriteria({
+      kind: "agent",
+      prompt:
+        "Exclua o documento “Relatório trimestral” nesta página: https://example.com/document",
+    }).some((c) => c.kind === "artifact"),
+  );
+  const dialogId = randomUUID();
+  const base = {
+    taskId: task.id,
+    revision: 0,
+    executorId: "vps",
+    executorEpoch: 1,
+    resourceFence: 0,
+    runToken: "test",
+    resourceLeaseIds: [],
+    createdAt: new Date().toISOString(),
+    status: "succeeded" as const,
+  };
+  const record = {
+    ...base,
+    id: "rename-dialog-response",
+    toolName: "browser_dialog",
+    bindingHash: "c".repeat(64),
+    args: { dialogId, accept: true, promptText: "Relatório trimestral" },
+    effect: true,
+    receipt: {
+      sessionId: randomUUID(),
+      snapshotId: randomUUID(),
+      url: "https://example.com/document",
+      text: "Nome: Sem título",
+      response: { dialogId, accept: true },
+    },
+  };
+  await server.agent.journal.prepare("owner", record);
+  assert.notEqual(
+    (await server.agent.verification.assess("owner", task.id, 0)).status,
+    "verified",
+    "arguments alone cannot prove the new name",
+  );
+  await server.agent.journal.prepare("owner", {
+    ...record,
+    id: "confirmed-rename",
+    receipt: {
+      ...record.receipt,
+      text: "Nome: Relatório trimestral\nNome salvo: Relatório trimestral. Alterações: 1.",
+    },
+  });
+  assert.equal((await server.agent.verification.assess("owner", task.id, 0)).status, "verified");
+  assert.ok(
+    taskCriteria({
+      kind: "agent",
+      prompt: "Crie um relatório trimestral comparando custos e riscos.",
+    }).some((c) => c.kind === "artifact"),
+  );
+});
+
 test("account addresses and resource URLs do not turn Calendar or Drive requests into Gmail work", () => {
   for (const prompt of [
     "Na agenda da conta msant262@gmail.com, exclua o compromisso “Okami validação de agenda 10 outubro” de amanhã.",
