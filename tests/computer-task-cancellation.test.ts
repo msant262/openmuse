@@ -5,6 +5,7 @@ import type { ComputerBackend } from "../apps/server/src/computer-contract.ts";
 import { createStore } from "../apps/server/src/db.ts";
 import { reconcileWaitingComputerTasks } from "../apps/server/src/engine/computer-jobs.ts";
 import { AgentService } from "../apps/server/src/engine/service.ts";
+import { TaskJournal } from "../apps/server/src/engine/task-journal.ts";
 import { WorkAdmission } from "../apps/server/src/engine/work-admission.ts";
 import type { AgentTask } from "../packages/domain/src/agent.ts";
 import type { ComputerCommand } from "../packages/domain/src/computer.ts";
@@ -134,4 +135,88 @@ test("completed work and a foreign owner cannot trigger another physical cancell
   await f.agent.control("owner", f.task.id, "cancel");
   await reconcileWaitingComputerTasks(f.db, f.computer, f.admission);
   assert.equal(f.calls(), 0, "a terminal receipt wins the race with cancellation");
+});
+
+test("confirmed Python cancellation reconciles its orphaned host primitive without task selectors or rewriting native receipts", async (t) => {
+  const f = await fixture(t);
+  await f.db.put("owner", "tasks", {
+    ...f.task,
+    status: "cancelled",
+    historyHiddenAt: new Date().toISOString(),
+    state: {},
+  });
+  const primitive = {
+    id: "python-primitive",
+    taskId: f.task.id,
+    revision: 0,
+    runToken: "original-run",
+    status: "dispatching",
+    toolName: "primitive.execute_code",
+    args: { language: "python" },
+    effect: true,
+    bindingHash: "original-binding",
+    resourceLeaseIds: [],
+    physicalOperationId: "owned-command",
+    sequence: 1,
+  };
+  const native = {
+    ...primitive,
+    id: "owned-command",
+    toolName: "native.command",
+    nativeEnvelope: { kind: "command", capability: "python" },
+    status: "outcome_unknown",
+    receipt: {
+      status: "outcome_unknown",
+      data: { cleanupConfirmed: true, result: { status: "interrupted", state_lost: true } },
+    },
+  };
+  await f.db.put("owner", "task-operations", primitive);
+  await f.db.put("owner", "task-operations", native);
+  await f.db.put("other", "task-operations", { ...primitive, id: "foreign-primitive" });
+  const command = {
+    id: "owned-command",
+    command: "Python cell",
+    cwd: "/workspace",
+    status: "interrupted",
+    stdout: "",
+    stderr: "",
+    truncated: false,
+    startedAt: f.task.createdAt,
+    cleanupConfirmed: true,
+    outcomeUnknown: true,
+  } as ComputerCommand;
+  let reads = 0;
+  let confirmed = false;
+  const computer = {
+    command: async (owner: string, id: string) => {
+      reads++;
+      assert.equal(owner, "owner");
+      assert.equal(id, command.id);
+      return confirmed ? command : { ...command, status: "running", cleanupConfirmed: false };
+    },
+  } as unknown as ComputerBackend;
+  const journal = new TaskJournal(f.db);
+  await reconcileWaitingComputerTasks(f.db, computer, f.admission, undefined, journal);
+  assert.equal(
+    (await f.db.get<typeof primitive>("owner", "task-operations", primitive.id))?.status,
+    "dispatching",
+    "a selector hint cannot replace a validated physical cleanup receipt",
+  );
+  confirmed = true;
+  await reconcileWaitingComputerTasks(f.db, computer, f.admission, undefined, journal);
+  const reconciled = await f.db.get<typeof primitive & { receipt: ComputerCommand }>(
+    "owner",
+    "task-operations",
+    primitive.id,
+  );
+  assert.equal(reconciled?.status, "outcome_unknown");
+  assert.equal(reconciled?.receipt.cleanupConfirmed, true);
+  assert.equal(reconciled?.receipt.outcomeUnknown, true);
+  assert.deepEqual(await f.db.get("owner", "task-operations", native.id), native);
+  assert.deepEqual(await f.db.get("other", "task-operations", "foreign-primitive"), {
+    ...primitive,
+    id: "foreign-primitive",
+  });
+  await reconcileWaitingComputerTasks(f.db, computer, f.admission, undefined, journal);
+  assert.equal(reads, 2, "settled primitives leave the recovery index; history is not re-polled");
 });

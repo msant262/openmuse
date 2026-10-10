@@ -944,6 +944,37 @@ export class Store {
     );
     return result.rows.map((row) => row.data as unknown as { owner: string; value: T });
   }
+  /** Cancelled Python cells can stop after their JS checkpoint was withdrawn.
+   * Recover only their bound, unconfirmed host primitive, not historical task bodies. */
+  async cancelledPythonPrimitives(): Promise<
+    { owner: string; taskId: string; id: string; commandId: string }[]
+  > {
+    const result = await this.db.query(`SELECT jsonb_build_object(
+      'owner',p.owner,'taskId',p.data->>'taskId','id',p.id,'commandId',n.id) AS data
+      FROM records p
+      JOIN records t ON t.owner=p.owner AND t.kind='tasks' AND t.id=p.data->>'taskId'
+      JOIN records n ON n.owner=p.owner AND n.kind='task-operations' AND n.id=p.data->>'physicalOperationId'
+      WHERE p.kind='task-operations' AND p.data->>'toolName'='primitive.execute_code'
+        AND p.data->'args'->>'language'='python'
+        AND p.data->>'status' IN ('dispatching','running','outcome_unknown')
+        AND p.data->'receipt'->>'cleanupConfirmed' IS DISTINCT FROM 'true'
+        AND t.data->>'status'='cancelled'
+        AND n.data->>'taskId'=p.data->>'taskId' AND n.data->>'runToken'=p.data->>'runToken'
+        AND n.data->>'revision'=p.data->>'revision'
+        AND n.data->'nativeEnvelope'->>'kind'='command'
+        AND n.data->'nativeEnvelope'->>'capability'='python'
+        AND n.data->'receipt'->'data'->>'cleanupConfirmed'='true'
+      ORDER BY p.updated_at,p.id LIMIT 100`);
+    return result.rows.map(
+      (row) =>
+        row.data as unknown as {
+          owner: string;
+          taskId: string;
+          id: string;
+          commandId: string;
+        },
+    );
+  }
   /** Preflight remains global, but source histories never cross the DB boundary. */
   async deploymentActivity<T>(kind: "tasks" | "task-operations") {
     const projection =
@@ -1804,6 +1835,9 @@ export async function createStore(
   );
   await database.query(
     "CREATE INDEX IF NOT EXISTS task_operation_task_created ON records(owner,(data->>'taskId'),(data->>'createdAt'),id) WHERE kind='task-operations'",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS cancelled_python_primitive_recovery ON records(updated_at,id) WHERE kind='task-operations' AND data->>'toolName'='primitive.execute_code' AND data->'args'->>'language'='python' AND data->>'status' IN ('dispatching','running','outcome_unknown') AND data->'receipt'->>'cleanupConfirmed' IS DISTINCT FROM 'true'",
   );
   await database.query(
     "CREATE INDEX IF NOT EXISTS interaction_thread_history ON records(owner,(data->>'threadId'),updated_at DESC,id) WHERE kind='interaction-requests'",

@@ -3,7 +3,7 @@ import type { ComputerCommand } from "../../../../packages/domain/src/computer.t
 import { type ComputerBackend, computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import type { Store } from "../db.ts";
 import { ResourceLeases } from "./resource-leases.ts";
-import type { TaskJournal } from "./task-journal.ts";
+import type { JournalOperation, TaskJournal } from "./task-journal.ts";
 import type { WorkAdmission } from "./work-admission.ts";
 
 export async function readComputerCommand(
@@ -41,8 +41,47 @@ export async function reconcileWaitingComputerTasks(
   computer: ComputerBackend,
   admission: WorkAdmission,
   resources = new ResourceLeases(db),
-  journal?: Pick<TaskJournal, "reconcileComputerReceipt">,
+  journal?: Pick<TaskJournal, "reconcileComputerReceipt" | "recordReceipt">,
 ) {
+  if (journal)
+    for (const candidate of await db.cancelledPythonPrimitives()) {
+      try {
+        const receipt = await readComputerCommand(computer, candidate.owner, candidate.commandId);
+        if (
+          !receipt ||
+          receipt.id !== candidate.commandId ||
+          !computerCommandCleanupConfirmed(receipt)
+        )
+          continue;
+        const primitive = await db.get<JournalOperation>(
+          candidate.owner,
+          "task-operations",
+          candidate.id,
+        );
+        if (
+          !primitive ||
+          primitive.nativeEnvelope ||
+          primitive.taskId !== candidate.taskId ||
+          primitive.physicalOperationId !== receipt.id ||
+          !["dispatching", "running", "outcome_unknown"].includes(primitive.status)
+        )
+          continue;
+        await journal.recordReceipt(
+          candidate.owner,
+          primitive.id,
+          receipt,
+          receipt.outcomeUnknown ||
+            receipt.status === "interrupted" ||
+            receipt.status === "timed_out"
+            ? "outcome_unknown"
+            : receipt.status,
+          (primitive.sequence ?? 0) + 1,
+        );
+      } catch {
+        // No confirmed receipt means no derived completion. Retry the bounded
+        // selector later; do not alter the native receipt or rerun the cell.
+      }
+    }
   const resumable = new Set([
     "running",
     "queued",
