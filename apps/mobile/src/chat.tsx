@@ -692,6 +692,7 @@ export function ChatScreen({
     return () => subscription.unsubscribe();
   }, [agent, queue]);
   const replayLock = useRef(false);
+  const connectionRetry = useRef(0);
   const lastInteractions = useRef<InteractionRequest[] | undefined>(undefined);
   const syncReplay = useCallback(async () => {
     if (!(queue instanceof MessageOutbox) || replayLock.current || !loaded || !isReady) return;
@@ -709,8 +710,8 @@ export function ChatScreen({
       } else {
         await queue.applyReplay(replay);
       }
-      queue.resume();
-      setHistoryError("");
+      queue.resume(true);
+      if (!connectionRetry.current) setHistoryError("");
       const cards = await api.request<{ requests: InteractionRequest[] }>(
         `/api/conversations/${threadId}/interactions`,
       );
@@ -721,13 +722,28 @@ export function ChatScreen({
         );
         setSuggestions(suggestionsFromRequests(cards.requests));
       }
-      if ((needsSnapshot || replay.events.length) && !runLock.current && !agent.isRunning) {
+      if (
+        (needsSnapshot || replay.events.length || connectionRetry.current) &&
+        Date.now() >= connectionRetry.current &&
+        !runLock.current &&
+        !agent.isRunning
+      ) {
         runLock.current = true;
         // Response streaming may wait for a stored message to retry. Keep journal
         // synchronization available so its durable failure disposition is visible meanwhile.
-        void copilotkit
-          .connectAgent({ agent })
-          .catch((cause) => setHistoryError(cause instanceof Error ? cause.message : String(cause)))
+        void runConversationTurn(
+          agentId,
+          () => copilotkit.connectAgent({ agent }),
+          (onError) => copilotkit.subscribe({ onError }),
+        )
+          .then(() => {
+            connectionRetry.current = 0;
+            setHistoryError("");
+          })
+          .catch((cause) => {
+            connectionRetry.current = Date.now() + 5000;
+            setHistoryError(cause instanceof Error ? cause.message : String(cause));
+          })
           .finally(() => {
             runLock.current = false;
           });
@@ -735,7 +751,7 @@ export function ChatScreen({
     } finally {
       replayLock.current = false;
     }
-  }, [agent, api, copilotkit, isReady, loaded, queue, threadId]);
+  }, [agent, agentId, api, copilotkit, isReady, loaded, queue, threadId]);
   useEffect(() => {
     if (!durableChat || !active) return;
     const poll = () => {
@@ -746,7 +762,8 @@ export function ChatScreen({
     const timer = setInterval(poll, 1000);
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
-        queue.resume();
+        if (queue instanceof MessageOutbox) queue.resume(true);
+        else queue.resume();
         poll();
       }
     });
@@ -851,12 +868,13 @@ export function ChatScreen({
       try {
         if (queue instanceof MessageOutbox) {
           const value = message as OutboxMessage;
-          const { id, attempts, delivery, ...envelope } = value;
+          const { id, attempts, delivery, retryAt, ...envelope } = value;
           await api.request<ConversationAcceptance>(`/api/conversations/${threadId}/messages`, {
             ...envelope,
             clientMessageId: id,
           });
           setReceivedMessage(id);
+          setError("");
           markAccepted(threadId);
           void syncReplay().catch((cause) => setError(String(cause)));
         } else await run(message);
@@ -953,12 +971,18 @@ export function ChatScreen({
     const subscription = copilotkit.subscribe({
       onError: (event) => {
         if (event.context?.agentId && event.context.agentId !== agentId) return;
+        if (event.context?.threadId && event.context.threadId !== threadId) return;
         const failure = event.error instanceof Error ? event.error : new Error(String(event.error));
+        if (event.code === "agent_connect_failed") {
+          connectionRetry.current = Date.now() + 5000;
+          setHistoryError(failure.message);
+          return;
+        }
         setError(failure.message);
       },
     });
     return () => subscription.unsubscribe();
-  }, [copilotkit, agentId, queue]);
+  }, [copilotkit, agentId, threadId, queue]);
   async function stop() {
     queue.pause();
     try {

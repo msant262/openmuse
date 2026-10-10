@@ -32,6 +32,69 @@ function storage() {
   };
   return disk;
 }
+
+test("journal polling honors Retry-After across reload without duplicating or discarding the message", async (t) => {
+  let now = 100_000;
+  t.mock.method(Date, "now", () => now);
+  const disk = storage();
+  let outbox = new MessageOutbox(disk, "rate-limited", "chat");
+  await outbox.enqueue({ id: "original-id", text: "Procure meu compromisso" });
+  let calls = 0;
+  const send = async (message: { id: string }) => {
+    assert.equal(message.id, "original-id");
+    if (++calls === 1) throw new ApiError("Too many requests", 429, "API_QUOTA_EXCEEDED", 30_000);
+  };
+  await assert.rejects(outbox.flush(send), /Too many requests/);
+  for (let second = 1; second < 30; second++) {
+    now = 100_000 + second * 1000;
+    outbox.resume(true);
+    await outbox.flush(send);
+  }
+  assert.equal(calls, 1, "polling must not spend the quota repeatedly");
+  outbox = new MessageOutbox(disk, "rate-limited", "chat");
+  await outbox.open();
+  outbox.resume(true);
+  await outbox.flush(send);
+  assert.equal(calls, 1, "reloading must retain the server's retry deadline");
+  now = 130_000;
+  outbox.resume(true);
+  await outbox.flush(send);
+  assert.equal(calls, 2);
+  assert.equal(outbox.getSnapshot().pending.length, 0);
+});
+
+test("maintenance waits automatically while permanent rejection and human Stop stay paused", async (t) => {
+  let now = 100_000;
+  t.mock.method(Date, "now", () => now);
+  const outbox = new MessageOutbox(storage(), "maintenance", "chat");
+  await outbox.enqueue({ id: "same-id", text: "Crie meu documento" });
+  let calls = 0;
+  const send = async () => {
+    calls++;
+    throw new ApiError("Maintenance", 503, "DEPLOYMENT_MAINTENANCE", 15_000);
+  };
+  await assert.rejects(outbox.flush(send));
+  outbox.resume(true);
+  await outbox.flush(send);
+  assert.equal(calls, 1);
+  now += 15_000;
+  outbox.resume(true);
+  await assert.rejects(
+    outbox.flush(async () => {
+      throw new ApiError("Task removed", 404);
+    }),
+  );
+  outbox.resume(true);
+  assert.equal(
+    outbox.getSnapshot().paused,
+    true,
+    "a permanent rejection needs the person's decision",
+  );
+  outbox.resume();
+  outbox.pause();
+  outbox.resume(true);
+  assert.equal(outbox.getSnapshot().paused, true, "a journal read must not undo Stop");
+});
 test("stream snapshots coalesce disk writes and persist only the recent display page", async () => {
   const disk = storage();
   let writes = 0;
@@ -59,7 +122,9 @@ test("stream snapshots coalesce disk writes and persist only the recent display 
   assert.equal(restored.getSnapshot().messages.length, 50);
   assert.equal((restored.getSnapshot().messages[0] as { id: string }).id, "old-451");
 });
-test("prior lost ACK remains uncertain after later authentication or task rejection", async () => {
+test("prior lost ACK remains uncertain after later authentication or task rejection", async (t) => {
+  let now = 100_000;
+  t.mock.method(Date, "now", () => now);
   const disk = storage();
   let outbox = new MessageOutbox(disk, "task-guidance", "chat");
   await outbox.enqueue({
@@ -76,6 +141,8 @@ test("prior lost ACK remains uncertain after later authentication or task reject
   await outbox.open();
   assert.equal(outbox.getSnapshot().pending[0].targetTaskId, "selected-task");
   await assert.rejects(() => outbox.remove("direction"), /accepted/i);
+  now += 1000;
+  outbox.resume(true);
   await assert.rejects(() =>
     outbox.flush(async () => {
       throw new ApiError("Task was removed", 404);
@@ -154,7 +221,9 @@ test("a persisted delivery failure stays visible after ACK/reopen and clears onl
   });
   assert.equal(conversationDeliveryError(outbox.getSnapshot().events), "");
 });
-test("two offline messages, lost ACK and restart preserve the full queue with original IDs", async () => {
+test("two offline messages, lost ACK and restart preserve the full queue with original IDs", async (t) => {
+  let now = 100_000;
+  t.mock.method(Date, "now", () => now);
   const disk = storage();
   let outbox = new MessageOutbox(disk, "owner:chat", "chat");
   await outbox.enqueue({ id: "one", text: "First" });
@@ -171,6 +240,8 @@ test("two offline messages, lost ACK and restart preserve the full queue with or
     ["one", "two"],
   );
   const ids: string[] = [];
+  now += 1000;
+  outbox.resume(true);
   await outbox.flush(async (message) => {
     ids.push(message.id);
     return { messageId: message.id, runId: "run", duplicate: message.id === "one" };

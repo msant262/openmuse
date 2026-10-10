@@ -3,6 +3,7 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly code?: string,
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -36,5 +37,22 @@ export function parsePayload<T>(body: string, status: number, statusText = ""): 
   return payload as T;
 }
 export async function parseResponse<T>(response: Response): Promise<T> {
-  return parsePayload<T>(await response.text(), response.status, response.statusText);
+  try {
+    return parsePayload<T>(await response.text(), response.status, response.statusText);
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error;
+    const value = response.headers.get("Retry-After");
+    const delay =
+      value === null
+        ? NaN
+        : /^\d+(?:\.\d+)?$/.test(value)
+          ? Number(value) * 1000
+          : Date.parse(value) - Date.now();
+    throw new ApiError(
+      error.message,
+      error.status,
+      error.code,
+      Number.isFinite(delay) && delay >= 0 ? delay : undefined,
+    );
+  }
 }

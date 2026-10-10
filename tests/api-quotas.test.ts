@@ -24,6 +24,10 @@ test("owner/device/route quotas reserve control and bound memory without trustin
   assert.equal(apiQuotaClass("POST", "/api/desktop/viewers/abc/observe"), "observe");
   assert.equal(apiQuotaClass("POST", "/api/desktop/viewers/abc/take-control"), "control");
   assert.equal(apiQuotaClass("POST", "/api/computer/stop"), "control");
+  assert.equal(apiQuotaClass("POST", "/api/conversations/chat/social/window"), "observe");
+  assert.equal(apiQuotaClass("POST", "/api/conversations/chat/reactions"), "work");
+  assert.equal(apiQuotaClass("POST", "/api/copilotkit/agent/default/connect"), "observe");
+  assert.equal(apiQuotaClass("POST", "/api/copilotkit/agent/default/run"), "chat");
 });
 
 test("actual app keeps two devices, four task requests, uploads and Take control/Stop independent of exhausted polls", async (t) => {

@@ -26,6 +26,7 @@ export type OutboxMessage = Omit<AcceptedMessageInput, "clientMessageId"> & {
   id: string;
   attempts: number;
   delivery?: "uncertain" | "rejected";
+  retryAt?: number;
 };
 type Persisted = {
   version: 1;
@@ -99,6 +100,7 @@ const savedOutboxSchema = z
         id: acceptedMessageSchema.shape.clientMessageId,
         attempts: z.number().int().min(0),
         delivery: z.enum(["uncertain", "rejected"]).optional(),
+        retryAt: z.number().finite().nonnegative().optional(),
       }),
     ),
     cursor: z.number().int().min(0),
@@ -143,6 +145,7 @@ export class MessageOutbox {
   private pendingMessages?: readonly unknown[];
   private savingMessages?: Promise<void>;
   private opening?: Promise<void>;
+  private automaticRetry = false;
   constructor(
     private readonly storage: MessageStorage,
     private readonly key: string,
@@ -184,7 +187,8 @@ export class MessageOutbox {
       .then((raw) => {
         if (raw) {
           const parsed = this.decode(raw);
-          this.update(parsed);
+          this.automaticRetry = parsed.pending[0]?.retryAt !== undefined;
+          this.update({ ...parsed, paused: this.automaticRetry });
         }
         this.update({ loaded: true, error: "" });
       })
@@ -417,14 +421,23 @@ export class MessageOutbox {
     });
   }
   pause() {
+    this.automaticRetry = false;
     this.update({ paused: true });
   }
-  resume() {
+  resume(automatic = false) {
+    if (automatic && !this.automaticRetry) return;
+    if ((this.state.pending[0]?.retryAt ?? 0) > Date.now()) return;
+    this.automaticRetry = false;
     if (this.state.paused) this.update({ paused: false });
   }
   async flush(send: (message: OutboxMessage) => Promise<ConversationAcceptance | void>) {
     await this.open();
-    if (this.state.running || this.state.paused) return;
+    if (
+      this.state.running ||
+      this.state.paused ||
+      (this.state.pending[0]?.retryAt ?? 0) > Date.now()
+    )
+      return;
     this.update({ running: true });
     let pendingId: string | undefined;
     let priorUncertain = false;
@@ -440,7 +453,12 @@ export class MessageOutbox {
             // Read the persisted disposition: a retry rejection cannot resolve
             // an earlier request whose acknowledgement was lost.
             priorUncertain = item.attempts > 0 && item.delivery !== "rejected";
-            return { ...item, attempts: item.attempts + 1, delivery: "uncertain" as const };
+            return {
+              ...item,
+              retryAt: undefined,
+              attempts: item.attempts + 1,
+              delivery: "uncertain" as const,
+            };
           }),
         }));
         if (!exists) continue;
@@ -451,15 +469,27 @@ export class MessageOutbox {
         }));
       }
     } catch (error) {
+      const transient =
+        !(error instanceof ApiError) ||
+        [408, 425, 429].includes(error.status) ||
+        error.status >= 500;
+      const attempts =
+        this.state.pending.find((message) => message.id === pendingId)?.attempts ?? 1;
+      const delay =
+        error instanceof ApiError && error.retryAfterMs !== undefined
+          ? error.retryAfterMs
+          : Math.min(60_000, 1000 * 2 ** Math.min(attempts - 1, 6));
+      const retryAt = transient ? Date.now() + Math.max(1000, delay) : undefined;
       const delivery =
         !priorUncertain && error instanceof ApiError && error.status >= 400 && error.status < 500
           ? ("rejected" as const)
           : ("uncertain" as const);
       await this.commit((previous) => ({
         pending: previous.pending.map((message) =>
-          message.id === pendingId ? { ...message, delivery } : message,
+          message.id === pendingId ? { ...message, delivery, retryAt } : message,
         ),
       }));
+      this.automaticRetry = transient;
       this.update({ paused: true });
       throw error;
     } finally {

@@ -123,6 +123,14 @@ class HybridBackup:
     def snapshot_window(self,quiesce,drain_timeout):
         if not quiesce:
             yield self.preflight();return
+        status=self.api()
+        # No live work can reconcile these remaining operations while admission
+        # is closed. Defer the snapshot instead of taking the app offline for
+        # the full drain timeout; retain every uncertain receipt unchanged.
+        if status.get("activeOperations",0)>0 and all(status.get(key)==0 for key in (
+                "activeTasks","activeConversations","activeHttpRequests",
+                "nativeDeliveries","workAdmissions","heldResources")):
+            raise ValueError("Backup deferred: idle runtime has unresolved operations; admission remains open")
         identity=str(uuid.uuid4());owned_pause=None;completed=False
         try:
             self.api("/api/deployment/maintenance",{"id":identity,"operation":"begin","ttlMs":120000})

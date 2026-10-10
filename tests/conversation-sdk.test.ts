@@ -6,6 +6,33 @@ import { throwError } from "rxjs";
 import { ConversationQueue } from "../apps/mobile/src/conversation-queue.ts";
 import { runConversationTurn } from "../apps/mobile/src/conversation-run.ts";
 
+test("read-only reconnect surfaces a swallowed SDK connection error without starting another run", async () => {
+  let connects = 0;
+  let runs = 0;
+  class ReconnectingAgent extends AbstractAgent {
+    run() {
+      runs++;
+      return throwError(() => new Error("Must not run"));
+    }
+    connect() {
+      connects++;
+      return throwError(() => new Error("Connection interrupted"));
+    }
+  }
+  const agent = new ReconnectingAgent({ agentId: "default" });
+  const core = new CopilotKitCore({ agents__unsafe_dev_only: { default: agent } });
+  await assert.rejects(
+    runConversationTurn(
+      "default",
+      () => core.connectAgent({ agent }),
+      (onError) => core.subscribe({ onError }),
+    ),
+    /Connection interrupted/,
+  );
+  assert.equal(connects, 1);
+  assert.equal(runs, 0);
+});
+
 test("an emitted CopilotKit run error stops the queue even when runAgent resolves", async () => {
   let attempts = 0;
   class FailingAgent extends AbstractAgent {

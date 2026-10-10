@@ -13,7 +13,7 @@ import { ActionLog } from "./action-log.ts";
 import { approvalPolicy } from "./action-policy.ts";
 import { ActionService } from "./actions.ts";
 import { agentConfigured, conversationAgentFactory, makeRuntime } from "./agent.ts";
-import { ApiQuotas, apiQuotaClass } from "./api-quotas.ts";
+import { ApiQuotas, apiQuotaClass, apiReadRequest } from "./api-quotas.ts";
 import { auditedComputer, currentComputerResourceScope } from "./audited-computer.ts";
 import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
@@ -689,11 +689,12 @@ export async function createApp(
       }
     }
     if (
-      !["GET", "HEAD", "OPTIONS"].includes(c.req.method) &&
+      !apiReadRequest(c.req.method, c.req.path) &&
       c.req.path !== "/api/deployment/maintenance" &&
       apiQuotaClass(c.req.method, c.req.path) !== "control" &&
       (await deploymentMaintenance.current())
-    )
+    ) {
+      c.header("Retry-After", "15");
       return c.json(
         {
           error: "Maintenance is draining work. Try again shortly.",
@@ -701,8 +702,9 @@ export async function createApp(
         },
         503,
       );
+    }
     const mutation =
-      !["GET", "HEAD", "OPTIONS"].includes(c.req.method) &&
+      !apiReadRequest(c.req.method, c.req.path) &&
       !["/api/deployment/maintenance", "/api/agent/runtime-pause"].includes(c.req.path);
     const finished = mutation ? deploymentMaintenance.request() : undefined;
     try {

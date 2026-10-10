@@ -203,6 +203,23 @@ class HybridBackupContracts(unittest.TestCase):
 
 
 class QuiescenceContracts(unittest.TestCase):
+    def test_unresolved_operations_at_idle_defer_backup_before_closing_app_admission(self):
+        service,pause,calls,active,_=self.fixture()
+        original=service.api
+        def api(path="/api/deployment/status",body=None):
+            result=original(path,body)
+            if path=="/api/deployment/status":
+                result.update(activeTasks=0,activeConversations=0,activeHttpRequests=0,
+                    nativeDeliveries=0,workAdmissions=0,heldResources=0,activeOperations=40,
+                    readyForStoppedWriterBackup=False)
+            return result
+        service.api=api
+        with self.assertRaisesRegex(ValueError,"unresolved operations"):
+            with service.snapshot_window(True,1):self.fail("Must not snapshot")
+        self.assertEqual(calls,[("/api/deployment/status",None)])
+        self.assertFalse(pause["paused"])
+        self.assertIsNone(active["id"])
+
     def fixture(self,paused=False,busy=False):
         service=object.__new__(hybrid_backup.HybridBackup)
         pause={"paused":paused,"revision":11};calls=[];active={"id":None};busy_state={"busy":busy}

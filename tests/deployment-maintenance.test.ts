@@ -122,6 +122,13 @@ test("connected maintenance drains an actual task without abort, blocks new admi
   assert.equal(busy.readyForStoppedWriterBackup, false);
   assert(busy.workAdmissions > 0);
   assert.equal(
+    (await request("/api/conversations/missing/social/window", { messageIds: [] })).status,
+    404,
+    "a social metadata read reaches the owner-scoped handler during maintenance",
+  );
+  const blocked = await request("/api/agent/tasks", { prompt: "Must wait for maintenance" });
+  assert.equal(blocked.headers.get("Retry-After"), "15");
+  assert.equal(
     (await request("/api/agent/tasks", { prompt: "Must wait for maintenance" })).status,
     503,
   );

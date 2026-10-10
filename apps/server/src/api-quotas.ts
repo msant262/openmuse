@@ -18,9 +18,21 @@ type Options = {
   limits?: Partial<Record<ApiQuotaClass, Limit>>;
 };
 
+/** This POST only transports bounded IDs to an owner-scoped read handler. */
+export function apiReadRequest(method: string, path: string): boolean {
+  return (
+    ["GET", "HEAD", "OPTIONS"].includes(method) ||
+    (method === "POST" && /^\/api\/conversations\/[^/]+\/social\/window$/.test(path))
+  );
+}
+
 export function apiQuotaClass(method: string, path: string): ApiQuotaClass {
   if (path === "/api/deployment/maintenance") return "control";
-  if (method === "GET" || method === "HEAD" || /\/viewers\/[^/]+\/observe$/.test(path))
+  if (
+    apiReadRequest(method, path) ||
+    /\/viewers\/[^/]+\/observe$/.test(path) ||
+    (method === "POST" && /^\/api\/copilotkit\/agent\/[^/]+\/connect$/.test(path))
+  )
     return "observe";
   if (/\/(?:viewers\/[^/]+\/input|browsers\/[^/]+\/console)$/.test(path)) return "input";
   if (/\/(?:runtime-pause|stop|take-control|hand-back|control|revoke|close|input)$/.test(path))

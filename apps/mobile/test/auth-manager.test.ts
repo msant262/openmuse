@@ -8,6 +8,29 @@ import ts from "typescript";
 import { createStore } from "../../server/src/db.ts";
 import { DeviceSessions } from "../../server/src/device-sessions.ts";
 import { ApiError, parseResponse } from "../src/api-errors.ts";
+
+test("HTTP retry deadlines survive parsing without losing the provider error code", async (t) => {
+  t.mock.method(Date, "now", () => Date.parse("2026-10-10T02:00:00Z"));
+  for (const [header, expected] of [
+    ["30", 30_000],
+    ["Sat, 10 Oct 2026 02:00:45 GMT", 45_000],
+    ["invalid", undefined],
+  ] as const)
+    await assert.rejects(
+      parseResponse(
+        new Response(JSON.stringify({ error: "Waiting", code: "API_QUOTA_EXCEEDED" }), {
+          status: 429,
+          headers: { "Retry-After": header },
+        }),
+      ),
+      (error: unknown) =>
+        error instanceof ApiError &&
+        error.status === 429 &&
+        error.code === "API_QUOTA_EXCEEDED" &&
+        error.retryAfterMs === expected,
+    );
+});
+
 import {
   AuthManager,
   type Credential,
