@@ -18,8 +18,35 @@ from .python_kernel import KernelProcess, RUNNER_PATH
 from .trust_policy import service_privileges
 
 
+def stop_python_unit(runtime, executor_id, unit, process=None):
+    """Observe/stop the exact root-recorded unit, including collected services."""
+    if not isinstance(unit, str) or not re.fullmatch(r"okami-python-[a-f0-9]{64}\.service", unit):
+        raise ValueError("Invalid owned Python unit")
+    expected = (runtime.cgroup_root / "okami.slice" / "okami-bots.slice"
+                / runtime.sessions.slice(executor_id) / unit)
+    try:
+        try: runtime.runner(["systemctl", "stop", unit])
+        except subprocess.CalledProcessError: pass
+        try:
+            observed = runtime.runner(["systemctl", "show", unit, "--property=LoadState,ActiveState,ControlGroup"])
+        except subprocess.CalledProcessError as error:
+            observed = error.stdout or ""
+            if isinstance(observed, bytes): observed = observed.decode(errors="replace")
+        fields = dict(line.split("=", 1) for line in observed.splitlines() if "=" in line)
+        if not (fields.get("LoadState") == "not-found" or fields.get("ActiveState") in ("inactive", "failed")):
+            return False
+        if process is not None: process.wait(timeout=10)
+        group = fields.get("ControlGroup", "")
+        if group and runtime.populated(group): return False
+        if expected.exists() and "populated 1" in (expected / "cgroup.events").read_text(): return False
+        return True
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 class NativePythonLauncher:
-    def __init__(self, runtime, *, executor_id, owner, memory_bytes, guard):
+    def __init__(self, runtime, *, executor_id, owner, memory_bytes, guard,
+                 before_launch=lambda scope, unit: None, after_stop=lambda unit: None):
         if (not isinstance(owner, str) or not owner or len(owner) > 1024
                 or type(memory_bytes) is not int or memory_bytes < 16 * 1024**2
                 or not callable(guard)):
@@ -27,6 +54,7 @@ class NativePythonLauncher:
         runtime.sessions.account(executor_id)
         self.runtime, self.executor_id, self.owner = runtime, executor_id, owner
         self.memory_bytes, self.guard = memory_bytes, guard
+        self.before_launch, self.after_stop = before_launch, after_stop
         self.units, self.lock = {}, threading.Lock()
 
     def command(self, scope, sentinel):
@@ -87,45 +115,24 @@ class NativePythonLauncher:
             raise ValueError("Only the registered native supervisor may launch Python units")
         self._source_is_trusted()
         argv, unit = self.command(scope, sentinel)
+        # Root journal identity and physical admission precede systemd dispatch.
+        self.before_launch(scope, unit)
         # systemd-run carries only the private streams; systemd changes User
         # before Python starts. Node/server credentials never enter its env.
-        process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}, close_fds=True)
-        expected = (self.runtime.cgroup_root / "okami.slice" / "okami-bots.slice"
-                    / self.runtime.sessions.slice(self.executor_id) / unit)
+        try:
+            process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}, close_fds=True)
+        except Exception:
+            if stop_python_unit(self.runtime, self.executor_id, unit): self.after_stop(unit)
+            raise
 
         def stop():
-            # Stop only the exact owned unit, including its descendants. Do
-            # not kill all processes for the registered user or reset its desktop.
             try:
-                try:
-                    self.runtime.runner(["systemctl", "stop", unit])
-                except subprocess.CalledProcessError:
-                    # An exited transient unit may already have been collected.
-                    # A stop error alone proves neither live nor stopped state.
-                    pass
-                try:
-                    observed = self.runtime.runner([
-                        "systemctl", "show", unit, "--property=LoadState,ActiveState,ControlGroup"])
-                except subprocess.CalledProcessError as error:
-                    observed = error.stdout or ""
-                    if isinstance(observed, bytes):
-                        observed = observed.decode(errors="replace")
-                fields = dict(line.split("=", 1) for line in observed.splitlines() if "=" in line)
-                confirmed = fields.get("LoadState") == "not-found" or fields.get("ActiveState") in ("inactive", "failed")
-                if not confirmed:
-                    return False
-                process.wait(timeout=10)
-                group = fields.get("ControlGroup", "")
-                if group and self.runtime.populated(group):
-                    return False
-                if expected.exists() and "populated 1" in (expected / "cgroup.events").read_text():
-                    return False
-                if confirmed:
-                    with self.lock:
-                        self.units.pop(unit, None)
-                return confirmed
-            except (OSError, ValueError, subprocess.SubprocessError):
+                if not stop_python_unit(self.runtime, self.executor_id, unit, process): return False
+                self.after_stop(unit)
+                with self.lock: self.units.pop(unit, None)
+                return True
+            except Exception:
                 return False
 
         handle = KernelProcess(process, stop)
@@ -143,3 +150,76 @@ class NativePythonLauncher:
             handles = list(self.units.values())
         outcomes = [handle.stop() for handle in handles]
         return all(outcomes)
+
+
+class ManagedPythonLaunchers:
+    """Crash-safe ownership and idle RAM reservations for the fixed supervisor."""
+    def __init__(self, runtime, journal, budget, *, executor_id, guard, snapshot, max_sessions=4):
+        self.runtime, self.journal, self.budget = runtime, journal, budget
+        self.executor_id, self.guard, self.snapshot = executor_id, guard, snapshot
+        self.max_sessions, self.launchers, self.lock = max_sessions, [], threading.RLock()
+
+    def records(self):
+        return self.journal.state("python-units") or []
+
+    def _remember(self, scope, unit, memory):
+        with self.lock, self.journal.lock:
+            records = self.records()
+            if len(records) >= self.max_sessions:
+                raise ValueError("Native Python session capacity remains owned")
+            record = {"unit": unit, "executorId": self.executor_id, "scope": list(scope), "memoryBytes": memory}
+            self.journal.state("python-units", [*records, record])
+            snapshot = self.snapshot()
+            try:
+                self.budget.admit(unit, memory, False, snapshot["memoryAvailableBytes"],
+                    snapshot.get("unmanagedAccountBytes", 0), snapshot.get("managedSessionBytes", 0), self.executor_id)
+            except Exception:
+                # No process has been started. Keep the record if either
+                # durable rollback fails, for the startup cleanup path.
+                self._forget(unit, memory)
+                raise
+
+    def _forget(self, unit, memory):
+        with self.lock, self.journal.lock:
+            self.budget.release(unit, self.executor_id, memory, False)
+            self.journal.state("python-units", [item for item in self.records() if item["unit"] != unit])
+
+    def factory(self, owner, memory):
+        launcher = NativePythonLauncher(self.runtime, executor_id=self.executor_id, owner=owner,
+            memory_bytes=memory, guard=self.guard,
+            before_launch=lambda scope, unit: self._remember(scope, unit, memory),
+            after_stop=lambda unit: self._forget(unit, memory))
+        with self.lock:
+            self.launchers = [item for item in self.launchers if item.units]
+            self.launchers.append(launcher)
+        return launcher
+
+    def recover(self):
+        """Stop durable old units even if Python is disabled after a rollback."""
+        outcomes = []
+        with self.lock:
+            for item in self.records():
+                if (set(item) != {"unit", "executorId", "scope", "memoryBytes"}
+                        or item["executorId"] != self.executor_id or not isinstance(item["scope"], list)
+                        or len(item["scope"]) != 3 or item["scope"][0] != self.executor_id
+                        or type(item["memoryBytes"]) is not int or item["memoryBytes"] < 16 * 1024**2):
+                    raise ValueError("Retained Python unit ownership is invalid")
+                self.budget.restore(item["unit"], item["memoryBytes"], False, self.executor_id)
+                confirmed = stop_python_unit(self.runtime, self.executor_id, item["unit"])
+                outcomes.append(confirmed)
+                if confirmed: self._forget(item["unit"], item["memoryBytes"])
+        return all(outcomes)
+
+    def stopped_scope(self, scope):
+        with self.lock:
+            records = [item for item in self.records() if item["scope"] == list(scope)]
+            for item in records:
+                if not stop_python_unit(self.runtime, self.executor_id, item["unit"]): return False
+                self._forget(item["unit"], item["memoryBytes"])
+        return True
+
+    def contain(self):
+        with self.lock: launchers = list(self.launchers)
+        outcomes = [launcher.contain() for launcher in launchers]
+        # Also includes launch attempts that failed before returning a handle.
+        return self.recover() and all(outcomes)

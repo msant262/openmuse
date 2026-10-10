@@ -294,7 +294,10 @@ class Gate:
             previous = self.journal.state(fence_key) or 0
             if operation["resourceFence"] < previous:
                 raise ValueError("Native resource fence is stale")
-            self.journal.state(fence_key, operation["resourceFence"])
+            # Repeated inspections of an existing cell must not fsync the same
+            # fence twenty times per second. Only a new fence mutates the WAL.
+            if operation["resourceFence"] > previous:
+                self.journal.state(fence_key, operation["resourceFence"])
 
 
 class NodeTransport:
@@ -317,7 +320,7 @@ class NodeTransport:
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def request(self, route, body):
-        if route not in ("register", "reconcile", "heartbeat", "claim", "receipt", "artifact", "desktop/frame", "desktop/input") and not re.fullmatch(r"(?:credential-grants|browser-files)/[a-f0-9-]{36}/consume",route):
+        if route not in ("register", "reconcile", "heartbeat", "claim", "receipt", "artifact", "desktop/frame", "desktop/input") and not re.fullmatch(r"(?:credential-grants|browser-files|python-replies)/[a-f0-9-]{36}/consume",route):
             raise ValueError("Unregistered native protocol route")
         url = self.origin + "/executor/" + self.executor_id + "/" + route
         request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
@@ -392,7 +395,7 @@ def prepare_sleep(executor_id, ipc_root=Path("/run/okami-executor")):
 
 
 class Supervisor:
-    def __init__(self, config, sessions, runtime, workspace, journal, transport, helper, clock=boottime, resource_snapshot=None, budget=None, desktop=None):
+    def __init__(self, config, sessions, runtime, workspace, journal, transport, helper, clock=boottime, resource_snapshot=None, budget=None, desktop=None, python_jobs=None):
         from .job_runtime import HostBudget, host_snapshot
         self.config, self.sessions, self.runtime = config, sessions, runtime
         self.workspace, self.journal, self.transport, self.helper = workspace, journal, transport, helper
@@ -407,14 +410,32 @@ class Supervisor:
         self.instance_id = str(uuid.uuid4())
         self.threads = {}
         self.pause_ack = None
+        self.python_jobs, self.python_launchers = python_jobs, None
         self.budget = budget
         if self.budget is None:
             try:
                 self.budget = HostBudget(self.resource_snapshot(config["hostId"])["memoryTotalBytes"], config.get("reserveBytes", 4 * 1024**3))
             except (OSError, ValueError):
                 pass  # Readiness stays unavailable, and command dispatch fails closed.
+        if config.get("pythonKernelEnabled") is True or journal.state("python-units"):
+            from .python_kernel_native import ManagedPythonLaunchers
+            from .python_transport import NativePythonJobs
+            if self.budget is None:
+                raise ValueError("Retained Python units require physical resource accounting")
+            self.python_launchers = ManagedPythonLaunchers(runtime, journal, self.budget,
+                # A launch owns the kernel's stop lock. Do not acquire the Gate
+                # lock here: watchdog containment owns it while stopping units.
+                executor_id=config["executorId"], guard=lambda: self.gate.open and not self.gate.quarantined
+                    and not self.gate.needs_reconciliation and self.gate.clock() < self.gate.deadline,
+                snapshot=lambda: self.resource_snapshot(config["hostId"]))
+            if config.get("pythonKernelEnabled") is True and self.python_jobs is None:
+                self.python_jobs = NativePythonJobs(config["executorId"], journal,
+                    guard=lambda operation: self.gate.check(operation, inspection=operation.get("inspection") is True),
+                    consume=transport.request, launch_factory=self.python_launchers.factory,
+                    publish=self.publish_python, stopped_scope=self.python_launchers.stopped_scope)
         owned_commands=journal.owned_commands(config["executorId"])
         for item in owned_commands:
+            if item["operation"].get("capability") == "python": continue
             receipt = item["receipt"] or {}
             if (item["operation"]["kind"] in ("command", "media") and
                     (not receipt or receipt.get("status") == "running" or
@@ -426,6 +447,20 @@ class Supervisor:
         self.gate.close("startup")
         journal.recover()
         for item in owned_commands:
+            if item["operation"].get("capability") == "python":
+                # The durable unit manifest was written before dispatch and is
+                # cleared only after exact cgroup cleanup. Never adopt a Python
+                # operation as a shell service or replay a lost namespace.
+                from .python_transport import validate_cell
+                cell = validate_cell(item["operation"])
+                scope = (config["executorId"], cell["owner"], cell["sessionId"])
+                confirmed = self.python_launchers.stopped_scope(scope) if self.python_launchers else True
+                current = journal.get(item["operation"]["id"])["receipt"]
+                if current["status"] == "outcome_unknown" and confirmed:
+                    journal.receipt(item["operation"]["id"], {"status": "outcome_unknown", "data": {
+                        **current.get("data", {}), "cellSettled": True, "cleanupConfirmed": True,
+                        "stateLost": True}, "message": "Python session lost on restart; source was not replayed"})
+                continue
             receipt=item["receipt"] or {}
             if receipt.get("status") in TERMINAL and receipt.get("data",{}).get("cleanupConfirmed") is True:
                 operation=item["operation"];resource_budget=operation.get("resourceBudget")
@@ -447,12 +482,20 @@ class Supervisor:
         # Never move/freeze existing personal or RDP session scopes.
         account = attempt(lambda:self.helper.contain_account(executor_id)) if hasattr(self.helper, "contain_account") else True
         jobs = attempt(lambda:self.runtime.contain(executor_id, freeze=True))
+        python = attempt(self.python_jobs.contain) if self.python_jobs else True
+        python_units = attempt(self.python_launchers.contain) if self.python_launchers else True
         session = attempt(lambda:self.helper.contain_session(executor_id))
         if graphical and account and session:self.desktop_frozen=True
         if self.budget:
             for operation_id in list(self.runtime.active):
                 self.budget.freeze(operation_id)
-        return graphical and network and account and jobs and session
+        return graphical and network and account and jobs and python and python_units and session
+
+    def publish_python(self):
+        try: self.flush()
+        except Exception:
+            self.gate.close("python-receipt-transport-lost")
+            raise
 
     def readiness(self):
         account = self.sessions.preflight(self.config["executorId"])
@@ -494,6 +537,7 @@ class Supervisor:
                  "minProtocolVersion":1, "maxProtocolVersion":1,
                  "capabilities":[{"name":"command", "version":1}, {"name":"files", "version":1},
                                  {"name":"transcribe", "version":1}]+(
+                    [{"name":"python", "version":1}] if self.python_jobs else [])+(
                     [{"name":name,"version":1} for name in ("desktop","browser.dom","browser.screenshot","browser.pointer","browser.drag")] if self.desktop else []),
                  "readiness":self.readiness()}
         response = self.transport.request("register", hello)
@@ -580,7 +624,9 @@ class Supervisor:
         return command
 
     def perform(self, operation):
+        python_reply = operation["kind"] == "session" and operation.get("capability") == "python" and operation["args"].get("operation") == "python-reply"
         inspection = (operation["kind"] == "file" and operation["args"].get("operation") in ("list","search","read","read_binary","stat")
+                      or python_reply
                       or operation["kind"]=="desktop" and operation["args"].get("operation")=="observe"
                       or operation["kind"]=="browser" and operation["args"].get("operation") in ("snapshot","images","console","cdp","read","inspect","agent-screenshot","screenshot","control","downloads","download"))
         containment=(operation["kind"]=="cancel" or operation["kind"]=="session" and operation["args"].get("operation")=="stop"
@@ -593,6 +639,15 @@ class Supervisor:
             if operation["executorId"]!=self.config["executorId"]:
                 raise ValueError("Operation belongs to another registered executor")
             self.gate.check(operation, inspection, containment)
+            if operation.get("capability") == "python" and not (operation["kind"] == "command" or python_reply):
+                raise ValueError("Python capability only accepts a cell or its bound private reply")
+            if operation["kind"] == "command" and (operation.get("capability") == "python" or "pythonCell" in operation["args"]):
+                if not self.python_jobs: raise ValueError("Registered persistent Python capability is disabled")
+                # The launch factory admits a durable per-unit RAM reservation.
+                # Keep the session lease separate from cpu-heavy native jobs so
+                # host RPC can call ordinary native commands without deadlock.
+                self.python_jobs.start(operation)
+                return
             if operation["kind"] in ("command", "media"):
                 resource_budget = operation.get("resourceBudget")
                 if not self.budget or not resource_budget:
@@ -656,20 +711,32 @@ class Supervisor:
                     data={key:value for key,value in data.items() if key!="image"}
                     data["imagePublished"]=True
             elif operation["kind"] == "session":
-                if operation["args"] not in ({"operation":"start"},{"operation":"stop"}):
+                if python_reply:
+                    if not self.python_jobs: raise ValueError("Registered persistent Python capability is disabled")
+                    started = True
+                    data = self.python_jobs.reply(operation)
+                elif operation["args"] not in ({"operation":"start"},{"operation":"stop"}):
                     raise ValueError("Session operation must be the registered start or stop")
-                started = True
-                data = (self.sessions.start if operation["args"]["operation"] == "start" else self.sessions.stop)(self.config["executorId"])
+                else:
+                    started = True
+                    data = (self.sessions.start if operation["args"]["operation"] == "start" else self.sessions.stop)(self.config["executorId"])
             elif operation["kind"] == "cancel":
                 target = self.journal.get(operation["args"]["operationId"])
                 if (target["operation"]["executorId"] != self.config["executorId"] or target["operation"]["kind"] not in ("command", "media")
                         or target["operation"]["taskId"]!=operation["taskId"] or target["operation"]["resourceKey"]!=operation["resourceKey"]):
                     raise ValueError("Job cancellation target is not owned")
                 started = True
-                self.runtime.cancel(target["operation"]["id"])
-                state = self.runtime.inspect(target["operation"]["id"])
-                self.journal.receipt(target["operation"]["id"], {"status":"outcome_unknown", "data":self.command_receipt(target["operation"], "outcome_unknown",
-                    {"message":"Job cancelled; effects already sent remain uncertain", "cleanupConfirmed":state.get("cleanupConfirmed",False)})})
+                if target["operation"].get("capability") == "python":
+                    if not self.python_jobs: raise ValueError("Python ownership requires native reconciliation")
+                    state = {"cleanupConfirmed": self.python_jobs.cancel(target["operation"]["id"])}
+                else:
+                    self.runtime.cancel(target["operation"]["id"])
+                    state = self.runtime.inspect(target["operation"]["id"])
+                cancelled_data = self.command_receipt(target["operation"], "outcome_unknown",
+                    {"message":"Job cancelled; effects already sent remain uncertain", "cleanupConfirmed":state.get("cleanupConfirmed",False)})
+                if target["operation"].get("capability") == "python":
+                    cancelled_data.update(cellSettled=True, stateLost=True)
+                self.journal.receipt(target["operation"]["id"], {"status":"outcome_unknown", "data":cancelled_data})
                 if state.get("cleanupConfirmed"):
                     self.release(target["operation"]["id"])
                 data = {"cancelled":True, "contained":state.get("cleanupConfirmed",False)}
@@ -685,11 +752,11 @@ class Supervisor:
             # mutation. Once handle() raises, the read has definitively failed;
             # do not freeze its task as an uncertain write. File mutations and
             # graphical/command dispatch keep their existing uncertainty rules.
-            file_read_failed = started and operation["kind"] == "file" and operation["args"].get("operation") in ("list","search","read","read_binary","stat")
+            file_read_failed = started and (python_reply or operation["kind"] == "file" and operation["args"].get("operation") in ("list","search","read","read_binary","stat"))
             status = "failed" if file_read_failed else "outcome_unknown" if started else "rejected_not_dispatched"
             graphical=operation["kind"] in ("desktop","browser")
             message = "Native graphical operation could not be confirmed; inspect before repeating input" if graphical else type(error).__name__ + ": " + str(error)[:500]
-            local_cleanup=not started or operation["kind"] in ("file","file-version") or graphical and getattr(error,"cleanup_confirmed",False)
+            local_cleanup=not started or python_reply or operation["kind"] in ("file","file-version") or graphical and getattr(error,"cleanup_confirmed",False)
             data = self.command_receipt(operation, status, {"message":message,"cleanupConfirmed":local_cleanup}) if operation["kind"] in ("command", "media") else {"cleanupConfirmed":local_cleanup}
             if graphical:data["code"]=getattr(error,"code","DESKTOP_FAILED")
             self.journal.receipt(operation["id"], {"status":status, "data":data, "message":message})
@@ -699,6 +766,9 @@ class Supervisor:
         if operation["executorId"]!=self.config["executorId"] or operation["kind"] not in ("command", "media"):
             raise ValueError("Cleanup release belongs to another executor")
         resource_budget=operation.get("resourceBudget")
+        if operation.get("capability") == "python":
+            if self.python_jobs: self.python_jobs.release(operation_id)
+            return  # Idle unit retains its own physical reservation.
         if self.budget and resource_budget:
             self.budget.check_binding(operation_id,resource_budget["memoryBytes"],resource_budget["heavy"],self.config["executorId"])
         self.runtime.release(operation_id)
@@ -715,6 +785,13 @@ class Supervisor:
 
     def tick(self):
         self.flush()
+        if self.python_jobs:
+            for operation_id in list(self.python_jobs.active):
+                receipt = self.journal.get(operation_id)["receipt"]
+                if receipt and receipt["status"] in TERMINAL and receipt.get("data", {}).get("cellSettled"):
+                    if receipt["status"] == "outcome_unknown" and receipt["data"].get("cleanupConfirmed") is not True:
+                        self.gate.close("python-cleanup")
+                    self.release(operation_id)
         for operation_id in list(self.runtime.active):
             item = self.journal.get(operation_id)
             if item["receipt"] and item["receipt"]["status"] in ("running", "outcome_unknown"):
@@ -733,7 +810,7 @@ class Supervisor:
         # poll must not add fifteen seconds to an already finished command.
         self.flush()
         response = self.transport.request("claim", {"epoch":self.gate.epoch,
-            "waitMs":1000 if self.runtime.active else 15000})
+            "waitMs":1000 if self.runtime.active or self.python_jobs and self.python_jobs.busy() else 15000})
         pause = response["pause"]
         self.pause_ack = self.gate.pause(pause)
         if self.gate.needs_reconciliation:
@@ -833,6 +910,8 @@ def main():
         supervisor.run()
     finally:
         supervisor.gate.close("shutdown")
+        if supervisor.python_jobs and not supervisor.python_jobs.wait(timeout=5):
+            raise RuntimeError("Python receipt writer has not settled; retain its journal for recovery")
         control.close();supervisor.journal.close();workspace.close();budget.close();singleton.close();os.close(home_anchor)
 
 

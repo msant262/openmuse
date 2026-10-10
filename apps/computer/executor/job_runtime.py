@@ -365,7 +365,9 @@ def host_snapshot(host_id, cgroup_root=Path("/sys/fs/cgroup"), meminfo_path=Path
         account_group=base/("okami-bots-u"+str(account["uid"])+".slice")
         try:
             for child in account_group.iterdir():
-                if re.fullmatch(r"okami-job-[0-9a-f]{64}\.service",child.name):
+                # Both families have durable physical reservations. Idle Python
+                # units retain theirs until their exact cgroup is stopped.
+                if re.fullmatch(r"okami-(?:job|python)-[0-9a-f]{64}\.service",child.name):
                     try:job_current+=int((child/"memory.current").read_text())
                     except FileNotFoundError:pass
         except FileNotFoundError:pass

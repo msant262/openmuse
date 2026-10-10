@@ -8,7 +8,9 @@ import unittest
 from unittest.mock import patch
 
 from .job_runtime import JobRuntime
-from .python_kernel_native import NativePythonLauncher
+from .python_kernel_native import NativePythonLauncher, ManagedPythonLaunchers
+from .job_runtime import HostBudget, host_snapshot
+from .supervisor import Journal
 from .user_session import UserSession
 
 
@@ -110,6 +112,69 @@ class NativePythonLauncherTests(unittest.TestCase):
             handle = self.launcher(self.scope, "@@sentinel@@")
         self.assertFalse(handle.stop())
         self.assertEqual(len(self.launcher.units), 1)
+
+    def managed(self):
+        journal = Journal(Path(self.directory.name) / "journal.sqlite")
+        budget = HostBudget(16 * 1024**3, 3 * 1024**3)
+        self.addCleanup(journal.close)
+        self.addCleanup(budget.close)
+        snapshot = lambda: {"memoryAvailableBytes": 12 * 1024**3, "managedSessionBytes": 0}
+        return ManagedPythonLaunchers(self.runtime, journal, budget, executor_id="node",
+            guard=lambda: True, snapshot=snapshot), journal, budget
+
+    def test_unit_identity_and_memory_reservation_are_durable_before_process_start(self):
+        managed, journal, budget = self.managed()
+        launcher = managed.factory("owner", 512 * 1024**2)
+        def popen(*args, **kwargs):
+            records = journal.state("python-units")
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["scope"], list(self.scope))
+            self.assertEqual(budget.jobs[records[0]["unit"]]["bytes"], 512 * 1024**2)
+            self.assertFalse(budget.jobs[records[0]["unit"]]["heavy"])
+            return SimpleNamespace(wait=lambda timeout: 0)
+        self.runtime.runner = lambda args: "LoadState=not-found\nActiveState=inactive\nControlGroup=\n"
+        with patch("executor.python_kernel_native.os.geteuid", return_value=0), \
+                patch.object(launcher, "_source_is_trusted"), \
+                patch("executor.python_kernel_native.subprocess.Popen", side_effect=popen):
+            handle = launcher(self.scope, "@@sentinel@@")
+        self.assertEqual(budget.reserved_bytes, 512 * 1024**2)
+        self.assertTrue(handle.stop())
+        self.assertEqual(journal.state("python-units"), [])
+        self.assertEqual(budget.reserved_bytes, 0)
+
+    def test_restart_stops_the_recorded_unit_without_running_a_cell_or_forgetting_uncertainty(self):
+        managed, journal, budget = self.managed()
+        unit = self.launcher.command(self.scope, "@@sentinel@@")[1]
+        record = {"unit": unit, "executorId": "node", "scope": list(self.scope), "memoryBytes": 512 * 1024**2}
+        journal.state("python-units", [record])
+        calls = []
+        def runner(args):
+            calls.append(args)
+            return "LoadState=loaded\nActiveState=active\nControlGroup=\n"
+        self.runtime.runner = runner
+        self.assertFalse(managed.recover())
+        self.assertEqual(budget.reserved_bytes, 512 * 1024**2)
+        self.assertEqual(journal.state("python-units"), [record])
+        self.runtime.runner = lambda args: calls.append(args) or "LoadState=not-found\nActiveState=inactive\nControlGroup=\n"
+        self.assertTrue(managed.recover())
+        self.assertEqual(budget.reserved_bytes, 0)
+        self.assertEqual(journal.state("python-units"), [])
+        self.assertTrue(all(args[:2] in (["systemctl", "stop"], ["systemctl", "show"]) for args in calls))
+
+    def test_idle_kernel_ram_is_reserved_once_instead_of_charged_as_an_unowned_desktop(self):
+        base = Path(self.directory.name) / "cgroups"
+        bots = base / "okami.slice" / "okami-bots.slice"
+        group = bots / "okami-bots-u1003.slice" / ("okami-python-" + "a" * 64 + ".service")
+        group.mkdir(parents=True)
+        (group / "memory.current").write_text(str(512 * 1024**2))
+        for name, value in [("memory.current", 768 * 1024**2), ("memory.high", 12 * 1024**3),
+                            ("memory.max", 13 * 1024**3), ("memory.pressure", "some avg10=0")]:
+            (bots / name).write_text(str(value))
+        meminfo = Path(self.directory.name) / "meminfo"
+        meminfo.write_text("MemTotal: 16777216 kB\nMemAvailable: 12582912 kB\n")
+        with patch("executor.job_runtime.unmanaged_memory", return_value=0):
+            observed = host_snapshot("node", cgroup_root=base, meminfo_path=meminfo, accounts=[{"uid": 1003}])
+        self.assertEqual(observed["managedSessionBytes"], 256 * 1024**2)
 
 
 if __name__ == "__main__":

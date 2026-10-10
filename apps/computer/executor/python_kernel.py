@@ -227,6 +227,20 @@ class PythonKernels:
                 self.uncertain_kernels.pop(scope)
         return True
 
+    def stop_scope(self, scope):
+        """Stop this exact conversation, including an attached cell; no replay."""
+        with self.registry.lock:
+            kernel = self.registry.kernels.get(scope) or self.uncertain_kernels.get(scope)
+        if kernel is None:
+            return True
+        confirmed = self._stop(kernel)
+        self.registry.discard(scope, kernel)
+        if confirmed:
+            with self.registry.lock:
+                if self.uncertain_kernels.get(scope) is kernel:
+                    self.uncertain_kernels.pop(scope)
+        return confirmed
+
     def _release(self, kernel):
         with self.registry.lock:
             kernel.attached -= 1
