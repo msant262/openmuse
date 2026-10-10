@@ -44,6 +44,8 @@ test("native Python selection retains the copied agent's ordinary host hook and 
       execute: async (input) => {
         nativeRuns++;
         assert.equal(input.reset, true);
+        assert.equal(input.wallClockMs, 300_000);
+        assert.equal(input.maxToolCalls, 100);
         assert.equal(
           input.tools.some((tool) => ["finish_task", "execute_code"].includes(tool.name)),
           false,

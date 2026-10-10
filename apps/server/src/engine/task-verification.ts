@@ -21,6 +21,7 @@ import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { DocumentReview } from "../document-review.ts";
 import { driveRemovalEvidence, driveRemovalRequest } from "../drive-removal.ts";
+import { nativePythonArgsSchema, pythonResultSchema } from "../executors/python-protocol.ts";
 import type { Files } from "../files.ts";
 import { verifiedGmailOrganization } from "../gmail-organization.ts";
 import { observedDriveSearch } from "../google-drive-search.ts";
@@ -727,7 +728,73 @@ function actionMatches(
   }
   return true;
 }
-function operationMatches(criterion: CompletionCriterion, op: JournalOperation, prompt: string) {
+/** A script's own return value cannot establish execution. Match the complete
+ * result to its canonical native cell and original host-call lineage. */
+function observedNativePython(op: JournalOperation, operations: JournalOperation[]) {
+  const args = object(op.args),
+    receipt = object(op.receipt),
+    command = object(receipt?.command);
+  if (
+    op.toolName !== "execute_code" ||
+    op.parentOperationId ||
+    op.status !== "succeeded" ||
+    args?.language !== "python" ||
+    typeof args.code !== "string" ||
+    command?.status !== "succeeded"
+  )
+    return false;
+  const result = pythonResultSchema.safeParse(receipt?.result);
+  if (
+    !result.success ||
+    result.data.status !== "ok" ||
+    result.data.state_lost ||
+    result.data.host_call_pending ||
+    result.data.error
+  )
+    return false;
+  const native = operations.find((child) => child.id === command.id);
+  if (
+    native?.status !== "succeeded" ||
+    native.taskId !== op.taskId ||
+    native.revision !== op.revision ||
+    native.toolName !== "native.command" ||
+    native.nativeEnvelope?.capability !== "python" ||
+    native.nativeEnvelope.kind !== "command" ||
+    native.nativeEnvelope.inspection === true
+  )
+    return false;
+  const parent = operations.find((entry) => entry.id === native.parentOperationId);
+  if (
+    parent?.id !== op.id &&
+    !(
+      parent?.parentOperationId === op.id &&
+      parent.toolName === "primitive.execute_code" &&
+      parent.status === "succeeded"
+    )
+  )
+    return false;
+  const cell = nativePythonArgsSchema.safeParse(native.args);
+  const delivered = object(native.receipt),
+    data = object(delivered?.data);
+  const nativeResult = pythonResultSchema.safeParse(data?.result);
+  return (
+    cell.success &&
+    cell.data.pythonCell.code === args.code &&
+    delivered?.status === "succeeded" &&
+    data?.cellSettled === true &&
+    data.stateLost === false &&
+    data.hostCallPending === false &&
+    nativeResult.success &&
+    bindingHash(result.data) === bindingHash(nativeResult.data)
+  );
+}
+
+function operationMatches(
+  criterion: CompletionCriterion,
+  op: JournalOperation,
+  prompt: string,
+  operations: JournalOperation[] = [],
+) {
   if (criterion.id === "requested-browser-deletion") return false;
   const codeMode = criterion.effect === "command" && op.toolName === "execute_code";
   if (
@@ -747,6 +814,8 @@ function operationMatches(criterion: CompletionCriterion, op: JournalOperation, 
     !required(criterion, { args: op.args, receipt })
   )
     return false;
+  if (codeMode && object(op.args)?.language === "python")
+    return /\bpython\w*\b/i.test(prompt) && observedNativePython(op, operations);
   if (codeMode)
     return (
       !/\b(?:python\w*|bash|shell|terminal|comando|command|powershell|ruby|php|java|rust|gcc)\b/i.test(
@@ -1218,7 +1287,7 @@ export class TaskVerification {
                   (op) =>
                     op.revision === revision &&
                     (!criterion.referenceId || criterion.referenceId === op.id) &&
-                    operationMatches(criterion, op, task.prompt),
+                    operationMatches(criterion, op, task.prompt, ops),
                 )
                 .map((op) => op.id),
             );
@@ -1276,12 +1345,14 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|search_files$|run_computer_command$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot|get_images|console|cdp)$)/.test(
+                    !/^(execute_code$|execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|search_files$|run_computer_command$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot|get_images|console|cdp)$)/.test(
                       op.toolName,
                     ) ||
                     !useful(op.receipt) ||
                     (op.receipt as { error?: unknown })?.error
                   )
+                    return false;
+                  if (op.toolName === "execute_code" && !observedNativePython(op, ops))
                     return false;
                   if (op.toolName === "search_mail") {
                     const result = op.receipt as { account?: unknown; matches?: unknown };

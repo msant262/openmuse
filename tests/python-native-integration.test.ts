@@ -14,6 +14,7 @@ import {
 import { computerTools } from "../apps/server/src/computer-tools.ts";
 import { withNativePythonHostCall } from "../apps/server/src/engine/python-call-scope.ts";
 import { currentExecutorContext } from "../apps/server/src/engine/task-executor-authority.ts";
+import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import type { ExecutorOperation } from "../apps/server/src/executors/protocol.ts";
 import { dispatchPythonRequests } from "../apps/server/src/executors/python-dispatch.ts";
 import { pythonHostCallId, pythonRpcWire } from "../apps/server/src/executors/python-protocol.ts";
@@ -471,6 +472,89 @@ test("an API-owned cancellation stops the actual Python process and retains the 
     {
       timeoutMs: 15_000,
       code: "from pathlib import Path\nimport time\nPath('started.txt').write_text('actual process running')\ntime.sleep(60)\nPath('after-cancellation.txt').write_text('must not execute')",
+    },
+  );
+});
+
+test("completion verifies actual native Python results and refuses an unbound script claim", {
+  timeout: 45_000,
+}, async (t) => {
+  const code = "primos_qa = [2, 3, 5]\nprint(sum(primos_qa))";
+  await pythonRuntime(
+    t,
+    async ({ server, registry, task, operation }) => {
+      const native = await peer(registry, operation);
+      try {
+        const driven = dispatchPythonRequests(
+          registry,
+          "owner",
+          operation,
+          {
+            shouldContinue: () => true,
+            call: async () => assert.fail("this calculation has no host callbacks"),
+          },
+          5,
+        );
+        await native.start();
+        assert.equal((await driven).status, "succeeded");
+        const backend = new RemoteComputerBackend(registry, { executorId: operation.executorId });
+        const parent = (await server.agent.journal.operations("owner", task.id)).find(
+          (op) => op.toolName === "execute_code",
+        );
+        assert.ok(parent);
+        const delivered = (await registry.delivery("owner", operation.id))?.receipt;
+        assert.ok(delivered?.data?.result);
+        const receipt = {
+          command: await backend.command("owner", operation.id),
+          result: delivered.data.result,
+        };
+        await server.agent.journal.recordReceipt("owner", parent.id, receipt, "succeeded");
+        const verified = await server.agent.verification.assess("owner", task.id, 0);
+        assert.equal(verified.status, "verified", JSON.stringify(verified));
+        const running = await server.agent.getTask("owner", task.id);
+        const prompt = "Run a Python program to calculate the sum of these numbers.";
+        await server.db.put("owner", "tasks", {
+          ...running,
+          prompt,
+          criteria: taskCriteria({ ...running, prompt }),
+        });
+        assert.equal(
+          (await server.agent.verification.assess("owner", task.id, 0)).status,
+          "verified",
+        );
+        await server.db.put("owner", "task-operations", {
+          ...parent,
+          status: "succeeded",
+          receipt: {
+            ...receipt,
+            result: { ...(delivered.data.result as object), stdout: "fabricated answer" },
+          },
+        });
+        assert.notEqual(
+          (await server.agent.verification.assess("owner", task.id, 0)).status,
+          "verified",
+        );
+        await server.db.put("owner", "task-operations", {
+          ...parent,
+          status: "succeeded",
+          receipt: {
+            ...receipt,
+            command: { ...receipt.command, id: "unrelated-native-cell" },
+          },
+        });
+        assert.notEqual(
+          (await server.agent.verification.assess("owner", task.id, 0)).status,
+          "verified",
+        );
+      } finally {
+        await native.close();
+      }
+    },
+    [],
+    {
+      code,
+      logicalArgs: { language: "python", code },
+      prompt: "Guarde os números numa sessão Python persistente para eu continuar depois.",
     },
   );
 });

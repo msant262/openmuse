@@ -1,7 +1,7 @@
 # Persistent Python integration boundary
 
-Status: core, native transport and API/host integration implemented locally; **disabled in production and not
-exposed in the published `execute_code` tool or native capability catalog**.
+Status: compatible API and registered native runtime published at `f5ed943c`;
+**enabled for controlled published Luna acceptance, with overall acceptance pending**.
 
 `python_kernel.py` owns a conversation's interpreter and installs fresh caller
 callbacks for every cell. `python_kernel_runner.py` executes the unchanged
@@ -31,7 +31,7 @@ receipt reports `cellSettled`; it does not claim the still-live unit was stopped
 
 The supervisor wires this surface only when its root-owned
 `pythonKernelEnabled` configuration is explicitly `true`. The current deployed
-configuration remains false. Disabled requests cannot fall back to shell
+configuration is now enabled following API-first publication and registered-unit checks. Disabled requests cannot fall back to shell
 execution. Enabled sessions use a separate conversation resource key rather
 than the CPU-heavy command key. Their idle interpreters retain per-unit physical
 RAM reservations, and native snapshots avoid counting that RAM twice. Unit
@@ -87,13 +87,14 @@ flow preserves recovery. Kernel reset never deletes it. Internal `.okami-*`
 paths remain blocked; no private-state exception or automatic deletion of user
 documents is introduced. Test cleanup selects only its own exact outputs.
 
-The following work is required before enabling this surface:
+The following acceptance work remains:
 
 1. Verify nested native command admission and approval/denial resumption through
    the actual model/task runtime. The API/registered-unit bridge below proves
    file attachment and owned cancellation, not natural model/provider behavior.
-2. Publish the compatible API protocol before enabling the native capability,
-   retaining ordinary task leases, per-unit RAM and exact rollback ownership.
+2. Preserve the compatible API/native protocol, ordinary task leases, per-unit
+   RAM and exact rollback ownership. Publication is complete; validate subsequent
+   API corrections with the actual model rather than treating activation as acceptance.
 3. Complete ordinary Luna chats in the published app, including persistence,
    real Workspace reads, file delivery, actual UI approval/denial, approval
    resumption and cancellation. Preserve existing JavaScript behavior and honest

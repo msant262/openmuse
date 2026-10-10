@@ -34,7 +34,7 @@ export async function pythonRuntime(
     ) => Promise<{ sequence: number; json: string; sha256: string }>;
   }) => Promise<void>,
   tools = ["write_sample"],
-  cell: { code?: string; timeoutMs?: number } = {},
+  cell: { code?: string; timeoutMs?: number; logicalArgs?: unknown; prompt?: string } = {},
 ) {
   const server = await taskRuntime(t);
   const authority = new TaskExecutorAuthority(server.agent.journal, {
@@ -51,7 +51,9 @@ export async function pythonRuntime(
     operations: [],
     contained: true,
   });
-  const task = await server.agent.createTask("owner", { prompt: "Owned Python protocol fixture" });
+  const task = await server.agent.createTask("owner", {
+    prompt: cell.prompt ?? "Owned Python protocol fixture",
+  });
   let error: unknown;
   let reached = false;
   const worker = new TaskWorker(server.db, async (owner, running, ctx) => {
@@ -93,7 +95,7 @@ export async function pythonRuntime(
         resourceFence: 0,
         status: "queued",
         toolName: "execute_code",
-        args,
+        args: cell.logicalArgs ?? args,
         effect: false,
         runToken: String(running.leaseId),
         resourceLeaseIds: [],
