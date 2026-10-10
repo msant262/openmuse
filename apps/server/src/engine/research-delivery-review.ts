@@ -415,16 +415,14 @@ export async function reviewResearchDelivery(options: {
         )
           decision.missing.push(item.requirement);
       if (options.stage === "access_selection" && decision.complete) {
+        const normalizeRaw = (value: string) =>
+          value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
         const normalize = (value: string) =>
-          visibleSourceText(Lexer.lexInline(value))
-            .normalize("NFKC")
-            .replace(/[*`]/g, "")
-            .replace(/\s+/g, " ")
-            .trim()
-            .toLowerCase();
+          normalizeRaw(visibleSourceText(Lexer.lexInline(value)).replace(/[*`]/g, ""));
         const normalizedSources = observations.map((source) => ({
           ...source,
           normalizedText: normalize(source.text),
+          rawText: normalizeRaw(source.text),
         }));
         const failed = (decision.accessAudit ?? []).filter((item) => {
           const evidence = [...(item.quote ? [item.quote] : []), ...(item.quotes ?? [])]
@@ -446,7 +444,11 @@ export async function reviewResearchDelivery(options: {
                     !source.error &&
                     (source.extraction as { status?: string } | undefined)?.status !== "partial" &&
                     source.url === sourceUrl &&
-                    source.normalizedText.includes(normalize(quote)),
+                    // Exact raw excerpts can end inside a Markdown token. Parsing
+                    // the source and an unfinished excerpt yields different text;
+                    // preserve this valid verbatim path alongside visible labels.
+                    (source.rawText.includes(normalizeRaw(quote)) ||
+                      source.normalizedText.includes(normalize(quote))),
                 ),
             )
           );

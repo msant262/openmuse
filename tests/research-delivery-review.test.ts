@@ -2249,6 +2249,85 @@ test("free-access proof matches visible linked text without dropping intervening
   );
 });
 
+test("verbatim source fragments remain evidence when they end inside a Markdown link", async (t) => {
+  const fixture = await modelFixture(t, () => undefined, {
+    researchReview: () => ({
+      complete: true,
+      missing: [],
+      nextSteps: [],
+      accessAudit: [
+        {
+          option: "Introduction to AI",
+          access: "free",
+          sourceUrl: "https://courses.example/catalogue",
+          quote: "### [Introduction to AI — learn with examples",
+          evidence: [
+            {
+              sourceUrl: "https://courses.example/policy",
+              quote: "Every course in our catalogue is free.",
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", { prompt: "Find a free introductory AI course." });
+  const review = (catalogue: string) =>
+    reviewResearchDelivery({
+      task,
+      summary: "Introduction to AI: free course access.",
+      model: "openai/fixture",
+      providers: f.agent.config.modelProviders!,
+      structured: false,
+      stage: "access_selection",
+      signal: new AbortController().signal,
+      operations: [
+        {
+          toolName: "web_fetch",
+          status: "succeeded",
+          args: { url: "https://courses.example/catalogue" },
+          receipt: { url: "https://courses.example/catalogue", text: catalogue },
+        },
+        {
+          toolName: "web_fetch",
+          status: "succeeded",
+          args: { url: "https://courses.example/policy" },
+          receipt: {
+            url: "https://courses.example/policy",
+            text: "Every course in our catalogue is free.",
+          },
+        },
+      ] as never,
+    });
+  assert.equal(
+    (await review("### [Introduction to AI — learn with examples](https://courses.example/ai)"))
+      .complete,
+    true,
+  );
+  assert.equal(
+    fixture.reviewRequests.length,
+    1,
+    "an exact source fragment does not need another model call",
+  );
+  assert.equal(
+    (
+      await review(
+        "### [Introduction to AI — paid lessons; learn with examples](https://courses.example/ai)",
+      )
+    ).complete,
+    false,
+  );
+  assert.equal(
+    (
+      await review(
+        "### [Different course — learn with examples](https://courses.example/Introduction-to-AI)",
+      )
+    ).complete,
+    false,
+  );
+});
+
 test("a valid additional access fragment cannot mask a fabricated primary quotation", async (t) => {
   let additional: { quotes?: string[]; evidence?: { sourceUrl: string; quote: string }[] } = {
     quotes: ["45 minutes"],

@@ -173,6 +173,27 @@ only the dedicated firewall, registered session and supervisor, then installs
 the sleep gate. Preserve the inventoried lid/power/Wi-Fi policies and existing
 SSH/RDP; check restart/unlock with those paths still available.
 
+Updating compiled native browser files does not reload the separate graphical
+process. A supervisor restart alone leaves its old Node modules in memory.
+After a reviewed browser publication, use the existing coordinator's owned
+maintenance interval and wait for tasks, HTTP requests, admissions, resources
+and native deliveries to drain. Reload both writers with the installed helper:
+
+```sh
+sudo python3 /opt/okami-computer/repository/scripts/reload_native_browser.py \
+  --config /etc/okami-backup/native.json --maintenance-id OWNED_MAINTENANCE_ID \
+  --worker /opt/okami-computer/repository/native-dist/apps/worker/src/native.js \
+  --worker-sha256 REVIEWED_WORKER_SHA256 \
+  --receipt /var/lib/okami-deployment/UNIQUE_RELOAD_RECEIPT.json
+```
+
+The helper retains the closed-gate stop/resume order and verifies a new browser
+process, unchanged selected bytes, configuration, pause and prior journal
+receipts. Existing uncertain outcomes remain uncertain. The coordinator must
+finish its maintenance interval after verification; validate the actual browser
+operation through a fresh ordinary chat. No active task or native job may be
+stopped to satisfy this publication preflight.
+
 The ASR path is `/opt/openmuse/models/whisper-small`, pinned to Systran's small
 snapshot `536b0662742c02347bc0e980a01041f333bce120`. It uses CPU/int8, bounded CPU
 threads and local-only inference; no paid ASR or external audio upload. Loading

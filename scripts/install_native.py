@@ -86,7 +86,7 @@ def copy_set(source):
         if path.is_symlink():raise ValueError("Source symlinks are not installable")
         if not path.is_file():raise ValueError("Frozen browser worker package is missing")
         files[str(path.relative_to(source))]=sha(path)
-    for name in ("backup_receive.py","backup_native_remote.py","deployment_backup.py","hybrid_backup.py","verify_hybrid.py","soak_hybrid.py","operator_backup_token.py"):
+    for name in ("backup_receive.py","backup_native_remote.py","deployment_backup.py","hybrid_backup.py","reload_native_browser.py","verify_hybrid.py","soak_hybrid.py","operator_backup_token.py"):
         path=source/"scripts"/name
         if path.is_symlink() or not path.is_file():raise ValueError("Hybrid deployment scripts are missing or symlinked")
         files[str(path.relative_to(source))]=sha(path)
