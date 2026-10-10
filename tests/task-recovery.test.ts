@@ -23,6 +23,40 @@ import { RoutinesService } from "../apps/server/src/routines.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("resuming provider work clears the old waiting message before exposing running progress", async (t) => {
+  const server = await taskRuntime(t);
+  const created = await server.agent.createTask("owner", { prompt: "Create the researched PDF" });
+  const pendingDocumentGeneration = { args: { content: "Saved draft" }, revision: 0 };
+  await server.db.put("owner", "tasks", {
+    ...created,
+    status: "waiting_provider",
+    question: "The delivery check is temporarily unavailable.",
+    nextRunAt: new Date(0).toISOString(),
+    state: { ...created.state, pendingDocumentGeneration },
+  });
+  let resumed = false;
+  const worker = new TaskWorker(server.db, async (owner, task) => {
+    resumed = true;
+    const visible = await server.agent.getTask(owner, task.id);
+    assert.equal(visible.status, "running");
+    assert.equal(visible.question, "", "the resolved waiting message must not override progress");
+    assert.equal(task.question, "");
+    assert.deepEqual(task.state.pendingDocumentGeneration, pendingDocumentGeneration);
+    return {
+      status: "waiting_provider",
+      question: "The current provider request is unavailable.",
+      nextRunAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+  });
+  t.after(() => worker.stop());
+  await worker.tick();
+  assert.ok(resumed);
+  const waiting = await server.agent.getTask("owner", created.id);
+  assert.equal(waiting.status, "waiting_provider", waiting.error ?? undefined);
+  assert.equal(waiting.question, "The current provider request is unavailable.");
+  assert.deepEqual(waiting.state.pendingDocumentGeneration, pendingDocumentGeneration);
+});
+
 test("the copied executor completes work beyond the former step cap without a forced handoff", async (t) => {
   const { requests } = await modelFixture(t, (index) =>
     index < 16

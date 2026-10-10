@@ -252,6 +252,7 @@ export class TaskWorker {
     if (previous.status === "running") expected.leaseUntil = previous.leaseUntil;
     let task = await this.db.compareAndSwapTask<AgentTask>(owner, previous.id, expected, {
       status: "running",
+      question: "",
       leaseId,
       leaseUntil: new Date(this.now() + leaseMs).toISOString(),
       updatedAt: new Date(this.now()).toISOString(),
