@@ -506,11 +506,15 @@ export class TaskJournal {
     if (result.status === "revision_conflict") throw new TaskSupersededError();
     return checkpoint;
   }
-  async history(owner: string, taskId: string): Promise<Message[]> {
+  async history(
+    owner: string,
+    taskId: string,
+    operations?: JournalOperation[],
+  ): Promise<Message[]> {
     const checkpoint = await this.db.get<TaskCheckpoint>(owner, "task-checkpoints", taskId);
     const messages = checkpoint ? completedMessages(checkpoint.messages) : [];
     const recorded = new Set(messages.filter((m) => m.role === "tool").map((m) => m.toolCallId));
-    for (const op of await this.operations(owner, taskId)) {
+    for (const op of operations ?? (await this.operations(owner, taskId))) {
       if (
         op.parentOperationId ||
         op.nativeEnvelope ||

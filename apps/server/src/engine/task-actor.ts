@@ -4,6 +4,7 @@ import type { TaskBudget } from "../../../../packages/domain/src/runtime.ts";
 import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
+import { reviewedActionHistory } from "./reviewed-action-context.ts";
 import { completedMessages, providerContinuationCheckpointSchema } from "./task-history.ts";
 import type { TaskJournal } from "./task-journal.ts";
 import type { TaskMailbox } from "./task-mailbox.ts";
@@ -75,10 +76,11 @@ export class TaskActor {
     );
   }
   async history(owner: string, task: AgentTask): Promise<Message[]> {
-    const journal = await this.journal.history(owner, task.id);
-    if (!task.state.providerCheckpoint) return journal;
-    const provider = providerContinuationCheckpointSchema.parse(task.state.providerCheckpoint);
     const ops = await this.journal.operations(owner, task.id);
+    const journal = await this.journal.history(owner, task.id, ops);
+    if (!task.state.providerCheckpoint)
+      return reviewedActionHistory(this.db, owner, task, journal, ops);
+    const provider = providerContinuationCheckpointSchema.parse(task.state.providerCheckpoint);
     const known = new Set(
       ops
         .filter(
@@ -108,7 +110,13 @@ export class TaskActor {
           ? m.toolCalls?.every((call) => !calls.has(call.id))
           : false,
     );
-    return completedMessages([...completed, ...extra]);
+    return reviewedActionHistory(
+      this.db,
+      owner,
+      task,
+      completedMessages([...completed, ...extra]),
+      ops,
+    );
   }
   async extendBudget(
     owner: string,

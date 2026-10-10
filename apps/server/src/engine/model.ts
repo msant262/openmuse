@@ -71,6 +71,7 @@ import {
 } from "./research-delivery-review.ts";
 import { researchDocumentContent, reviewedDocumentTextPresent } from "./research-document-proof.ts";
 import { recoverResearchSources, recoverResearchToolResult } from "./research-source-recovery.ts";
+import { claimsPendingReview, REVIEWED_ACTION_REPORT } from "./reviewed-action-context.ts";
 import type { AgentService } from "./service.ts";
 import { TaskBudgetExhaustedError } from "./task-actor.ts";
 import { taskEvidenceContext } from "./task-evidence-context.ts";
@@ -521,6 +522,26 @@ export async function executeModelTask(
         nextSteps: ["Select the actual final files using artifactIds."],
       };
     const revision = Number(task.state.appliedRevision ?? 0);
+    if (claimsPendingReview(summary)) {
+      const completion = await service.verification.assess(owner, task.id, revision, summary);
+      if (
+        completion.checks.some(
+          (check) => check.criterionId === REVIEWED_ACTION_REPORT && !check.passed,
+        )
+      ) {
+        task = await ctx.checkpoint({
+          completion,
+          state: { ...task.state, completionFollowup: completion.remaining },
+        });
+        return {
+          complete: false,
+          repairable: true,
+          missing: completion.remaining,
+          instruction:
+            "The review has finished; no approval card remains open for the completed change. Read its current receipt in the resumed tool history and approvalResult. Correct only the delivery report. Never repeat the completed effect or prepare another approval to repair wording. Preserve any separate, genuinely incomplete requirements.",
+        };
+      }
+    }
     if (task.criteria?.some((criterion) => criterion.effect === "drive.delete")) {
       const completion = await service.verification.assess(owner, task.id, revision, summary);
       if (

@@ -29,6 +29,7 @@ import {
   googleWorkspaceVerificationBinding,
 } from "../google-workspace-tools.ts";
 import { readablePage } from "../public-web.ts";
+import { claimsPendingReview, REVIEWED_ACTION_REPORT } from "./reviewed-action-context.ts";
 import type { JournalOperation, TaskJournal } from "./task-journal.ts";
 import { officeContent } from "./task-office.ts";
 
@@ -1374,6 +1375,22 @@ export class TaskVerification {
     const remaining = criteria
       .filter((_, index) => !checks[index].passed)
       .map((criterion) => criterion.description);
+    const currentReviews = receipts.filter(
+      (action) =>
+        action.taskId === taskId &&
+        (action.dispatchedRevision ?? action.preparedRevision ?? 0) === revision,
+    );
+    if (
+      current &&
+      claimsPendingReview(delivery ?? task.result ?? "") &&
+      currentReviews.some((action) => action.status === "succeeded" && useful(action.result)) &&
+      !currentReviews.some((action) => ["awaiting_review", "executing"].includes(action.status))
+    ) {
+      checks.push({ criterionId: REVIEWED_ACTION_REPORT, passed: false, evidenceIds: [] });
+      remaining.push(
+        "The report says approval is still pending, but the current reviewed action has already completed. Correct the report from its actual receipt without repeating the effect.",
+      );
+    }
     remaining.push(...driveMissing);
     // Only server-authored designed documents opt into this newer delivery contract.
     // Existing forms, imports and text files retain their established verification.
