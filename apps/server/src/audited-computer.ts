@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
 import type { ResourceLease } from "../../../packages/domain/src/runtime.ts";
-import { type ActionLog, type LogAction, unknownOutcome } from "./action-log.ts";
+import type { ActionLog, LogAction } from "./action-log.ts";
 import { workspacePath } from "./computer.ts";
 import {
   type ComputerBackend,
@@ -371,7 +371,9 @@ export function auditedComputer(
           await log.finish(owner, action, "rejected_not_dispatched");
           throw error;
         }
-        const uncertain = saved ? !computerCommandCleanupConfirmed(saved) : unknownOutcome(error);
+        // Dispatch ownership already crossed the backend hook. Without a bound
+        // terminal receipt, an exception cannot prove the command never ran.
+        const uncertain = !saved || !computerCommandCleanupConfirmed(saved);
         if (!uncertain) await Promise.all(leases.map((lease) => resources?.release(lease)));
         await log.finish(owner, action, uncertain ? "outcome_unknown" : "failed");
         if (uncertain) {

@@ -21,14 +21,15 @@ export class AppError extends Error {
   }
 }
 
-/** Trusted registry rejection before native authority/envelope/delivery creation. */
+/** Trusted host validation or registry rejection before native dispatch. */
 export class NativePreflightRejection extends AppError {
   constructor(
     message: string,
     readonly parentOperationId?: string,
     readonly primitiveOperationId?: string,
+    options: { status?: AppError["status"]; code?: string } = {},
   ) {
-    super(message, 409, "NATIVE_CAPABILITY_UNAVAILABLE");
+    super(message, options.status ?? 409, options.code ?? "NATIVE_CAPABILITY_UNAVAILABLE");
     this.name = "NativePreflightRejection";
   }
 }

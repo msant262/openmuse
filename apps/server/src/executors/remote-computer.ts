@@ -21,6 +21,7 @@ import {
 } from "../computer-contract.ts";
 import { AppError } from "../errors.ts";
 import { FileVersions } from "../file-versions.ts";
+import { nativePreflight } from "./native-preflight.ts";
 import {
   type ExecutorDispatchContext,
   type ExecutorOperation,
@@ -105,22 +106,25 @@ export class RemoteComputerBackend implements ComputerBackend {
     );
   }
   async python(owner: string, input: ComputerPythonInput, options: ComputerPythonOptions) {
-    if (!(await this.pythonAvailable(owner)))
-      throw new AppError("Native Python is not available on the connected executor", 409);
-    const args = nativePythonArgsSchema.parse({
-      command: "Python cell",
-      cwd: "/workspace",
-      background: false,
-      timeoutMs: input.wallClockMs,
-      pythonCell: {
-        owner,
-        sessionId: input.sessionId,
-        code: input.code,
-        tools: input.tools,
-        reset: input.reset,
-        maxToolCalls: input.maxToolCalls,
-        outputBytes: 131072,
-      },
+    const available = await this.pythonAvailable(owner);
+    const args = nativePreflight(owner, () => {
+      if (!available)
+        throw new AppError("Native Python is not available on the connected executor", 409);
+      return nativePythonArgsSchema.parse({
+        command: "Python cell",
+        cwd: "/workspace",
+        background: false,
+        timeoutMs: input.wallClockMs,
+        pythonCell: {
+          owner,
+          sessionId: input.sessionId,
+          code: input.code,
+          tools: input.tools,
+          reset: input.reset,
+          maxToolCalls: input.maxToolCalls,
+          outputBytes: 131072,
+        },
+      });
     });
     const operation = await this.submit(
       owner,
@@ -170,24 +174,28 @@ export class RemoteComputerBackend implements ComputerBackend {
     input: Omit<ExecutorRequest, "id" | "executorId">,
     options: ComputerDispatchOptions = {},
   ) {
-    this.check(owner);
+    nativePreflight(owner, () => this.check(owner));
     options.signal?.throwIfAborted();
     await options.dispatchGuard?.();
     const id = this.id(owner, options.idempotencyKey);
-    const request = executorRequestSchema.parse({
-      ...input,
-      id,
-      executorId: this.options.executorId,
-    });
+    const request = nativePreflight(owner, () =>
+      executorRequestSchema.parse({
+        ...input,
+        id,
+        executorId: this.options.executorId,
+      }),
+    );
     const context =
       (await this.options.context?.(owner, id, request)) ??
       options.dispatchContext ??
       (await this.options.manualContext?.(owner, id, request));
     if (!context)
-      throw new AppError(
-        "Native dispatch requires trusted task context or authenticated manual-operation authorization",
-        503,
-      );
+      nativePreflight(owner, () => {
+        throw new AppError(
+          "Native dispatch requires trusted task context or authenticated manual-operation authorization",
+          503,
+        );
+      });
     // Persist M3 physical resource linkage before publishing for node delivery.
     return this.registry.enqueue(owner, request, context, { onDispatch: options.onDispatch });
   }
@@ -346,16 +354,18 @@ export class RemoteComputerBackend implements ComputerBackend {
     raw: unknown,
     options: ComputerDispatchOptions = {},
   ): Promise<ComputerCommand> {
-    const parsed = computerCommandSchema.parse(raw),
-      timeoutMs = parsed.timeoutMs ?? this.options.timeoutMs ?? 1800000;
-    if (timeoutMs > (this.options.timeoutMs ?? 1800000))
-      throw new AppError("Command timeout exceeds native executor maximum", 422);
-    const args = {
-      ...parsed,
-      cwd: workspacePath(parsed.cwd),
-      timeoutMs,
-      background: parsed.background ?? false,
-    };
+    const args = nativePreflight(owner, () => {
+      const parsed = computerCommandSchema.parse(raw),
+        timeoutMs = parsed.timeoutMs ?? this.options.timeoutMs ?? 1800000;
+      if (timeoutMs > (this.options.timeoutMs ?? 1800000))
+        throw new AppError("Command timeout exceeds native executor maximum", 422);
+      return {
+        ...parsed,
+        cwd: workspacePath(parsed.cwd),
+        timeoutMs,
+        background: parsed.background ?? false,
+      };
+    });
     const operation = await this.submit(
       owner,
       { kind: "command", capability: "command", capabilityVersion: 1, args },
@@ -380,26 +390,34 @@ export class RemoteComputerBackend implements ComputerBackend {
     raw: unknown,
     options: ComputerDispatchOptions = {},
   ): Promise<ComputerCommand> {
-    const {
-      timeoutMs = this.options.timeoutMs ?? 1800000,
-      background,
-      ...parsed
-    } = mediaSchema.parse(raw);
-    if (timeoutMs > (this.options.timeoutMs ?? 1800000))
-      throw new AppError("Media timeout exceeds native maximum", 422);
     // Stable output names belong to this intention; native helper refuses overwrite.
     const key = options.idempotencyKey ?? randomUUID();
     const suffix = this.id(owner, key).slice(0, 20);
-    const parameters = {
-      path: workspacePath(parsed.path),
-      ...(kind === "transcribe"
-        ? {
-            language: parsed.language,
-            textPath: workspacePath(parsed.textPath ?? `/workspace/transcript-${suffix}.txt`),
-            ...(parsed.srtPath ? { srtPath: workspacePath(parsed.srtPath) } : {}),
-          }
-        : { outputPath: workspacePath(parsed.outputPath ?? `/workspace/preview-${suffix}.pdf`) }),
-    };
+    const { timeoutMs, background, parameters } = nativePreflight(owner, () => {
+      const {
+        timeoutMs = this.options.timeoutMs ?? 1800000,
+        background,
+        ...parsed
+      } = mediaSchema.parse(raw);
+      if (timeoutMs > (this.options.timeoutMs ?? 1800000))
+        throw new AppError("Media timeout exceeds native maximum", 422);
+      return {
+        timeoutMs,
+        background,
+        parameters: {
+          path: workspacePath(parsed.path),
+          ...(kind === "transcribe"
+            ? {
+                language: parsed.language,
+                textPath: workspacePath(parsed.textPath ?? `/workspace/transcript-${suffix}.txt`),
+                ...(parsed.srtPath ? { srtPath: workspacePath(parsed.srtPath) } : {}),
+              }
+            : {
+                outputPath: workspacePath(parsed.outputPath ?? `/workspace/preview-${suffix}.pdf`),
+              }),
+        },
+      };
+    });
     const operation = await this.submit(
       owner,
       {
@@ -573,7 +591,7 @@ export class RemoteComputerBackend implements ComputerBackend {
         capability: "files",
         capabilityVersion: 1,
         inspection: ["list", "search", "read", "read_binary", "stat"].includes(operation),
-        args: { operation, path: workspacePath(path), ...extra },
+        args: nativePreflight(owner, () => ({ operation, path: workspacePath(path), ...extra })),
       },
       options,
     );
@@ -588,8 +606,10 @@ export class RemoteComputerBackend implements ComputerBackend {
     raw: z.output<typeof computerSearchParameters>,
     options: Pick<ComputerDispatchOptions, "signal"> = {},
   ) {
-    const canonical = workspacePath(path);
-    const parameters = computerSearchParameters.parse(raw);
+    const { canonical, parameters } = nativePreflight(owner, () => ({
+      canonical: workspacePath(path),
+      parameters: computerSearchParameters.parse(raw),
+    }));
     const result = computerSearchReceipt.parse(
       await this.file(owner, "search", canonical, { parameters }, options),
     );
@@ -615,8 +635,10 @@ export class RemoteComputerBackend implements ComputerBackend {
     return result;
   }
   async write(owner: string, path: string, text: string) {
-    if (Buffer.byteLength(text) > 262144)
-      throw new AppError("Text files must be 256 KB or smaller", 413);
+    nativePreflight(owner, () => {
+      if (Buffer.byteLength(text) > 262144)
+        throw new AppError("Text files must be 256 KB or smaller", 413);
+    });
     return z
       .object({ path: z.string() })
       .parse(
@@ -632,7 +654,7 @@ export class RemoteComputerBackend implements ComputerBackend {
       replaceAll: boolean;
     },
   ) {
-    const path = workspacePath(input.path);
+    const path = nativePreflight(owner, () => workspacePath(input.path));
     const reject = (error: string) => ({
       path,
       status: "rejected_not_dispatched" as const,
@@ -681,7 +703,7 @@ export class RemoteComputerBackend implements ComputerBackend {
     };
   }
   private async expected(owner: string, path: string) {
-    const canonical = workspacePath(path);
+    const canonical = nativePreflight(owner, () => workspacePath(path));
     const artifacts = await this.registry.db.list<{
       version: string;
       executorId: string;
@@ -696,8 +718,10 @@ export class RemoteComputerBackend implements ComputerBackend {
     return z.object({ path: z.string() }).parse(await this.file(owner, "mkdir", path));
   }
   async writeBytes(owner: string, path: string, bytes: Uint8Array) {
-    if (bytes.length > attachmentLimit)
-      throw new AppError("Attachments must be 25 MB or smaller", 413);
+    nativePreflight(owner, () => {
+      if (bytes.length > attachmentLimit)
+        throw new AppError("Attachments must be 25 MB or smaller", 413);
+    });
     return z.object({ path: z.string() }).parse(
       await this.file(owner, "write_binary", path, {
         base64: Buffer.from(bytes).toString("base64"),
@@ -743,8 +767,13 @@ export class RemoteComputerBackend implements ComputerBackend {
     return { name: posix.basename(raw.path), bytes };
   }
   async writePdf(owner: string, path: string, bytes: Uint8Array) {
-    if (bytes.length > 10 * 1024 * 1024 || Buffer.from(bytes.subarray(0, 5)).toString() !== "%PDF-")
-      throw new AppError("Choose a PDF of 10 MB or smaller", 422);
+    nativePreflight(owner, () => {
+      if (
+        bytes.length > 10 * 1024 * 1024 ||
+        Buffer.from(bytes.subarray(0, 5)).toString() !== "%PDF-"
+      )
+        throw new AppError("Choose a PDF of 10 MB or smaller", 422);
+    });
     return this.writeBytes(owner, path, bytes);
   }
   async pdfBytes(owner: string, path: string) {
