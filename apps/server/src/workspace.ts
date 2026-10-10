@@ -41,6 +41,32 @@ const googleFailureCode = (error: unknown) =>
     ? error.code
     : "GOOGLE_UNAVAILABLE";
 
+function cachedWorkspaceRows<T extends Mail | CalendarEvent>(
+  rows: CachedRow<T>[],
+  sample: boolean,
+  connected: boolean,
+  connectionId?: string,
+): T[] {
+  return rows
+    .filter((row) => (sample ? connected : !row.connectionId || row.connectionId === connectionId))
+    .map((row) => ({
+      ...row,
+      ...(typeof (row as CachedRow<T> & { providerMessageId?: string }).providerMessageId ===
+      "string"
+        ? { id: (row as CachedRow<T> & { providerMessageId: string }).providerMessageId }
+        : {}),
+      cache: {
+        provenance: sample || row.connectionId ? ("verified" as const) : ("unknown" as const),
+        freshness: sample
+          ? ("fresh" as const)
+          : row.connectionId
+            ? ("stale" as const)
+            : ("unknown" as const),
+        ...(row.cachedAt ? { cachedAt: row.cachedAt } : {}),
+      },
+    }));
+}
+
 export class WorkspaceService {
   private seeding = new Map<string, Promise<void>>();
   constructor(
@@ -340,6 +366,23 @@ export class WorkspaceService {
       )
       .sort((a, b) => b.date.localeCompare(a.date));
   }
+  /** UI cache search, without a Google request or complete message payloads. */
+  async cachedMail(owner: string, query = ""): Promise<Mail[]> {
+    const sample = this.config.mode === "sample";
+    const tokens = sample ? null : await this.googleAuth.tokens(owner);
+    const connected = sample ? await this.connected(owner) : Boolean(tokens);
+    return cachedWorkspaceRows(
+      await this.db.mailPreviews<CachedRow<Mail>>(
+        owner,
+        tokens?.connectionId ?? null,
+        sample,
+        query,
+      ),
+      sample,
+      connected,
+      tokens?.connectionId,
+    );
+  }
   async ensureSample(owner: string, actions: ActionService) {
     if (this.config.mode !== "sample") return;
     const active = this.seeding.get(owner);
@@ -492,34 +535,17 @@ export class WorkspaceService {
     }>(owner, "settings", "google-health");
     if (tokens && health?.connectionId === tokens.connectionId) googleStatus = health.status;
     const cachedRows = <T extends Mail | CalendarEvent>(rows: CachedRow<T>[]): T[] =>
-      rows
-        .filter((row) =>
-          this.config.mode === "sample"
-            ? connected
-            : !row.connectionId || row.connectionId === tokens?.connectionId,
-        )
-        .map((row) => ({
-          ...row,
-          ...(typeof (row as CachedRow<T> & { providerMessageId?: string }).providerMessageId ===
-          "string"
-            ? { id: (row as CachedRow<T> & { providerMessageId: string }).providerMessageId }
-            : {}),
-          cache: {
-            provenance:
-              this.config.mode === "sample" || row.connectionId
-                ? ("verified" as const)
-                : ("unknown" as const),
-            freshness:
-              this.config.mode === "sample"
-                ? ("fresh" as const)
-                : row.connectionId
-                  ? ("stale" as const)
-                  : ("unknown" as const),
-            ...(row.cachedAt ? { cachedAt: row.cachedAt } : {}),
-          },
-        }));
+      cachedWorkspaceRows(rows, this.config.mode === "sample", connected, tokens?.connectionId);
     let mail = ["all", "mail", "essential"].includes(section)
-      ? cachedRows(await this.db.list<CachedRow<Mail>>(owner, "mail"))
+      ? cachedRows(
+          section === "essential"
+            ? await this.db.mailPreviews<CachedRow<Mail>>(
+                owner,
+                tokens?.connectionId ?? null,
+                this.config.mode === "sample",
+              )
+            : await this.db.list<CachedRow<Mail>>(owner, "mail"),
+        )
       : [];
     let events = ["all", "calendar", "essential"].includes(section)
       ? cachedRows(await this.db.list<CachedRow<CalendarEvent>>(owner, "events"))

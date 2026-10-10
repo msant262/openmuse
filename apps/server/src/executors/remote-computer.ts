@@ -35,7 +35,7 @@ import {
   pythonResourceKey,
   pythonResultSchema,
 } from "./python-protocol.ts";
-import type { ExecutorRegistry } from "./registry.ts";
+import type { ExecutorDelivery, ExecutorRegistry } from "./registry.ts";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const directorySchema = z.object({
@@ -269,12 +269,20 @@ export class RemoteComputerBackend implements ComputerBackend {
     if (registration.owner !== owner)
       throw new AppError("Native computer belongs to another owner", 403);
     const node = await this.registry.node(this.options.executorId);
-    const commands = (await this.registry.deliveries(owner, this.options.executorId))
-      .filter((value) => ["command", "media"].includes(value.operation.kind))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 100);
+    const commands = await this.registry.commandWindow<ComputerCommand>(
+      owner,
+      this.options.executorId,
+    );
     const receipts = [];
-    for (const delivery of commands) receipts.push(await this.command(owner, delivery.id));
+    for (const { delivery, command } of commands) {
+      // Always validate the canonical receipt before using its monotonic projection.
+      const receipt = this.commandReceipt(delivery);
+      receipts.push(
+        command && command.status !== "running"
+          ? commandReceiptSchema.parse(command)
+          : await this.saveCommandReceipt(owner, receipt),
+      );
+    }
     const base: ComputerSnapshot = {
       enabled: this.options.enabled !== false,
       provider: "native",
@@ -441,7 +449,11 @@ export class RemoteComputerBackend implements ComputerBackend {
       !["command", "media"].includes(delivery.operation.kind)
     )
       throw new AppError("Native computer command not found", 404);
-    const operation = delivery.operation,
+    return this.saveCommandReceipt(owner, this.commandReceipt(delivery));
+  }
+  private commandReceipt(delivery: ExecutorDelivery): ComputerCommand {
+    const id = delivery.id,
+      operation = delivery.operation,
       args = operation.args;
     const intent: ComputerCommand = {
       id,
@@ -535,17 +547,20 @@ export class RemoteComputerBackend implements ComputerBackend {
       };
     else if (delivery.receipt?.status === "outcome_unknown")
       receipt = { ...receipt, outcomeUnknown: true, cleanupConfirmed: true };
+    return receipt;
+  }
+  private async saveCommandReceipt(owner: string, receipt: ComputerCommand) {
     // Monotonic physical receipts consumed by M3 and the existing ActionLog.
     await this.registry.db.insertIfAbsent(owner, "computer-commands", receipt);
     await this.registry.db.compareAndSwap(
       owner,
       "computer-commands",
-      id,
+      receipt.id,
       { status: "running" },
       { ...receipt },
     );
     return commandReceiptSchema.parse(
-      (await this.registry.db.get(owner, "computer-commands", id)) ?? receipt,
+      (await this.registry.db.get(owner, "computer-commands", receipt.id)) ?? receipt,
     );
   }
   async cancel(owner: string, id: string) {

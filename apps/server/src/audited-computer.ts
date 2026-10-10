@@ -200,7 +200,7 @@ export function auditedComputer(
   const finish = async (owner: string, receipt: ComputerCommand) => {
     if (receipt.status === "running") return;
     const action = await log.db.get<ComputerAudit>(owner, "computer-audit", receipt.id);
-    if (action)
+    if (action && !action.complete)
       await log.finish(
         owner,
         action,
@@ -463,7 +463,12 @@ export function auditedComputer(
     }),
     snapshot: async (owner) => {
       const value = await backend.snapshot(owner);
-      for (const receipt of value.commands) await finish(owner, receipt);
+      const pending = await log.db.computerSnapshotAuditIds(
+        owner,
+        value.commands.map((receipt) => receipt.id),
+      );
+      for (const receipt of value.commands)
+        if (pending.has(receipt.id)) await finish(owner, receipt);
       return value;
     },
     start: (owner) =>

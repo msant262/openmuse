@@ -875,6 +875,14 @@ export async function createApp(
       throw new AppError("Choose a calendar range between one moment and 366 days", 422);
     return c.json(await workspace.events(c.get("owner"), query));
   });
+  app.get("/api/mail/cache", async (c) =>
+    c.json(
+      await workspace.cachedMail(
+        c.get("owner"),
+        z.string().trim().max(200).default("").parse(c.req.query("q")),
+      ),
+    ),
+  );
   app.get("/api/mail/threads/:id", async (c) =>
     c.json(
       await workspace.thread(

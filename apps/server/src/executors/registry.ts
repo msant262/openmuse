@@ -421,6 +421,11 @@ export class ExecutorRegistry {
       throw new AppError("Native executor belongs to another owner", 403);
     return this.db.executorDeliveries<ExecutorDelivery>(owner, executorId);
   }
+  async commandWindow<C>(owner: string, executorId: string) {
+    if (this.registration(executorId).owner !== owner)
+      throw new AppError("Native executor belongs to another owner", 403);
+    return this.db.executorCommandWindow<ExecutorDelivery, C>(owner, executorId);
+  }
   private async claim(executorId: string, epoch: number) {
     const authority = this.options.authority,
       node = await this.epoch(executorId, epoch),

@@ -9,6 +9,10 @@ import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  "Searching messages…": "Buscando mensagens…",
+  "Loading the complete message…": "Carregando a mensagem completa…",
+  "This is a preview. Try again to load the complete message.":
+    "Esta é uma prévia. Tente novamente para carregar a mensagem completa.",
   "Confirm browser dialog": "Confirmar ação no navegador",
   Confirmation: "Confirmação",
   Response: "Resposta",

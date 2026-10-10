@@ -37,6 +37,8 @@ export interface Mail {
   to: string[];
   subject: string;
   body: string;
+  /** False for lightweight UI previews. Thread and agent reads return complete bodies. */
+  bodyComplete?: boolean;
   date: string;
   unread: boolean;
   label: string;

@@ -234,6 +234,15 @@ function MailDetail({ mail: m }: { mail: Mail }) {
           <Text selectable style={[s.text, { lineHeight: 25 }]}>
             {message.body}
           </Text>
+          {message.bodyComplete === false && (
+            <Text style={[s.small, { marginTop: 8 }]}>
+              {t(
+                loading
+                  ? "Loading the complete message…"
+                  : "This is a preview. Try again to load the complete message.",
+              )}
+            </Text>
+          )}
           {message.attachments.map((id) => {
             const file = w.files.find((f) => f.id === id);
             return file ? (

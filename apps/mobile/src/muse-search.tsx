@@ -1,37 +1,76 @@
 import { ChevronRight, FileText, ListChecks, Mail, Search, X } from "lucide-react-native";
-import { useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import type { Mail as MailMessage } from "../../../packages/domain/src/index";
 import { useAgentWorkspace } from "./agent-workspace";
 import { useI18n } from "./i18n";
-import { IconButton, ModalSurface, useUI } from "./ui";
+import { ErrorNotice, IconButton, ModalSurface, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
   const { colors, s } = useUI();
 
   const { t } = useI18n();
-  const { workspace, open } = useWorkspace();
+  const { workspace, open, api } = useWorkspace();
   const { data } = useAgentWorkspace();
   const [query, setQuery] = useState("");
+  const [mailMatches, setMailMatches] = useState<MailMessage[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState("");
   const needle = query.trim().toLocaleLowerCase();
+  useEffect(() => {
+    setMailMatches([]);
+    setError("");
+    setSearching(Boolean(needle));
+    if (!needle) return;
+    let active = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      void api
+        .request<MailMessage[]>(
+          `/api/mail/cache?q=${encodeURIComponent(needle)}`,
+          undefined,
+          "GET",
+          controller.signal,
+        )
+        .then((mail) => {
+          if (active) setMailMatches(mail);
+        })
+        .catch((e) => {
+          if (active) setError(e instanceof Error ? e.message : String(e));
+        })
+        .finally(() => {
+          if (active) setSearching(false);
+        });
+    }, 200);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [api, needle]);
   const results = [
-    ...(data?.tasks ?? []).map((task) => ({
-      id: `task:${task.id}`,
-      title: task.title,
-      detail: task.result || task.input || "",
-      type: "Activity",
-      icon: ListChecks,
-      show: () => open({ type: "task", taskId: task.id }),
-    })),
-    ...workspace.files.map((file) => ({
-      id: `file:${file.id}`,
-      title: file.name,
-      detail: file.mimeType,
-      type: "Library",
-      icon: FileText,
-      show: () => open({ type: "file", file }),
-    })),
-    ...workspace.mail.map((mail) => ({
+    ...[
+      ...(data?.tasks ?? []).map((task) => ({
+        id: `task:${task.id}`,
+        title: task.title,
+        detail: task.result || task.input || "",
+        type: "Activity",
+        icon: ListChecks,
+        show: () => open({ type: "task", taskId: task.id }),
+      })),
+      ...workspace.files.map((file) => ({
+        id: `file:${file.id}`,
+        title: file.name,
+        detail: file.mimeType,
+        type: "Library",
+        icon: FileText,
+        show: () => open({ type: "file", file }),
+      })),
+    ].filter(
+      (item) => !needle || `${item.title} ${item.detail}`.toLocaleLowerCase().includes(needle),
+    ),
+    ...(needle ? mailMatches : workspace.mail).map((mail) => ({
       id: `mail:${mail.id}`,
       title: mail.subject,
       detail: mail.body,
@@ -39,11 +78,7 @@ export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
       icon: Mail,
       show: () => open({ type: "mail", mail }),
     })),
-  ]
-    .filter(
-      (item) => !needle || `${item.title} ${item.detail}`.toLocaleLowerCase().includes(needle),
-    )
-    .slice(0, 30);
+  ].slice(0, 30);
   return (
     <ModalSurface label={t("Search")} onClose={onClose} width={680} height={540}>
       <View
@@ -102,7 +137,14 @@ export function WorkspaceSearch({ onClose }: { onClose: () => void }) {
             <ChevronRight size={16} color={colors.muted} />
           </Pressable>
         ))}
-        {!results.length && (
+        {searching && (
+          <ActivityIndicator
+            accessibilityLabel={t("Searching messages…")}
+            color={colors.blueDark}
+          />
+        )}
+        <ErrorNotice error={error} />
+        {!results.length && !searching && !error && (
           <Text style={[s.muted, { textAlign: "center", padding: 32 }]}>
             {t("No results found.")}
           </Text>

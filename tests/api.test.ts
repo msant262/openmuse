@@ -88,6 +88,31 @@ test("sample workspace serves a real PDF and filling creates a new version", asy
   forged.searchParams.set("owner", "another-user");
   assert.equal((await app.request(forged.toString())).status, 403);
 });
+test("cached mail search stays authenticated and previews expand into complete threads", async () => {
+  assert.equal((await app.request("/api/mail/cache?q=permission")).status, 401);
+  const essential = (await (
+    await app.request("/api/workspace?section=essential", { headers: headers() })
+  ).json()) as Workspace;
+  const message = essential.mail[0];
+  assert.equal(message.bodyComplete, false);
+  const search = await app.request(`/api/mail/cache?q=${encodeURIComponent(message.subject)}`, {
+    headers: headers(),
+  });
+  assert.equal(search.status, 200);
+  const matches = (await search.json()) as Workspace["mail"];
+  assert.ok(matches.some((match) => match.id === message.id && match.bodyComplete === false));
+  const full = await app.request(`/api/mail/threads/${encodeURIComponent(message.threadId)}`, {
+    headers: headers(),
+  });
+  assert.equal(full.status, 200);
+  assert.ok(
+    ((await full.json()) as Workspace["mail"]).every((mail) => mail.bodyComplete !== false),
+  );
+  assert.equal(
+    (await app.request(`/api/mail/cache?q=${"x".repeat(201)}`, { headers: headers() })).status,
+    422,
+  );
+});
 test("reviewed sample email persists a receipt, then revocation blocks another proposal", async () => {
   const propose = () =>
     app.request("/api/actions", {

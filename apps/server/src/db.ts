@@ -133,6 +133,54 @@ export class Store {
     );
     return result.rows.map((row) => row.data as T);
   }
+  /** Full cached bodies stay in PostgreSQL, including when searching their contents. */
+  async mailPreviews<T>(
+    owner: string,
+    connectionId: string | null,
+    sample: boolean,
+    query = "",
+  ): Promise<T[]> {
+    const result = await this.db.query(
+      `SELECT data-'body' || jsonb_build_object('body',left(COALESCE(data->>'body',''),240),'bodyComplete',false) AS data
+       FROM records WHERE owner=$1 AND kind='mail'
+       AND ($3::boolean OR data->>'connectionId' IS NULL OR data->>'connectionId'=$2)
+       AND ($4::text='' OR position(lower($4) in lower(concat_ws(' ',data->>'sender',data->>'from',data->>'subject',data->>'body')))>0)
+       ORDER BY data->>'date' DESC,id DESC LIMIT ${query ? 30 : 100}`,
+      [owner, connectionId, sample, query],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  /** Desktop history is a display window; reconciliation still reads all deliveries. */
+  async executorCommandWindow<T, C>(
+    owner: string,
+    executorId: string,
+  ): Promise<{ delivery: T; command: C | null }[]> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('delivery',delivery.data,'command',command.data) AS data
+       FROM (SELECT id,data FROM records WHERE owner='__executors__' AND kind='deliveries'
+         AND data->>'owner'=$1 AND data->'operation'->>'executorId'=$2
+         AND data->'operation'->>'kind' IN ('command','media')
+         ORDER BY data->>'createdAt' DESC,id DESC LIMIT 100) delivery
+       LEFT JOIN records command ON command.owner=$1 AND command.kind='computer-commands' AND command.id=delivery.id
+       ORDER BY delivery.data->>'createdAt' DESC,delivery.id DESC`,
+      [owner, executorId],
+    );
+    return result.rows.map((row) => row.data as { delivery: T; command: C | null });
+  }
+  /** Poll only audit work that is unfinished or still owns physical resource handles. */
+  async computerSnapshotAuditIds(owner: string, ids: string[]): Promise<Set<string>> {
+    if (!ids.length) return new Set();
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('id',id) AS data FROM records
+         WHERE owner=$1 AND kind='computer-audit' AND id=ANY($2::text[])
+         AND data->>'complete' IS DISTINCT FROM 'true'
+       UNION SELECT jsonb_build_object('id',data->>'taskId') AS data FROM records
+         WHERE owner='__runtime__' AND kind='resource-leases' AND data->>'owner'=$1
+         AND data->>'taskId'=ANY($2::text[])`,
+      [owner, ids],
+    );
+    return new Set(result.rows.map((row) => String(row.data.id)));
+  }
   async pushRecoveryDeliveries<T>(): Promise<{ owner: string; value: T }[]> {
     const result = await this.db.query(
       `SELECT jsonb_build_object('owner',owner,'value',data) AS data FROM records WHERE kind='push-deliveries'
@@ -1771,6 +1819,9 @@ export async function createStore(
   );
   await database.query(
     "CREATE INDEX IF NOT EXISTS executor_delivery_queue ON records((data->>'owner'),(data->'operation'->>'executorId'),(data->>'createdAt'),id) WHERE owner='__executors__' AND kind='deliveries' AND data->>'state'='queued'",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS executor_command_history ON records((data->>'owner'),(data->'operation'->>'executorId'),(data->>'createdAt') DESC,id DESC) WHERE owner='__executors__' AND kind='deliveries' AND data->'operation'->>'kind' IN ('command','media')",
   );
   await database.query(
     "CREATE INDEX IF NOT EXISTS push_delivery_recovery ON records(updated_at,id) WHERE kind='push-deliveries' AND (data->>'status'='sending' OR data->>'auditedStatus' IS DISTINCT FROM data->>'status')",

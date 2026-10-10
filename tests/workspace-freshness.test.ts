@@ -37,6 +37,118 @@ const cachedMail: Mail = {
   attachments: [],
 };
 
+test("opening the chat uses a bounded mail preview without transferring old message bodies", async (t) => {
+  const { db, workspace } = await fixture(t);
+  const sql = (
+    db as unknown as {
+      db: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
+    }
+  ).db;
+  await sql.query(`INSERT INTO records(owner,kind,id,data)
+    SELECT 'owner','mail','mail-' || n,jsonb_build_object(
+      'id','mail-' || n,'providerMessageId','provider-' || n,'threadId','thread-' || n,
+      'from','reader@example.com','sender','Reader','to','[]'::jsonb,'subject','Message ' || n,
+      'body',repeat('Long body ',1000) || CASE WHEN n=1 THEN 'old body search target' ELSE '' END,
+      'date',to_char(timestamp '2026-10-01' + n * interval '1 second','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+      'unread',true,'label','Inbox','attachments','["attachment-reference"]'::jsonb,
+      'connectionId','current-connection','cachedAt','2026-10-10T00:00:00Z')
+    FROM generate_series(1,1000) n`);
+  await db.put("owner", "mail", {
+    ...cachedMail,
+    id: "other-account",
+    connectionId: "other-connection",
+    date: "2099-01-01T00:00:00Z",
+  });
+  await db.put("other", "mail", {
+    ...cachedMail,
+    id: "other-owner",
+    connectionId: "current-connection",
+    date: "2099-01-01T00:00:00Z",
+  });
+  let providerReads = 0,
+    rows = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    providerReads++;
+    throw new Error("opening the chat must use cache");
+  });
+  const query = sql.query.bind(sql);
+  t.mock.method(sql, "query", async (...args: Parameters<typeof query>) => {
+    const result = await query(...args);
+    rows += result.rows.length;
+    return result;
+  });
+  const snapshot = await workspace.snapshot("owner", undefined, "essential");
+  assert.equal(providerReads, 0);
+  assert.equal(snapshot.mail.length, 100);
+  assert.equal(snapshot.mail[0].id, "provider-1000");
+  assert.equal(snapshot.mail.at(-1)?.id, "provider-901");
+  assert.ok(rows < 140, `initial cache rows must be bounded in SQL, read ${rows}`);
+  assert.ok(Buffer.byteLength(JSON.stringify(snapshot.mail)) < 100_000);
+  assert.equal((snapshot.mail[0] as Mail & { bodyComplete?: boolean }).bodyComplete, false);
+  assert.equal(snapshot.mail[0].body.length, 240);
+  assert.deepEqual(snapshot.mail[0].attachments, ["attachment-reference"]);
+  assert.equal(snapshot.mail[0].cache?.provenance, "verified");
+  const stored = await db.get<Mail>("owner", "mail", "mail-1000");
+  assert.ok(stored && stored.body.length > 240, "full bodies must remain stored");
+  const old = await workspace.cachedMail("owner", "old body search target");
+  assert.deepEqual(
+    old.map((mail) => mail.id),
+    ["provider-1"],
+    "search must include messages outside the initial window",
+  );
+});
+
+test("workspace mail search finds content beyond the preview and outside the initial history window", async (t) => {
+  const { db, workspace } = await fixture(t);
+  await db.put("owner", "mail", {
+    ...cachedMail,
+    body: "x".repeat(5000) + "hidden search target",
+    connectionId: "current-connection",
+  });
+  await db.put("owner", "mail", {
+    ...cachedMail,
+    id: "wrong-account",
+    body: "hidden search target",
+    connectionId: "other-connection",
+  });
+  await db.put("other", "mail", {
+    ...cachedMail,
+    body: "hidden search target",
+    connectionId: "current-connection",
+  });
+  const results = await workspace.cachedMail("owner", "hidden search target");
+  assert.deepEqual(
+    results.map((mail) => mail.id),
+    [cachedMail.id],
+  );
+  assert.equal(results[0].body.length, 240);
+  assert.equal(results[0].cache?.provenance, "verified");
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({
+      id: cachedMail.threadId,
+      messages: [
+        {
+          id: cachedMail.id,
+          threadId: cachedMail.threadId,
+          internalDate: String(Date.parse(cachedMail.date)),
+          labelIds: ["INBOX"],
+          payload: {
+            mimeType: "text/plain",
+            body: { data: Buffer.from("Complete message from Google").toString("base64url") },
+            headers: [
+              { name: "Subject", value: cachedMail.subject },
+              { name: "From", value: cachedMail.from },
+            ],
+          },
+        },
+      ],
+    }),
+  );
+  const full = await workspace.thread("owner", cachedMail.threadId);
+  assert.equal(full[0].body, "Complete message from Google");
+  assert.notEqual((full[0] as Mail & { bodyComplete?: boolean }).bodyComplete, false);
+});
+
 async function fixture(t: TestContext) {
   const db = await createStore();
   const directory = await mkdtemp(join(tmpdir(), "openmuse-freshness-"));
