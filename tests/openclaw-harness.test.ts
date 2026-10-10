@@ -929,7 +929,7 @@ test("strict-provider null placeholders omit optional fields while explicit null
 });
 
 for (const computerConfigured of [false, true]) {
-  test(`core research and image tools stay visible, with configured computer=${computerConfigured}`, async (t) => {
+  test(`core research, image and browser tools stay visible, with configured computer=${computerConfigured}`, async (t) => {
     const dataDir = await mkdtemp(join(tmpdir(), "okami-harness-core-"));
     t.after(() => rm(dataDir, { recursive: true, force: true }));
     const fixture = await modelFixture(t, () => undefined, { text: () => "Ready." });
@@ -943,6 +943,10 @@ for (const computerConfigured of [false, true]) {
         "search_web",
         "read_web_data",
         "generate_image",
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_act",
+        "browser_dialog",
         "run_computer_command",
         "remote_operation",
       ].map((name) =>
@@ -974,6 +978,10 @@ for (const computerConfigured of [false, true]) {
     for (const name of [
       "search_web",
       "generate_image",
+      "browser_navigate",
+      "browser_snapshot",
+      "browser_act",
+      "browser_dialog",
       "read_tool_output",
       "tool_search",
       "tool_call",

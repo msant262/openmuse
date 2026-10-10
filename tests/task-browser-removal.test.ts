@@ -52,6 +52,15 @@ test("a premature plain-text finish resumes from the missing effect instead of p
   const task = await server.agent.createTask("owner", { prompt });
   await server.agent.journal.prepare("owner", reviewedRemoval(task.id).operations[0]);
   await server.agent.worker.tick();
+  const initial = JSON.parse(fixture.requests[0].body);
+  const visible = initial.tools.flatMap(
+    (tool: { name?: string; tools?: { name: string }[] }) =>
+      tool.tools?.map((child) => child.name) ?? [tool.name],
+  );
+  for (const name of ["browser_navigate", "browser_snapshot", "browser_act", "browser_dialog"])
+    assert.ok(visible.includes(name), `${name} must be callable on the first model turn`);
+  assert.match(initial.instructions, /supplied URL identifies the target location/);
+  assert.match(initial.instructions, /native connectors for Google Drive/);
   const continued = await server.agent.getTask("owner", task.id);
   assert.equal(continued.status, "queued", continued.error ?? continued.result);
   assert.ok(Array.isArray(continued.state.completionFollowup));
