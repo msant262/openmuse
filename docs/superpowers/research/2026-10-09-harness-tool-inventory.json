@@ -289,7 +289,7 @@
   "implementationChecks": [
     {
       "surface": "execute_code.python",
-      "status": "published-native-runtime-observed-completion-fix-acceptance-pending",
+      "status": "published-natural-persistence-verified-review-resumption-pending",
       "productionEnabled": true,
       "upstream": "e0550c97bbd916cd5ff8fa0450e6291c31921b94",
       "unmodifiedSourceSha256": "ab88721b4a82c6b32d4160b441daccbb0e84e44c100d7bb29bcb6491a882ca5f",
@@ -314,14 +314,18 @@
         "API-owned cancellation stops the registered unit and preserves interrupted outcome uncertainty",
         "original nested native command completes while its Python parent waits, with independent CPU/RAM admission",
         "published Luna conversation: real persistent namespace reused across tasks (execution counts 1 and 2)",
-        "optional Code Mode parameters normalize before dispatch and native completion matches actual cell lineage and full result"
+        "optional Code Mode parameters normalize before dispatch and native completion matches actual cell lineage and full result",
+        "natural published Luna handoff and two successful Python tasks, with actual reused namespace and omitted optional parameters",
+        "frozen registered QA unit stops through its exact cgroup without thawing the parent or affecting sibling processes"
       ],
       "pending": [
-        "published natural Luna confirmation after optional-parameter/completion fix",
         "actual UI approval/denial and resumption through Python host callbacks",
         "broader Hermes/OpenClaw tool parity and performance acceptance"
       ],
-      "acceptanceApproved": false
+      "acceptanceApproved": false,
+      "apiSource": "e6b2d839ae45c8d4e969de11f47b5e8a9cbab7f1",
+      "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
     }
-  ]
+  ],
+  "updatedAt": "2026-10-10"
 }

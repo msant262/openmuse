@@ -1,7 +1,8 @@
 # Persistent Python integration boundary
 
-Status: compatible API and registered native runtime published at `f5ed943c`;
-**enabled for controlled published Luna acceptance, with overall acceptance pending**.
+Status: API corrections published at `e6b2d839`, native containment correction at
+`c7fa614f`; **enabled, with natural Luna persistence verified and overall
+acceptance pending**.
 
 `python_kernel.py` owns a conversation's interpreter and installs fresh caller
 callbacks for every cell. `python_kernel_runner.py` executes the unchanged
@@ -40,6 +41,16 @@ pause, reconnect, suspend, cancellation and shutdown contain registered kernels;
 startup also cleans retained units after a disabled rollback. Cleanup failures
 retain their exact unit and budget. Startup preserves uncertain outcomes and
 never restores a namespace by replaying source.
+
+An actual API restart exposed a containment failure: systemd refused to stop a
+Python unit after the watchdog froze its account slice. That left the executor
+quarantined and removed Python from the worker's available tools. Teardown now
+checks the exact registered unit's cgroup and uses its `cgroup.kill` interface
+when ordinary stop fails. It verifies both the terminal unit and empty cgroup;
+it does not thaw the account or a sibling. Unconfirmed teardown retains its
+ownership and RAM reservation. The regression passes on an actual frozen QA
+unit as well as in local tests. See the [kernel cgroup v2 interface](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html)
+for the process-tree kill primitive.
 
 The caller supplies `(executor_id, owner, conversation_id)`, an admitted memory
 budget and its authorized tool callbacks. Python cannot select an account,
@@ -95,10 +106,13 @@ The following acceptance work remains:
 2. Preserve the compatible API/native protocol, ordinary task leases, per-unit
    RAM and exact rollback ownership. Publication is complete; validate subsequent
    API corrections with the actual model rather than treating activation as acceptance.
-3. Complete ordinary Luna chats in the published app, including persistence,
-   real Workspace reads, file delivery, actual UI approval/denial, approval
-   resumption and cancellation. Preserve existing JavaScript behavior and honest
-   availability metadata. The acceptance gate remains false until these pass.
+3. Complete actual UI approval/denial, resumption and cancellation through Python
+   callbacks in ordinary Luna chats. Natural persistence now passes across two
+   tasks with a real reused namespace and verified completion. Ordinary native
+   CSV delivery and natural Gmail draft/send/read/approved-trash also pass, but
+   those do not establish Python callback approval acceptance. Preserve existing
+   JavaScript behavior and honest availability metadata. The acceptance gate
+   remains false until the remaining checks pass.
 
 Local verification:
 
