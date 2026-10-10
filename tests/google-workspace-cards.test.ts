@@ -364,6 +364,8 @@ test("calendar reviews display the same instant in its named zone instead of cop
 test("the Actions tab fetches one summary page and reopens a selected draft without issuing Google operations", async () => {
   const calls: string[] = [],
     opened: any[] = [];
+  let refreshes = 0;
+  let refreshError = "";
   const workspace: { actions: any[] } = { actions: [] };
   const api = {
     identityKey: "owner",
@@ -395,6 +397,11 @@ test("the Actions tab fetches one summary page and reopens a selected draft with
           api,
           workspace,
           open: (detail: any) => opened.push(detail),
+          refresh: async () => {
+            refreshes++;
+            if (refreshError) throw new Error(refreshError);
+            workspace.actions = [];
+          },
         }),
       },
       "./external-action-preview": {
@@ -436,6 +443,22 @@ test("the Actions tab fetches one summary page and reopens a selected draft with
     await h.flush();
     assert.equal(calls.length, 2, "a decision refreshes the displayed summaries");
     assert.match(h.text(), /denied/);
+    h.button("Refresh").onPress();
+    await h.flush();
+    await h.flush();
+    assert.equal(refreshes, 1, "manual refresh reloads workspace actions too");
+    assert.equal(calls.length, 3, "manual refresh also reloads the draft page");
+    assert.doesNotMatch(h.text(), /denied/, "removed actions disappear without reloading the app");
+    assert.equal(h.button("Refresh").disabled, false);
+    refreshError = "Workspace unavailable";
+    h.button("Refresh").onPress();
+    await h.flush();
+    assert.equal(refreshes, 2);
+    assert.equal(calls.length, 3, "failed workspace refresh does not pretend to reload drafts");
+    assert.ok(
+      h.nodes().some((node) => node.type === "ErrorNotice" && node.props.error === refreshError),
+    );
+    assert.equal(h.button("Refresh").disabled, false, "a failed refresh remains retryable");
   } finally {
     h.close();
   }
@@ -503,4 +526,37 @@ test("pending batch trash cards identify every displayed subject before approval
     view.fields.some((f) => f.value.includes("Own test 1") && f.value.includes("Own test 2")),
   );
   assert.ok(view.fields.some((f) => f.label === "Messages" && f.value === "2"));
+});
+
+test("Drive trash cards describe removal and its destination instead of a file edit", () => {
+  const proposal = {
+    ...action,
+    title: "Move Study notes to trash",
+    data: {
+      tool: "google.workspace",
+      operation: "drive.files.update",
+      fileId: "owned-file",
+      account: "work@example.com",
+      resourceName: "Study notes",
+      request: JSON.stringify({ parameters: { fileId: "owned-file" }, body: { trashed: true } }),
+    },
+  };
+  const pending = googleActionPresentation(proposal);
+  assert.equal(pending.verb, "Move to trash");
+  assert.equal(pending.deletion, true);
+  assert.ok(
+    pending.fields.some((field) => field.label === "Destination" && field.value === "Lixeira"),
+  );
+  const completed = googleActionPresentation({
+    ...proposal,
+    status: "succeeded",
+    result: JSON.stringify({ data: { id: "owned-file", name: "Study notes", trashed: true } }),
+  });
+  assert.equal(completed.outcome, "File moved to trash.");
+  const restored = googleActionPresentation({
+    ...proposal,
+    data: { ...proposal.data, request: JSON.stringify({ body: { trashed: false } }) },
+  });
+  assert.equal(restored.verb, "Edit file");
+  assert.equal(restored.deletion, false);
 });

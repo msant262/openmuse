@@ -36,6 +36,7 @@ export const chatPresentationPtBR: Record<string, string> = {
   "Presentation updated in Google Slides.": "Apresentação atualizada no Google Slides.",
   "File saved in Google Drive.": "Arquivo salvo no Google Drive.",
   "File updated in Google Drive.": "Arquivo atualizado no Google Drive.",
+  "File moved to trash.": "Arquivo movido para a lixeira.",
   "Event created in this account's calendar.": "Compromisso criado na agenda desta conta.",
   "Event updated in this account's calendar.": "Compromisso atualizado na agenda desta conta.",
   "Email sent to the recipients shown below.": "E-mail enviado aos destinatários abaixo.",

@@ -275,13 +275,16 @@ export function googleActionPresentation(
     sheets: "Google Sheets",
     slides: "Google Slides",
   };
+  const driveTrash = service === "drive" && body.trashed === true;
   const deletion =
+    driveTrash ||
     data.requiresHumanApproval === true ||
     /\.(delete|batchDelete|trash|emptyTrash|clear|batchClear|remove)$/.test(operation);
-  const verb =
-    service === "gmail" &&
-    ((mailChange.verified === true && Number(mailChange.trashed) > 0) ||
-      (Array.isArray(body.addLabelIds) && body.addLabelIds.includes("TRASH")))
+  const verb = driveTrash
+    ? "Move to trash"
+    : service === "gmail" &&
+        ((mailChange.verified === true && Number(mailChange.trashed) > 0) ||
+          (Array.isArray(body.addLabelIds) && body.addLabelIds.includes("TRASH")))
       ? "Move email to trash"
       : mailChange.verified === true && Number(mailChange.archived) > 0
         ? "Archive email"
@@ -340,8 +343,11 @@ export function googleActionPresentation(
     },
     {
       label: "Destination",
-      value:
-        Number(mailChange.archived) > 0
+      value: driveTrash
+        ? locale === "pt-BR"
+          ? "Lixeira"
+          : "Trash"
+        : Number(mailChange.archived) > 0
           ? locale === "pt-BR"
             ? "Arquivados · Todos os e-mails"
             : "Archived · All Mail"
@@ -448,9 +454,11 @@ export function googleActionPresentation(
         ? locale === "pt-BR"
           ? `${mailChange.processed} e-mails conferidos no Gmail.${Number(mailChange.archived) > 0 ? ` ${mailChange.archived} arquivados.` : ""}${Number(mailChange.trashed) > 0 ? ` ${mailChange.trashed} enviados à lixeira.` : ""}${Number(mailChange.deleted) > 0 ? ` ${mailChange.deleted} excluídos.` : ""}`
           : `${mailChange.processed} emails verified in Gmail; ${mailChange.archived ?? 0} archived, ${mailChange.trashed ?? 0} trashed.`
-        : deletion
-          ? "Removal confirmed."
-          : (confirmedOutcomes[service] ?? "Change completed."),
+        : driveTrash && result.trashed === true
+          ? "File moved to trash."
+          : deletion
+            ? "Removal confirmed."
+            : (confirmedOutcomes[service] ?? "Change completed."),
     failed: "This action could not be completed. See the error below.",
     outcome_unknown: "The result has not been confirmed. Do not repeat this action yet.",
     executing: "The approved action is being executed.",

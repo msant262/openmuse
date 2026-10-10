@@ -18,7 +18,7 @@ import { useWorkspace } from "./workspace";
 
 /** Fetch only a page of summaries. Full email contents load when an item is opened. */
 export function GoogleActionsScreen({ onOpen }: { onOpen?: () => void } = {}) {
-  const { api, workspace, open } = useWorkspace();
+  const { api, workspace, open, refresh } = useWorkspace();
   const { t, locale } = useI18n();
   const { s, colors } = useUI();
   const [page, setPage] = useState<{
@@ -142,7 +142,20 @@ export function GoogleActionsScreen({ onOpen }: { onOpen?: () => void } = {}) {
         <Button small primary={filter === "history"} onPress={() => setFilter("history")}>
           {t("History")}
         </Button>
-        <Button small disabled={busy} onPress={() => setAttempt((value) => value + 1)}>
+        <Button
+          small
+          disabled={busy}
+          onPress={() => {
+            setBusy(true);
+            setError("");
+            void refresh()
+              .then(() => setAttempt((value) => value + 1))
+              .catch((cause) => {
+                setError(cause instanceof Error ? cause.message : String(cause));
+                setBusy(false);
+              });
+          }}
+        >
           {t("Refresh")}
         </Button>
       </View>
