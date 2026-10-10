@@ -28,6 +28,11 @@ import type { ToolCallRecord } from "./openclaw/tool-call-record.ts";
 import { getNoProgressStreak } from "./openclaw/tool-loop-no-progress.ts";
 import { calculateMaxToolResultCharsWithCap } from "./openclaw/tool-result-limits.ts";
 import { withNativePythonHostCall } from "./python-call-scope.ts";
+import {
+  PYTHON_SESSION_CRITERION,
+  pythonRequestContext,
+  pythonTaskCriteria,
+} from "./python-request.ts";
 import { taskActivity } from "./task-activity.ts";
 import "../config.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -86,7 +91,7 @@ import {
   taskOperationId,
 } from "./task-journal.ts";
 import { TaskValidityExpiredError } from "./task-timing.ts";
-import { textPlanDelivery } from "./task-verification.ts";
+import { taskCriteria, textPlanDelivery } from "./task-verification.ts";
 import type { TaskContext } from "./worker.ts";
 
 export async function executeModelTask(
@@ -611,12 +616,16 @@ export async function executeModelTask(
     }
     if (
       deliveryOutcome === "completed" &&
-      task.criteria?.some((criterion) => criterion.id === "requested-command")
+      task.criteria?.some((criterion) =>
+        ["requested-command", PYTHON_SESSION_CRITERION].includes(criterion.id),
+      )
     ) {
       const completion = await service.verification.assess(owner, task.id, revision, summary);
       if (
         completion.checks.some(
-          (check) => check.criterionId === "requested-command" && !check.passed,
+          (check) =>
+            ["requested-command", PYTHON_SESSION_CRITERION].includes(check.criterionId) &&
+            !check.passed,
         )
       ) {
         task = await ctx.checkpoint({
@@ -627,8 +636,11 @@ export async function executeModelTask(
           complete: false,
           repairable: true,
           missing: completion.remaining,
-          instruction:
-            "The requested program/command has not completed with a successful execution receipt. Continue the already authorized work in the appropriate runtime: execute_code supports the languages listed in its current schema; use run_computer_command for other computer runtimes and shell work. Start the computer if needed and obtain the actual result. A source file or anticipated output does not prove execution. Reuse and poll pending commands; never replay an uncertain effect. If an observed blocker prevents execution, report that concrete blocker with outcome=partial rather than asking permission to do the requested work.",
+          instruction: completion.checks.some(
+            (check) => check.criterionId === PYTHON_SESSION_CRITERION && !check.passed,
+          )
+            ? "The requested Python session has not run successfully. Use execute_code(language=python) when its current schema supports it. Keep the actual requested results in the retained namespace. A direct tool call, ordinary shell process, JavaScript result or source example does not satisfy this request. Reuse already confirmed effects: read their canonical results into Python rather than creating or deleting them again. A review legitimately stops the interpreter; resume from host receipts without replay. If the configured executor cannot run Python, report that concrete blocker with outcome=partial. Do not ask permission to do this already authorized work."
+            : "The requested program/command has not completed with a successful execution receipt. Continue the already authorized work in the appropriate runtime: execute_code supports the languages listed in its current schema; use run_computer_command for other computer runtimes and shell work. Start the computer if needed and obtain the actual result. A source file or anticipated output does not prove execution. Reuse and poll pending commands; never replay an uncertain effect. If an observed blocker prevents execution, report that concrete blocker with outcome=partial rather than asking permission to do the requested work.",
         };
       }
     }
@@ -2766,6 +2778,9 @@ export async function executeModelTask(
     delegatedBrief: task.state.conversationContext ? undefined : task.state.delegatedBrief,
   };
   const pythonExecutor = service.computer.python?.bind(service.computer);
+  const pythonAvailable = Boolean(
+    pythonExecutor && (await service.computer.pythonAvailable?.(owner)),
+  );
   let originalCalendarContext = calendarRequestContext(task.prompt, task.createdAt);
   if (originalCalendarContext && task.originThreadId && task.originMessageId) {
     const message = await service.inbox.get(owner, task.originThreadId, task.originMessageId);
@@ -2777,6 +2792,7 @@ export async function executeModelTask(
     projectToolResult: (name, result, contextTokens) =>
       recoverResearchToolResult(service.files, owner, name, result, contextTokens),
     directToolNames: [
+      ...(pythonAvailable ? ["execute_code"] : []),
       ...googleTaskTools(task.prompt),
       ...(config.computerEnabled
         ? [
@@ -2793,7 +2809,7 @@ export async function executeModelTask(
     requiredOperationIds: () => service.journal.requiredHistoryIds(owner, task.id),
     workClass: "background",
     codeToolEffects: true,
-    ...((await service.computer.pythonAvailable?.(owner)) && pythonExecutor
+    ...(pythonAvailable && pythonExecutor
       ? {
           pythonRuntime: {
             execute: async (input) => {
@@ -2904,6 +2920,9 @@ export async function executeModelTask(
     onMessages: async (messages, phase) => {
       if (phase !== "beforeModel") return;
       task = await service.actor.apply(owner, task, ctx);
+      const criteria = pythonTaskCriteria(task, task.criteria ?? taskCriteria(task));
+      if (JSON.stringify(criteria) !== JSON.stringify(task.criteria))
+        task = await ctx.checkpoint({ criteria });
       await service.journal.checkpoint(owner, task.id, task.leaseId ?? "", modelHistory(messages));
       const elapsed = Date.now() - budgetAccountedAt;
       budgetAccountedAt = Date.now();
@@ -3020,6 +3039,7 @@ export async function executeModelTask(
       buildPromisedWorkPromptSection().join("\n") +
       (await humanizerContext(config, owner)) +
       (Number(task.state.appliedRevision ?? 0) === 0 ? originalCalendarContext : "") +
+      pythonRequestContext(task, pythonAvailable) +
       (await googleAgentContext(service.workspace, owner, selectedTools, task.prompt)) +
       `\nConnected image capabilities (server data): ${JSON.stringify(await service.media.imageCapabilities(selectedModel))}` +
       `\nDirections applied at revision ${Number(task.state.appliedRevision ?? 0)}: ${JSON.stringify(task.state.directives ?? [])}` +

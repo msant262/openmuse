@@ -31,6 +31,7 @@ import {
 } from "../google-workspace-tools.ts";
 import { readablePage } from "../public-web.ts";
 import { browserRemovalEvidence, browserRemovalRequest } from "./browser-removal.ts";
+import { PYTHON_SESSION_CRITERION, pythonTaskCriteria } from "./python-request.ts";
 import { claimsPendingReview, REVIEWED_ACTION_REPORT } from "./reviewed-action-context.ts";
 import type { JournalOperation, TaskJournal } from "./task-journal.ts";
 import { officeContent } from "./task-office.ts";
@@ -183,7 +184,9 @@ function requestedExecution(prompt: string) {
       )
         return false;
       const clause = prompt.slice(index).split(/[.!?;\n]|\b(?:and|e|then|depois)\b/i)[0];
-      return /\b(?:command|comando|program|programa|script|code|c[oó]digo)\b/i.test(clause);
+      return /\b(?:command|comando|program|programa|script|code|c[oó]digo|function|fun[çc][aã]o)\b/i.test(
+        clause,
+      );
     },
   );
 }
@@ -464,7 +467,7 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       requiredItems: [...new Set(task.prompt.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi) ?? [])],
     });
   if (
-    (/\b(calendar|calend[aá]rio|event|evento)\b/i.test(prompt) ||
+    (/\b(calendar|calend[aá]rio|events?|eventos?|compromissos?|appointments?)\b/i.test(prompt) ||
       (/\bagenda\b/i.test(prompt) &&
         /\b(coloca|coloque|agende|agendar|marque|marca|marcar|schedule|book|reserve)\b/i.test(
           prompt,
@@ -564,16 +567,19 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
         "Report the exact installed browser version from a current Browser.getVersion receipt. A title or console read does not establish the version.",
       requiredItems: [],
     });
-  return criteria.length
-    ? criteria
-    : [
-        {
-          id: "observed-result",
-          kind: "observation",
-          description: "The requested outcome has current observed evidence",
-          requiredItems: [],
-        },
-      ];
+  return pythonTaskCriteria(
+    task,
+    criteria.length
+      ? criteria
+      : [
+          {
+            id: "observed-result",
+            kind: "observation",
+            description: "The requested outcome has current observed evidence",
+            requiredItems: [],
+          },
+        ],
+  );
 }
 
 /** The requested text is the deliverable; a completion claim without steps is not. */
@@ -814,8 +820,15 @@ function operationMatches(
     !required(criterion, { args: op.args, receipt })
   )
     return false;
+  if (criterion.id === PYTHON_SESSION_CRITERION) return observedNativePython(op, operations);
   if (codeMode && object(op.args)?.language === "python")
-    return /\bpython\w*\b/i.test(prompt) && observedNativePython(op, operations);
+    return (
+      (/\bpython\w*\b/i.test(prompt) ||
+        !/\b(?:javascript|js|bash|shell|terminal|comando|command|powershell|ruby|php|java|rust|gcc)\b/i.test(
+          prompt,
+        )) &&
+      observedNativePython(op, operations)
+    );
   if (codeMode)
     return (
       !/\b(?:python\w*|bash|shell|terminal|comando|command|powershell|ruby|php|java|rust|gcc)\b/i.test(
@@ -1099,7 +1112,7 @@ export class TaskVerification {
         ["dispatching", "running", "outcome_unknown"].includes(op.status) &&
         op.toolName !== "finish_task",
     );
-    const criteria = task.criteria ?? taskCriteria(task);
+    const criteria = pythonTaskCriteria(task, task.criteria ?? taskCriteria(task));
     const requestedContent = requiredContent(task.prompt);
     const driveMissing: string[] = [];
     const checks = await Promise.all(

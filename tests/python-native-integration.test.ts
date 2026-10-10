@@ -522,6 +522,48 @@ test("completion verifies actual native Python results and refuses an unbound sc
           (await server.agent.verification.assess("owner", task.id, 0)).status,
           "verified",
         );
+        const sessionPrompt =
+          "Use uma sessão Python para somar os números e guarde o resultado para continuar depois.";
+        const sessionCriteria = taskCriteria({ ...running, prompt: sessionPrompt });
+        assert.ok(sessionCriteria.some((criterion) => criterion.id === "requested-python-session"));
+        await server.db.put("owner", "tasks", {
+          ...running,
+          prompt: sessionPrompt,
+          criteria: sessionCriteria,
+        });
+        const sessionVerified = await server.agent.verification.assess("owner", task.id, 0);
+        assert.equal(sessionVerified.status, "verified", JSON.stringify(sessionVerified));
+        const genericPrompt = "Execute o programa para somar os números.";
+        await server.db.put("owner", "tasks", {
+          ...running,
+          prompt: genericPrompt,
+          criteria: taskCriteria({ ...running, prompt: genericPrompt }),
+        });
+        assert.equal(
+          (await server.agent.verification.assess("owner", task.id, 0)).status,
+          "verified",
+          "a generic code request also accepts the actual native interpreter",
+        );
+        for (const explicitPrompt of [
+          "Execute o programa JavaScript para somar os números.",
+          "Execute o comando shell para somar os números.",
+        ]) {
+          await server.db.put("owner", "tasks", {
+            ...running,
+            prompt: explicitPrompt,
+            criteria: taskCriteria({ ...running, prompt: explicitPrompt }),
+          });
+          assert.notEqual(
+            (await server.agent.verification.assess("owner", task.id, 0)).status,
+            "verified",
+            "Python must not replace the explicitly requested runtime",
+          );
+        }
+        await server.db.put("owner", "tasks", {
+          ...running,
+          prompt: sessionPrompt,
+          criteria: sessionCriteria,
+        });
         await server.db.put("owner", "task-operations", {
           ...parent,
           status: "succeeded",
