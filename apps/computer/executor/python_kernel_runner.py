@@ -134,8 +134,10 @@ cell["_clip"] = clip
 
 
 def spill(text):
-    # Fixed owned cwd, exclusive leaves, no overwrite of a user's document.
-    directory = Path(tempfile.mkdtemp(prefix=".okami-python-output-", dir=workspace))
+    # Retained user output, exported/versioned/removed by ordinary file tools.
+    # .okami-* is reserved for private executor state and cannot be exported.
+    # Exclusive owner-private leaves never overwrite an existing document.
+    directory = Path(tempfile.mkdtemp(prefix="python-output-", dir=workspace))
     target = directory / "stdout.txt"
     encoded = text.encode("utf-8", errors="replace")
     with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as out:

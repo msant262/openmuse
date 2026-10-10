@@ -34,6 +34,7 @@ export async function pythonRuntime(
     ) => Promise<{ sequence: number; json: string; sha256: string }>;
   }) => Promise<void>,
   tools = ["write_sample"],
+  cell: { code?: string; timeoutMs?: number } = {},
 ) {
   const server = await taskRuntime(t);
   const authority = new TaskExecutorAuthority(server.agent.journal, {
@@ -60,11 +61,11 @@ export async function pythonRuntime(
         command: "Python cell",
         cwd: "/workspace",
         background: false,
-        timeoutMs: 3000,
+        timeoutMs: cell.timeoutMs ?? 3000,
         pythonCell: {
           owner,
           sessionId: "conversation",
-          code: "print(42)",
+          code: cell.code ?? "print(42)",
           tools,
           reset: false,
           maxToolCalls: 100,

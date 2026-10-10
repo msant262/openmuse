@@ -1,5 +1,6 @@
 """Actual child-interpreter tests; no model fixtures or fake tool receipts."""
 import contextvars
+import base64
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ import time
 import unittest
 
 from .python_kernel import PythonKernels, KernelProcess, RUNNER_PATH
+from .files import Workspace
 
 
 class PythonKernelTests(unittest.TestCase):
@@ -176,6 +178,36 @@ class PythonKernelTests(unittest.TestCase):
         spill = Path(self.directory.name, result["stdout_spill_path"])
         self.assertEqual(spill.read_text(), "á" * 10000 + "\n")
         self.assertEqual(spill.stat().st_mode & 0o777, 0o600)
+
+    def test_long_output_can_be_exported_by_the_ordinary_workspace_file_transport(self):
+        files = Workspace(self.directory.name, Path(self.directory.name) / ".okami-state")
+        self.addCleanup(files.close)
+        result = self.run_cell("print('á' * 10000)", output_bytes=1024)
+        path = "/workspace/" + str(Path(result["stdout_spill_path"]).relative_to(self.directory.name))
+        exported = files.handle({"kind": "file", "args": {"operation": "read_binary", "path": path}})
+        data = base64.b64decode(exported["base64"])
+        self.assertEqual(data, ("á" * 10000 + "\n").encode())
+        self.assertEqual(exported["size"], len(data))
+        self.assertEqual(exported["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertIn(path, [entry["path"] for entry in files.list(str(Path(path).parent))["entries"]])
+        # Making normal output downloadable must never open internal files.
+        with self.assertRaisesRegex(ValueError, "Reserved"):
+            files.read("/workspace/.okami-state/files.sqlite")
+
+    def test_spilled_output_survives_kernel_reset_and_uses_existing_file_recovery(self):
+        files = Workspace(self.directory.name, Path(self.directory.name) / ".okami-state")
+        self.addCleanup(files.close)
+        result = self.run_cell("print('original output ' * 200)", output_bytes=1024)
+        path = "/workspace/" + str(Path(result["stdout_spill_path"]).relative_to(self.directory.name))
+        self.run_cell("print('new session')", reset=True)
+        source = files.handle({"kind": "file", "args": {"operation": "stat", "path": path}})
+        expected = ("original output " * 200 + "\n").encode()
+        self.assertEqual(files.read(path), expected)
+        removed = files.trash(source["artifactId"], source["version"], task_id="owned-output-cleanup")
+        with self.assertRaises(FileNotFoundError):
+            files.read(path)
+        recovered = files.restore(removed["id"], None)
+        self.assertEqual(files.read(recovered["path"]), expected)
 
     def test_concurrent_cells_use_one_process_and_serialize_state_changes(self):
         results = []

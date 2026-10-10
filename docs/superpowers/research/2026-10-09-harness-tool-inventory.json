@@ -289,7 +289,7 @@
   "implementationChecks": [
     {
       "surface": "execute_code.python",
-      "status": "host-dispatch-implemented-production-acceptance-pending",
+      "status": "api-native-bridge-verified-production-acceptance-pending",
       "productionEnabled": false,
       "upstream": "e0550c97bbd916cd5ff8fa0450e6291c31921b94",
       "unmodifiedSourceSha256": "ab88721b4a82c6b32d4160b441daccbb0e84e44c100d7bb29bcb6491a882ca5f",
@@ -308,11 +308,13 @@
         "local actual M3/M4 private reply ownership, node authentication and current request fencing",
         "original host task dispatcher with derived call identity and unrelated-effect barriers",
         "copied agent optional Python selection preserves full host results and JavaScript behavior",
-        "known host review stop is terminal only with confirmed containment"
+        "known host review stop is terminal only with confirmed containment",
+        "retained output files export through existing native file transport and controlled recovery",
+        "actual API/native Gate, Journal, private reply and original attachment publisher with registered systemd units",
+        "API-owned cancellation stops the registered unit and preserves interrupted outcome uncertainty"
       ],
       "pending": [
-        "owned spill-file delivery and retention",
-        "full API/native nested-command and approval-resumption verification",
+        "actual model/task nested-command admission and approval/denial resumption",
         "ordinary Luna chat acceptance in the published app"
       ],
       "acceptanceApproved": false

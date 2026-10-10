@@ -79,15 +79,19 @@ effect. Cancellation, timeout and unconfirmed containment remain uncertain.
 Python receives full tool results. Controller diagnostics retain bounded
 previews, not a second transcript of every large result. Exact args/results
 must be saved by the ordinary host dispatcher. Captured output is bounded by
-UTF-8 bytes; clipped stdout has an exclusive, owner-private spill file in the
-workspace. These temporary outputs still need the app's owned-file delivery
-and retention integration before production activation.
+UTF-8 bytes; clipped stdout has an exclusive, owner-private output file in the
+ordinary workspace. It is a retained output, rather than hidden executor state:
+the existing file transport can export its exact bytes/hash, the app can attach
+it with `export_computer_file`, and the existing controlled trash/version/restore
+flow preserves recovery. Kernel reset never deletes it. Internal `.okami-*`
+paths remain blocked; no private-state exception or automatic deletion of user
+documents is introduced. Test cleanup selects only its own exact outputs.
 
 The following work is required before enabling this surface:
 
-1. Complete owned stdout spill-file delivery/retention and verify nested native
-   command admission/cancellation through the full API/native path. Local
-   dispatcher fixtures are not proof of native provider effects.
+1. Verify nested native command admission and approval/denial resumption through
+   the actual model/task runtime. The API/registered-unit bridge below proves
+   file attachment and owned cancellation, not natural model/provider behavior.
 2. Publish the compatible API protocol before enabling the native capability,
    retaining ordinary task leases, per-unit RAM and exact rollback ownership.
 3. Complete ordinary Luna chats in the published app, including persistence,
@@ -112,3 +116,16 @@ envelopes, cross-task/revision/epoch/fence refusal, corrupted reply rejection,
 real cell persistence, pause/timeout/cancellation and retransmission. Host
 callbacks/review payloads in this suite are local fixtures. They do not
 constitute published harness acceptance or prove Hermes/OpenClaw tool parity.
+
+The API/native integration tests also connect actual node-authenticated Hono
+endpoints, M3/M4 task authority, the original computer export/Files publisher,
+native Gate/Journal/PythonJobs and real interpreters. They verify complete
+20,000-item RPC results, exact attachment bytes, long-output export, same-ID
+delivery without another effect, host-review stopping later source lines and
+an API-owned cancellation retaining its interrupted outcome. Test provider and
+review values remain fixtures. The default OS launcher is local; the opt-in
+registered-unit run uses root-owned staged sources, the actual registered
+user/cgroup/RAM reservation and a private QA workspace, with no production
+configuration/service change. All temporary sources, journals, output files and
+reservations are removed after verification. A passing bridge run is separate
+from published Luna chat and actual user review acceptance.
