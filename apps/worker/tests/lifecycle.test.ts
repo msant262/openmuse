@@ -7,7 +7,9 @@ import { join } from "node:path";
 import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { signBrowserAuthorization } from "../../../packages/domain/src/browser-payment.ts";
 import { createBrowserManager } from "../src/browser.ts";
+import { BrowserDialogs } from "../src/browser-dialogs.ts";
 import { publicFixture } from "./public-fixture.ts";
 
 let fixture: Awaited<ReturnType<typeof publicFixture>>;
@@ -16,6 +18,270 @@ before(async () => {
 });
 after(async () => {
   await fixture?.close();
+});
+
+test("a reviewed click returns its pending confirmation without waiting for a second approval", {
+  timeout: 20_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-reviewed-modal-"));
+  const token = "fixture-only-browser-token-at-least-32-chars";
+  const browser = await createBrowserManager({ dataDir, token });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/reviewed-dialog");
+    const snap = await browser.snapshot(id);
+    const button = snap.elements.find((item) => item.label === "Pay 10 euros");
+    assert.ok(button);
+    const action = {
+      snapshotId: snap.snapshotId,
+      element: button.number,
+      action: "click" as const,
+    };
+    const intent = await browser.inspect(id, action);
+    const authorization = signBrowserAuthorization(token, {
+      sessionId: id,
+      id: "c".repeat(64),
+      expiresAt: Date.now() + 60_000,
+      binding: intent.binding,
+    });
+    const receipt = await browser.reviewedAct(id, authorization);
+    assert.equal(receipt.status, "succeeded");
+    assert.equal(receipt.dialog?.message, "Confirm payment of 10 euros?");
+    assert.equal(receipt.dialog?.requiresApproval, true);
+    assert.equal(receipt.elements.length, 0);
+    const denied = await browser.dialog(id, { dialogId: receipt.dialog.id, accept: false });
+    assert.match(denied.text, /Payment cancelled/);
+    assert.doesNotMatch(denied.text, /Paid once/);
+    const replay = await browser.reviewedAct(id, authorization);
+    assert.equal(replay.replayed, true);
+    assert.match(replay.text, /Payment cancelled/);
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("a dialog opening during a page read releases the observation without blocking or dismissing it", {
+  timeout: 15_000,
+}, async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const dialogs = new BrowserDialogs(
+      page,
+      (text) => text,
+      () => {},
+    );
+    const read = dialogs.observe(() =>
+      page.evaluate(
+        () =>
+          new Promise<string>((resolve) => {
+            setTimeout(() => {
+              alert("Notice during read");
+              resolve("Actual read");
+            }, 0);
+          }),
+      ),
+    );
+    assert.equal(await read, undefined);
+    const pending = dialogs.observation();
+    assert.equal(pending?.message, "Notice during read");
+    await dialogs.respond({ dialogId: pending!.id, accept: true }, () => {});
+    assert.equal(await dialogs.observe(() => page.title()), "");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("real browser dialogs remain pending and ordinary prompts resume without repeating the click", {
+  timeout: 30_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-browser-dialogs-"));
+  const browser = await createBrowserManager({ dataDir });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/dialogs");
+    const initial = await browser.snapshot(id);
+    const button = initial.elements.find((element) => element.label === "Name document");
+    assert.ok(button);
+    const pending = await browser.act(id, {
+      snapshotId: initial.snapshotId,
+      element: button.number,
+      action: "click",
+    });
+    assert.equal(pending.dialog?.type, "prompt");
+    assert.equal(pending.dialog?.message, "Name this document");
+    assert.equal(pending.dialog?.defaultValue, "Untitled");
+    assert.equal(
+      pending.elements.length,
+      0,
+      "blocked DOM controls must not be presented as usable",
+    );
+    const observed = await browser.snapshot(id);
+    assert.equal(observed.dialog?.id, pending.dialog.id);
+    await assert.rejects(browser.back(id), { code: "BROWSER_DIALOG_PENDING" });
+    await assert.rejects(browser.dialog(id, { dialogId: randomUUID(), accept: true }), {
+      code: "STALE_DIALOG",
+    });
+    await browser.setControl(id, "human");
+    await assert.rejects(browser.dialog(id, { dialogId: pending.dialog.id, accept: true }), {
+      code: "BROWSER_CONTROLLED",
+    });
+    await browser.setControl(id, "agent");
+    const resumed = await browser.dialog(id, {
+      dialogId: pending.dialog.id,
+      accept: true,
+      promptText: "Quarterly report",
+    });
+    assert.equal(resumed.dialog, undefined);
+    assert.match(resumed.text, /Quarterly report/);
+    await assert.rejects(browser.dialog(id, { dialogId: pending.dialog.id, accept: true }), {
+      code: "STALE_DIALOG",
+    });
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("destructive confirmation cannot be accepted through the ordinary browser tool", {
+  timeout: 30_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-browser-dialog-review-"));
+  const browser = await createBrowserManager({ dataDir });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/dialogs");
+    const initial = await browser.snapshot(id);
+    const button = initial.elements.find((element) => element.label === "Delete document");
+    assert.ok(button);
+    const pending = await browser.act(id, {
+      snapshotId: initial.snapshotId,
+      element: button.number,
+      action: "click",
+    });
+    assert.equal(pending.dialog?.requiresApproval, true);
+    await assert.rejects(browser.dialog(id, { dialogId: pending.dialog.id, accept: true }), {
+      code: "DIALOG_APPROVAL_REQUIRED",
+    });
+    await assert.rejects(
+      browser.dialog(id, { dialogId: pending.dialog.id, accept: true, approved: true }),
+      { code: "INVALID_DIALOG" },
+    );
+    const dismissed = await browser.dialog(id, { dialogId: pending.dialog.id, accept: false });
+    assert.match(dismissed.text, /Kept/);
+    assert.doesNotMatch(dismissed.text, /Deleted/);
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("navigation and chained alerts return promptly and each response binds the current dialog", {
+  timeout: 30_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-browser-chained-dialogs-"));
+  const browser = await createBrowserManager({ dataDir });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/navigation-dialog");
+    const navigation = await browser.snapshot(id);
+    assert.equal(navigation.dialog?.message, "Notice during navigation");
+    const loaded = await browser.dialog(id, { dialogId: navigation.dialog.id, accept: true });
+    assert.match(loaded.text, /Loaded after notice/);
+    await browser.navigate(id, "https://browser.fixture.test/dialogs");
+    const initial = await browser.snapshot(id);
+    const button = initial.elements.find((element) => element.label === "Two notices");
+    assert.ok(button);
+    const first = await browser.act(id, {
+      snapshotId: initial.snapshotId,
+      element: button.number,
+      action: "click",
+    });
+    assert.equal(first.dialog?.message, "First notice");
+    const second = await browser.dialog(id, { dialogId: first.dialog.id, accept: true });
+    assert.equal(second.dialog?.message, "Second notice");
+    assert.notEqual(first.dialog.id, second.dialog.id);
+    const finished = await browser.dialog(id, { dialogId: second.dialog.id, accept: true });
+    assert.match(finished.text, /Both notices acknowledged/);
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("trusted reviewed dialog dispatch changes the actual page once and pending dialogs close cleanly", {
+  timeout: 30_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-browser-reviewed-dialog-"));
+  const browser = await createBrowserManager({ dataDir });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/dialogs");
+    const initial = await browser.snapshot(id);
+    const button = initial.elements.find((element) => element.label === "Delete document");
+    assert.ok(button);
+    const pending = await browser.act(id, {
+      snapshotId: initial.snapshotId,
+      element: button.number,
+      action: "click",
+    });
+    const reviewed = { dialogId: pending.dialog!.id, accept: true, approvalId: "a".repeat(64) };
+    const result = await browser.dialog(id, reviewed, true);
+    assert.match(result.text, /Deleted/);
+    assert.equal(result.response.dialogId, reviewed.dialogId);
+    await assert.rejects(browser.dialog(id, reviewed, true), { code: "STALE_DIALOG" });
+    const prompt = result.elements.find((element) => element.label === "Name document");
+    assert.ok(prompt);
+    const blocking = await browser.act(id, {
+      snapshotId: result.snapshotId,
+      element: prompt.number,
+      action: "click",
+    });
+    assert.ok(blocking.dialog);
+    await browser.closeSession(id);
+    await browser.create(id, "https://browser.fixture.test/dialogs");
+    assert.equal(
+      (await browser.snapshot(id)).dialog,
+      undefined,
+      "closed renderer dialogs cannot survive a new browser lifecycle",
+    );
+    await assert.rejects(browser.dialog(id, reviewed, true), { code: "STALE_DIALOG" });
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("a dialog may wait longer than the click timeout without losing the observed action", {
+  timeout: 30_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-browser-dialog-wait-"));
+  const browser = await createBrowserManager({ dataDir });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/dialogs");
+    const initial = await browser.snapshot(id);
+    const button = initial.elements.find((element) => element.label === "Name document");
+    assert.ok(button);
+    const pending = await browser.act(id, {
+      snapshotId: initial.snapshotId,
+      element: button.number,
+      action: "click",
+    });
+    assert.ok(pending.dialog);
+    await new Promise((resolve) => setTimeout(resolve, 11_000));
+    assert.equal((await browser.snapshot(id)).dialog?.id, pending.dialog.id);
+    const result = await browser.dialog(id, {
+      dialogId: pending.dialog.id,
+      accept: true,
+      promptText: "Still available",
+    });
+    assert.match(result.text, /Still available/);
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
 });
 
 test("browser images are observed from the actual page, paginated and omit protected credential regions", {

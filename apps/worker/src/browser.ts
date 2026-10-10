@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserContext, Frame, Page } from "playwright";
@@ -6,11 +6,16 @@ import {
   browserCdpInputSchema,
   browserConsoleInputSchema,
 } from "../../../packages/domain/src/browser-diagnostics.ts";
+import {
+  browserDialogInputSchema,
+  reviewedBrowserDialogInputSchema,
+} from "../../../packages/domain/src/browser-dialog.ts";
 import { browserUploadSchema } from "../../../packages/domain/src/browser-file.ts";
 import { browserImagesInputSchema } from "../../../packages/domain/src/browser-images.ts";
 import { defaultSearchEndpoint, searchInputSchema } from "../../../packages/domain/src/search.ts";
 import { AgentPage, browserAction } from "./agent-page.ts";
 import { BrowserDiagnostics } from "./browser-diagnostics.ts";
+import { BrowserDialogs } from "./browser-dialogs.ts";
 import { BrowserChallenge } from "./challenge.ts";
 import {
   type CredentialLoginInput,
@@ -51,6 +56,7 @@ type Running = {
   agent: AgentPage;
   challenge: BrowserChallenge;
   diagnostics: BrowserDiagnostics;
+  dialogs: BrowserDialogs;
   captchaActive?: boolean;
   interruptions: {
     popupsBlocked: number;
@@ -145,7 +151,7 @@ export async function createBrowserManager(options: {
       if (queues.get(id) === next) queues.delete(id);
     }
   }
-  function active(id: string) {
+  function active(id: string, allowDialog = false) {
     const value = running.get(id);
     if (!value || value.page.isClosed())
       throw new WorkerError(
@@ -159,15 +165,27 @@ export async function createBrowserManager(options: {
         "A popup or dialog could not be contained; close this session before continuing.",
         409,
       );
+    if (!allowDialog && value.dialogs.pending)
+      throw new WorkerError(
+        "BROWSER_DIALOG_PENDING",
+        "A browser dialog is pending. Read browser_snapshot and answer its exact dialogId before another page operation.",
+        409,
+      );
     value.touched = Date.now();
     return value;
   }
   async function refresh(id: string) {
-    const instance = active(id);
+    const instance = active(id, true);
     if (instance.page.url() !== "about:blank") await validatePage(instance);
     const session: Session = {
       id,
-      title: (await instance.page.title()).slice(0, 300),
+      title: instance.dialogs.pending
+        ? (sessions.get(id)?.title ?? "Browser dialog")
+        : (
+            (await instance.dialogs.observe(() => instance.page.title())) ??
+            sessions.get(id)?.title ??
+            "Browser dialog"
+          ).slice(0, 300),
       url: instance.page.url(),
       status: "active",
       updatedAt: new Date().toISOString(),
@@ -176,6 +194,30 @@ export async function createBrowserManager(options: {
     sessions.set(id, session);
     await persist(session);
     return session;
+  }
+  async function observation(id: string, instance: Running) {
+    const snapshot = await instance.dialogs.observe(() => instance.agent.snapshot());
+    await refresh(id);
+    const dialog = instance.dialogs.observation();
+    const result =
+      dialog || !snapshot
+        ? {
+            snapshotId: randomUUID(),
+            url: instance.page.url(),
+            title: sessions.get(id)?.title ?? "Browser dialog",
+            text: "A browser dialog is pending. Respond to its exact dialogId before continuing with the page.",
+            truncated: false,
+            truncatedElements: false,
+            elements: [],
+          }
+        : snapshot;
+    return {
+      sessionId: id,
+      control: sessions.get(id)?.control ?? "agent",
+      ...result,
+      dialog,
+      interruptions: { ...instance.interruptions },
+    };
   }
   async function downloads(id: string): Promise<PdfDownload[]> {
     if (!sessions.has(id))
@@ -210,11 +252,14 @@ export async function createBrowserManager(options: {
     if (agent) guardAgent(id);
     await running.get(id)?.agent.invalidate();
     const target = await validatePublicUrl(url);
-    const { page } = active(id);
-    active(id).publicData.reset();
+    const instance = active(id),
+      { page } = instance;
+    instance.publicData.reset();
     if (agent) guardAgent(id);
     try {
-      await page.goto(target.url.href, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      await instance.dialogs.run(() =>
+        page.goto(target.url.href, { waitUntil: "domcontentloaded", timeout: 60_000 }),
+      );
       // Chromium can follow redirects outside Playwright's initial route hook.
       // The proxy blocks those sockets, but its 403 is still an HTTP response:
       // validate the final location so the API does not report it as success.
@@ -390,15 +435,25 @@ export async function createBrowserManager(options: {
       const page = await context.newPage();
       for (const old of oldPages) await old.close();
       page.setDefaultTimeout(10_000);
-      const instance: Running = {
+      const diagnostics = new BrowserDiagnostics(page);
+      let instance: Running;
+      const dialogs = new BrowserDialogs(
+        page,
+        (text) => diagnostics.redact(text),
+        () => {
+          void instance.agent.invalidate();
+        },
+      );
+      instance = {
         publicData: observePublicDataRequests(page),
         context,
         page,
         touched: Date.now(),
         pending: new Set(),
-        agent: new AgentPage(page, options.protect),
+        agent: new AgentPage(page, options.protect, (label) => dialogs.setOpener(label)),
         challenge: new BrowserChallenge(page),
-        diagnostics: new BrowserDiagnostics(page),
+        diagnostics,
+        dialogs,
         interruptions: { popupsBlocked: 0, dialogsDismissed: 0 },
       };
       running.set(id, instance);
@@ -410,17 +465,6 @@ export async function createBrowserManager(options: {
         instance.interruptions.last = "POPUP_BLOCKED";
         void instance.agent.invalidate();
         void popup.close().catch(() => {
-          instance.unsafeSurface = true;
-        });
-      });
-      page.on("dialog", (dialog) => {
-        instance.interruptions.dialogsDismissed = Math.min(
-          1000,
-          instance.interruptions.dialogsDismissed + 1,
-        );
-        instance.interruptions.last = "DIALOG_DISMISSED";
-        void instance.agent.invalidate();
-        void dialog.dismiss().catch(() => {
           instance.unsafeSurface = true;
         });
       });
@@ -525,7 +569,9 @@ export async function createBrowserManager(options: {
         };
         instance.page.on("framenavigated", navigation);
         try {
-          await instance.page.goBack({ waitUntil: "domcontentloaded", timeout: 60_000 });
+          await instance.dialogs.run(() =>
+            instance.page.goBack({ waitUntil: "domcontentloaded", timeout: 60_000 }),
+          );
         } finally {
           instance.page.off("framenavigated", navigation);
         }
@@ -536,15 +582,7 @@ export async function createBrowserManager(options: {
             await instance.page.goto("about:blank", { timeout: 5000 });
           throw error;
         }
-        const result = await instance.agent.snapshot();
-        await refresh(id);
-        return {
-          sessionId: id,
-          control: sessions.get(id)?.control ?? "agent",
-          ...result,
-          historyMoved,
-          interruptions: { ...instance.interruptions },
-        };
+        return { ...(await observation(id, instance)), historyMoved };
       }),
     control: (id: string) =>
       serial(id, async () => {
@@ -568,15 +606,29 @@ export async function createBrowserManager(options: {
     },
     snapshot: (id: string) =>
       serial(id, async () => {
-        const instance = active(id);
+        const instance = active(id, true);
         await validatePage(instance);
-        const result = await instance.agent.snapshot();
-        await refresh(id);
+        return observation(id, instance);
+      }),
+    dialog: (id: string, raw: unknown, reviewed = false) =>
+      serial(id, async () => {
+        const checked = (
+          reviewed ? reviewedBrowserDialogInputSchema : browserDialogInputSchema
+        ).safeParse(raw);
+        if (!checked.success)
+          throw new WorkerError(
+            "INVALID_DIALOG",
+            "Use only the exact pending dialogId, accept and optional promptText.",
+            422,
+          );
+        guardAgent(id);
+        const instance = active(id, true);
+        await validatePage(instance);
+        await instance.dialogs.respond(checked.data, () => guardAgent(id), reviewed);
+        await validatePage(instance);
         return {
-          sessionId: id,
-          control: sessions.get(id)?.control ?? "agent",
-          ...result,
-          interruptions: { ...instance.interruptions },
+          ...(await observation(id, instance)),
+          response: { dialogId: checked.data.dialogId, accept: checked.data.accept },
         };
       }),
     console: (id: string, raw: unknown = {}) =>
@@ -734,19 +786,17 @@ export async function createBrowserManager(options: {
         guardAgent(id);
         const instance = active(id);
         await validatePage(instance);
-        await instance.agent.upload(
-          file,
-          { name: file.name, mimeType: file.mimeType, buffer: bytes },
-          () => guardAgent(id),
+        await instance.dialogs.run(() =>
+          instance.agent.upload(
+            file,
+            { name: file.name, mimeType: file.mimeType, buffer: bytes },
+            () => guardAgent(id),
+          ),
         );
         guardAgent(id);
         await validatePage(instance);
-        await refresh(id);
         return {
-          sessionId: id,
-          control: sessions.get(id)?.control ?? "agent",
-          ...(await instance.agent.snapshot()),
-          interruptions: { ...instance.interruptions },
+          ...(await observation(id, instance)),
           uploaded: { name: file.name, size: file.size, sha256: file.sha256 },
         };
       }),
@@ -814,10 +864,10 @@ export async function createBrowserManager(options: {
           authorization,
           instance.agent,
           () => guardAgent(id),
+          (operation) => instance.dialogs.run(operation),
         );
         try {
           await validatePage(instance);
-          await refresh(id);
         } catch {
           throw new WorkerError(
             "OUTCOME_UNKNOWN",
@@ -825,7 +875,7 @@ export async function createBrowserManager(options: {
             409,
           );
         }
-        return receipt;
+        return { ...receipt, ...(await observation(id, instance)) };
       }),
     inspect: (id: string, value: Record<string, unknown>) =>
       serial(id, async () => {
@@ -851,7 +901,7 @@ export async function createBrowserManager(options: {
             409,
           );
         await validatePage(instance);
-        await instance.agent.act(action, () => guardAgent(id));
+        await instance.dialogs.run(() => instance.agent.act(action, () => guardAgent(id)));
         try {
           await validatePage(instance);
         } catch (error) {
@@ -859,13 +909,7 @@ export async function createBrowserManager(options: {
           throw error;
         }
         guardAgent(id);
-        await refresh(id);
-        return {
-          sessionId: id,
-          control: sessions.get(id)?.control ?? "agent",
-          ...(await instance.agent.snapshot()),
-          interruptions: { ...instance.interruptions },
-        };
+        return observation(id, instance);
       });
     },
     agentScreenshot: (id: string) =>

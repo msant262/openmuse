@@ -754,8 +754,12 @@ function operationMatches(criterion: CompletionCriterion, op: JournalOperation, 
       );
   }
   if (!criterion.effect || criterion.effect === "browser")
-    if (op.toolName === "browser_act")
+    if (op.toolName === "browser_act" || op.toolName === "browser_dialog")
       return (
+        !receipt.dialog &&
+        (op.toolName !== "browser_dialog" ||
+          (object(receipt.response)?.accept === true &&
+            object(receipt.response)?.dialogId === object(op.args)?.dialogId)) &&
         typeof receipt.snapshotId === "string" &&
         typeof receipt.sessionId === "string" &&
         typeof receipt.url === "string" &&
@@ -877,6 +881,103 @@ export class TaskVerification {
       ),
     );
     const ops = await this.journal.operations(owner, taskId);
+    const pendingDialogs = new Map<
+      string,
+      { sessionId: string; operation: { sequence?: number; createdAt: string } }
+    >();
+    const answeredDialogs = new Set<string>();
+    for (const action of receipts) {
+      if (
+        action.taskId !== taskId ||
+        action.status !== "succeeded" ||
+        action.dispatchedRevision !== revision ||
+        !["browser.payment", "browser.dialog"].includes(String(action.data?.tool))
+      )
+        continue;
+      try {
+        const receipt = object(JSON.parse(action.result ?? ""));
+        const dialogId = object(receipt?.dialog)?.id;
+        if (
+          typeof receipt?.sessionId === "string" &&
+          typeof receipt.snapshotId === "string" &&
+          typeof dialogId === "string"
+        )
+          pendingDialogs.set(dialogId, {
+            sessionId: receipt.sessionId,
+            operation: { createdAt: action.createdAt },
+          });
+      } catch {
+        /* Legacy receipts do not contain browser observations. */
+      }
+    }
+    for (const op of ops) {
+      if (
+        op.status !== "succeeded" ||
+        op.revision !== revision ||
+        !op.toolName.startsWith("browser_")
+      )
+        continue;
+      const receipt = object(op.receipt);
+      if (typeof receipt?.sessionId !== "string" || typeof receipt.snapshotId !== "string")
+        continue;
+      const dialogId = object(receipt.dialog)?.id;
+      if (typeof dialogId === "string")
+        pendingDialogs.set(dialogId, { sessionId: receipt.sessionId, operation: op });
+      const answered = object(receipt.response)?.dialogId;
+      if (
+        op.toolName === "browser_dialog" &&
+        typeof answered === "string" &&
+        answered === object(op.args)?.dialogId
+      )
+        answeredDialogs.add(answered);
+    }
+    for (const op of ops) {
+      const receipt = object(op.receipt);
+      if (
+        op.status !== "succeeded" ||
+        op.revision !== revision ||
+        op.toolName !== "browser_snapshot" ||
+        receipt?.dialog ||
+        typeof receipt?.snapshotId !== "string"
+      )
+        continue;
+      for (const [id, pending] of pendingDialogs) {
+        const newer =
+          op.sequence !== undefined && pending.operation.sequence !== undefined
+            ? op.sequence > pending.operation.sequence
+            : Date.parse(op.createdAt) > Date.parse(pending.operation.createdAt);
+        if (newer && receipt.sessionId === pending.sessionId) answeredDialogs.add(id);
+      }
+    }
+    for (const action of receipts) {
+      if (
+        action.taskId !== taskId ||
+        action.status !== "succeeded" ||
+        action.data?.tool !== "browser.dialog"
+      )
+        continue;
+      let receipt: Record<string, unknown> | undefined;
+      try {
+        receipt = object(JSON.parse(action.result ?? ""));
+      } catch {
+        continue;
+      }
+      const sessionId = receipt?.sessionId,
+        answered = object(receipt?.response)?.dialogId;
+      const pending = typeof answered === "string" ? pendingDialogs.get(answered) : undefined;
+      if (
+        typeof sessionId !== "string" ||
+        typeof answered !== "string" ||
+        !pending ||
+        pending.sessionId !== sessionId
+      )
+        continue;
+      answeredDialogs.add(answered);
+      const next = object(receipt?.dialog)?.id;
+      if (typeof next === "string")
+        pendingDialogs.set(next, { sessionId, operation: pending.operation });
+    }
+    for (const answered of answeredDialogs) pendingDialogs.delete(answered);
     const uncertain = ops.some(
       (op) =>
         op.effect &&
@@ -1306,6 +1407,10 @@ export class TaskVerification {
     }
     if (!current) remaining.push("Apply the latest direction and verify its result");
     if (uncertain) remaining.push("Reconcile the dispatched operation's uncertain result");
+    if (pendingDialogs.size)
+      remaining.push(
+        "Answer the pending browser dialog using its exact dialogId and verify the page result before completing this task.",
+      );
     return completionAssessmentSchema.parse({
       status:
         checks.every((check) => check.passed) && !remaining.length

@@ -113,7 +113,7 @@ export async function createWorkerServer(options: {
           return result;
         }
         const match =
-          /^\/sessions\/([^/]+)\/(navigate|agent-navigate|back|close|screenshot|agent-screenshot|snapshot|images|console|cdp|act|inspect|reviewed-act|control|read|input|downloads|credentials|credential-challenge|challenge|search|upload)(?:\/([^/]+))?$/.exec(
+          /^\/sessions\/([^/]+)\/(navigate|agent-navigate|back|close|screenshot|agent-screenshot|snapshot|images|console|cdp|dialog|reviewed-dialog|act|inspect|reviewed-act|control|read|input|downloads|credentials|credential-challenge|challenge|search|upload)(?:\/([^/]+))?$/.exec(
             pathname,
           );
         if (!match) throw new WorkerError("NOT_FOUND", "Worker endpoint not found.", 404);
@@ -147,6 +147,15 @@ export async function createWorkerServer(options: {
           json(200, await browser.console(id, await readBody(request)));
         else if (action === "cdp" && !downloadId && request.method === "POST")
           json(200, await browser.cdp(id, await readBody(request)));
+        else if (
+          ["dialog", "reviewed-dialog"].includes(action) &&
+          !downloadId &&
+          request.method === "POST"
+        )
+          json(
+            200,
+            await browser.dialog(id, await readBody(request), action === "reviewed-dialog"),
+          );
         else if (action === "search" && !downloadId && request.method === "POST")
           json(200, await browser.search(id, await readBody(request)));
         else if (action === "challenge" && !downloadId && request.method === "POST")

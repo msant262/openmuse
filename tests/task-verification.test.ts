@@ -8,6 +8,115 @@ import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("a successful-looking browser receipt with an unanswered dialog cannot complete the task", async (t) => {
+  const server = await taskRuntime(t);
+  const task = await server.agent.createTask("owner", {
+    prompt: "Submit this form in the browser",
+  });
+  const sessionId = randomUUID(),
+    dialogId = randomUUID();
+  assert.ok(task.criteria?.some((criterion) => criterion.effect === "browser"));
+  const base = {
+    taskId: task.id,
+    revision: 0,
+    executorId: "vps",
+    executorEpoch: 1,
+    resourceFence: 0,
+    runToken: "test",
+    resourceLeaseIds: [],
+    createdAt: new Date().toISOString(),
+    status: "succeeded" as const,
+  };
+  const receipt = {
+    sessionId,
+    snapshotId: randomUUID(),
+    url: "https://example.com/",
+    text: "Successfully submitted",
+    dialog: {
+      id: dialogId,
+      type: "confirm",
+      message: "Confirm submission?",
+      requiresApproval: false,
+    },
+  };
+  await server.agent.journal.prepare("owner", {
+    ...base,
+    id: "pending-browser-click",
+    toolName: "browser_act",
+    bindingHash: "a".repeat(64),
+    args: {},
+    effect: true,
+    receipt,
+  });
+  const pending = await server.agent.verification.assess(
+    "owner",
+    task.id,
+    0,
+    "The form was successfully submitted.",
+  );
+  assert.notEqual(pending.status, "verified");
+  assert.ok(pending.remaining.some((message) => /dialog/i.test(message)));
+  await server.agent.journal.prepare("owner", {
+    ...base,
+    id: "answered-browser-dialog",
+    toolName: "browser_dialog",
+    bindingHash: "b".repeat(64),
+    args: { dialogId, accept: true },
+    effect: true,
+    receipt: {
+      ...receipt,
+      snapshotId: randomUUID(),
+      dialog: undefined,
+      response: { dialogId, accept: true },
+    },
+  });
+  const finished = await server.agent.verification.assess(
+    "owner",
+    task.id,
+    0,
+    "The form was successfully submitted.",
+  );
+  assert.equal(finished.status, "verified", JSON.stringify(finished));
+});
+
+test("a reviewed browser click with a pending confirmation cannot certify completion", async (t) => {
+  const server = await taskRuntime(t);
+  const task = await server.agent.createTask("owner", {
+    prompt: "Submit this form in the browser",
+  });
+  const sessionId = randomUUID(),
+    dialogId = randomUUID();
+  await server.db.put("owner", "actions", {
+    id: "reviewed-click-with-modal",
+    taskId: task.id,
+    kind: "external.action",
+    status: "succeeded",
+    dispatchedRevision: 0,
+    createdAt: new Date().toISOString(),
+    data: { tool: "browser.payment" },
+    result: JSON.stringify({
+      sessionId,
+      snapshotId: randomUUID(),
+      url: "https://example.com/",
+      text: "Successfully submitted",
+      dialog: {
+        id: dialogId,
+        type: "confirm",
+        message: "Confirm payment?",
+        requiresApproval: true,
+      },
+    }),
+  });
+  const pending = await server.agent.verification.assess(
+    "owner",
+    task.id,
+    0,
+    "Submitted successfully",
+  );
+  assert.notEqual(pending.status, "verified");
+  assert.ok(pending.remaining.some((text) => /dialog/i.test(text)));
+});
+
 test("account addresses and resource URLs do not turn Calendar or Drive requests into Gmail work", () => {
   for (const prompt of [
     "Na agenda da conta msant262@gmail.com, exclua o compromisso “Okami validação de agenda 10 outubro” de amanhã.",

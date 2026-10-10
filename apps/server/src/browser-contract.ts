@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { browserDialogSchema } from "../../../packages/domain/src/browser-dialog.ts";
 import { AppError } from "./errors.ts";
 
 const reference = { snapshotId: z.uuid(), element: z.number().int().min(1).max(150) };
@@ -22,6 +23,7 @@ export const browserActionSchema = z.discriminatedUnion("action", [
     .strict(),
 ]);
 export const snapshotSchema = z.object({
+  dialog: browserDialogSchema.optional(),
   interruptions: z
     .object({
       popupsBlocked: z.number().int().min(0).max(1000),

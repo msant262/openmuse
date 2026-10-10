@@ -260,6 +260,9 @@ async function handle(raw: Record<string, unknown>): Promise<unknown> {
         return browser.console(id, body);
       case "cdp":
         return browser.cdp(id, body);
+      case "dialog":
+      case "reviewed-dialog":
+        return browser.dialog(id, body, operation.args.operation === "reviewed-dialog");
       case "search":
         return browser.search(id, body);
       case "read":

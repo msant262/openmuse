@@ -200,15 +200,18 @@ export class AgentPage {
     masks: [number, number, number, number][],
     state: { suspended: boolean; screenOffset?: { x: number; y: number; scale: number } },
   ) => Promise<void>;
+  private readonly onDispatch?: (label: string) => void;
   constructor(
     page: Page,
     physicalProtection?: (
       masks: [number, number, number, number][],
       state: { suspended: boolean; screenOffset?: { x: number; y: number; scale: number } },
     ) => Promise<void>,
+    onDispatch?: (label: string) => void,
   ) {
     this.page = page;
     this.physicalProtection = physicalProtection;
+    this.onDispatch = onDispatch;
   }
   async invalidate() {
     this.snapshotId = undefined;
@@ -603,6 +606,7 @@ export class AgentPage {
     const { handle } = inspected.target;
     // Invalidate before dispatch: a timed-out action may already have changed the page.
     this.snapshotId = undefined;
+    this.onDispatch?.(inspected.live.label);
     try {
       if (action.action === "click") await handle.click({ timeout: 10_000 });
       else if (action.action === "fill") await handle.fill(action.value, { timeout: 10_000 });

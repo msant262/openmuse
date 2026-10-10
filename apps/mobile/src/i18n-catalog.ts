@@ -9,6 +9,10 @@ import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  "Confirm browser dialog": "Confirmar ação no navegador",
+  Confirmation: "Confirmação",
+  Response: "Resposta",
+  Accept: "Aceitar",
   "Organizing Gmail": "Organizando o Gmail",
   "Archive email": "Arquivar e-mails",
   Messages: "Mensagens",

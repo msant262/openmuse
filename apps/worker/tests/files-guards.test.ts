@@ -7,7 +7,7 @@ import test from "node:test";
 import { createBrowserManager } from "../src/browser.ts";
 import { publicFixture } from "./public-fixture.ts";
 
-test("real numbered file upload guards stale targets/hash/control; popups and dialogs are contained with safe provenance", async () => {
+test("real file upload guards stale targets/hash/control; popups are blocked and dialogs explicitly resolved", async () => {
   const fixture = await publicFixture();
   const dataDir = await mkdtemp(join(tmpdir(), "okami-browser-files-"));
   const browser = await createBrowserManager({ dataDir });
@@ -43,7 +43,10 @@ test("real numbered file upload guards stale targets/hash/control; popups and di
       });
     }
     assert.equal(snapshot.interruptions.popupsBlocked, 2);
-    assert.equal(snapshot.interruptions.dialogsDismissed, 1);
+    assert.equal(snapshot.interruptions.dialogsDismissed, 0);
+    assert.equal(snapshot.dialog?.type, "confirm");
+    assert.ok(snapshot.dialog);
+    snapshot = await browser.dialog(id, { dialogId: snapshot.dialog.id, accept: false });
     assert.match((await browser.read(id)).text, /dismissed/);
     assert.ok(!JSON.stringify(snapshot).includes("sensitive-dialog-fixture-marker"));
     assert.ok(!fixture.requests.some((request) => request.path === "/private"));

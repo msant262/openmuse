@@ -30,7 +30,8 @@ function knownSkip(value: unknown) {
   );
 }
 const unconfirmed = (entry: Entry) => entry.status === "started" || entry.status === "uncertain";
-const historyEffect = (name: string) => name === "browser_act" || name === "browser_back";
+const historyEffect = (name: string) =>
+  ["browser_act", "browser_back", "browser_dialog"].includes(name);
 type Journal = { id: string; entries: Entry[] };
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
@@ -133,9 +134,11 @@ export class TaskBrowserHistory {
     const key =
       name === "browser_act"
         ? this.actKey(args)
-        : name === "browser_back" && typeof args.operationId === "string"
-          ? `back:${args.operationId}`
-          : undefined;
+        : name === "browser_dialog"
+          ? `dialog:${digest(args)}`
+          : name === "browser_back" && typeof args.operationId === "string"
+            ? `back:${args.operationId}`
+            : undefined;
     if (historyEffect(name) && this.unconfirmedAction)
       return {
         outcomeUnknown: true,

@@ -793,7 +793,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
             )}
             {!!d.action && <ReviewLine label={t("Operation")} value={String(d.action)} />}
             {connectorReviewLines(d).map((line) => (
-              <ReviewLine key={line.label} label={line.label} value={line.value} />
+              <ReviewLine key={line.label} label={t(line.label)} value={t(line.value)} />
             ))}
             <Text style={s.small}>
               {d.tool === "mcp.call"

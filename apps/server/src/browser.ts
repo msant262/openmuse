@@ -9,6 +9,10 @@ import {
   browserConsoleSchema,
 } from "../../../packages/domain/src/browser-diagnostics.ts";
 import {
+  browserDialogInputSchema,
+  reviewedBrowserDialogInputSchema,
+} from "../../../packages/domain/src/browser-dialog.ts";
+import {
   browserBodyHash,
   signBrowserExecutor,
 } from "../../../packages/domain/src/browser-executor.ts";
@@ -562,6 +566,125 @@ export class BrowserService {
   }
   configureActions(actions: ActionService) {
     this.actions = actions;
+    actions.registerExternal("browser.dialog", async (owner, raw, proposal, beforeDispatch) => {
+      const binding = z
+        .object({
+          sessionId: z.uuid(),
+          input: browserDialogInputSchema,
+          url: z.url(),
+          dialog: snapshotSchema.shape.dialog.unwrap(),
+        })
+        .strict()
+        .parse(raw);
+      return this.runAutomated(
+        owner,
+        undefined,
+        binding.sessionId,
+        undefined,
+        undefined,
+        true,
+        (id) =>
+          this.serial(id, async () => {
+            await this.get(owner, id);
+            const current = snapshotSchema.parse(
+              await (await this.ownedRequest(owner, `/sessions/${id}/snapshot`)).json(),
+            );
+            if (
+              current.sessionId !== id ||
+              current.url !== binding.url ||
+              JSON.stringify(current.dialog) !== JSON.stringify(binding.dialog)
+            )
+              throw new BrowserError(
+                "STALE_DIALOG",
+                "The reviewed dialog or page changed. Read a fresh snapshot before preparing another review.",
+                409,
+                id,
+              );
+            if (proposal.taskId) {
+              const task = await this.db.get<{ status: string }>(owner, "tasks", proposal.taskId);
+              if (!task || !["running", "waiting_approval"].includes(task.status))
+                throw new AppError("Task was cancelled or paused before dialog dispatch", 409);
+            }
+            const input = reviewedBrowserDialogInputSchema.parse({
+              ...binding.input,
+              approvalId: proposal.id,
+            });
+            await beforeDispatch();
+            const result = snapshotSchema
+              .extend({ response: z.object({ dialogId: z.uuid(), accept: z.boolean() }) })
+              .parse(
+                await (
+                  await this.ownedRequest(owner, `/sessions/${id}/reviewed-dialog`, input)
+                ).json(),
+              );
+            if (
+              result.sessionId !== id ||
+              result.response.dialogId !== input.dialogId ||
+              result.response.accept !== input.accept
+            )
+              throw new BrowserError(
+                "OUTCOME_UNKNOWN",
+                "The dialog response did not return a matching execution receipt. Inspect the site before repeating it.",
+                409,
+                id,
+              );
+            return JSON.stringify(result);
+          }),
+        undefined,
+        undefined,
+        { taskId: proposal.taskId },
+      );
+    });
+    actions.registerExternalDenial("browser.dialog", async (owner, raw) => {
+      const binding = z
+        .object({
+          sessionId: z.uuid(),
+          input: browserDialogInputSchema,
+          url: z.url(),
+          dialog: snapshotSchema.shape.dialog.unwrap(),
+        })
+        .strict()
+        .parse(raw);
+      return this.runAutomated(
+        owner,
+        undefined,
+        binding.sessionId,
+        undefined,
+        undefined,
+        true,
+        (id) =>
+          this.serial(id, async () => {
+            const current = snapshotSchema.parse(
+              await (await this.ownedRequest(owner, `/sessions/${id}/snapshot`)).json(),
+            );
+            if (current.sessionId !== id)
+              throw new BrowserError(
+                "INVALID_SESSION",
+                "The browser returned a different session.",
+              );
+            if (!current.dialog || current.dialog.id !== binding.input.dialogId)
+              return JSON.stringify({ dismissed: false, alreadyClosed: true, dispatched: false });
+            const input = { dialogId: binding.input.dialogId, accept: false };
+            const result = snapshotSchema
+              .extend({ response: z.object({ dialogId: z.uuid(), accept: z.boolean() }) })
+              .parse(
+                await (await this.ownedRequest(owner, `/sessions/${id}/dialog`, input)).json(),
+              );
+            if (
+              result.sessionId !== id ||
+              result.response.dialogId !== input.dialogId ||
+              result.response.accept !== false
+            )
+              throw new BrowserError(
+                "OUTCOME_UNKNOWN",
+                "The declined dialog response was not confirmed. Inspect the site.",
+                409,
+                id,
+              );
+            return JSON.stringify(result);
+          }),
+      );
+    });
     actions.registerExternal("browser.act", async (owner, raw, proposal, beforeDispatch) => {
       const { sessionId, binding } = raw as { sessionId: string; binding: BrowserPaymentBinding };
       if (this.native && (await this.usesNative(owner, sessionId)))
@@ -617,14 +740,23 @@ export class BrowserService {
             await this.runtimePause.assertResumed(owner);
             await beforeDispatch();
             try {
-              const receipt = z.object({ id: z.string(), status: z.literal("succeeded") }).parse(
-                await (
-                  await this.ownedRequest(owner, `/sessions/${sessionId}/reviewed-act`, {
-                    authorization,
-                  })
-                ).json(),
-              );
+              const receipt = z
+                .object({ id: z.string(), status: z.literal("succeeded") })
+                .passthrough()
+                .parse(
+                  await (
+                    await this.ownedRequest(owner, `/sessions/${sessionId}/reviewed-act`, {
+                      authorization,
+                    })
+                  ).json(),
+                );
               if (receipt.id !== proposal.id) throw new Error("Mismatched browser receipt");
+              if (receipt.sessionId !== undefined) {
+                const observation = snapshotSchema.parse(receipt);
+                if (observation.sessionId !== sessionId)
+                  throw new Error("Mismatched browser session");
+                return JSON.stringify({ id: receipt.id, status: receipt.status, ...observation });
+              }
               return `Browser action completed · ${receipt.id}`;
             } catch (error) {
               if (
@@ -1065,6 +1197,8 @@ export class BrowserService {
         path.endsWith("/back") ||
         path.endsWith("/upload") ||
         path.endsWith("/reviewed-act") ||
+        path.endsWith("/dialog") ||
+        path.endsWith("/reviewed-dialog") ||
         path.endsWith("/credentials") ||
         path.endsWith("/credential-challenge") ||
         path.endsWith("/challenge") ||
@@ -1117,6 +1251,27 @@ export class BrowserService {
           const receipt = captchaResultSchema.parse(payload);
           if (receipt.sessionId !== sessionId)
             throw new Error("Challenge receipt belongs to another session");
+        } else if (["dialog", "reviewed-dialog"].includes(endpoint)) {
+          const receipt = snapshotSchema
+            .extend({ response: z.object({ dialogId: z.uuid(), accept: z.boolean() }) })
+            .parse(payload);
+          const input = browserDialogInputSchema.parse(
+            endpoint === "reviewed-dialog"
+              ? {
+                  dialogId: (body as Record<string, unknown>).dialogId,
+                  accept: (body as Record<string, unknown>).accept,
+                  ...((body as Record<string, unknown>).promptText !== undefined
+                    ? { promptText: (body as Record<string, unknown>).promptText }
+                    : {}),
+                }
+              : body,
+          );
+          if (
+            receipt.sessionId !== sessionId ||
+            receipt.response.dialogId !== input.dialogId ||
+            receipt.response.accept !== input.accept
+          )
+            throw new Error("Dialog response receipt binding changed");
         } else if (["act", "upload", "back"].includes(endpoint)) {
           const receipt = (
             endpoint === "back"
@@ -1577,6 +1732,95 @@ export class BrowserService {
           "The browser returned a different session or protocol command.",
         );
       return value;
+    });
+  }
+  async dialog(
+    owner: string,
+    id: string,
+    input: z.input<typeof browserDialogInputSchema>,
+    signal?: AbortSignal,
+    taskId?: string,
+  ) {
+    return this.serial(id, async () => {
+      await this.get(owner, id);
+      const request = browserDialogInputSchema.parse(input);
+      const current = snapshotSchema.parse(
+        await (
+          await this.ownedRequest(owner, `/sessions/${id}/snapshot`, undefined, signal)
+        ).json(),
+      );
+      if (current.sessionId !== id)
+        throw new BrowserError("INVALID_SESSION", "The browser returned a different session.");
+      if (!current.dialog || current.dialog.id !== request.dialogId)
+        throw new BrowserError(
+          "STALE_DIALOG",
+          "This dialog is no longer pending. Read a fresh browser snapshot.",
+          409,
+          id,
+        );
+      if (request.promptText !== undefined && (!request.accept || current.dialog.type !== "prompt"))
+        throw new BrowserError(
+          "INVALID_DIALOG",
+          "Text is accepted only when confirming a prompt dialog.",
+          422,
+          id,
+        );
+      if (
+        request.accept &&
+        (current.dialog.requiresApproval || approvalPolicy(this.config) === "all")
+      ) {
+        if (!this.actions)
+          throw new BrowserError(
+            "DIALOG_APPROVAL_REQUIRED",
+            "Native dialog review is not configured.",
+            409,
+            id,
+          );
+        const binding = { sessionId: id, input: request, url: current.url, dialog: current.dialog };
+        const review = await this.actions.proposeExternal(
+          owner,
+          {
+            tool: "browser.dialog",
+            target: auditTarget(current.url),
+            summary: "Confirm browser dialog",
+            money: false,
+            requiresHumanApproval: true,
+            binding,
+            display: {
+              page: auditTarget(current.url),
+              label: current.dialog.message,
+              dialogType: current.dialog.type,
+              ...(request.promptText !== undefined ? { promptText: request.promptText } : {}),
+            },
+          },
+          createHash("sha256").update(JSON.stringify(binding)).digest("hex"),
+          taskId,
+        );
+        return {
+          sessionId: id,
+          approvalRequired: true,
+          actionId: review.id,
+          dialog: current.dialog,
+          dispatched: false,
+        };
+      }
+      const result = snapshotSchema
+        .extend({ response: z.object({ dialogId: z.uuid(), accept: z.boolean() }) })
+        .parse(
+          await (await this.ownedRequest(owner, `/sessions/${id}/dialog`, request, signal)).json(),
+        );
+      if (
+        result.sessionId !== id ||
+        result.response.dialogId !== request.dialogId ||
+        result.response.accept !== request.accept
+      )
+        throw new BrowserError(
+          "OUTCOME_UNKNOWN",
+          "The browser returned an unmatched dialog response receipt. Inspect the site before repeating it.",
+          409,
+          id,
+        );
+      return result;
     });
   }
   async back(owner: string, id: string, signal?: AbortSignal) {

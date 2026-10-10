@@ -660,7 +660,7 @@ export class TaskJournal {
           (effect && data?.outcomeUnknown) ||
           effectStatus === "outcome_unknown" ||
           unknownError ||
-          (["browser_act", "browser_back"].includes(call.name) &&
+          (["browser_act", "browser_back", "browser_dialog"].includes(call.name) &&
             data?.error &&
             !data.skipped &&
             !data.paused &&

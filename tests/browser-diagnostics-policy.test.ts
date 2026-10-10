@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { browserDiagnosticInspection } from "../packages/domain/src/browser-diagnostics.ts";
 import type { BrowserService } from "../apps/server/src/browser.ts";
+import { browserTools } from "../apps/server/src/browser-tools.ts";
 import type { ComputerBackend } from "../apps/server/src/computer-contract.ts";
 import { computerTools } from "../apps/server/src/computer-tools.ts";
-import type { Files } from "../apps/server/src/files.ts";
-import { browserTools } from "../apps/server/src/browser-tools.ts";
 import { ToolDiscovery } from "../apps/server/src/engine/tool-discovery.ts";
 import { classifyBrowserOperation } from "../apps/server/src/executors/capability-router.ts";
 import {
   nativeBrowserArgsSchema,
   nativeInspection,
 } from "../apps/server/src/executors/graphical-policy.ts";
+import type { Files } from "../apps/server/src/files.ts";
+import { browserDiagnosticInspection } from "../packages/domain/src/browser-diagnostics.ts";
 
 test("native diagnostic inspection validates concrete commands before granting reading authority", () => {
   const args = {
@@ -45,6 +45,42 @@ test("native diagnostic inspection validates concrete commands before granting r
     }).success,
     false,
   );
+});
+
+test("dialog responses use native mutation authority and cannot inject their own approval", () => {
+  const args = {
+    sessionId: randomUUID(),
+    sessionGeneration: randomUUID(),
+    controlRevision: 0,
+    browserSessionId: randomUUID(),
+    actor: "agent",
+    operation: "dialog",
+    body: { dialogId: randomUUID(), accept: true },
+  };
+  assert.equal(nativeBrowserArgsSchema.safeParse(args).success, true);
+  assert.equal(nativeInspection("browser", args), false);
+  assert.equal(classifyBrowserOperation("dialog", false), "mutable");
+  assert.equal(classifyBrowserOperation("dialog", true), "mutable");
+  assert.equal(
+    nativeBrowserArgsSchema.safeParse({ ...args, body: { ...args.body, approved: true } }).success,
+    false,
+  );
+  assert.equal(
+    nativeBrowserArgsSchema.safeParse({
+      ...args,
+      operation: "reviewed-dialog",
+      body: { ...args.body, approvalId: "a".repeat(64) },
+    }).success,
+    true,
+  );
+  const tools = browserTools({} as BrowserService, "owner");
+  const discovery = new ToolDiscovery(tools);
+  assert.ok(
+    discovery
+      .search("respond pending browser dialog confirmation prompt")
+      .tools.some((tool) => tool.name === "browser_dialog"),
+  );
+  assert.deepEqual(discovery.describe(["browser_dialog"]).loaded, ["browser_dialog"]);
 });
 
 test("the actual diagnostics tools participate in progressive schema discovery", () => {

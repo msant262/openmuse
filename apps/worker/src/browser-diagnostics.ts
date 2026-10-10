@@ -43,7 +43,7 @@ export class BrowserDiagnostics {
     // Already captured messages are redacted again when read. Credential
     // adapters call this before typing, and secrets never enter durable logs.
   }
-  private redact(text: string) {
+  redact(text: string) {
     for (const value of this.secrets) text = text.split(value).join("[redacted]");
     return text.replace(/\bBearer\s+[^\s"'<>]+/gi, "Bearer [redacted]");
   }

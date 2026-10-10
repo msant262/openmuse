@@ -840,6 +840,8 @@ export class DesktopService {
         session.browserSessionId,
       );
     const effect = [
+      "dialog",
+      "reviewed-dialog",
       "open",
       "act",
       "navigate",

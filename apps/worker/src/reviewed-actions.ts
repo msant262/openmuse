@@ -12,7 +12,13 @@ export class ReviewedActions {
     this.directory = directory;
     this.secret = secret;
   }
-  async execute(sessionId: string, authorization: unknown, page: AgentPage, guard: () => void) {
+  async execute(
+    sessionId: string,
+    authorization: unknown,
+    page: AgentPage,
+    guard: () => void,
+    dispatch: (operation: () => Promise<unknown>) => Promise<unknown> = (operation) => operation(),
+  ) {
     let intent: ReturnType<typeof verifyBrowserAuthorization>;
     try {
       intent = verifyBrowserAuthorization(this.secret, authorization);
@@ -78,7 +84,7 @@ export class ReviewedActions {
     await save("executing");
     try {
       // Revalidate after receipt IO, immediately before dispatch under the session queue.
-      await page.actReviewed(action, intent.binding, guard);
+      await dispatch(() => page.actReviewed(action, intent.binding, guard));
     } catch (error) {
       const status =
         error instanceof WorkerError &&

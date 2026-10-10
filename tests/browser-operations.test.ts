@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import { ActionService } from "../apps/server/src/actions.ts";
 import { Auth } from "../apps/server/src/auth.ts";
 import { BrowserService } from "../apps/server/src/browser.ts";
 import { BrowserError, browserActionSchema } from "../apps/server/src/browser-contract.ts";
@@ -28,6 +29,125 @@ const makeSnapshot = (id: string) => ({
       frameUrl: "https://example.com/",
     },
   ],
+});
+
+test("browser dialog tool binds exact dialogs, prepares human review and dispatches only the approved response", async (t) => {
+  let id = "",
+    responseCalls = 0;
+  const dialogId = randomUUID();
+  const fixture = await browserFixture(t, (path, body) => {
+    if (path === "/sessions") id = String(body.id);
+    if (path.endsWith("/snapshot"))
+      return {
+        data: {
+          ...makeSnapshot(id),
+          dialog: {
+            id: dialogId,
+            type: "confirm",
+            message: "Delete quarterly report?",
+            defaultValue: "",
+            truncated: false,
+            requiresApproval: true,
+          },
+        },
+      };
+    if (path.endsWith("/reviewed-dialog")) {
+      responseCalls++;
+      assert.equal(body.dialogId, dialogId);
+      assert.equal(body.accept, true);
+      assert.match(String(body.approvalId), /^[a-f0-9]{64}$/);
+      return {
+        data: {
+          ...makeSnapshot(id),
+          text: "Quarterly report removed",
+          response: { dialogId, accept: true },
+        },
+      };
+    }
+    return {
+      data: {
+        id,
+        url: "https://example.com/",
+        title: "Report",
+        status: "active",
+        control: "agent",
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  });
+  const actions = new ActionService(fixture.db, {
+    policy: "money",
+    connected: async () => false,
+    execute: async () => "not Google",
+  });
+  fixture.service.configureActions(actions);
+  await fixture.service.agentSession("owner", undefined, "https://example.com/");
+  const tool = browserTools(fixture.service, "owner").find(
+    (tool) => tool.name === "browser_dialog",
+  );
+  assert.ok(tool?.execute, "a discovered dialog tool must actually exist");
+  await assert.rejects(fixture.service.dialog("other-owner", id, { dialogId, accept: true }), {
+    status: 404,
+  });
+  await assert.rejects(
+    fixture.service.dialog("owner", id, { dialogId: randomUUID(), accept: true }),
+    { code: "STALE_DIALOG" },
+  );
+  assert.equal(
+    tool.parameters.safeParse({ dialogId, accept: true, approved: true }).success,
+    false,
+  );
+  const execute = tool.execute as (args: {
+    sessionId: string;
+    dialogId: string;
+    accept: boolean;
+  }) => Promise<unknown>;
+  const pending = (await execute({ sessionId: id, dialogId, accept: true })) as {
+    approvalRequired: boolean;
+    actionId: string;
+  };
+  assert.equal(pending.approvalRequired, true);
+  assert.equal(responseCalls, 0, "preparing a deletion review cannot accept its confirmation");
+  const proposal = await fixture.db.get<import("../packages/domain/src/index.ts").ActionProposal>(
+    "owner",
+    "actions",
+    pending.actionId,
+  );
+  assert.ok(proposal);
+  const approved = await actions.decide("owner", pending.actionId, proposal.hash, "approve");
+  assert.equal(approved.status, "succeeded", approved.error);
+  assert.equal(responseCalls, 1);
+  await actions.decide("owner", pending.actionId, proposal.hash, "approve");
+  assert.equal(responseCalls, 1, "a repeated decision must not repeat the dialog response");
+});
+
+test("denying a dialog review dismisses only that dialog and leaves the browser usable", async (t) => {
+  let id = "", dismissed = 0;
+  const dialogId = randomUUID();
+  const fixture = await browserFixture(t, (path, body) => {
+    if (path === "/sessions") id = String(body.id);
+    if (path.endsWith("/snapshot")) return { data: { ...makeSnapshot(id), dialog: { id: dialogId, type: "confirm", message: "Delete report?", defaultValue: "", truncated: false, requiresApproval: true } } };
+    if (path.endsWith("/dialog")) {
+      assert.equal(body.dialogId, dialogId);
+      assert.equal(body.accept, false);
+      dismissed++;
+      return { data: { ...makeSnapshot(id), text: "Report kept", response: { dialogId, accept: false } } };
+    }
+    if (path.endsWith("/reviewed-dialog")) throw new Error("a denial must never accept a dialog");
+    return { data: { id, url: "https://example.com/", title: "Report", status: "active", control: "agent", updatedAt: new Date().toISOString() } };
+  });
+  const actions = new ActionService(fixture.db, { policy: "money", connected: async () => false, execute: async () => "not Google" });
+  fixture.service.configureActions(actions);
+  await fixture.service.agentSession("owner", undefined, "https://example.com/");
+  const pending = await fixture.service.dialog("owner", id, { dialogId, accept: true });
+  assert.ok("actionId" in pending);
+  const proposal = await fixture.db.get<import("../packages/domain/src/index.ts").ActionProposal>("owner", "actions", pending.actionId);
+  assert.ok(proposal);
+  const declined = await actions.decide("owner", proposal.id, proposal.hash, "deny");
+  assert.equal(declined.status, "denied");
+  assert.equal(dismissed, 1);
+  await actions.decide("owner", proposal.id, proposal.hash, "deny");
+  assert.equal(dismissed, 1);
 });
 
 test("browser image tool binds the owner and validates actual paginated worker observations", async (t) => {

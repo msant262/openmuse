@@ -6,6 +6,24 @@ import {
   googleActionPresentation,
   withGoogleActionContext,
 } from "../apps/mobile/src/external-action-preview.ts";
+
+test("browser dialog review shows the actual page, confirmation text and response", () => {
+  assert.deepEqual(
+    connectorReviewLines({
+      tool: "browser.dialog",
+      page: "https://example.com/reports",
+      label: "Delete quarterly report permanently?",
+      dialogType: "confirm",
+      promptText: "",
+    }),
+    [
+      { label: "Page", value: "https://example.com/reports" },
+      { label: "Confirmation", value: "Delete quarterly report permanently?" },
+      { label: "Response", value: "Accept" },
+    ],
+  );
+});
+
 import { componentHarness } from "./helpers/component.ts";
 
 test("native Google handoffs are recognized independently of the foreground tool name", () => {

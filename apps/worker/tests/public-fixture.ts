@@ -111,6 +111,23 @@ export async function publicFixture() {
     if (path.startsWith("/redirect-private")) {
       response.writeHead(302, { location: "http://127.0.0.1:8790/health" });
       response.end();
+    } else if (path === "/dialogs") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<title>Dialog fixture</title>
+        <button onclick="document.querySelector('output').textContent = prompt('Name this document', 'Untitled') || 'Cancelled'">Name document</button>
+        <button onclick="document.querySelector('output').textContent = confirm('Delete this document permanently?') ? 'Deleted' : 'Kept'">Delete document</button>
+        <button onclick="alert('First notice'); alert('Second notice'); document.querySelector('output').textContent = 'Both notices acknowledged'">Two notices</button>
+        <output>Unchanged</output>`);
+    } else if (path === "/reviewed-dialog") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        `<title>Reviewed dialog fixture</title><button onclick="document.querySelector('output').textContent = confirm('Confirm payment of 10 euros?') ? 'Paid once' : 'Payment cancelled'">Pay 10 euros</button><output>Unchanged</output>`,
+      );
+    } else if (path === "/navigation-dialog") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        `<title>Navigation dialog</title><script>alert('Notice during navigation')</script><p>Loaded after notice</p>`,
+      );
     } else if (path === "/diagnostics-flood") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(

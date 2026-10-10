@@ -2,6 +2,15 @@
 export function connectorReviewLines(
   data: Record<string, unknown>,
 ): { label: string; value: string }[] {
+  if (data.tool === "browser.dialog")
+    return [
+      { label: "Page", value: String(data.page ?? data.target ?? "") },
+      { label: "Confirmation", value: String(data.label ?? "") },
+      { label: "Response", value: "Accept" },
+      ...(typeof data.promptText === "string" && data.promptText
+        ? [{ label: "Text", value: data.promptText }]
+        : []),
+    ].filter((line) => line.value);
   if (data.tool === "google.workspace") {
     const operation = String(data.operation ?? "");
     const service = operation.split(".")[0];

@@ -128,7 +128,7 @@ export async function executeModelTask(
   if (
     (await service.journal.operations(owner, initial.id)).some(
       (op) =>
-        ["browser_act", "browser_back"].includes(op.toolName) &&
+        ["browser_act", "browser_back", "browser_dialog"].includes(op.toolName) &&
         ["dispatching", "running", "outcome_unknown"].includes(op.status),
     )
   )
