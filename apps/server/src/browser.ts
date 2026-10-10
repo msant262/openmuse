@@ -8,6 +8,10 @@ import {
 } from "../../../packages/domain/src/browser-executor.ts";
 import { browserUploadLimit } from "../../../packages/domain/src/browser-file.ts";
 import {
+  browserImagesInputSchema,
+  browserImagesSchema,
+} from "../../../packages/domain/src/browser-images.ts";
+import {
   type BrowserPaymentBinding,
   signBrowserAuthorization,
 } from "../../../packages/domain/src/browser-payment.ts";
@@ -1500,6 +1504,29 @@ export class BrowserService {
         },
         id,
       );
+      return value;
+    });
+  }
+  async images(
+    owner: string,
+    id: string,
+    input: z.input<typeof browserImagesInputSchema> = {},
+    signal?: AbortSignal,
+  ) {
+    return this.serial(id, async () => {
+      await this.get(owner, id);
+      const value = browserImagesSchema.parse(
+        await (
+          await this.ownedRequest(
+            owner,
+            `/sessions/${id}/images`,
+            browserImagesInputSchema.parse(input),
+            signal,
+          )
+        ).json(),
+      );
+      if (value.sessionId !== id)
+        throw new BrowserError("INVALID_SESSION", "The browser returned a different session.");
       return value;
     });
   }

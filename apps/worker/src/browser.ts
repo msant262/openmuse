@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/p
 import { join } from "node:path";
 import type { BrowserContext, Frame, Page } from "playwright";
 import { browserUploadSchema } from "../../../packages/domain/src/browser-file.ts";
+import { browserImagesInputSchema } from "../../../packages/domain/src/browser-images.ts";
 import { defaultSearchEndpoint, searchInputSchema } from "../../../packages/domain/src/search.ts";
 import { AgentPage, browserAction } from "./agent-page.ts";
 import { BrowserChallenge } from "./challenge.ts";
@@ -569,6 +570,85 @@ export async function createBrowserManager(options: {
           control: sessions.get(id)?.control ?? "agent",
           ...result,
           interruptions: { ...instance.interruptions },
+        };
+      }),
+    images: (id: string, raw: unknown = {}) =>
+      serial(id, async () => {
+        const checked = browserImagesInputSchema.safeParse(raw);
+        if (!checked.success)
+          throw new WorkerError(
+            "INVALID_IMAGES",
+            "Use only a bounded image offset and limit.",
+            422,
+          );
+        const instance = active(id);
+        await validatePage(instance);
+        await instance.agent.prepareObservation();
+        const images: {
+          src: string;
+          alt: string;
+          width: number;
+          height: number;
+          frameUrl: string;
+        }[] = [];
+        let total = 0,
+          partial = false;
+        for (const frame of instance.page.frames()) {
+          if (frame.isDetached()) {
+            partial = true;
+            continue;
+          }
+          if (frame !== instance.page.mainFrame()) {
+            const element = await frame.frameElement().catch(() => undefined);
+            const visible = element && (await element.isVisible());
+            await element?.dispose();
+            if (!visible) continue;
+          }
+          try {
+            const page = await frame.evaluate(
+              ({ offset, limit }) => {
+                const images: { src: string; alt: string; width: number; height: number }[] = [];
+                let total = 0;
+                const nodes = document.images;
+                for (let index = 0; index < nodes.length; index++) {
+                  const image = nodes.item(index);
+                  if (!image) continue;
+                  if (image.closest('[data-openmuse-credential-sensitive="true"]')) continue;
+                  const src = image.currentSrc || image.src;
+                  if (!/^https?:\/\//i.test(src) || src.length > 8192) continue;
+                  if (total >= offset && images.length < limit)
+                    images.push({
+                      src,
+                      alt: image.alt.slice(0, 500),
+                      width: image.naturalWidth,
+                      height: image.naturalHeight,
+                    });
+                  total++;
+                }
+                return { images, total };
+              },
+              {
+                offset: Math.max(0, checked.data.offset - total),
+                limit: checked.data.limit - images.length,
+              },
+            );
+            images.push(...page.images.map((image) => ({ ...image, frameUrl: frame.url() })));
+            total += page.total;
+          } catch {
+            // A changing frame is incomplete coverage, never proof of absence.
+            partial = true;
+          }
+        }
+        await refresh(id);
+        const next = checked.data.offset + images.length;
+        return {
+          sessionId: id,
+          url: instance.page.url(),
+          observedAt: new Date().toISOString(),
+          images,
+          total,
+          nextOffset: next < total ? next : null,
+          partial,
         };
       }),
     search: (id: string, raw: unknown) =>

@@ -77,6 +77,66 @@ test("original Code Mode batches real host reads and records each child through 
   assert.equal(fixture.requests.length, 2);
 });
 
+test("foreground Code Mode can read actual page-image metadata through normal host dispatch", async (t) => {
+  await modelFixture(t, (index) =>
+    index === 0
+      ? {
+          name: "tool_call",
+          arguments: {
+            id: "okami_execute_code",
+            args: { code: "return await browser_get_images({offset:0,limit:2});" },
+          },
+        }
+      : undefined,
+  );
+  const f = await taskRuntime(t);
+  const calls: string[] = [];
+  const image = { src: "https://example.com/cover.svg", alt: "Course cover" };
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers: richChatFixtureProviders(f.directory),
+    prompt: "Describe page images.",
+    executeTool: async (call, execute) => {
+      calls.push(call.name);
+      return execute();
+    },
+    tools: [
+      defineTool({
+        name: "browser_get_images",
+        description: "Read page images",
+        parameters: z.object({ offset: z.number(), limit: z.number() }),
+        execute: async (args) => {
+          assert.deepEqual(args, { offset: 0, limit: 2 });
+          return { images: [image] };
+        },
+      }),
+    ],
+  });
+  const events = await lastValueFrom(
+    agent
+      .run({
+        threadId: randomUUID(),
+        runId: randomUUID(),
+        messages: [{ id: randomUUID(), role: "user", content: "Describe the images." }],
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR), JSON.stringify(events));
+  const result = events.find(
+    (event) =>
+      event.type === EventType.TOOL_CALL_RESULT &&
+      String(event.content).includes('"value"') &&
+      String(event.content).includes(image.src),
+  );
+  assert.ok(result, JSON.stringify(events));
+  assert.deepEqual(JSON.parse(String(result.content)).value, { images: [image] });
+  assert.deepEqual(calls, ["execute_code", "browser_get_images"]);
+});
+
 test("Code Mode exposes only run-scoped reads and stops child dispatch after a terminal outcome", async (t) => {
   await modelFixture(t, (index) =>
     index === 0

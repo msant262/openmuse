@@ -113,7 +113,7 @@ export async function createWorkerServer(options: {
           return result;
         }
         const match =
-          /^\/sessions\/([^/]+)\/(navigate|agent-navigate|back|close|screenshot|agent-screenshot|snapshot|act|inspect|reviewed-act|control|read|input|downloads|credentials|credential-challenge|challenge|search|upload)(?:\/([^/]+))?$/.exec(
+          /^\/sessions\/([^/]+)\/(navigate|agent-navigate|back|close|screenshot|agent-screenshot|snapshot|images|act|inspect|reviewed-act|control|read|input|downloads|credentials|credential-challenge|challenge|search|upload)(?:\/([^/]+))?$/.exec(
             pathname,
           );
         if (!match) throw new WorkerError("NOT_FOUND", "Worker endpoint not found.", 404);
@@ -141,6 +141,8 @@ export async function createWorkerServer(options: {
           json(200, await browser.act(id, await readBody(request)));
         else if (action === "upload" && !downloadId && request.method === "POST")
           json(200, await browser.upload(id, await readBody(request, 7 * 1024 * 1024)));
+        else if (action === "images" && !downloadId && request.method === "POST")
+          json(200, await browser.images(id, await readBody(request)));
         else if (action === "search" && !downloadId && request.method === "POST")
           json(200, await browser.search(id, await readBody(request)));
         else if (action === "challenge" && !downloadId && request.method === "POST")

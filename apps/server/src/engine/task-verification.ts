@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentArtifact, AgentTask } from "../../../../packages/domain/src/agent.ts";
 import { rasterMime } from "../../../../packages/domain/src/attachments.ts";
+import { browserImagesSchema } from "../../../../packages/domain/src/browser-images.ts";
 import type { ActionProposal, Artifact } from "../../../../packages/domain/src/index.ts";
 import {
   type CompletionAssessment,
@@ -1025,7 +1026,7 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|search_files$|run_computer_command$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot))/.test(
+                    !/^(execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|search_files$|run_computer_command$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot|get_images))/.test(
                       op.toolName,
                     ) ||
                     !useful(op.receipt) ||
@@ -1047,6 +1048,10 @@ export class TaskVerification {
                         (!search.data.complete || search.data.totalMatches !== 0))
                     )
                       return false;
+                  }
+                  if (op.toolName === "browser_get_images") {
+                    const images = browserImagesSchema.safeParse(op.receipt);
+                    if (!images.success || images.data.partial) return false;
                   }
                   if (op.toolName === "run_computer_command") {
                     const command = commandReceiptSchema.safeParse(op.receipt);

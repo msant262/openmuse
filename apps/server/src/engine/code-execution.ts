@@ -41,7 +41,7 @@ export type CodeExecutionRuntime = {
 // ordinary tools too: each call retains host dispatch, ownership and approval.
 // Neither mode receives server fs/process, raw credentials or recursive code.
 const readTool =
-  /^(search_(web|saved_files|drive|gmail|calendar|past_threads|google_workspace_tools|app_tools)|read_|get_|list_|skills_(list|search|read)$|web_(fetch|extract)$|computer_status$)/;
+  /^(search_(web|saved_files|drive|gmail|calendar|past_threads|google_workspace_tools|app_tools)|read_|get_|list_|skills_(list|search|read)$|web_(fetch|extract)$|computer_status$|browser_get_images$)/;
 
 export function codeExecutionTool(options: {
   runtime: CodeExecutionRuntime;

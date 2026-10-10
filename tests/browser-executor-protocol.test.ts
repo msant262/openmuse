@@ -188,6 +188,7 @@ test("real worker HTTP protocol authenticates handshake and fences stale snapsho
   for (const [endpoint, payload, operationClass] of [
     ["back", {}, "mutable"],
     ["search", { query: "source", limit: 3 }, "public_read"],
+    ["images", { offset: 0, limit: 2 }, "authenticated_read"],
     ["challenge", { action: { action: "check" } }, "mutable"],
     [
       "upload",

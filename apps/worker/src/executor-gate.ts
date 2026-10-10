@@ -64,7 +64,9 @@ export class BrowserExecutorGate {
           request.path,
         ) &&
           request.method === "GET") ||
-        ((request.path.endsWith("/inspect") || request.path.endsWith("/search")) &&
+        ((request.path.endsWith("/inspect") ||
+          request.path.endsWith("/search") ||
+          request.path.endsWith("/images")) &&
           request.method === "POST")
       )
     )

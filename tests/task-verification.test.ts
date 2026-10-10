@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -37,6 +37,66 @@ test("reading or locating files does not invent a file-delivery obligation", () 
       taskCriteria({ kind: "agent", prompt }).some((criterion) => criterion.kind === "file"),
       prompt,
     );
+});
+
+test("actual page-image observations verify a read while partial, malformed or stale receipts do not", async (t) => {
+  const runtime = await taskRuntime(t);
+  const task = await runtime.agent.createTask("owner", {
+    prompt: "Describe the images on my browser page.",
+  });
+  const receipt = {
+    sessionId: randomUUID(),
+    url: "https://example.com/",
+    observedAt: new Date().toISOString(),
+    partial: false,
+    total: 1,
+    nextOffset: null,
+    images: [
+      {
+        src: "https://example.com/cover.svg",
+        alt: "Course cover",
+        width: 320,
+        height: 180,
+        frameUrl: "https://example.com/",
+      },
+    ],
+  };
+  const operation = {
+    id: `${task.id}:images`,
+    taskId: task.id,
+    revision: 0,
+    executorId: "native",
+    executorEpoch: 1,
+    resourceFence: 0,
+    runToken: "test",
+    resourceLeaseIds: [],
+    createdAt: new Date().toISOString(),
+    status: "succeeded" as const,
+    toolName: "browser_get_images",
+    bindingHash: "a".repeat(64),
+    effect: false,
+    args: { offset: 0, limit: 50 },
+    receipt,
+  };
+  for (const [label, changes, expected] of [
+    ["actual", {}, true],
+    ["complete-empty", { receipt: { ...receipt, images: [], total: 0 } }, true],
+    ["partial-positive", { receipt: { ...receipt, partial: true } }, false],
+    ["partial-empty", { receipt: { ...receipt, partial: true, images: [], total: 0 } }, false],
+    ["malformed", { receipt: { images: receipt.images } }, false],
+    ["failed", { status: "failed" }, false],
+    ["wrong-revision", { revision: 1 }, false],
+    ["another-task", { taskId: "another-task" }, false],
+  ] as const) {
+    await runtime.db.put("owner", "task-operations", { ...operation, ...changes });
+    const assessed = await runtime.agent.verification.assess(
+      "owner",
+      task.id,
+      0,
+      label === "complete-empty" ? "The page has no HTTP images." : "The page shows Course cover.",
+    );
+    assert.equal(assessed.status === "verified", expected, `${label}: ${JSON.stringify(assessed)}`);
+  }
 });
 
 test("owned native search observations verify a lookup, including bounded positive matches, without accepting incomplete absence", async (t) => {

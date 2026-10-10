@@ -30,6 +30,65 @@ const makeSnapshot = (id: string) => ({
   ],
 });
 
+test("browser image tool binds the owner and validates actual paginated worker observations", async (t) => {
+  let id = "",
+    foreign = false;
+  const imageCalls: Record<string, unknown>[] = [];
+  const fixture = await browserFixture(t, (path, body) => {
+    if (path === "/sessions") id = String(body.id);
+    if (path.endsWith("/images")) {
+      imageCalls.push(body);
+      return {
+        data: {
+          sessionId: foreign ? randomUUID() : id,
+          url: "https://example.com/",
+          observedAt: new Date().toISOString(),
+          images: [
+            {
+              src: "https://example.com/course.png",
+              alt: "Course cover",
+              width: 320,
+              height: 180,
+              frameUrl: "https://example.com/",
+            },
+          ],
+          total: 3,
+          nextOffset: 1,
+          partial: false,
+        },
+      };
+    }
+    return {
+      data: {
+        id,
+        url: "https://example.com/",
+        title: "Images",
+        status: "active",
+        control: "agent",
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  });
+  await fixture.service.agentSession("owner", undefined, "https://example.com/");
+  const tool = browserTools(fixture.service, "owner").find(
+    (tool) => tool.name === "browser_get_images",
+  );
+  assert.ok(tool?.execute);
+  const input = { sessionId: id, offset: 0, limit: 1 };
+  const result = (await tool.execute(input)) as {
+    images: { alt: string }[];
+    nextOffset: number;
+  };
+  assert.equal(result.images[0].alt, "Course cover");
+  assert.equal(result.nextOffset, 1);
+  assert.deepEqual(imageCalls, [{ offset: 0, limit: 1 }]);
+  await assert.rejects(fixture.service.images("another-owner", id), { status: 404 });
+  await assert.rejects(fixture.service.images("owner", id, { offset: -1 }));
+  assert.equal(imageCalls.length, 1, "invalid owner or paging cannot dispatch");
+  foreign = true;
+  await assert.rejects(fixture.service.images("owner", id), { code: "INVALID_SESSION" });
+});
+
 test("browser back retains uncertainty when the worker omits the history receipt", async (t) => {
   let id = "";
   const fixture = await browserFixture(t, (path, body) => {

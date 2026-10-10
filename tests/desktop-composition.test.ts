@@ -194,12 +194,52 @@ test("native browser history traverses the real typed transport and records its 
   assert.equal(native.status, "succeeded");
 });
 
+test("native browser images traverse the typed supervisor as an inspection, without mutable effect authority", async (t) => {
+  const server = await fixture(t);
+  assert.ok(server.desktop);
+  const desktop = server.desktop;
+  server.agent.configureNativeExecution(async (owner, task) => {
+    const result = await server.agent.journal.run(
+      owner,
+      task,
+      {
+        id: "images",
+        name: "browser_get_images",
+        args: { offset: 0, limit: 2 },
+      },
+      async () =>
+        (
+          await desktop.browserRequest(
+            owner,
+            `/sessions/${server.session.browserSessionId}/images`,
+            { offset: 0, limit: 2 },
+          )
+        ).json(),
+      false,
+    );
+    assert.equal((result as { images: { alt: string }[] }).images[0].alt, "Course cover");
+    return { status: "succeeded" };
+  });
+  const task = await server.agent.createTask("local-user", {
+    prompt: "Native page image observation fixture",
+  });
+  await server.agent.worker.tick();
+  const operations = await server.agent.journal.operations("local-user", task.id);
+  const native = operations.find((operation) => operation.nativeEnvelope?.kind === "browser");
+  assert.ok(native);
+  assert.equal((native.args as { operation: string }).operation, "images");
+  assert.equal(native.effect, false);
+  assert.equal(native.status, "succeeded");
+});
+
 test("invalid browser operations are rejected before acquiring native dispatch authority", async (t) => {
   const server = await fixture(t);
   assert.ok(server.desktop);
   const before = await server.call("state");
   for (const [operation, body] of [
     ["back", { approved: true }],
+    ["images", { expression: "fetch('/delete')" }],
+    ["images", { offset: -1 }],
     ["unsupported-operation", {}],
   ] as const) {
     await assert.rejects(

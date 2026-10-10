@@ -111,6 +111,16 @@ export async function publicFixture() {
     if (path.startsWith("/redirect-private")) {
       response.writeHead(302, { location: "http://127.0.0.1:8790/health" });
       response.end();
+    } else if (path === "/images") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        `<title>Image fixture</title><main><img src="/picture.svg" alt="Course cover"><img src="/picture.svg?second" alt="Second cover"><img src="data:image/svg+xml,%3Csvg/%3E" alt="Inline"><div data-openmuse-credential-sensitive="true"><img src="/picture.svg?private" alt="Protected credential image"></div><img src="/picture.svg?last" alt="Last cover"></main>`,
+      );
+    } else if (path.startsWith("/picture.svg")) {
+      response.writeHead(200, { "content-type": "image/svg+xml" });
+      response.end(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="blue"/></svg>',
+      );
     } else if (path === "/history") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(

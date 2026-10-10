@@ -12,6 +12,82 @@ import { browserFixture } from "./helpers/browser.ts";
 import { fixture as computerFixture } from "./helpers/computer.ts";
 import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 
+test("model discovers page images and journals the actual observation without mutable effect authority", async (t) => {
+  let sessionId = "";
+  const browser = await browserFixture(t, (path, body) => {
+    if (path === "/sessions") sessionId = String(body.id);
+    if (path.endsWith("/images"))
+      return {
+        data: {
+          sessionId,
+          url: "https://example.com/",
+          observedAt: new Date().toISOString(),
+          partial: false,
+          total: 1,
+          nextOffset: null,
+          images: [
+            {
+              src: "https://example.com/course.svg",
+              alt: "Course cover",
+              width: 320,
+              height: 180,
+              frameUrl: "https://example.com/",
+            },
+          ],
+        },
+      };
+    return {
+      data: {
+        id: sessionId,
+        url: "https://example.com/",
+        title: "Images",
+        status: "active",
+        control: "agent",
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  });
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "describe_tools", arguments: { names: ["browser_get_images"] } },
+        { name: "browser_get_images", arguments: { offset: 0, limit: 2 } },
+        { name: "finish_task", arguments: { summary: "The page shows Course cover." } },
+      ][i],
+  );
+  const app = await createApp(browser.db, {
+    ...browser.config,
+    agentBackend: "model",
+    model: "openai/fixture",
+    modelProviders: richChatFixtureProviders(browser.config.dataDir),
+  });
+  t.after(() => app.agent.stop());
+  const task = await app.agent.createTask("owner", {
+    prompt: "Describe the images on my browser page.",
+  });
+  await app.agent.worker.tick();
+  const saved = await app.agent.detail("owner", task.id);
+  assert.equal(
+    saved.task.status,
+    "succeeded",
+    JSON.stringify({
+      error: saved.task.error,
+      completion: saved.task.completion,
+      operations: saved.operations.map((op) => ({ name: op.toolName, receipt: op.receipt })),
+    }),
+  );
+  const observation = saved.operations.find((op) => op.toolName === "browser_get_images");
+  assert.ok(observation);
+  assert.equal(observation.status, "succeeded");
+  assert.equal(observation.effect, false);
+  assert.equal(
+    (observation.receipt as { images: { alt: string }[] }).images[0].alt,
+    "Course cover",
+  );
+  assert.ok(fixture.requests.some((request) => request.body.includes("okami_browser_get_images")));
+});
+
 test("OpenClaw model worker executes server tools and persists the confirmed outcome", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "openmuse-model-"));
   const db = await createStore();

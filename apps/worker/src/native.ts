@@ -253,6 +253,8 @@ async function handle(raw: Record<string, unknown>): Promise<unknown> {
         return browser.snapshot(id);
       case "back":
         return browser.back(id);
+      case "images":
+        return browser.images(id, body);
       case "search":
         return browser.search(id, body);
       case "read":

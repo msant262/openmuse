@@ -48,6 +48,7 @@ class Browser:
         csv=b"name,value\nfixture,42\n"
         download={"id":"22222222-2222-4222-8222-222222222222","name":"fixture.csv","size":len(csv),"mimeType":"text/csv","sha256":hashlib.sha256(csv).hexdigest()}
         if kind=="search":return {"query":body["query"],"status":"ok","sources":[{"title":"Fixture source","url":"https://example.org/source","snippet":"index result"}],"observedAt":"2026-10-03T00:00:00.000Z","truncated":False,"provenance":{"backend":"browser","provider":"duckduckgo-html","searchUrl":"https://html.duckduckgo.com/html/","sessionId":session["browserSessionId"],"fullPagesRead":False}}
+        if kind=="images":return {"sessionId":session["browserSessionId"],"url":"https://example.org/images","observedAt":"2026-10-03T00:00:00.000Z","images":[{"src":"https://example.org/course.svg","alt":"Course cover","width":320,"height":180,"frameUrl":"https://example.org/images"}],"total":1,"nextOffset":None,"partial":False}
         if kind=="downloads":return {"downloads":[download],"failures":[]}
         if kind=="download":return {**download,"base64":base64.b64encode(csv).decode()}
         if kind in ("snapshot","upload","back"):

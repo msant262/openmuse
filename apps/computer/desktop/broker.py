@@ -138,7 +138,7 @@ class DesktopBroker:
 
     def _perform(self, operation, dispatched, cleaned):
         args=operation["args"];kind=args.get("operation")
-        inspection=(operation.get("kind")=="desktop" and kind=="observe" or operation.get("kind")=="browser" and kind in ("snapshot","read","inspect","agent-screenshot","screenshot","control","downloads","download"))
+        inspection=(operation.get("kind")=="desktop" and kind=="observe" or operation.get("kind")=="browser" and kind in ("snapshot","images","read","inspect","agent-screenshot","screenshot","control","downloads","download"))
         reset=operation.get("kind")=="desktop" and kind=="reset"
         self.authorize(operation,inspection=inspection,reset=reset)
         if reset:

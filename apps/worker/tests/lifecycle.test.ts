@@ -18,6 +18,43 @@ after(async () => {
   await fixture?.close();
 });
 
+test("browser images are observed from the actual page, paginated and omit protected credential regions", {
+  timeout: 30_000,
+}, async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "okami-browser-images-"));
+  const browser = await createBrowserManager({ dataDir });
+  try {
+    const id = randomUUID();
+    await browser.create(id, "https://browser.fixture.test/images");
+    const first = await browser.images(id, { limit: 2 });
+    assert.equal(first.sessionId, id);
+    assert.equal(first.url, "https://browser.fixture.test/images");
+    assert.equal(first.total, 3);
+    assert.equal(first.nextOffset, 2);
+    assert.deepEqual(
+      first.images.map((image) => image.alt),
+      ["Course cover", "Second cover"],
+    );
+    assert.equal(first.images[0].src, "https://browser.fixture.test/picture.svg");
+    const last = await browser.images(id, { offset: first.nextOffset, limit: 2 });
+    assert.deepEqual(
+      last.images.map((image) => image.alt),
+      ["Last cover"],
+    );
+    assert.equal(last.nextOffset, null);
+    assert.equal(JSON.stringify([first, last]).includes("private"), false);
+    assert.equal(JSON.stringify([first, last]).includes("data:image"), false);
+    await assert.rejects(browser.images(id, { expression: "fetch('/delete')" }), {
+      code: "INVALID_IMAGES",
+    });
+    await browser.closeSession(id);
+    await assert.rejects(browser.images(id), { code: "SESSION_CLOSED" });
+  } finally {
+    await browser.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("browser back traverses real history with fresh controls and respects human takeover", {
   timeout: 30_000,
 }, async () => {

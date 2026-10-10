@@ -10,6 +10,7 @@ const reads = new Set([
   "open",
   "read",
   "snapshot",
+  "images",
   "agent-screenshot",
   "screenshot",
   "inspect",
