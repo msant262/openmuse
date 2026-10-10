@@ -641,7 +641,7 @@ for (const outcome of ["completed", "partial"] as const)
               operationId: `trash-${selectedIds[(index - 3) / 2]}`,
             },
           };
-        if (index === 12 && outcome === "partial")
+        if (index >= 4 && index % 2 === 0 && outcome === "partial")
           return {
             name: "finish_task",
             arguments: {
@@ -749,13 +749,14 @@ for (const outcome of ["completed", "partial"] as const)
       pending = await server.agent.getTask("owner", task.id);
       assert.deepEqual(changed, selectedIds.slice(0, index + 1));
       if (index < selectedIds.length - 1) {
-        assert.equal(
-          pending.status,
-          "queued",
-          "a partial removal plus searches must not complete the five requested files",
+        assert.ok(
+          pending.status === "queued" || pending.status === "waiting_approval",
+          `an unfinished removal must continue instead of ending with ${pending.status}`,
         );
-        await server.agent.worker.tick();
-        pending = await server.agent.getTask("owner", task.id);
+        if (pending.status === "queued") {
+          await server.agent.worker.tick();
+          pending = await server.agent.getTask("owner", task.id);
+        }
         assert.equal(
           pending.status,
           "waiting_approval",

@@ -4,6 +4,7 @@ import { browserInstructions, browserTools } from "../browser-tools.ts";
 import { designReferenceInstructions, designReferenceTools } from "../design-catalog.ts";
 import { desktopInstructions, desktopTools } from "../desktop-tools.ts";
 import { DocumentReview, documentReviewArgs } from "../document-review.ts";
+import { DRIVE_REMOVAL_PENDING_TARGET } from "../drive-removal.ts";
 import { googleWorkspaceReadTool, googleWorkspaceTools } from "../google-workspace-tools.ts";
 import { humanizerContext } from "../humanizer-context.ts";
 import { personalInstructions, personalTools } from "../personal-tools.ts";
@@ -483,12 +484,15 @@ export async function executeModelTask(
         nextSteps: ["Select the actual final files using artifactIds."],
       };
     const revision = Number(task.state.appliedRevision ?? 0);
-    if (
-      deliveryOutcome === "completed" &&
-      task.criteria?.some((criterion) => criterion.effect === "drive.delete")
-    ) {
+    if (task.criteria?.some((criterion) => criterion.effect === "drive.delete")) {
       const completion = await service.verification.assess(owner, task.id, revision, summary);
       if (
+        // A partial model ending cannot abandon already located, unfinished
+        // targets or claim a nonexistent approval card. Actual suspension still
+        // occurs at the native tool/approval boundary. Empty selections and real
+        // blockers without actionable targets retain partial delivery.
+        (deliveryOutcome === "completed" ||
+          completion.remaining.some((item) => item.startsWith(DRIVE_REMOVAL_PENDING_TARGET))) &&
         completion.checks.some(
           (check) =>
             !check.passed &&

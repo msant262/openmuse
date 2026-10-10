@@ -19,6 +19,8 @@ type Binding = {
   args: Record<string, unknown>;
   fingerprint: string;
 };
+// Server-generated continuation guidance, not model prose or provider content.
+export const DRIVE_REMOVAL_PENDING_TARGET = "Remove the remaining selected Drive file ";
 const record = (value: unknown) =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -221,7 +223,7 @@ export function driveRemovalEvidence(
         )
       )
         missing.push(
-          `Remove the remaining selected Drive file “${file.name}” (fileId ${file.id}, account ${file.account}) only through its approval card, then confirm its provider receipt.`,
+          `${DRIVE_REMOVAL_PENDING_TARGET}“${file.name}” (fileId ${file.id}, account ${file.account}) only through its approval card, then confirm its provider receipt.`,
         );
   }
   for (const name of request.names)
