@@ -788,13 +788,11 @@ export class PublicWeb {
         serialize("childNodes" in content ? content : root),
       );
     }
-    const extracted = structured
-      ? readableText.slice(0, 19000) + structured.slice(0, 11000)
-      : readableText;
+    // Apply the caller's excerpt limit only after assembling the source. Internal
+    // cuts would discard visible facts before the spill/recovery path sees them.
+    const extracted = readableText + structured;
     const text = data.embedded
-      ? extracted.slice(0, 17500) +
-        "\nEmbedded application JSON (untrusted source data):\n" +
-        data.embedded
+      ? extracted + "\nEmbedded application JSON (untrusted source data):\n" + data.embedded
       : extracted;
     // A 200 response can be the application's loading shell. Ignore empty ad
     // placeholders, but don't certify the surrounding boilerplate as its data.
@@ -870,7 +868,7 @@ export class PublicWeb {
         ? {
             ...(await options.spill({
               url: document.url,
-              text: readableText + structured + (data.embedded ? `\n${data.embedded}` : ""),
+              text,
               mimeType: "text/plain",
             })),
             truncated: data.truncated,
@@ -885,11 +883,7 @@ export class PublicWeb {
       links,
       dataSources: data.dataSources,
       extraction,
-      truncated:
-        data.truncated ||
-        (Boolean(data.embedded) && extracted.length > 17500) ||
-        text.length > limit ||
-        (Boolean(structured) && (readableText.length > 19000 || structured.length > 11000)),
+      truncated: data.truncated || text.length > limit,
       observedAt: new Date().toISOString(),
       provenance: { backend: "http" as const, authenticated: false as const },
     };

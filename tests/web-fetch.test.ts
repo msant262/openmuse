@@ -6,6 +6,46 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const resolve = async () => [{ address: "93.184.216.34", family: 4 }];
 
+test("embedded page data cannot hide course facts beyond an internal text cutoff or prevent source recovery", async (t) => {
+  const { preservePublicSource } = await import("../apps/server/src/public-web.ts");
+  const { readPublicSource } = await import("../apps/server/src/public-source-cache.ts");
+  const f = await taskRuntime(t);
+  let reads = 0;
+  t.mock.method(f.agent.web, "document", async (url: string) => {
+    reads++;
+    return {
+      url,
+      contentType: "text/html",
+      body: `<title>Credentials</title><main><p>${"Earlier credential details. ".repeat(1000)}</p><h2>Getting Started with Generative AI</h2><p>Languages: English, Brazilian Portuguese. Duration: 3 hours.</p><p>${"Other catalogue details. ".repeat(200)}</p><script type="application/json">{"catalogue":"learning"}</script></main>`,
+    };
+  });
+  const complete = await f.agent.web.read("https://academy.example/credentials", undefined, {
+    maxChars: 50000,
+    spill: preservePublicSource(f.files, "owner"),
+  });
+  assert.match(complete.text, /Getting Started with Generative AI/);
+  assert.match(complete.text, /Duration: 3 hours/);
+  assert.equal(complete.truncated, false);
+  const excerpt = await f.agent.web.read("https://academy.example/credentials", undefined, {
+    maxChars: 18000,
+    spill: preservePublicSource(f.files, "owner"),
+  });
+  assert.ok(
+    "spill" in excerpt && excerpt.spill,
+    "every omitted visible section must have recoverable original text",
+  );
+  const course = await readPublicSource(f.files, "owner", {
+    fileId: excerpt.spill.fileId,
+    query: "Getting Started with Generative AI",
+    offset: 0,
+    limit: 1000,
+  });
+  assert.match(course.text, /Brazilian Portuguese/);
+  assert.match(course.text, /Duration: 3 hours/);
+  assert.equal(course.found, true);
+  assert.equal(reads, 2, "targeted recovery uses preserved bytes without another network read");
+});
+
 test("a course article with a static logo placeholder stays readable over HTTP", async () => {
   const { PublicWeb, readablePage } = await import("../apps/server/src/public-web.ts");
   const web = new PublicWeb({

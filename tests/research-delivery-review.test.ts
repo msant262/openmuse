@@ -15,6 +15,60 @@ function taskRuntime(
   return baseTaskRuntime(t, { ...config, researchReviewEnabled: true }, options);
 }
 
+test("factual review retains source truncation and exact recovery metadata instead of presenting excerpts as whole pages", async (t) => {
+  await modelFixture(t, () => undefined, {
+    researchReview: (body) => {
+      const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
+      const source = input.observations[0];
+      assert.equal(source.truncated, true);
+      assert.equal(source.sourceLength, 60000);
+      assert.equal(source.spill.fileId, "a".repeat(64));
+      assert.equal(source.spill.truncated, false);
+      assert.equal(source.nextOffset, 1000);
+      assert.match(
+        JSON.parse(body).instructions,
+        /truncated.*(?:absence|not stated|not published)/i,
+      );
+      return {
+        complete: false,
+        needsMoreResearch: false,
+        missing: ["Course-specific language and duration remain unread"],
+        nextSteps: ["Search the preserved full text for the course title"],
+      };
+    },
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Compare a free course's language and duration.",
+  });
+  const decision = await reviewResearchDelivery({
+    task,
+    summary: "Language and duration are not stated.",
+    stage: "access_selection",
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url: "https://academy.example/credentials" },
+        receipt: {
+          url: "https://academy.example/credentials",
+          text: "Earlier credentials...",
+          truncated: true,
+          sourceLength: 60000,
+          nextOffset: 1000,
+          spill: { fileId: "a".repeat(64), truncated: false },
+        },
+      },
+    ] as never,
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    signal: new AbortController().signal,
+  });
+  assert.equal(decision.complete, false);
+  assert.equal(decision.needsMoreResearch, false);
+});
+
 test("document preflight defers only file delivery while retaining factual and access failures", async (t) => {
   const fixture = await modelFixture(t, () => undefined, {
     researchReview: (_body, i) => ({
