@@ -636,6 +636,30 @@ export class Store {
     );
     return result.rows.map((row) => row.data as T);
   }
+  async threadInteractionRequests<T>(owner: string, threadId: string): Promise<T[]> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='interaction-requests' AND data->>'threadId'=$2 ORDER BY updated_at DESC,id",
+      [owner, threadId],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  async taskInteractionRequests<T>(owner: string, taskId: string): Promise<T[]> {
+    const result = await this.db.query(
+      "SELECT data FROM records WHERE owner=$1 AND kind='interaction-requests' AND data->>'taskId'=$2 ORDER BY updated_at DESC,id",
+      [owner, taskId],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  async pendingCredentialRequests<T>(owner: string): Promise<T[]> {
+    const result = await this.db.query(
+      `SELECT data FROM records WHERE owner=$1 AND kind='interaction-requests'
+       AND data->>'kind'='credential' AND (data->>'status' IN ('waiting','saving','connecting','outcome_unknown','needs_challenge')
+         OR (data->'schema'->>'credentialKind'='composio' AND data->>'status' IN ('error','expired')))
+       ORDER BY data->>'createdAt',updated_at DESC,id`,
+      [owner],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
   async listByStatus<T>(owner: string, kind: string, status: string): Promise<T[]> {
     const result = await this.db.query(
       "SELECT data FROM records WHERE owner=$1 AND kind=$2 AND data->>'status'=$3 ORDER BY updated_at DESC,id",
@@ -1732,6 +1756,15 @@ export async function createStore(
   );
   await database.query(
     "CREATE INDEX IF NOT EXISTS task_operation_task_created ON records(owner,(data->>'taskId'),(data->>'createdAt'),id) WHERE kind='task-operations'",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS interaction_thread_history ON records(owner,(data->>'threadId'),updated_at DESC,id) WHERE kind='interaction-requests'",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS interaction_task_history ON records(owner,(data->>'taskId'),updated_at DESC,id) WHERE kind='interaction-requests'",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS credential_prompt_status ON records(owner,(data->>'status'),(data->>'createdAt'),id) WHERE kind='interaction-requests' AND data->>'kind'='credential'",
   );
   await database.query(
     "CREATE INDEX IF NOT EXISTS conversation_inbox_pending ON records((data->>'createdAt'),id) WHERE kind='conversation-inbox' AND data->>'status' IN ('accepted','dispatching')",

@@ -6,6 +6,135 @@ import { test } from "node:test";
 import { createStore } from "../apps/server/src/db.ts";
 import { InteractionRequests } from "../apps/server/src/interaction-requests.ts";
 
+test("thread listing preserves resolved history without re-reading it or loading another conversation", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  const requests = new InteractionRequests(db);
+  const rows = Array.from({ length: 36 }, (_, index) => ({
+    id: `question-${index}`,
+    taskId: `task-${index}`,
+    threadId: index < 12 ? "current-chat" : "another-chat",
+    kind: "question",
+    status: "answered",
+    revision: 1,
+    createdAt: new Date(index * 1000).toISOString(),
+    schema: { title: "Preferred time?", fields: [{ id: "reply", label: "Time", type: "text" }] },
+    answer: { reply: "Morning" },
+  }));
+  for (const row of rows) await db.put("owner", "interaction-requests", row);
+  await db.put("other-owner", "interaction-requests", { ...rows[0], answer: { reply: "Private" } });
+  await db.put("owner", "tasks", { id: "active-task", status: "waiting_input", attempts: 2 });
+  await db.put("owner", "tasks", { id: "changed-task", status: "waiting_input", attempts: 3 });
+  for (const [id, taskId] of [
+    ["question-active", "active-task"],
+    ["question-changed", "changed-task"],
+    ["question-missing", "missing-task"],
+  ])
+    await db.put("owner", "interaction-requests", {
+      ...rows[0],
+      id,
+      taskId,
+      threadId: "current-chat",
+      status: "waiting",
+      revision: 2,
+    });
+  const get = db.get.bind(db);
+  const reads: { kind: string; id: string }[] = [];
+  t.mock.method(db, "get", async (owner: string, kind: string, id: string) => {
+    reads.push({ kind, id });
+    return get(owner, kind, id);
+  });
+  const list = db.list.bind(db);
+  let ownerWideReads = 0;
+  t.mock.method(db, "list", async (owner: string, kind: string) => {
+    if (kind === "interaction-requests") ownerWideReads++;
+    return list(owner, kind);
+  });
+  const result = await requests.list("owner", "current-chat");
+  assert.equal(result.length, 15);
+  assert.deepEqual(
+    result
+      .filter((r) => r.status === "answered")
+      .map((r) => r.id)
+      .sort(),
+    rows
+      .slice(0, 12)
+      .map((r) => r.id)
+      .sort(),
+  );
+  assert.equal(result.find((r) => r.id === "question-active")?.status, "waiting");
+  assert.equal(result.find((r) => r.id === "question-changed")?.status, "superseded");
+  assert.equal(result.find((r) => r.id === "question-missing")?.status, "superseded");
+  assert.equal(ownerWideReads, 0, "other conversations must be filtered in the database");
+  assert.equal(
+    reads.filter((r) => r.kind === "interaction-requests").length,
+    0,
+    "listing must reuse the already-read request records",
+  );
+  assert.equal(
+    reads.filter((r) => r.kind === "tasks").length,
+    3,
+    "only live requests need task reconciliation",
+  );
+  assert.deepEqual(await requests.list("other-owner", "current-chat"), [
+    { ...rows[0], answer: { reply: "Private" } },
+  ]);
+});
+
+test("a listing reconciles its waiting snapshot without overwriting a concurrent answer", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  const requests = new InteractionRequests(db);
+  await db.put("owner", "tasks", {
+    id: "task",
+    status: "waiting_input",
+    attempts: 1,
+    state: {},
+    input: {},
+    originThreadId: "chat",
+  });
+  const request = await requests.create("owner", {
+    taskId: "task",
+    revision: 1,
+    kind: "question",
+    schema: { title: "Preferred time?", fields: [{ id: "reply", label: "Time", type: "text" }] },
+  });
+  const get = db.get.bind(db);
+  let racing = false;
+  t.mock.method(db, "get", async (owner: string, kind: string, id: string) => {
+    if (kind === "tasks" && id === "task" && !racing) {
+      racing = true;
+      await requests.answer(owner, request.id, {
+        clientResponseId: "one-answer",
+        revision: 1,
+        answer: { reply: "Morning" },
+      });
+      await db.compareAndSwap(owner, "tasks", id, { status: "queued" }, { status: "cancelled" });
+    }
+    return get(owner, kind, id);
+  });
+  const result = await requests.list("owner", "chat");
+  assert.equal(result.length, 1);
+  assert.equal(result[0].status, "answered");
+  assert.deepEqual(result[0].kind === "question" && result[0].answer, { reply: "Morning" });
+  assert.equal((await get<{ status: string }>("owner", "tasks", "task"))?.status, "cancelled");
+  assert.equal(
+    (await get<{ status: string }>("owner", "interaction-requests", request.id))?.status,
+    "answered",
+  );
+  assert.equal(
+    (await db.conversationEvents("owner", "chat", 0)).events.filter(
+      (event) =>
+        event.kind === "interaction" &&
+        event.payload !== null &&
+        typeof event.payload === "object" &&
+        "status" in event.payload &&
+        event.payload.status === "superseded",
+    ).length,
+    0,
+  );
+});
+
 test("literal credential titles, choice metadata and Portuguese named answers cannot enter generic question storage", async () => {
   const db = await createStore();
   const requests = new InteractionRequests(db);

@@ -11,6 +11,7 @@ import { createStore } from "../apps/server/src/db.ts";
 import { IntegrationService } from "../apps/server/src/integrations.ts";
 import { InteractionRequests } from "../apps/server/src/interaction-requests.ts";
 import type { AgentTask } from "../packages/domain/src/agent.ts";
+import type { CredentialInteractionRequest } from "../packages/domain/src/runtime.ts";
 
 const site = {
   serviceName: "Unregistered account portal",
@@ -62,6 +63,90 @@ function task(threadId: string): AgentTask {
     updatedAt: new Date().toISOString(),
   } as AgentTask;
 }
+
+test("credential polling reads only actionable owner forms, including recoverable Composio failures", async (t) => {
+  const db = await createStore();
+  t.after(() => db.close());
+  const secrets = vault();
+  const browser = new CredentialBroker(db, secrets, []);
+  const api = new GenericCredentials(db, secrets, { available: true });
+  const legacy = new IntegrationService(db, secrets, { available: true });
+  const statuses: CredentialInteractionRequest["status"][] = [
+    "waiting",
+    "saving",
+    "connecting",
+    "outcome_unknown",
+    "needs_challenge",
+    "error",
+    "expired",
+    "saved",
+    "connected",
+    "cancelled",
+    "superseded",
+    "invalid_credentials",
+  ];
+  for (const credentialKind of [undefined, "composio"] as const)
+    for (const [index, status] of statuses.entries())
+      await db.put("owner", "interaction-requests", {
+        id: `${credentialKind ?? "integration"}-${status}`,
+        taskId: credentialKind ? `composio-settings:${status}` : "settings",
+        revision: 1,
+        kind: "credential",
+        status,
+        createdAt: new Date(index * 1000).toISOString(),
+        schema: {
+          title: "Connect service",
+          serviceName: "Service",
+          origin: "https://service.example",
+          purpose: "Use service",
+          fields: [],
+          ...(credentialKind ? { credentialKind } : { integrationId: "tavily" }),
+        },
+      });
+  const all = await db.list<CredentialInteractionRequest>("owner", "interaction-requests");
+  await db.put("foreign", "interaction-requests", {
+    ...all.find((r) => r.status === "waiting")!,
+    id: "foreign-form",
+  });
+  await db.put("owner", "interaction-requests", {
+    ...all[0],
+    id: "ordinary-question",
+    kind: "question",
+    status: "waiting",
+  });
+  t.mock.method(db, "list", () => {
+    throw new Error("Polling must not materialize unrelated history");
+  });
+  t.mock.method(legacy, "status", async (owner: string, id: string) => {
+    const value = await db.get<CredentialInteractionRequest>(owner, "interaction-requests", id);
+    assert.ok(value);
+    return value;
+  });
+  const composio = {
+    statusInteraction: async (owner: string, id: string) => {
+      const value = await db.get<CredentialInteractionRequest>(owner, "interaction-requests", id);
+      assert.ok(value);
+      return value;
+    },
+  };
+  const app = new Hono<{ Variables: { owner: string } }>();
+  app.use("*", async (c, next) => {
+    c.set("owner", "owner");
+    await next();
+  });
+  app.route("/api", credentialPromptRoutes(db, browser, api, legacy, composio));
+  const response = await app.request("/api/credential-prompts");
+  assert.equal(response.status, 200);
+  const result = (await response.json()) as { requests: CredentialInteractionRequest[] };
+  const active = statuses.slice(0, 5);
+  assert.deepEqual(
+    result.requests.map((r) => r.id).sort(),
+    [
+      ...active.map((status) => `integration-${status}`),
+      ...[...active, "error", "expired"].map((status) => `composio-${status}`),
+    ].sort(),
+  );
+});
 
 test("the global queue returns only current owner forms and never creates an additional questionnaire", async (t) => {
   const db = await createStore();

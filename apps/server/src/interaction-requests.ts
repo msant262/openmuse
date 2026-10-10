@@ -104,7 +104,7 @@ export class InteractionRequests {
     return saved.values[0];
   }
   async forTask(owner: string, task: AgentTask) {
-    const requests = await this.db.list<InteractionRequest>(owner, "interaction-requests");
+    const requests = await this.db.taskInteractionRequests<InteractionRequest>(owner, task.id);
     // Credentials have their own private channel. Never manufacture a normal
     // chat questionnaire for a task already waiting for that secure form.
     const credential = requests.find(
@@ -186,7 +186,7 @@ export class InteractionRequests {
     });
   }
   async answeredForTask(owner: string, taskId: string) {
-    return (await this.db.list<InteractionRequest>(owner, "interaction-requests"))
+    return (await this.db.taskInteractionRequests<InteractionRequest>(owner, taskId))
       .filter(
         (request): request is QuestionInteractionRequest =>
           request.kind === "question" && request.taskId === taskId && request.status === "answered",
@@ -196,6 +196,13 @@ export class InteractionRequests {
   async status(owner: string, id: string): Promise<InteractionRequest> {
     const request = await this.db.get<InteractionRequest>(owner, "interaction-requests", id);
     if (!request) throw new AppError("Question not found", 404);
+    return this.resolveStatus(owner, request);
+  }
+  private async resolveStatus(
+    owner: string,
+    request: InteractionRequest,
+  ): Promise<InteractionRequest> {
+    const id = request.id;
     if (
       request.status === "waiting" &&
       request.kind !== "proactivity" &&
@@ -245,9 +252,9 @@ export class InteractionRequests {
   }
   async list(owner: string, threadId: string) {
     return Promise.all(
-      (await this.db.list<InteractionRequest>(owner, "interaction-requests"))
-        .filter((request) => request.threadId === threadId)
-        .map((request) => this.status(owner, request.id)),
+      (await this.db.threadInteractionRequests<InteractionRequest>(owner, threadId)).map(
+        (request) => this.resolveStatus(owner, request),
+      ),
     );
   }
   async answer(

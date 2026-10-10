@@ -29,11 +29,7 @@ export function credentialPromptRoutes(
   routes.get("/credential-prompts", async (c) => {
     const owner = c.get("owner");
     const requests: CredentialInteractionRequest[] = [];
-    const candidates = (await db.list<InteractionRequest>(owner, "interaction-requests"))
-      .filter(
-        (item): item is CredentialInteractionRequest => item.kind === "credential" && pending(item),
-      )
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const candidates = await db.pendingCredentialRequests<CredentialInteractionRequest>(owner);
     for (const item of candidates) {
       if (item.threadId) {
         const thread = await db.get<{ deletedAt?: string }>(owner, "threads", item.threadId);
