@@ -27,11 +27,38 @@ interface AgentContextValue {
 }
 const AgentContext = createContext<AgentContextValue | null>(null);
 export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
-  const { api, open, navigate } = useWorkspace();
+  const { api, open, navigate, refresh: refreshWorkspace } = useWorkspace();
   const { locale } = useI18n();
   const [data, setData] = useState<AgentWorkspace>();
   const [error, setError] = useState("");
   const requestVersion = useRef(0);
+  const reviewed = useRef<string | undefined>(undefined);
+  const reviewRefresh = useRef(false);
+  useEffect(() => {
+    if (!data || reviewRefresh.current) return;
+    const revision = JSON.stringify(
+      data.tasks
+        .filter((task) => task.actionId)
+        .map((task) => [task.id, task.actionId, task.status])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    );
+    if (reviewed.current === revision) return;
+    if (reviewed.current === undefined && revision === "[]") {
+      reviewed.current = revision;
+      return;
+    }
+    // Task polls already observe review preparation and settlement. Refresh
+    // the small workspace projection only on those transitions, not heartbeats.
+    reviewRefresh.current = true;
+    void refreshWorkspace()
+      .then(() => {
+        reviewed.current = revision;
+      })
+      .catch(() => {})
+      .finally(() => {
+        reviewRefresh.current = false;
+      });
+  }, [data, refreshWorkspace]);
   useEffect(() => {
     setDisplayLocale(locale === "pt-BR" ? "pt-BR" : "en-US");
   }, [locale]);

@@ -16,12 +16,20 @@ export async function nativeComponentFixture(
   const slots: unknown[] = [];
   const effects: { deps?: unknown[]; cleanup?: () => void }[] = [];
   let pendingEffects: (() => void)[] = [];
+  const intervals = new Map<number, () => void>();
+  let intervalId = 0;
   let tree: NativeNode;
   let props = initialProps;
   let mounted = true;
   const same = (a?: unknown[], b?: unknown[]) =>
     !!a && !!b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
   const hooks = {
+    createContext(value: unknown) {
+      return { value, Provider: "Provider" };
+    },
+    useCallback(value: () => unknown, deps: unknown[]) {
+      return hooks.useMemo(() => value, deps);
+    },
     useState(initial: unknown) {
       const index = cursor++;
       if (!(index in slots)) slots[index] = typeof initial === "function" ? initial() : initial;
@@ -63,8 +71,14 @@ export async function nativeComponentFixture(
       exports,
       Date,
       // Polls are triggered explicitly by the tests, so no timers survive teardown.
-      setInterval: () => 1,
-      clearInterval: () => {},
+      setInterval: (callback: () => void) => {
+        const id = ++intervalId;
+        intervals.set(id, callback);
+        return id;
+      },
+      clearInterval: (id: number) => {
+        intervals.delete(id);
+      },
       require(name: string) {
         if (name === "react") return hooks;
         if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
@@ -92,6 +106,9 @@ export async function nativeComponentFixture(
   return {
     render,
     nodes: () => walk(tree),
+    poll: () => {
+      for (const callback of intervals.values()) callback();
+    },
     async settle() {
       for (let i = 0; i < 60; i++) {
         await Promise.resolve();
