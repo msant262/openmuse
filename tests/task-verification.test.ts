@@ -93,7 +93,7 @@ test("a reviewed browser click with a pending confirmation cannot certify comple
     status: "succeeded",
     dispatchedRevision: 0,
     createdAt: new Date().toISOString(),
-    data: { tool: "browser.payment" },
+    data: { tool: "browser.act" },
     result: JSON.stringify({
       sessionId,
       snapshotId: randomUUID(),

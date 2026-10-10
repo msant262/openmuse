@@ -891,7 +891,7 @@ export class TaskVerification {
         action.taskId !== taskId ||
         action.status !== "succeeded" ||
         action.dispatchedRevision !== revision ||
-        !["browser.payment", "browser.dialog"].includes(String(action.data?.tool))
+        !["browser.act", "browser.dialog"].includes(String(action.data?.tool))
       )
         continue;
       try {
