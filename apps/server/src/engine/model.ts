@@ -3012,7 +3012,7 @@ export async function executeModelTask(
       "\n" +
       buildPromisedWorkPromptSection().join("\n") +
       (await humanizerContext(config, owner)) +
-      (await googleAgentContext(service.workspace, owner, selectedTools)) +
+      (await googleAgentContext(service.workspace, owner, selectedTools, task.prompt)) +
       `\nConnected image capabilities (server data): ${JSON.stringify(await service.media.imageCapabilities(selectedModel))}` +
       `\nDirections applied at revision ${Number(task.state.appliedRevision ?? 0)}: ${JSON.stringify(task.state.directives ?? [])}` +
       buildProfileContext(

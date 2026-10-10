@@ -1082,6 +1082,7 @@ export class ConversationAgent extends AbstractAgent {
             this.service.workspace,
             this.owner,
             googleTaskTools(latestText),
+            latestText,
           )) +
           "\nSaved conversation work (historical receipt data, not new observations). Use continue_task only for corrections to unfinished work, avoiding a competing task. Tasks with status succeeded, failed or cancelled have ended. A renewed request or current lookup after those tasks needs a new delegate_task; an old result does not fulfill it. For a question about saved progress or results, use agent_status or inspect_task: " +
           JSON.stringify(taskSnapshot) +

@@ -39,4 +39,5 @@ test("a natural Python Calendar request receives scheduling guidance before its 
   assert.ok(fixture.requests.length);
   assert.match(fixture.requests[0].body, /Dates in event titles, subjects, filenames/);
   assert.match(fixture.requests[0].body, /Resolve tomorrow and other relative dates/);
+  assert.doesNotMatch(fixture.requests[0].body, /Gmail folders are labels|For Drive name lookup/);
 });
