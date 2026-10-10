@@ -17,6 +17,7 @@ import type { JournalOperation } from "./task-journal.ts";
 
 const decisionSchema = z.object({
   complete: z.boolean(),
+  draftEligible: z.boolean().optional(),
   blocked: z.boolean().default(false),
   needsMoreResearch: z.boolean().default(true),
   userInputRequired: z.boolean().default(false),
@@ -324,7 +325,7 @@ export async function reviewResearchDelivery(options: {
         : []),
       ...(options.proposedDocument
         ? [
-            "DOCUMENT_PREFLIGHT_SCOPE. Rendering has NOT happened yet. requestAudit must distinguish scope:'content' (requested facts, each option, access, language, duration, certificate cost, source links) from scope:'delivery' (file creation, attachment and visual inspection). Judge complete only for content at this stage. File creation and attachment are not missing factual evidence; do not ask the agent to deliver a PDF before allowing the PDF renderer to run. Omit deferred delivery requirements from missing and nextSteps. Do not research to repair a file that has not been rendered. The host enforces actual bytes, file format, attachment and inspection independently after rendering. A content gap must remain scope:'content', including unsupported course access or certificate claims; never defer it as delivery.",
+            "DOCUMENT_PREFLIGHT_SCOPE. Rendering has NOT happened yet. Add draftEligible:boolean to the decision. A document is a local draft: draftEligible=true only when its INCLUDED factual claims and selected options are supported and satisfy the user's selection constraints. It may omit content destined for another requested document or a later revision; keep complete=false and identify those original-request gaps in requestAudit. This permits composing multiple files without pretending the first draft completes the request. Unsupported included facts, unqualified selected options or invented source proof require draftEligible=false. complete=true still requires ALL original content requirements to be satisfied by the proposed content; only that full content approval can be reused at delivery. requestAudit must distinguish scope:'content' (requested facts, each option, access, language, duration, certificate cost, source links) from scope:'delivery' (file creation, attachment and visual inspection). Judge complete only for content at this stage. File creation and attachment are not missing factual evidence; do not ask the agent to deliver a PDF before allowing the PDF renderer to run. Omit deferred delivery requirements from missing and nextSteps. Do not research to repair a file that has not been rendered. The host enforces actual bytes, file format, attachment and inspection independently after rendering. A content gap must remain scope:'content', including unsupported course access or certificate claims; never defer it as delivery.",
           ]
         : []),
       ...(options.stage === "image_brief"
@@ -437,9 +438,12 @@ export async function reviewResearchDelivery(options: {
           decision.missing.push(item.requirement);
       if (
         options.stage === "access_selection" &&
-        (decision.complete || decision.accessAudit?.length)
+        (decision.complete ||
+          (options.proposedDocument && decision.draftEligible) ||
+          decision.accessAudit?.length)
       ) {
-        const accepted = decision.complete;
+        const accepted =
+          decision.complete || (options.proposedDocument && decision.draftEligible === true);
         const normalizeRaw = (value: string) =>
           value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
         const normalize = (value: string) =>
@@ -505,6 +509,7 @@ export async function reviewResearchDelivery(options: {
           accessGaps.push(...failed);
           const exhausted = !accepted && decision.blocked && !decision.nextSteps.length;
           decision.complete = false;
+          decision.draftEligible = false;
           for (const item of failed)
             decision.missing.push(
               `Observed confirmation of full free access is missing for ${item.option}.`,

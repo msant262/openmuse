@@ -69,6 +69,7 @@ import {
   researchObservations,
   reviewResearchDelivery,
 } from "./research-delivery-review.ts";
+import { researchDocumentContent, reviewedDocumentTextPresent } from "./research-document-proof.ts";
 import { recoverResearchSources, recoverResearchToolResult } from "./research-source-recovery.ts";
 import type { AgentService } from "./service.ts";
 import { TaskBudgetExhaustedError } from "./task-actor.ts";
@@ -140,7 +141,25 @@ export async function executeModelTask(
   let selectedModel = config.model;
   const deliveryReviewEnabled = () =>
     config.researchReviewEnabled || requiresAccessConstraintReview(task);
-  const reviewDelivery = async (summary: string, artifactIds = task.artifactIds) => {
+  type ResearchReview = Awaited<ReturnType<typeof reviewResearchDelivery>> & {
+    attempts: number;
+    repairAttempts: number;
+    stalledAttempts: number;
+    factsKey?: string;
+    sourceFactsKey?: string;
+  };
+  type DocumentApproval = {
+    sourceOperationId: string;
+    sourceFactsKey: string;
+    argsHash: string;
+    sha256: string;
+    review: ResearchReview;
+  };
+  const reviewDelivery = async (
+    summary: string,
+    artifactIds = task.artifactIds,
+    proposedDocument = false,
+  ) => {
     if (!deliveryReviewEnabled()) return undefined;
     const recordedOperations = await service.journal.operations(owner, task.id);
     if (!needsResearchReview(task, recordedOperations)) return undefined;
@@ -153,13 +172,16 @@ export async function executeModelTask(
         config.modelProviders ?? modelProviderConfig(config.dataDir),
       ).capabilities.contextTokens,
     );
-    const factsKey = createHash("sha256")
+    const sourceFactsKey = createHash("sha256")
       .update(
         JSON.stringify([
           Number(task.state.appliedRevision ?? 0),
           selectedModel,
           task.prompt,
           task.state.directives,
+          task.criteria,
+          task.state.conversationContext,
+          task.state.interactionAnswer ?? task.state.answer,
           researchObservations(operations)
             .map((op) => {
               const receipt = op.receipt as Record<string, unknown> | undefined;
@@ -184,22 +206,82 @@ export async function executeModelTask(
             })
             .filter((item, index, items) => items.indexOf(item) === index)
             .sort(),
-          await Promise.all(
-            [...artifactIds].sort().map(async (fileId) => [
-              fileId,
-              createHash("sha256")
-                .update(await service.files.bytes(owner, fileId))
-                .digest("hex"),
-            ]),
-          ),
         ]),
       )
       .digest("hex");
+    const fileHashes = await Promise.all(
+      [...artifactIds].sort().map(async (fileId) => [
+        fileId,
+        createHash("sha256")
+          .update(await service.files.bytes(owner, fileId))
+          .digest("hex"),
+      ]),
+    );
+    const factsKey = createHash("sha256")
+      .update(JSON.stringify([sourceFactsKey, fileHashes, proposedDocument ? summary : null]))
+      .digest("hex");
+    if (!proposedDocument && artifactIds.length === 1) {
+      const fileId = artifactIds[0];
+      const approval = (
+        task.state.researchDocumentApprovals as Record<string, DocumentApproval> | undefined
+      )?.[fileId];
+      const producing = recordedOperations.find(
+        (op) =>
+          op.id === approval?.sourceOperationId &&
+          op.toolName === "create_document" &&
+          op.status === "succeeded",
+      );
+      const args = documentArgs.safeParse(producing?.args);
+      const generation =
+        producing &&
+        (await service.db.get<{
+          scope?: string;
+          binding?: string;
+          fileId?: string;
+          sha256?: string;
+        }>(owner, "document-generations", createHash("sha256").update(producing.id).digest("hex")));
+      if (
+        approval?.review.complete &&
+        approval.sourceFactsKey === sourceFactsKey &&
+        approval.sha256 === fileHashes[0][1] &&
+        args.success &&
+        approval.argsHash ===
+          createHash("sha256").update(JSON.stringify(args.data)).digest("hex") &&
+        generation?.scope === `task:${task.id}` &&
+        generation.fileId === fileId &&
+        generation.binding === approval.argsHash &&
+        generation.sha256 === approval.sha256 &&
+        reviewedDocumentTextPresent(
+          args.data,
+          await new FileLibrary(service.files, service.db).read(owner, {
+            fileId,
+            offset: 0,
+            limit: 100_000,
+          }),
+        )
+      ) {
+        const review = {
+          ...approval.review,
+          requestAudit: approval.review.requestAudit.filter((item) => item.scope !== "delivery"),
+          factsKey,
+          sourceFactsKey,
+          reusedContentApproval: true,
+          verifiedDocument: {
+            fileId,
+            sha256: approval.sha256,
+            sourceOperationId: approval.sourceOperationId,
+          },
+        };
+        task = await ctx.checkpoint({ state: { ...task.state, researchDeliveryReview: review } });
+        return review;
+      }
+    }
     const cached = task.state.researchDeliveryReview as
       | {
           factsKey?: string;
           complete?: boolean;
           needsMoreResearch?: boolean;
+          sourceFactsKey?: string;
         }
       | undefined;
     // Both missing research and wording defects belong to the selected bytes.
@@ -208,9 +290,9 @@ export async function executeModelTask(
     // New source evidence, selected bytes, model or user revision changes the key.
     if (
       requiresAccessConstraintReview(task) &&
-      artifactIds.length > 0 &&
+      (artifactIds.length > 0 || proposedDocument) &&
       cached?.factsKey === factsKey &&
-      cached.complete === false
+      (cached.complete === false || proposedDocument)
     )
       return cached as Awaited<ReturnType<typeof reviewResearchDelivery>> & {
         attempts: number;
@@ -255,6 +337,7 @@ export async function executeModelTask(
       signal,
       images,
       documents,
+      proposedDocument,
       structured:
         (await service.profiles.get(owner, task.originThreadId)).fields.textStyle === "structured",
     });
@@ -301,6 +384,7 @@ export async function executeModelTask(
         researchReviewHistory: reviewHistory,
         researchDeliveryReview: {
           factsKey,
+          sourceFactsKey,
           revision,
           attempts,
           repairAttempts,
@@ -310,7 +394,7 @@ export async function executeModelTask(
         },
       },
     });
-    return { ...review, attempts, repairAttempts, stalledAttempts };
+    return { ...review, factsKey, sourceFactsKey, attempts, repairAttempts, stalledAttempts };
   };
   let outcome: Partial<AgentTask> | undefined;
   let providerCheckpoint: ProviderContinuationCheckpoint | undefined;
@@ -1354,6 +1438,72 @@ export async function executeModelTask(
     })),
     ...mediaTools(service.media, service.computer, owner, `task:${task.id}`, {
       model: () => selectedModel,
+      documentBrief: async (args) => {
+        // Access-constrained selections are qualified before authoring. The
+        // approved input is bound to its actual generated bytes below; final
+        // delivery reuses it only with unchanged scope, sources and content.
+        if (!requiresAccessConstraintReview(task) || !["pdf", "docx", "pptx"].includes(args.format))
+          return undefined;
+        let review: Awaited<ReturnType<typeof reviewDelivery>>;
+        try {
+          review = await reviewDelivery(researchDocumentContent(args), [], true);
+        } catch (error) {
+          if (!(error instanceof ResearchReviewUnavailableError)) throw error;
+          return waitForReview(error, {
+            pendingDocumentGeneration: {
+              args,
+              revision: Number(task.state.appliedRevision ?? 0),
+              sourceOperationId: taskOperationId(),
+            },
+          });
+        }
+        // An independently observed exhausted/private access limitation may be
+        // written as an honest partial report. It receives no reusable approval
+        // and final delivery still rejects a completed outcome.
+        if (!review || review.complete || review.draftEligible || review.blocked) return undefined;
+        return {
+          ...review,
+          complete: false,
+          repairable: true,
+          instruction:
+            "No document was generated. Resolve the specific content or eligibility gaps using the already observed evidence or qualified alternatives. Keep the user's original selection constraints. Then retry create_document with corrected content; do not ask permission to repair your own proposal.",
+        };
+      },
+      documentCreated: async (args, receipt) => {
+        const review = task.state.researchDeliveryReview as ResearchReview | undefined;
+        const sourceOperationId = taskOperationId();
+        if (
+          !requiresAccessConstraintReview(task) ||
+          !sourceOperationId ||
+          !review?.complete ||
+          !review.sourceFactsKey
+        )
+          return;
+        const argsHash = createHash("sha256").update(JSON.stringify(args)).digest("hex");
+        const expected = createHash("sha256")
+          .update(JSON.stringify([review.sourceFactsKey, [], researchDocumentContent(args)]))
+          .digest("hex");
+        if (review.factsKey !== expected) return;
+        task = await ctx.checkpoint({
+          state: {
+            ...task.state,
+            researchDocumentApprovals: {
+              ...(task.state.researchDocumentApprovals as
+                | Record<string, DocumentApproval>
+                | undefined),
+              [receipt.fileId]: {
+                sourceOperationId,
+                sourceFactsKey: review.sourceFactsKey,
+                argsHash,
+                sha256: createHash("sha256")
+                  .update(await service.files.bytes(owner, receipt.fileId))
+                  .digest("hex"),
+                review,
+              },
+            },
+          },
+        });
+      },
       ...(config.researchReviewEnabled && { imageBrief }),
       revision: () => Number(task.state.appliedRevision ?? 0),
       signal,
@@ -2272,7 +2422,7 @@ export async function executeModelTask(
     ),
     tool(
       "confirm_document_review",
-      "Record visual assessment of the exact rendered document pages received in the preceding model turn. Report concrete defects preventing faithful, readable delivery; ordinary whitespace, continuous page breaks or text checkboxes alone do not fail review. Use inspect_document.hyperlinks for clickability evidence, not the raster image. Pass only after inspecting all pages in that receipt. This records model review, not external approval.",
+      "Record visual assessment of the exact rendered document pages received in the preceding model turn. Report concrete defects preventing faithful, readable delivery; ordinary whitespace, continuous page breaks, repeated headers on legible paginated tables or text checkboxes alone do not fail review. Missing cells, lost row/column associations, clipping, unreadably small type or violation of an explicit page limit do fail. Use inspect_document.hyperlinks for clickability evidence, not the raster image. Pass only after inspecting all pages in that receipt. This records model review, not external approval.",
       documentReviewArgs,
       async (args) =>
         documentReview.confirm(
@@ -2542,6 +2692,7 @@ export async function executeModelTask(
   // can be pruned. Duplicating them in the system prompt makes them mandatory.
   const promptState = {
     ...task.state,
+    researchDocumentApprovals: undefined,
     ...(!config.researchReviewEnabled && {
       imageBriefReview: undefined,
       documentBriefReview: undefined,
@@ -2609,7 +2760,7 @@ export async function executeModelTask(
       return {
         name: "confirm_document_review",
         parameters: documentReviewArgs.safeExtend({ receiptId: z.literal(assessment.receiptId) }),
-        instructions: `Assess the actual document preview in this inference and call confirm_document_review for ${JSON.stringify(assessment)}. Report passed:true only if these displayed pages have no concrete delivery defect; otherwise report passed:false with the defects. This records your assessment, never automatic approval. After this assessment the full authorized tool catalog is available again for corrections, remaining pages or delivery.`,
+        instructions: `Assess the actual document preview in this inference and call confirm_document_review for ${JSON.stringify(assessment)}. Report passed:true only if these displayed pages have no concrete delivery defect; otherwise report passed:false with the defects. A legible table continuing onto another page with repeated column headers is ordinary pagination; assess missing cells, lost associations, clipping and readability rather than rejecting the page break itself. This records your assessment, never automatic approval. After this assessment the full authorized tool catalog is available again for corrections, remaining pages or delivery.`,
       };
     },
     executeTool: async (call, execute) => {

@@ -381,7 +381,7 @@ export class MediaService {
       hyperlinks: await inspectPdfHyperlinks(rendered.pdfBytes, rendered.pages),
       nextPage: rendered.pages.at(-1)! < rendered.pageCount ? rendered.pages.at(-1)! + 1 : null,
       instruction:
-        "Examine the actual pixels against the applied design and its rationale, including hierarchy, typography, clipping, readability and data accuracy. Report concrete defects that prevent faithful delivery. Ordinary whitespace, a continuous section crossing a page, or text checkboxes alone are not failed-review reasons. The hyperlinks field reads actual PDF link annotations: a PNG cannot show whether text is clickable. Do not claim missing links when those URLs are present in this metadata. Use confirm_document_review in the next turn. Correct a failed draft with create_document.replaceFileId and a fresh operationId, then inspect its new bytes. Keep the requested output format; internal rendering and optional polish are not decisions to send back to the user.",
+        "Examine the actual pixels against the applied design and its rationale, including hierarchy, typography, clipping, readability and data accuracy. Report concrete defects that prevent faithful delivery. Ordinary whitespace, a continuous section crossing a page, repeated column headers on a legible table continuing across pages, or text checkboxes alone are not failed-review reasons. Reject missing cells, lost row/column associations, clipping, unreadably small type or a violated explicit page limit. The hyperlinks field reads actual PDF link annotations: a PNG cannot show whether text is clickable. Do not claim missing links when those URLs are present in this metadata. Use confirm_document_review in the next turn. Correct a failed draft with create_document.replaceFileId and a fresh operationId, then inspect its new bytes. Keep the requested output format; internal rendering and optional polish are not decisions to send back to the user.",
     };
   }
   async imageCapabilities(model: string | undefined) {
@@ -695,6 +695,11 @@ export function mediaTools(
   scope: string,
   options: {
     model: () => string | undefined;
+    documentBrief?: (args: z.output<typeof documentArgs>) => Promise<unknown | undefined>;
+    documentCreated?: (
+      args: z.output<typeof documentArgs>,
+      receipt: { fileId: string },
+    ) => Promise<void>;
     signal?: AbortSignal;
     before?: () => Promise<void>;
     effectBefore?: () => Promise<void>;
@@ -885,12 +890,15 @@ export function mediaTools(
     ),
     tool(
       "create_document",
-      "Compose a designed PDF or editable DOCX/PPTX from complete Markdown content, locally. Read document-design and format skill first. Supports headings, emphasis, lists, tables, quotes, owned file: images and chart/metrics/steps JSON fences. Choose design.reference from the full design_references catalog. Set layout (editorial/briefing/signal), display (serif/sans/mono), palette (paper/ink/muted/accent/surface hex colors) and rationale. Non-preset references require palette/layout/display. Optional subtitle, eyebrow, footer and cover. Text/markdown preserve exact UTF-8. Maximum120000 characters/100 PDF pages. Returns a draft attachment requiring inspect_document and visual review before completion. For a correction use replaceFileId of this task's draft plus a fresh operationId; other deliverables stay attached.",
+      "Compose a designed PDF or editable DOCX/PPTX from complete Markdown content, locally. Read document-design and format skill first. Supports headings, emphasis, lists, tables, quotes, owned file: images and chart/metrics/steps JSON fences. Routine short reports may choose an installed profile directly; use design_references for a requested brand, template or creative direction. Set layout (editorial/briefing/signal), display (serif/sans/mono), palette (paper/ink/muted/accent/surface hex colors) and rationale. Non-preset references require palette/layout/display. Optional subtitle, eyebrow, footer and cover. Text/markdown preserve exact UTF-8. Maximum120000 characters/100 PDF pages. Returns a draft attachment requiring inspect_document and visual review before completion. For a correction use replaceFileId of this task's draft plus a fresh operationId; other deliverables stay attached.",
       documentArgs,
-      // Local drafts are withheld until final factual and visual verification.
-      // Reviewing the same prose before rendering created contradictory audits
-      // and repeated provider waits without examining the delivered bytes.
-      (args) => media.createDocument(owner, args, scope),
+      async (args) => {
+        const correction = await options.documentBrief?.(args);
+        if (correction) return correction;
+        const receipt = await media.createDocument(owner, args, scope);
+        await options.documentCreated?.(args, receipt);
+        return receipt;
+      },
       true,
     ),
     tool(

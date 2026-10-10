@@ -119,8 +119,8 @@ test("an existing unselected PDF is recovered by its actual ID without another g
         );
         assert.equal(
           fixture.reviewRequests.length,
-          0,
-          "an empty selection is not the selected content",
+          1,
+          "an empty selection must not repeat the existing content approval",
         );
       }
       return [
@@ -586,12 +586,6 @@ test("a document wording repair stays a content correction through an unnecessar
             operationId: "incorrect",
           },
         },
-        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
-        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
-        {
-          name: "finish_task",
-          arguments: { summary: "Comparison attached.", artifactIds: [fileId] },
-        },
         {
           name: "ask_user",
           arguments: { question: "Posso continuar pesquisando e trocar o curso?" },
@@ -603,7 +597,6 @@ test("a document wording repair stays a content correction through an unnecessar
             format: "pdf",
             content: content("costs €20"),
             operationId: "corrected",
-            replaceFileId: fileId,
           },
         },
         { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
@@ -661,7 +654,7 @@ test("a document wording repair stays a content correction through an unnecessar
   });
   await f.agent.worker.tick();
   const operations = await f.agent.journal.operations("owner", task.id);
-  const correction = operations.find((op) => op.toolName === "finish_task")?.receipt as {
+  const correction = operations.find((op) => op.toolName === "create_document")?.receipt as {
     instruction: string;
     needsMoreResearch: boolean;
   };
@@ -686,7 +679,7 @@ test("a document wording repair stays a content correction through an unnecessar
   assert.equal(fixture.reviewRequests.length, 2);
 });
 
-test("an unqualified rendered PDF is withheld until its corrected bytes and pixels pass delivery", async (t) => {
+test("an unqualified PDF proposal is repaired before rendering and its bytes and pixels pass delivery", async (t) => {
   let fileId = "",
     receiptId = "";
   const rendered: string[] = [];
@@ -704,12 +697,6 @@ test("an unqualified rendered PDF is withheld until its corrected bytes and pixe
             content: "Premium AI: free registration, full access unconfirmed.",
           },
         },
-        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
-        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
-        {
-          name: "finish_task",
-          arguments: { summary: "Comparison attached.", artifactIds: [fileId] },
-        },
         {
           name: "ask_user",
           arguments: {
@@ -723,7 +710,6 @@ test("an unqualified rendered PDF is withheld until its corrected bytes and pixe
             name: "Courses",
             format: "pdf",
             operationId: "verified",
-            replaceFileId: fileId,
             content:
               "# Open AI\n\nAll lessons and exercises are free with no trial or subscription. Beginner generative AI, English, two hours. Optional certificate €20.\n\nSource: https://courses.example/open",
           },
@@ -808,9 +794,9 @@ test("an unqualified rendered PDF is withheld until its corrected bytes and pixe
     0,
     "replacing the agent's unqualified choice requires no new user answer",
   );
-  assert.equal(rendered.length, 2, "a rejected local draft is replaced before delivery");
-  assert.ok(rendered[1].includes("Open AI"));
-  const rejectedOutput = JSON.parse(fixture.requests[5].body)
+  assert.equal(rendered.length, 1, "an unqualified proposal is rejected before rendering");
+  assert.ok(rendered[0].includes("Open AI"));
+  const rejectedOutput = JSON.parse(fixture.requests[2].body)
     .input.filter((item: { type: string }) => item.type === "function_call_output")
     .at(-1);
   assert.ok(rejectedOutput);
@@ -834,7 +820,7 @@ test("an unqualified rendered PDF is withheld until its corrected bytes and pixe
   assert.equal(
     fixture.reviewRequests.length,
     2,
-    "each selected version is checked once against its actual delivered bytes",
+    "each proposal is checked once and the qualified rendered bytes reuse their content proof",
   );
 });
 
@@ -1076,7 +1062,7 @@ test("wording-only rejection remains bound to the actual document until its byte
     assert.match(fixture.requests[i].body, /Correct the document: the certificate costs €20/);
 });
 
-test("a researched PDF has one factual check on its actual reviewed bytes, not a second pre-render review", async (t) => {
+test("a researched PDF has one factual content check whose trusted authoring and actual text are verified at delivery", async (t) => {
   let fileId = "",
     receiptId = "",
     generations = 0,
@@ -1105,13 +1091,12 @@ test("a researched PDF has one factual check on its actual reviewed bytes, not a
       ][i],
     {
       researchReview: (body) => {
-        assert.equal(generations, 1, "facts are checked against the actual created document");
-        assert.equal(visualReviews, 1, "delivery retains its required visual inspection");
+        assert.equal(generations, 0, "qualify content before the first render");
+        assert.equal(visualReviews, 0);
         const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
-        assert.equal(input.proposedDocument, false);
-        assert.deepEqual(input.artifacts, [fileId]);
-        assert.equal(input.documents.length, 1);
-        assert.match(input.documents[0].text, /optional certificate €20/);
+        assert.equal(input.proposedDocument, true);
+        assert.deepEqual(input.artifacts, []);
+        assert.match(input.proposedAnswer, /optional certificate €20/);
         return {
           complete: true,
           missing: [],
@@ -1162,6 +1147,19 @@ test("a researched PDF has one factual check on its actual reviewed bytes, not a
   assert.equal(saved.status, "succeeded", saved.error ?? saved.question ?? saved.result);
   assert.equal(saved.completion?.status, "verified");
   assert.equal(fixture.reviewRequests.length, 1);
+  assert.equal(generations, 1);
+  assert.equal(visualReviews, 1);
+  assert.equal(
+    (saved.state.researchDeliveryReview as { reusedContentApproval?: boolean })
+      .reusedContentApproval,
+    true,
+  );
+  const actual = await new FileLibrary(f.files, f.db).read("owner", {
+    fileId,
+    offset: 0,
+    limit: 100_000,
+  });
+  assert.match(actual.text, /optional certificate €20/);
   assert.equal(read.mock.callCount(), 1);
   assert.equal((await f.db.list("owner", "interaction-requests")).length, 0);
   assert.deepEqual(saved.artifactIds, [fileId]);
@@ -1218,7 +1216,7 @@ test("the executor and final PDF review receive the fetched FAQ without another 
         assert.equal(source.truncated, false);
         assert.equal(source.sourceRecovery.networkRead, false);
         assert.equal(source.sourceRecovery.sha256, source.spill.sha256);
-        assert.match(input.documents[0].text, /Optional certificate: paid/);
+        assert.match(input.proposedAnswer, /Optional certificate: paid/);
         return {
           complete: true,
           missing: [],
@@ -1340,7 +1338,7 @@ test("an unavailable final document check resumes its saved reviewed file withou
   const f = await baseTaskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   f.agent.config.modelProviders!.routing!.maxAttempts = 1;
@@ -1364,7 +1362,7 @@ test("an unavailable final document check resumes its saved reviewed file withou
   });
   const task = await f.agent.createTask("owner", {
     prompt:
-      "Research a free AI course and deliver a PDF comparing language, duration and optional certificate cost.",
+      "Research an AI course and deliver a PDF comparing language, duration and optional certificate cost.",
   });
   await f.agent.worker.tick();
   let saved = await f.agent.getTask("owner", task.id);
