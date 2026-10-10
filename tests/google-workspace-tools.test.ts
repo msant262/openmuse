@@ -614,165 +614,180 @@ test("Calendar approval resumes from its bound receipt and replaces stale waitin
   assert.equal((await server.agent.verification.assess("owner", task.id, 0)).status, "unverified");
 });
 
-test("Drive cleanup resumes until every requested document, slide and sheet has a confirmed removal receipt", async (t) => {
-  const selectedIds = ["doc-one", "doc-two", "slide-one", "slide-two", "sheet"];
-  const model = await modelFixture(
-    t,
-    (index) => {
-      if (index < 3)
-        return {
-          name: "search_drive",
-          arguments: {
-            account: "work@example.com",
-            query: ["Study notes", "Study slides", "Study budget"][index],
-            kind: "files",
-            limit: 20,
+for (const outcome of ["completed", "partial"] as const)
+  test(`Drive cleanup resumes and reports confirmed removals when the model ends with ${outcome}`, async (t) => {
+    const selectedIds = ["doc-one", "doc-two", "slide-one", "slide-two", "sheet"];
+    const model = await modelFixture(
+      t,
+      (index) => {
+        if (index < 3)
+          return {
+            name: "search_drive",
+            arguments: {
+              account: "work@example.com",
+              query: ["Study notes", "Study slides", "Study budget"][index],
+              kind: "files",
+              limit: 20,
+            },
+          };
+        if (index >= 3 && index <= 11 && index % 2 === 1)
+          return {
+            name: "execute_google_workspace_tool",
+            arguments: {
+              toolId: "drive.files.update",
+              account: "work@example.com",
+              parameters: { fileId: selectedIds[(index - 3) / 2] },
+              body: { trashed: true },
+              operationId: `trash-${selectedIds[(index - 3) / 2]}`,
+            },
+          };
+        if (index === 12 && outcome === "partial")
+          return {
+            name: "finish_task",
+            arguments: {
+              outcome,
+              summary: "As solicitações aguardam aprovação; nenhuma remoção está confirmada ainda.",
+            },
+          };
+        return undefined;
+      },
+      { text: () => "A exclusão está aguardando sua aprovação no cartão de confirmação." },
+    );
+    const server = await fixture(t, "money", { agentBackend: "model", model: "openai/fixture" });
+    const files = [
+      {
+        id: "doc-one",
+        name: "Study notes",
+        mimeType: "application/vnd.google-apps.document",
+        trashed: false,
+      },
+      {
+        id: "doc-two",
+        name: "Study notes",
+        mimeType: "application/vnd.google-apps.document",
+        trashed: false,
+      },
+      {
+        id: "slide-one",
+        name: "Study slides",
+        mimeType: "application/vnd.google-apps.presentation",
+        trashed: false,
+      },
+      {
+        id: "slide-two",
+        name: "Study slides",
+        mimeType: "application/vnd.google-apps.presentation",
+        trashed: false,
+      },
+      {
+        id: "sheet",
+        name: "Study budget",
+        mimeType: "application/vnd.google-apps.spreadsheet",
+        trashed: false,
+      },
+      {
+        id: "unrelated",
+        name: "Other notes",
+        mimeType: "application/vnd.google-apps.document",
+        trashed: false,
+      },
+    ];
+    const changed: string[] = [];
+    t.mock.method(
+      server.workspace,
+      "google",
+      (
+        _owner: string,
+        connectionId?: string,
+        signal?: AbortSignal,
+        beforeWrite?: () => Promise<void>,
+      ) => {
+        assert.equal(connectionId, "work-id");
+        return new GoogleClient({
+          signal,
+          beforeWrite,
+          getAccessToken: async () => "fixture",
+          fetch: async (raw, init) => {
+            const url = new URL(String(raw));
+            if (url.pathname === "/drive/v3/files") {
+              assert.equal(init?.method, "GET");
+              return Response.json({ files: files.filter((file) => !file.trashed) });
+            }
+            const file = files.find((file) => url.pathname === `/drive/v3/files/${file.id}`);
+            assert.ok(file, url.pathname);
+            if (init?.method === "GET") return Response.json(file);
+            assert.equal(init?.method, "PATCH");
+            assert.deepEqual(JSON.parse(String(init.body)), { trashed: true });
+            changed.push(file.id);
+            file.trashed = true;
+            // Drive's default response need not include the changed field.
+            return Response.json({ id: file.id, name: file.name });
           },
-        };
-      if (index >= 3 && index <= 11 && index % 2 === 1)
-        return {
-          name: "execute_google_workspace_tool",
-          arguments: {
-            toolId: "drive.files.update",
-            account: "work@example.com",
-            parameters: { fileId: selectedIds[(index - 3) / 2] },
-            body: { trashed: true },
-            operationId: `trash-${selectedIds[(index - 3) / 2]}`,
-          },
-        };
-      return undefined;
-    },
-    { text: () => "A exclusão está aguardando sua aprovação no cartão de confirmação." },
-  );
-  const server = await fixture(t, "money", { agentBackend: "model", model: "openai/fixture" });
-  const files = [
-    {
-      id: "doc-one",
-      name: "Study notes",
-      mimeType: "application/vnd.google-apps.document",
-      trashed: false,
-    },
-    {
-      id: "doc-two",
-      name: "Study notes",
-      mimeType: "application/vnd.google-apps.document",
-      trashed: false,
-    },
-    {
-      id: "slide-one",
-      name: "Study slides",
-      mimeType: "application/vnd.google-apps.presentation",
-      trashed: false,
-    },
-    {
-      id: "slide-two",
-      name: "Study slides",
-      mimeType: "application/vnd.google-apps.presentation",
-      trashed: false,
-    },
-    {
-      id: "sheet",
-      name: "Study budget",
-      mimeType: "application/vnd.google-apps.spreadsheet",
-      trashed: false,
-    },
-    {
-      id: "unrelated",
-      name: "Other notes",
-      mimeType: "application/vnd.google-apps.document",
-      trashed: false,
-    },
-  ];
-  const changed: string[] = [];
-  t.mock.method(
-    server.workspace,
-    "google",
-    (
-      _owner: string,
-      connectionId?: string,
-      signal?: AbortSignal,
-      beforeWrite?: () => Promise<void>,
-    ) => {
-      assert.equal(connectionId, "work-id");
-      return new GoogleClient({
-        signal,
-        beforeWrite,
-        getAccessToken: async () => "fixture",
-        fetch: async (raw, init) => {
-          const url = new URL(String(raw));
-          if (url.pathname === "/drive/v3/files") {
-            assert.equal(init?.method, "GET");
-            return Response.json({ files: files.filter((file) => !file.trashed) });
-          }
-          const file = files.find((file) => url.pathname === `/drive/v3/files/${file.id}`);
-          assert.ok(file, url.pathname);
-          if (init?.method === "GET") return Response.json(file);
-          assert.equal(init?.method, "PATCH");
-          assert.deepEqual(JSON.parse(String(init.body)), { trashed: true });
-          changed.push(file.id);
-          file.trashed = true;
-          // Drive's default response need not include the changed field.
-          return Response.json({ id: file.id, name: file.name });
-        },
-      });
-    },
-  );
-  const task = await server.agent.createTask("owner", {
-    prompt:
-      "Apague do Drive da conta work@example.com os dois documentos “Study notes”, as duas apresentações “Study slides” e a planilha “Study budget”.",
-  });
-  await server.agent.worker.tick();
-  let pending = await server.agent.getTask("owner", task.id);
-  assert.equal(pending.status, "waiting_approval");
-  assert.deepEqual(changed, []);
-  assert.equal((await server.agent.verification.assess("owner", task.id, 0)).status, "unverified");
-  const reviewed: ActionProposal[] = [];
-  for (let index = 0; index < selectedIds.length; index++) {
-    assert.ok(pending.actionId);
-    const action = await server.db.get<ActionProposal>("owner", "actions", pending.actionId);
-    assert.ok(action);
-    reviewed.push(action);
-    await server.actions.decide("owner", action.id, action.hash, "approve");
+        });
+      },
+    );
+    const task = await server.agent.createTask("owner", {
+      prompt:
+        "Apague do Drive da conta work@example.com os dois documentos “Study notes”, as duas apresentações “Study slides” e a planilha “Study budget”.",
+    });
     await server.agent.worker.tick();
-    pending = await server.agent.getTask("owner", task.id);
-    assert.deepEqual(changed, selectedIds.slice(0, index + 1));
-    if (index < selectedIds.length - 1) {
-      assert.equal(
-        pending.status,
-        "queued",
-        "a partial removal plus searches must not complete the five requested files",
-      );
+    let pending = await server.agent.getTask("owner", task.id);
+    assert.equal(pending.status, "waiting_approval");
+    assert.deepEqual(changed, []);
+    assert.equal(
+      (await server.agent.verification.assess("owner", task.id, 0)).status,
+      "unverified",
+    );
+    const reviewed: ActionProposal[] = [];
+    for (let index = 0; index < selectedIds.length; index++) {
+      assert.ok(pending.actionId);
+      const action = await server.db.get<ActionProposal>("owner", "actions", pending.actionId);
+      assert.ok(action);
+      reviewed.push(action);
+      await server.actions.decide("owner", action.id, action.hash, "approve");
       await server.agent.worker.tick();
       pending = await server.agent.getTask("owner", task.id);
-      assert.equal(
-        pending.status,
-        "waiting_approval",
-        "the next item is prepared without a new user instruction",
-      );
+      assert.deepEqual(changed, selectedIds.slice(0, index + 1));
+      if (index < selectedIds.length - 1) {
+        assert.equal(
+          pending.status,
+          "queued",
+          "a partial removal plus searches must not complete the five requested files",
+        );
+        await server.agent.worker.tick();
+        pending = await server.agent.getTask("owner", task.id);
+        assert.equal(
+          pending.status,
+          "waiting_approval",
+          "the next item is prepared without a new user instruction",
+        );
+      }
     }
-  }
-  const finished = await server.agent.getTask("owner", task.id);
-  assert.equal(finished.status, "succeeded", JSON.stringify(finished.completion));
-  assert.deepEqual(changed, selectedIds);
-  assert.equal(files[5].trashed, false);
-  assert.doesNotMatch(finished.result!, /aguardando|waiting|approv/i);
-  assert.match(finished.result!, /Study notes/);
-  assert.match(finished.result!, /work@example.com/);
-  assert.equal(finished.criteria?.[0].effect, "drive.delete");
-  assert.match(finished.result!, /Study slides/);
-  assert.match(finished.result!, /Study budget/);
-  assert.deepEqual(
-    new Set(finished.completion?.checks[0].evidenceIds),
-    new Set(reviewed.map((action) => action.id)),
-  );
-  await server.db.put("owner", "actions", {
-    ...reviewed.at(-1)!,
-    status: "succeeded",
-    result: '{"trashed":true}',
+    const finished = await server.agent.getTask("owner", task.id);
+    assert.equal(finished.status, "succeeded", JSON.stringify(finished.completion));
+    assert.deepEqual(changed, selectedIds);
+    assert.equal(files[5].trashed, false);
+    assert.doesNotMatch(finished.result!, /aguardando|waiting|approv/i);
+    assert.match(finished.result!, /Study notes/);
+    assert.match(finished.result!, /work@example.com/);
+    assert.equal(finished.criteria?.[0].effect, "drive.delete");
+    assert.match(finished.result!, /Study slides/);
+    assert.match(finished.result!, /Study budget/);
+    assert.deepEqual(
+      new Set(finished.completion?.checks[0].evidenceIds),
+      new Set(reviewed.map((action) => action.id)),
+    );
+    await server.db.put("owner", "actions", {
+      ...reviewed.at(-1)!,
+      status: "succeeded",
+      result: '{"trashed":true}',
+    });
+    assert.equal(
+      (await server.agent.verification.assess("owner", task.id, 0)).status,
+      "unverified",
+    );
+    assert.ok(model.requests.length >= 13);
   });
-  assert.equal((await server.agent.verification.assess("owner", task.id, 0)).status, "unverified");
-  assert.ok(model.requests.length >= 13);
-});
 
 test("Drive trash does not certify a successful PATCH when provider readback still shows an active file", async (t) => {
   const server = await fixture(t);

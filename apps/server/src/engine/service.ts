@@ -2090,7 +2090,16 @@ export class AgentService {
       Number(task.state.appliedRevision ?? 0),
       result,
     );
-    if (deliveryOutcome === "partial") {
+    // A model can resume with stale approval-waiting prose after all requested
+    // removals are confirmed. For removal-only tasks, the independently verified
+    // effects and receipt-derived summary determine delivery. Other requirements
+    // and incomplete/uncertain removals retain the explicit partial outcome.
+    const confirmedRemovalOnly =
+      completion.status === "verified" &&
+      !!task.criteria?.length &&
+      (task.criteria.every((criterion) => criterion.effect === "drive.delete") ||
+        task.criteria.every((criterion) => criterion.effect === "calendar.delete"));
+    if (deliveryOutcome === "partial" && !confirmedRemovalOnly) {
       completion.status = completion.status === "unverified" ? "unverified" : "partial";
       completion.checks.push({ criterionId: "requested-outcome", passed: false, evidenceIds: [] });
       completion.remaining.push("The delivered report still lacks part of the requested outcome.");
