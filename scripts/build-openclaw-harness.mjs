@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { build } from "esbuild";
 
 const root = resolve("third_party/openclaw/harness");
+const toolResultLimits = "src/agents/tool-result-limits.ts";
+const portableToolResultLimits = resolve("apps/server/src/engine/openclaw/tool-result-limits.ts");
 const upstream = JSON.parse(await readFile(join(root, "UPSTREAM.json"), "utf8"));
 for (const [path, expected] of Object.entries(upstream.sha256)) {
   const actual = createHash("sha256")
@@ -36,6 +38,28 @@ const result = await build({
     js: 'import {createRequire as __okamiCreateRequire} from "node:module";const require=__okamiCreateRequire(import.meta.url);',
   },
   plugins: [
+    {
+      // Keep the pinned upstream bytes intact while sharing the app's effective
+      // model budget with native persistence, dispatch and context guards.
+      name: "owned-tool-result-budget",
+      setup(builder) {
+        builder.onLoad({ filter: /[/\\]agents[/\\]tool-result-limits\.ts$/ }, async ({ path }) => {
+          if (path !== join(root, toolResultLimits)) return;
+          const source = await readFile(path, "utf8");
+          const start = source.indexOf(
+            "/** Fresh producer text must fit persistence/dispatch and the raw-weight context guard. */",
+          );
+          if (start < 0) throw new Error("Copied native tool budget boundary changed");
+          const names =
+            "DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS, resolveAutoLiveToolResultMaxChars, calculateMaxToolResultCharsWithCap, resolveLiveToolResultMaxChars";
+          return {
+            contents: `import { estimateToolResultTextChars } from "./embedded-agent-runner/tool-result-text-budget.js";\nimport { ${names} } from ${JSON.stringify(portableToolResultLimits)};\nexport { ${names} };\n${source.slice(start)}`,
+            loader: "ts",
+            resolveDir: dirname(path),
+          };
+        });
+      },
+    },
     {
       name: "copied-upstream-workspaces",
       setup(builder) {
@@ -81,6 +105,12 @@ await writeFile(
       revision: upstream.revision,
       sources: Object.keys(result.metafile.inputs).length,
       outputs: Object.keys(result.metafile.outputs).length,
+      adaptations: [
+        {
+          source: toolResultLimits,
+          adapter: "apps/server/src/engine/openclaw/tool-result-limits.ts",
+        },
+      ],
     },
     null,
     2,

@@ -1167,7 +1167,7 @@ test("a researched PDF has one factual check on its actual reviewed bytes, not a
   assert.deepEqual(saved.artifactIds, [fileId]);
 });
 
-test("final PDF review recovers the fetched FAQ beyond a requested excerpt without a second fetch or changing the journal", async (t) => {
+test("the executor and final PDF review receive the fetched FAQ without another fetch, generation or journal mutation", async (t) => {
   const url = "https://courses.example/beginners";
   const freeProof =
     "All lessons in Beginners AI are free; the optional certificate requires a non-refundable fee.";
@@ -1175,8 +1175,20 @@ test("final PDF review recovers the fetched FAQ beyond a requested excerpt witho
     receiptId = "";
   const fixture = await modelFixture(
     t,
-    (i) =>
-      [
+    (i) => {
+      if (i === 1) {
+        const input = JSON.parse(fixture.requests[i].body).input;
+        const receipt = JSON.parse(
+          input.findLast((item: { type: string }) => item.type === "function_call_output").output,
+        );
+        assert.ok(
+          receipt.text.includes(freeProof),
+          "the worker must see the certificate FAQ before its first document generation",
+        );
+        assert.equal(receipt.truncated, false);
+        assert.equal(receipt.sourceRecovery.networkRead, false);
+      }
+      return [
         { name: "web_fetch", arguments: { url, maxChars: 6000 } },
         {
           name: "create_document",
@@ -1193,7 +1205,8 @@ test("final PDF review recovers the fetched FAQ beyond a requested excerpt witho
           name: "finish_task",
           arguments: { summary: "The course PDF is attached.", artifactIds: [fileId] },
         },
-      ][i],
+      ][i];
+    },
     {
       researchReview: (body) => {
         const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
@@ -1255,6 +1268,7 @@ test("final PDF review recovers the fetched FAQ beyond a requested excerpt witho
   );
   assert.equal(read.mock.callCount(), 1);
   const operations = await f.agent.journal.operations("owner", task.id);
+  assert.equal(operations.filter((op) => op.toolName === "create_document").length, 1);
   const fetched = operations.find((op) => op.toolName === "web_fetch")!.receipt as {
     text: string;
     truncated: boolean;
@@ -1270,7 +1284,7 @@ test("final PDF review recovers the fetched FAQ beyond a requested excerpt witho
   assert.equal(
     fetched.sourceRecovery,
     undefined,
-    "hydration is only a review projection, not a rewritten receipt",
+    "hydration is only a reasoning/review projection, not a rewritten receipt",
   );
   assert.ok(fetched.spill.fileId);
   assert.equal((await f.db.list("owner", "interaction-requests")).length, 0);

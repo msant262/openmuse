@@ -82,7 +82,7 @@ The upstream MIT notice is preserved in [LICENSE](LICENSE).
 | `apps/server/src/skill-frontmatter.ts` | `packages/markdown-core/src/frontmatter.ts` | Portable parser copied; package-specific `isRecord` import replaced by an equivalent local predicate. YAML parsing and recovery behavior retained. |
 | `apps/server/src/engine/openclaw/tool-loop-no-progress.ts` | `src/agents/tool-loop-no-progress.ts` | Algorithm unchanged; import uses a local structural record type. |
 | `apps/server/src/engine/openclaw/tool-loop-argument-churn.ts` | `src/agents/tool-loop-argument-churn.ts` | Algorithm unchanged; import uses a local structural record type. |
-| `apps/server/src/engine/openclaw/tool-result-limits.ts` | `src/agents/tool-result-limits.ts` | Portable live-cap constants/functions copied; normalization-dependent helpers omitted. Local adapter additionally caps conservative UTF-8 bytes. |
+| `apps/server/src/engine/openclaw/tool-result-limits.ts` | `src/agents/tool-result-limits.ts` | Portable cap functions copied; live results scale with the effective context instead of stopping at 64k characters. The build substitutes these functions in the native module, preserving its other guard functions and byte-verified upstream source. The model projection and native persistence/dispatch/context guards share one budget; global context admission remains active. |
 
 `tool-progress.ts` and `tool-output.ts` are application adapters, not upstream code.
 They consume canonical TanStack history, preserve existing effect receipts, and provide

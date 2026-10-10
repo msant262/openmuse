@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ModelMessage } from "@tanstack/ai";
+import { estimateStringChars } from "../../../../third_party/openclaw/harness/packages/normalization-core/src/cjk-chars.ts";
 import { resolveLiveToolResultMaxChars } from "./openclaw/tool-result-limits.ts";
 
 // Recognize only this known procedural instruction. Future warnings or page-
@@ -59,22 +60,26 @@ export class ToolOutputStore {
   }
   /** Project before the copied dispatcher serializes its envelope. Its own text
    * guard must never cut a JSON string containing another serialized receipt. */
-  live(toolCallId: string, contextTokens: number): string {
+  live(toolCallId: string, contextTokens: number, projected?: string): string {
     const text = this.outputs.get(toolCallId);
     if (text === undefined) throw new Error("Tool output unavailable in this task or conversation");
     const cap = resolveLiveToolResultMaxChars({ contextWindowTokens: contextTokens });
     // Reserve the native discovery envelope, escaping and tool identity. Details
     // carry status only; the canonical application receipt is stored separately.
-    const fits = (content: string) =>
-      JSON.stringify(
+    const fits = (content: string) => {
+      const envelope = JSON.stringify(
         {
           tool: { id: toolCallId, name: toolCallId, source: "okami" },
           result: { content: [{ type: "text", text: content }], details: { status: "succeeded" } },
         },
         null,
         2,
-      ).length <=
-      cap - 1024;
+      );
+      return Math.max(Buffer.byteLength(envelope), estimateStringChars(envelope)) <= cap - 1024;
+    };
+    // A recovered source is complete only when its entire envelope fits. Never
+    // shorten it while retaining truncated:false; fall back to the real excerpt.
+    if (projected !== undefined && fits(projected)) return projected;
     if (fits(text)) return text;
     return projectContent(text, toolCallId, Math.floor(cap * 0.75), fits);
   }

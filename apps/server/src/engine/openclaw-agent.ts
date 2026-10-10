@@ -56,6 +56,12 @@ type Options = {
     call: { id: string; toolCallId: string; name: string; args: unknown },
     execute: () => Promise<unknown>,
   ) => Promise<unknown>;
+  /** Owner-verified reasoning view; canonical receipts and Code Mode stay exact. */
+  projectToolResult?: (
+    toolName: string,
+    result: unknown,
+    contextTokens: number,
+  ) => Promise<unknown>;
   onMessages?: (messages: ModelMessage[], phase: string) => Promise<void>;
   /** A pending host assessment owns one inference; its result restores ordinary tools. */
   requiredToolTurn?: (
@@ -853,10 +859,10 @@ export function openclawAgent(options: Options) {
               ) => {
                 abort.signal.throwIfAborted();
                 const parent = /^tool_call:(.*):okami_[^:]+:\d+$/.exec(toolCallId)?.[1];
+                const receipt = { id: toolCallId, name: tool.name, args: raw };
+                receipts.set(toolCallId, receipt);
                 if (parent) {
-                  const receipt = { id: toolCallId, name: tool.name, args: raw };
                   receipts.set(parent, receipt);
-                  receipts.set(toolCallId, receipt);
                   // A dispatched host call is one operation. Keep its native
                   // child outcome and remove only this duplicate transport
                   // wrapper; otherwise wrappers evict the original detector's
@@ -871,27 +877,28 @@ export function openclawAgent(options: Options) {
                       !call.toolCallId ||
                       !receipts.has(call.toolCallId),
                   );
-                  // Upstream transcript sanitation can rewrite the parent id
-                  // after dispatch. Use its own sanitizer to retain the actual
-                  // child's receipt identity in the app's canonical journal.
-                  const [normalized] = copied.sanitizeToolCallIdsForCloudCodeAssist([
-                    {
-                      role: "assistant",
-                      content: [
-                        { type: "toolCall", id: parent, name: "tool_call", arguments: {} },
-                        {
-                          type: "toolCall",
-                          id: toolCallId,
-                          name: nativeName(tool.name),
-                          arguments: raw,
-                        },
-                      ],
-                    },
-                  ]);
-                  if (Array.isArray(normalized?.content)) {
-                    for (const part of normalized.content)
-                      if (part.type === "toolCall" && part.id) receipts.set(part.id, receipt);
-                  }
+                }
+                // Upstream transcript sanitation rewrites direct and parent
+                // call IDs. Both must resolve to the original host receipt.
+                const [normalized] = copied.sanitizeToolCallIdsForCloudCodeAssist([
+                  {
+                    role: "assistant",
+                    content: [
+                      ...(parent
+                        ? [{ type: "toolCall", id: parent, name: "tool_call", arguments: {} }]
+                        : []),
+                      {
+                        type: "toolCall",
+                        id: toolCallId,
+                        name: nativeName(tool.name),
+                        arguments: raw,
+                      },
+                    ],
+                  },
+                ]);
+                if (Array.isArray(normalized?.content)) {
+                  for (const part of normalized.content)
+                    if (part.type === "toolCall" && part.id) receipts.set(part.id, receipt);
                 }
                 if (
                   options.finalResponseWhen?.() &&
@@ -960,11 +967,22 @@ export function openclawAgent(options: Options) {
                   toolCallId,
                   content: text,
                 });
+                let projected: string | undefined;
+                if (!fullResult && options.projectToolResult) {
+                  try {
+                    projected = JSON.stringify(
+                      await options.projectToolResult(tool.name, result, contextWindow),
+                    );
+                  } catch {
+                    // A failed cache projection cannot replace a successful tool
+                    // receipt with an error or manufacture new source evidence.
+                  }
+                }
                 return {
                   content: [
                     {
                       type: "text",
-                      text: fullResult ? text : outputs.live(toolCallId, contextWindow),
+                      text: fullResult ? text : outputs.live(toolCallId, contextWindow, projected),
                     },
                   ],
                   details: fullResult

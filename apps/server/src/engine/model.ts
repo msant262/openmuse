@@ -69,7 +69,7 @@ import {
   researchObservations,
   reviewResearchDelivery,
 } from "./research-delivery-review.ts";
-import { recoverResearchSources } from "./research-source-recovery.ts";
+import { recoverResearchSources, recoverResearchToolResult } from "./research-source-recovery.ts";
 import type { AgentService } from "./service.ts";
 import { TaskBudgetExhaustedError } from "./task-actor.ts";
 import { taskEvidenceContext } from "./task-evidence-context.ts";
@@ -2559,6 +2559,8 @@ export async function executeModelTask(
   };
   const agent = openclawAgent({
     dataDir: config.dataDir,
+    projectToolResult: (name, result, contextTokens) =>
+      recoverResearchToolResult(service.files, owner, name, result, contextTokens),
     directToolNames: [
       ...googleTaskTools(task.prompt),
       ...(config.computerEnabled

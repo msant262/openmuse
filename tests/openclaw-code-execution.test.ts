@@ -26,6 +26,7 @@ test("original Code Mode batches real host reads and records each child through 
   );
   const f = await taskRuntime(t);
   const calls: Array<{ name: string; args: unknown }> = [];
+  const projected: string[] = [];
   const agent = openclawAgent({
     dataDir: f.directory,
     model: "openai/fixture",
@@ -34,6 +35,10 @@ test("original Code Mode batches real host reads and records each child through 
     executeTool: async (call, execute) => {
       calls.push(call);
       return execute();
+    },
+    projectToolResult: async (name, value) => {
+      projected.push(name);
+      return name === "read_sample" ? { value: 0 } : value;
     },
     tools: [
       defineTool({
@@ -75,6 +80,10 @@ test("original Code Mode batches real host reads and records each child through 
     [{ key: "first" }, { key: "second" }],
   );
   assert.equal(fixture.requests.length, 2);
+  assert.ok(
+    !projected.includes("read_sample"),
+    "programmatic child calls must receive exact tool data, not the reasoning view",
+  );
 });
 
 test("foreground Code Mode can read actual page-image metadata through normal host dispatch", async (t) => {

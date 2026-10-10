@@ -1,15 +1,11 @@
 import { createHash } from "node:crypto";
 import type { Files } from "../files.ts";
 import type { JournalOperation } from "./task-journal.ts";
+import { resolveLiveToolResultMaxChars } from "./openclaw/tool-result-limits.ts";
 
 /** Expand only byte-verified public sources from this owner's recorded reads.
  * This is an ephemeral review projection: no journal, network or file writes. */
-export async function recoverResearchSources(
-  files: Files,
-  owner: string,
-  operations: JournalOperation[],
-  contextTokens: number,
-): Promise<JournalOperation[]> {
+function sourceRecovery(files: Files, owner: string, contextTokens: number) {
   const maxCharacters = Math.max(0, Math.floor(contextTokens * 4));
   const loaded = new Map<string, Promise<string | undefined>>();
   const recover = async (value: unknown) => {
@@ -88,20 +84,52 @@ export async function recoverResearchSources(
       },
     };
   };
+  return recover;
+}
+
+async function recoverToolResult(
+  toolName: string,
+  value: unknown,
+  recover: (value: unknown) => Promise<unknown>,
+) {
+  const receipt = value as Record<string, unknown> | undefined;
+  if (toolName === "web_extract" && Array.isArray(receipt?.pages)) {
+    const pages = [];
+    for (const page of receipt.pages) pages.push(await recover(page));
+    return { ...receipt, pages };
+  }
+  if (["web_fetch", "read_web", "browser_research"].includes(toolName)) return recover(value);
+  return value;
+}
+
+/** The executor sees already-read, verified sources without changing the tool's
+ * requested excerpt or issuing another network read. Oversized sources retain
+ * their original excerpt and read_web_source reference. */
+export function recoverResearchToolResult(
+  files: Files,
+  owner: string,
+  toolName: string,
+  value: unknown,
+  contextTokens: number,
+) {
+  const characters = resolveLiveToolResultMaxChars({ contextWindowTokens: contextTokens });
+  return recoverToolResult(toolName, value, sourceRecovery(files, owner, characters / 4));
+}
+
+export async function recoverResearchSources(
+  files: Files,
+  owner: string,
+  operations: JournalOperation[],
+  contextTokens: number,
+): Promise<JournalOperation[]> {
+  const recover = sourceRecovery(files, owner, contextTokens);
   const result: JournalOperation[] = [];
   for (const op of operations) {
     if (op.status !== "succeeded") {
       result.push(op);
       continue;
     }
-    const receipt = op.receipt as Record<string, unknown> | undefined;
-    if (op.toolName === "web_extract" && Array.isArray(receipt?.pages)) {
-      const pages = [];
-      for (const page of receipt.pages) pages.push(await recover(page));
-      result.push({ ...op, receipt: { ...receipt, pages } });
-    } else if (["web_fetch", "read_web", "browser_research"].includes(op.toolName)) {
-      result.push({ ...op, receipt: await recover(op.receipt) });
-    } else result.push(op);
+    result.push({ ...op, receipt: await recoverToolResult(op.toolName, op.receipt, recover) });
   }
   return result;
 }
