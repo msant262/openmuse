@@ -42,6 +42,12 @@ test("console reads actual Chromium logs and exceptions with pagination and sess
       ),
     );
     assert.equal(JSON.stringify(await browser.console(other)).includes("fixture log"), false);
+    await browser.navigate(id, "https://browser.fixture.test/");
+    assert.equal(
+      (await browser.console(id)).entries.length,
+      0,
+      "old page errors cannot be attributed to the new page",
+    );
     await browser.console(id, { clear: true });
     assert.equal((await browser.console(id)).entries.length, 0);
     await assert.rejects(browser.console(id, { expression: "fetch('/delete')" }), {

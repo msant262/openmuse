@@ -27,6 +27,9 @@ export class BrowserDiagnostics {
     this.page = page;
     page.on("console", (message) => this.append("console", message.type(), message.text()));
     page.on("pageerror", (error) => this.append("exception", "error", error.message));
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) this.clear();
+    });
   }
   protectSecrets(values: string[]) {
     const merged = new Set([...this.secrets, ...values.filter(Boolean)]);
@@ -70,12 +73,13 @@ export class BrowserDiagnostics {
       .map((entry) => ({ ...entry, text: this.redact(entry.text) }));
     const nextAfter = available.length > entries.length ? (entries.at(-1)?.sequence ?? null) : null;
     const dropped = this.dropped;
-    if (input.clear) {
-      this.entries = [];
-      this.bytes = 0;
-      this.dropped = 0;
-    }
+    if (input.clear) this.clear();
     return { entries, nextAfter, dropped, cleared: input.clear };
+  }
+  private clear() {
+    this.entries = [];
+    this.bytes = 0;
+    this.dropped = 0;
   }
   async cdp(input: z.output<typeof browserCdpInputSchema>) {
     this.cdpSession ??= this.page.context().newCDPSession(this.page);
