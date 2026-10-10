@@ -476,6 +476,60 @@ test("production native file API waits for origin publication and rejects stale 
   );
 });
 
+test("stopping a waiting native task dispatches containment without an active worker or device scope", async (t) => {
+  const server = await nativeRuntime(t);
+  const first = await (
+    await server.post(
+      "/commands",
+      {
+        command: "python3 long-running.py",
+        background: true,
+        timeoutMs: 30000,
+      },
+      "task-stop-owned",
+    )
+  ).json();
+  const batch = await server.node("claim", { epoch: server.epoch, waitMs: 0 });
+  assert.equal(batch.operations.length, 1);
+  const target = batch.operations[0];
+  await server.node("receipt", {
+    epoch: server.epoch,
+    operationId: first.id,
+    sequence: 1,
+    receipt: { status: "running", data: first },
+  });
+  await server.agent.runtimePause.set("local-user", { paused: true, expectedRevision: 0 });
+  const pending = server.agent.control("local-user", target.taskId, "cancel");
+  const cancellation = await server.node("claim", { epoch: server.epoch, waitMs: 200 });
+  assert.equal(cancellation.operations.length, 1, "stop must reach the native executor");
+  const stop = cancellation.operations[0];
+  assert.equal(stop.kind, "cancel");
+  assert.equal(stop.args.operationId, first.id);
+  assert.equal(stop.taskId, target.taskId);
+  assert.equal(stop.resourceFence, target.resourceFence);
+  await server.node("receipt", {
+    epoch: server.epoch,
+    operationId: first.id,
+    sequence: 2,
+    receipt: {
+      status: "outcome_unknown",
+      data: { ...first, status: "interrupted", cleanupConfirmed: true, outcomeUnknown: true },
+    },
+  });
+  await server.node("receipt", {
+    epoch: server.epoch,
+    operationId: stop.id,
+    sequence: 1,
+    receipt: { status: "succeeded", data: { stopped: true } },
+  });
+  assert.equal((await pending).status, "cancelled");
+  assert.equal(
+    (await server.executors.delivery("local-user", first.id))?.receipt?.status,
+    "outcome_unknown",
+  );
+  assert.equal((await server.db.list("local-user", "tasks")).length, 1);
+});
+
 test("paired manual cancellation reuses owned command authority while globally paused", async (t) => {
   const server = await nativeRuntime(t);
   const first = await (

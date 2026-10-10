@@ -76,7 +76,11 @@ import { HttpSearchBackend, type SearchBackend } from "../search.ts";
 import { OperationDrain } from "../shutdown.ts";
 import type { LocalThreads } from "../threads.ts";
 import type { WorkspaceService } from "../workspace.ts";
-import { readComputerCommand, reconcileWaitingComputerTasks } from "./computer-jobs.ts";
+import {
+  cancelTaskComputerJob,
+  readComputerCommand,
+  reconcileWaitingComputerTasks,
+} from "./computer-jobs.ts";
 import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
 import { delegatedContext } from "./delegated-context.ts";
 import { analyzeSpending } from "./finance.ts";
@@ -1026,6 +1030,14 @@ export class AgentService {
     if (action === "resume" && task.status !== "paused")
       throw new AppError("Only paused tasks can be resumed", 409);
     if (action === "pause" && (terminal.has(task.status) || task.status === "paused")) return task;
+    const stopCommandId =
+      action === "cancel"
+        ? typeof task.state.computerCleanupPendingId === "string"
+          ? task.state.computerCleanupPendingId
+          : typeof task.state.waitingComputerCommandId === "string"
+            ? task.state.waitingComputerCommandId
+            : undefined
+        : undefined;
     const status =
       action === "cancel"
         ? "cancelled"
@@ -1060,10 +1072,15 @@ export class AgentService {
         updatedAt: date(),
         result:
           action === "cancel"
-            ? "Stopped by you."
+            ? stopCommandId
+              ? "Stop requested. Waiting for the computer to confirm that execution has ended."
+              : "Stopped by you."
             : action === "pause"
               ? "Paused. Resume when you're ready."
               : "",
+        ...(stopCommandId
+          ? { state: { ...task.state, computerCancellationRequestedId: stopCommandId } }
+          : {}),
         ...(task.kind === "monitor" && action === "resume"
           ? { state: { ...task.state, failures: 0, notice: null, resumingMonitor: false } }
           : {}),
@@ -1071,6 +1088,22 @@ export class AgentService {
     );
     if (!updated) throw new AppError("Task changed; refresh and try again", 409);
     this.worker.abort(id, action === "pause" ? "explicit_pause" : "explicit_cancel");
+    if (stopCommandId) {
+      try {
+        const receipt = await cancelTaskComputerJob(this.computer, owner, updated);
+        if (receipt && computerCommandCleanupConfirmed(receipt))
+          await this.db.compareAndSwapTask(
+            owner,
+            id,
+            { status: "cancelled", state: { computerCancellationRequestedId: stopCommandId } },
+            { result: "Stopped by you." },
+          );
+      } catch (error) {
+        // The durable stop request survives this HTTP request and worker turn.
+        // Maintenance retries containment; physical occupancy remains held.
+        backgroundFailure("stop task computer job", error);
+      }
+    }
     if (task.kind === "monitor")
       await this.db.compareAndSwap(
         owner,
@@ -1097,7 +1130,7 @@ export class AgentService {
       title: `Task ${status}`,
       detail: "Changed by you",
     });
-    return updated;
+    return (await this.db.get<AgentTask>(owner, "tasks", id)) ?? updated;
   }
   async answer(
     owner: string,

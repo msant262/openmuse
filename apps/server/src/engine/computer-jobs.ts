@@ -15,6 +15,26 @@ export async function readComputerCommand(
   return (await computer.snapshot(owner)).commands.find((command) => command.id === id);
 }
 
+/** A stopped JS turn may already have returned a background native job. Stop
+ * that same owned job; neither a lost ACK nor a restart authorizes replaying it. */
+export async function cancelTaskComputerJob(
+  computer: ComputerBackend,
+  owner: string,
+  task: AgentTask,
+): Promise<ComputerCommand | undefined> {
+  const id = task.state.computerCancellationRequestedId;
+  if (
+    task.status !== "cancelled" ||
+    typeof id !== "string" ||
+    (id !== task.state.computerCleanupPendingId && id !== task.state.waitingComputerCommandId)
+  )
+    return undefined;
+  const current = await readComputerCommand(computer, owner, id);
+  if (current && computerCommandCleanupConfirmed(current)) return current;
+  if (!computer.cancel) throw new Error("Computer job cancellation is unavailable");
+  return computer.cancel(owner, id);
+}
+
 /** Release abandoned task slots only after a durable computer receipt proves termination. */
 export async function reconcileWaitingComputerTasks(
   db: Store,
@@ -46,7 +66,9 @@ export async function reconcileWaitingComputerTasks(
     if (typeof id !== "string" || resumable.has(task.status)) continue;
     let receipt: ComputerCommand | undefined;
     try {
-      receipt = await readComputerCommand(computer, owner, id);
+      receipt =
+        (await cancelTaskComputerJob(computer, owner, task)) ??
+        (await readComputerCommand(computer, owner, id));
     } catch {
       // A failed poll cannot establish that the physical process has stopped.
       continue;
@@ -67,6 +89,9 @@ export async function reconcileWaitingComputerTasks(
         state: selector,
       },
       {
+        ...(task.status === "cancelled" && task.state.computerCancellationRequestedId === id
+          ? { result: "Stopped by you." }
+          : {}),
         state: {
           waitingComputerCommandId: id,
           computerCleanupPendingId: id,
@@ -99,6 +124,9 @@ export async function reconcileWaitingComputerTasks(
         state: {
           waitingComputerCommandId: null,
           computerCleanupPendingId: null,
+          ...(latest.state.computerCancellationRequestedId === id
+            ? { computerCancellationRequestedId: null }
+            : {}),
         },
       },
     );

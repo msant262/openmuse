@@ -205,18 +205,36 @@ export async function createApp(
           "task-operations",
           request.args.operationId,
         );
-        if (
-          device?.owner === owner &&
-          target?.nativeEnvelope &&
-          target.executorId === request.executorId
-        )
-          return taskAuthority.registerManualRequest(owner, id, device.deviceId, request, {
+        if (target?.nativeEnvelope && target.executorId === request.executorId) {
+          const targetContext = {
             kind: "task",
             taskId: target.taskId,
             desiredRevision: target.revision,
             runToken: target.runToken,
             resourceLeaseIds: target.resourceLeaseIds,
-          });
+          } as const;
+          const stoppedTask = await db.get<
+            import("../../../packages/domain/src/agent.ts").AgentTask
+          >(owner, "tasks", target.taskId);
+          // A durable user stop is containment authority even after the worker
+          // and authenticated request have gone away. The native authority still
+          // verifies the original target, run token, epoch and held resources.
+          if (
+            stoppedTask?.status === "cancelled" &&
+            stoppedTask.state.computerCancellationRequestedId === target.id &&
+            (stoppedTask.state.computerCleanupPendingId === target.id ||
+              stoppedTask.state.waitingComputerCommandId === target.id)
+          )
+            return targetContext;
+          if (device?.owner === owner)
+            return taskAuthority.registerManualRequest(
+              owner,
+              id,
+              device.deviceId,
+              request,
+              targetContext,
+            );
+        }
       }
       const manual = currentManualNativeScope() ?? currentDesktopViewerScope();
       if (context?.kind === "task" && request && manual?.owner === owner)
