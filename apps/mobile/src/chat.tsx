@@ -91,7 +91,7 @@ import {
   type ConversationFrame,
   ConversationResourceLibrary,
 } from "./conversation-resources";
-import { runConversationTurn } from "./conversation-run";
+import { connectConversationStream, runConversationTurn } from "./conversation-run";
 import { delegatedToolResult } from "./delegated-tool-result";
 import { FileToolCard, mediaResult } from "./file-tool-card";
 import { useI18n } from "./i18n";
@@ -551,6 +551,12 @@ export function ChatScreen({
   const runLock = useRef(false);
   const [saveError, setSaveError] = useState("");
   const [historyError, setHistoryError] = useState("");
+  const connectionRetry = useRef(0);
+  const restoreConnection = useCallback(() => {
+    connectionRetry.current = 0;
+    setHistoryError("");
+    setLoaded(true);
+  }, []);
   const [historyAttempt, setHistoryAttempt] = useState(0);
   useEffect(() => {
     if (!(queue instanceof MessageOutbox)) return;
@@ -635,10 +641,14 @@ export function ChatScreen({
                 );
                 await queue.checkpointReplay(checkpoint);
               }
-              await runConversationTurn(
+              await connectConversationStream(
                 agentId,
+                agent,
                 () => copilotkit.connectAgent({ agent }),
                 (onError) => copilotkit.subscribe({ onError }),
+                () => {
+                  if (active) restoreConnection();
+                },
               );
             } finally {
               runLock.current = false;
@@ -674,6 +684,7 @@ export function ChatScreen({
     richThreads,
     selection.existing,
     queue,
+    restoreConnection,
   ]);
   useEffect(() => {
     if (!(queue instanceof MessageOutbox) || !queue.getSnapshot().loaded) return;
@@ -692,7 +703,6 @@ export function ChatScreen({
     return () => subscription.unsubscribe();
   }, [agent, queue]);
   const replayLock = useRef(false);
-  const connectionRetry = useRef(0);
   const lastInteractions = useRef<InteractionRequest[] | undefined>(undefined);
   const syncReplay = useCallback(async () => {
     if (!(queue instanceof MessageOutbox) || replayLock.current || !loaded || !isReady) return;
@@ -731,10 +741,12 @@ export function ChatScreen({
         runLock.current = true;
         // Response streaming may wait for a stored message to retry. Keep journal
         // synchronization available so its durable failure disposition is visible meanwhile.
-        void runConversationTurn(
+        void connectConversationStream(
           agentId,
+          agent,
           () => copilotkit.connectAgent({ agent }),
           (onError) => copilotkit.subscribe({ onError }),
+          restoreConnection,
         )
           .then(() => {
             connectionRetry.current = 0;
@@ -751,7 +763,7 @@ export function ChatScreen({
     } finally {
       replayLock.current = false;
     }
-  }, [agent, agentId, api, copilotkit, isReady, loaded, queue, threadId]);
+  }, [agent, agentId, api, copilotkit, isReady, loaded, queue, threadId, restoreConnection]);
   useEffect(() => {
     if (!durableChat || !active) return;
     const poll = () => {
@@ -803,10 +815,12 @@ export function ChatScreen({
     // Reconnect while idle so background results appear without another send.
     seenRoutinePost.current = routinePost;
     runLock.current = true;
-    void runConversationTurn(
+    void connectConversationStream(
       agentId,
+      agent,
       () => copilotkit.connectAgent({ agent }),
       (onError) => copilotkit.subscribe({ onError }),
+      restoreConnection,
     )
       .catch((e) => {
         seenRoutinePost.current = "";
@@ -827,6 +841,7 @@ export function ChatScreen({
     agent,
     agentId,
     copilotkit,
+    restoreConnection,
   ]);
   const saveHistory = useCallback(async () => {
     if (!richThreads) await api.request("/api/conversation", { messages: agent.messages }, "PUT");
