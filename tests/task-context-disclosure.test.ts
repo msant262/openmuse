@@ -24,3 +24,19 @@ test("public research does not load Workspace mutation instructions into every m
       /For deleting a group of emails|For Calendar work, preserve|Gmail folders are labels/,
     );
 });
+
+test("a natural Python Calendar request receives scheduling guidance before its first tool call", async (t) => {
+  const fixture = await modelFixture(t, () => ({
+    name: "finish_task",
+    arguments: { outcome: "partial", summary: "No event was created." },
+  }));
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  await f.agent.createTask("owner", {
+    prompt:
+      "Use uma sessão Python para criar na minha agenda o compromisso QA Python A 20261010 amanhã às 11h, com 15 minutos de duração, no fuso Europe/Berlin.",
+  });
+  await f.agent.worker.tick();
+  assert.ok(fixture.requests.length);
+  assert.match(fixture.requests[0].body, /Dates in event titles, subjects, filenames/);
+  assert.match(fixture.requests[0].body, /Resolve tomorrow and other relative dates/);
+});
