@@ -864,7 +864,7 @@ export class ConversationAgent extends AbstractAgent {
       defineTool({
         name: "delegate_task",
         description:
-          "Immediately hand a whole job to the durable server worker. Use agent for research, images, documents, presentations, mail, calendar and integrations. The ORIGINAL user message and conversation context are attached automatically: normally OMIT prompt instead of rewriting the request. Choose a short title, acknowledgment and reaction. The worker researches, reads skills, drafts and delivers. Do not prepare the artifact here. The returned task card confirms admission. Internal IDs are not user-facing.",
+          "Immediately hand a whole job to the durable server worker. Use agent for research, images, documents, presentations, requested code/Python execution, persistent interpreter sessions, computer/browser work, mail, calendar and integrations. The ORIGINAL user message and conversation context are attached automatically: normally OMIT prompt instead of rewriting the request. Choose a short title, acknowledgment and reaction. The worker checks available runtimes, executes code, researches, reads skills, drafts and delivers. Do not prepare the artifact here. The returned task card confirms admission. Internal IDs are not user-facing.",
         // The foreground hands off an objective, not an arbitrary internal task
         // payload. A closed schema lets providers enforce the acknowledgment in
         // the first call instead of repairing missing arguments in another turn.
