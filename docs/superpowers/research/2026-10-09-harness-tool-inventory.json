@@ -285,5 +285,29 @@
       "name": "web_search",
       "source": "src/agents/tools/web-search.ts"
     }
+  ],
+  "implementationChecks": [
+    {
+      "surface": "execute_code.python",
+      "status": "core-implemented-not-connected",
+      "productionEnabled": false,
+      "upstream": "e0550c97bbd916cd5ff8fa0450e6291c31921b94",
+      "unmodifiedSourceSha256": "ab88721b4a82c6b32d4160b441daccbb0e84e44c100d7bb29bcb6491a882ca5f",
+      "verified": [
+        "real local interpreter namespace persistence",
+        "full-result host callback RPC",
+        "fresh cell context and retired-call refusal",
+        "timeout/process-group teardown",
+        "native unit arguments and no-follow workspace anchors",
+        "packaged MIT license"
+      ],
+      "pending": [
+        "native journal and per-cell transport",
+        "physical budget accounting and native watchdog registration",
+        "original host dispatcher and approval resumption",
+        "ordinary Luna chat acceptance in the published app"
+      ],
+      "acceptanceApproved": false
+    }
   ]
 }

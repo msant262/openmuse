@@ -11,6 +11,11 @@ OS packages keep their distribution-provided license/copyright files under
 `node_modules`; Python distributions keep their metadata/license files in the
 isolated media venv. Do not remove those files when packaging installed code.
 
+The pinned Hermes Python cell source is MIT-licensed. Its unchanged upstream
+source, full `HERMES-LICENSE` and provenance `README.md` are packaged together
+under `/opt/okami-computer/executor/vendor/`; this does not install the Hermes
+framework or advertise an unfinished interpreter capability.
+
 The separate [OpenBao 2.7.1 distribution](https://github.com/openbao/openbao/releases/tag/v2.7.1)
 has its own license. LibreOffice, ffmpeg, Chromium/Playwright, age, gogcli,
 faster-whisper/CTranslate2 and the small model retain their respective upstream

@@ -1,7 +1,9 @@
 """Native deployment contracts; no host changes and no credential values in output."""
 import copy
+import importlib.util
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"apps/computer"))
@@ -15,6 +17,20 @@ ACCOUNT={"uid":1003,"gid":1004,"user":"okami-bot","home":"/home/okami-bot",
 
 
 class PrivilegeContracts(unittest.TestCase):
+    def test_pinned_python_source_is_packaged_with_its_license_and_provenance(self):
+        spec=importlib.util.spec_from_file_location("native_installer",Path(__file__).with_name("install_native.py"))
+        installer=importlib.util.module_from_spec(spec);spec.loader.exec_module(installer)
+        files=installer.copy_set(Path(__file__).resolve().parents[1])
+        for name in ("hermes_code_kernel.py","HERMES-LICENSE","README.md"):
+            self.assertTrue("apps/computer/executor/vendor/"+name in files,name)
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)
+            vendor=source/"apps/computer/executor/vendor"
+            vendor.mkdir(parents=True)
+            (vendor/"hermes_code_kernel.py").write_text("# source without notices")
+            with self.assertRaisesRegex(ValueError,"notice"):
+                installer.copy_set(source)
+
     def test_native_proxy_is_fixed_reciprocal_and_obeys_pause(self):
         policy=NetworkPolicy(1003,["1.1.1.1"],browser_proxy_port=18777)
         self.assertTrue(policy.permits("127.0.0.1",18777,source_address="127.0.0.1"))

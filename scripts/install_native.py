@@ -76,6 +76,13 @@ def copy_set(source):
             if path.is_symlink():raise ValueError("Source symlinks are not installable")
             if path.is_file() and path.suffix in (".py",".ts") and "__pycache__" not in path.parts:
                 files[str(path.relative_to(source))]=sha(path)
+    vendor=source/"apps/computer/executor/vendor"
+    if (vendor/"hermes_code_kernel.py").exists():
+        for name in ("HERMES-LICENSE","README.md"):
+            path=vendor/name
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("Pinned Hermes Python source requires its license and provenance notice")
+            files[str(path.relative_to(source))]=sha(path)
     for name in ("files.py","media.py","media_job.py","requirements.txt"):
         path=source/"apps/computer"/name
         if path.is_symlink():raise ValueError("Source symlinks are not installable")
