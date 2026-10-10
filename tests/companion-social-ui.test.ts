@@ -22,6 +22,7 @@ export function SocialHarness(props) {
 `,
   );
   const api = { identityKey: "owner-one", request };
+  const appState = { currentState: "active" };
   let poll: (() => void) | undefined;
   const view = componentHarness(
     pathToFileURL(source),
@@ -30,7 +31,14 @@ export function SocialHarness(props) {
       "./avatar-renderer": { AvatarRenderer: "AvatarRenderer" },
       "expo-crypto": { randomUUID: () => "reaction-request" },
       "../../../packages/domain/src/conversation-social": socialDomain,
-      "react-native": { Image: "Image", Pressable: "Pressable", Text: "Text", View: "View" },
+      "react-native": {
+        Image: "Image",
+        Pressable: "Pressable",
+        Text: "Text",
+        View: "View",
+        AppState: appState,
+        Platform: { OS: "android" },
+      },
       "./i18n": { useI18n: () => ({ t: (text: string) => text }) },
       "./workspace": { useWorkspace: () => ({ api }) },
     },
@@ -48,6 +56,7 @@ export function SocialHarness(props) {
   return {
     ...view,
     api,
+    appState,
     poll: () => poll?.(),
     social: () =>
       view.nodes()[0].props.social as {
@@ -61,6 +70,64 @@ export function SocialHarness(props) {
     },
   };
 }
+
+test("identical social polls retain the visible state rather than invalidating the chat", async () => {
+  const response = {
+    reactions: [{ id: "r", threadId: "chat", messageId: "m", actor: "user", emoji: "❤️" }],
+    messages: [{ messageId: "m", text: "Thanks!", stickerId: "thanks" }],
+  };
+  const view = fixture(async () => structuredClone(response));
+  try {
+    view.render();
+    await view.flush();
+    const before = view.social().state;
+    for (let n = 0; n < 5; n++) {
+      view.poll();
+      await view.flush();
+      assert.equal(view.social().state, before, "unchanged polls must retain consumer identity");
+    }
+    response.reactions[0].emoji = "👍";
+    response.messages[0].text = "Updated reply";
+    view.poll();
+    await view.flush();
+    assert.notEqual(view.social().state, before);
+    assert.equal(view.social().state.reactions[0].emoji, "👍");
+    assert.equal(view.social().state.messages[0].text, "Updated reply");
+    const changed = view.social().state;
+    view.poll();
+    await view.flush();
+    assert.equal(view.social().state, changed);
+  } finally {
+    view.close();
+  }
+});
+
+test("background social polling makes no request and the foreground poll reads new content", async () => {
+  let reads = 0;
+  const view = fixture(async () => {
+    reads++;
+    return { reactions: [], messages: [{ messageId: "m", text: `Read ${reads}` }] };
+  });
+  try {
+    view.render();
+    await view.flush();
+    assert.equal(reads, 1);
+    view.appState.currentState = "background";
+    for (let n = 0; n < 5; n++) {
+      view.poll();
+      await view.flush();
+    }
+    assert.equal(reads, 1, "a hidden native app must not keep refreshing social history");
+    assert.equal(view.social().state.messages[0].text, "Read 1");
+    view.appState.currentState = "active";
+    view.poll();
+    await view.flush();
+    assert.equal(reads, 2);
+    assert.equal(view.social().state.messages[0].text, "Read 2");
+  } finally {
+    view.close();
+  }
+});
 
 test("a new identity cannot render another owner's cached reactions or quotes", async () => {
   const view = fixture(async () => ({

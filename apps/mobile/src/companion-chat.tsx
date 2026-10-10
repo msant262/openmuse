@@ -1,6 +1,6 @@
 import * as Crypto from "expo-crypto";
-import { useEffect, useRef, useState } from "react";
-import { Image, Pressable, Text, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AppState, Image, Platform, Pressable, Text, View } from "react-native";
 import {
   type ConversationSocialState,
   companionStickers,
@@ -130,6 +130,34 @@ export function MessageQuoteView({
   );
 }
 
+function sameSocialState(a: ConversationSocialState, b: ConversationSocialState) {
+  return (
+    a.reactions.length === b.reactions.length &&
+    a.messages.length === b.messages.length &&
+    a.reactions.every((item, index) => {
+      const next = b.reactions[index];
+      return (
+        item.id === next.id &&
+        item.threadId === next.threadId &&
+        item.messageId === next.messageId &&
+        item.actor === next.actor &&
+        item.emoji === next.emoji
+      );
+    }) &&
+    a.messages.every((item, index) => {
+      const next = b.messages[index];
+      return (
+        item.messageId === next.messageId &&
+        item.text === next.text &&
+        item.stickerId === next.stickerId &&
+        item.replyTo?.messageId === next.replyTo?.messageId &&
+        item.replyTo?.text === next.replyTo?.text &&
+        item.replyTo?.role === next.replyTo?.role
+      );
+    })
+  );
+}
+
 export function useConversationSocial(
   threadId: string,
   enabled: boolean,
@@ -158,11 +186,13 @@ export function useConversationSocial(
   function setState(
     next: ConversationSocialState | ((before: ConversationSocialState) => ConversationSocialState),
   ) {
-    setSnapshot((before) => ({
-      owner,
-      state:
-        typeof next === "function" ? next(before.owner === owner ? before.state : empty()) : next,
-    }));
+    setSnapshot((before) => {
+      const value =
+        typeof next === "function" ? next(before.owner === owner ? before.state : empty()) : next;
+      return before.owner === owner && sameSocialState(before.state, value)
+        ? before
+        : { owner, state: value };
+    });
   }
   useEffect(() => {
     setError("");
@@ -174,7 +204,15 @@ export function useConversationSocial(
     let live = true;
     let reading = false;
     const load = async () => {
-      if (!enabled || reading || changing.current) return;
+      if (
+        !enabled ||
+        reading ||
+        changing.current ||
+        AppState.currentState === "background" ||
+        AppState.currentState === "inactive" ||
+        (Platform.OS === "web" && typeof document !== "undefined" && document.hidden)
+      )
+        return;
       reading = true;
       const version = mutation.current;
       try {
@@ -265,12 +303,14 @@ export function useConversationSocial(
       }
     }
   }
-  const messages = new Map(
-    outbox?.getSnapshot().messageDetails.map((item) => [item.messageId, item]),
-  );
-  for (const message of state.messages) messages.set(message.messageId, message);
+  const cachedDetails = outbox?.getSnapshot().messageDetails;
+  const visibleState = useMemo(() => {
+    const messages = new Map(cachedDetails?.map((item) => [item.messageId, item]));
+    for (const message of state.messages) messages.set(message.messageId, message);
+    return { ...state, messages: [...messages.values()] };
+  }, [state, cachedDetails]);
   return {
-    state: { ...state, messages: [...messages.values()] },
+    state: visibleState,
     error: error || loadError,
     react,
   };

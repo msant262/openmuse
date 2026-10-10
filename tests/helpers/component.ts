@@ -38,6 +38,9 @@ export function componentHarness(
         cells[slot] = { deps, value: create() };
       return cells[slot].value;
     },
+    useCallback(callback: unknown, deps: readonly unknown[]) {
+      return hooks.useMemo(() => callback, deps);
+    },
     createContext(value: unknown) {
       return { value };
     },

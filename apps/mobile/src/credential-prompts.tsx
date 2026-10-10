@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -148,8 +149,9 @@ export function CredentialPromptsProvider({ children }: { children: ReactNode })
   );
 
   const pending = pendingCredentialPrompts(requests);
+  const controller = useMemo(() => ({ show, refresh }), [show, refresh]);
   return (
-    <CredentialPromptsContext.Provider value={{ show, refresh }}>
+    <CredentialPromptsContext.Provider value={controller}>
       {children}
       {!active && pending.length > 0 && (
         <View
