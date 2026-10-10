@@ -22,7 +22,11 @@ import { meetsRequirements, routingCapabilities } from "../providers/model-capab
 import type { ModelRouter } from "../providers/model-router.ts";
 import type { ModelSelection, ProviderContinuationCheckpoint } from "../providers/models.ts";
 import { continuationMessages, modelAdapter, providerConfigured } from "../providers/models.ts";
-import { type CodeExecutionRuntime, codeExecutionTool } from "./code-execution.ts";
+import {
+  type CodeExecutionRuntime,
+  codeExecutionTool,
+  type PythonExecutionRuntime,
+} from "./code-execution.ts";
 import type { ContextModelResolver } from "./context-budget.ts";
 import { harnessToolCatalog } from "./harness-tool-catalog.ts";
 import { resolveLiveToolResultMaxChars } from "./openclaw/tool-result-limits.ts";
@@ -82,6 +86,7 @@ type Options = {
   workClass?: WorkClass;
   /** Task-only Code Mode may call actions through the ordinary host policy. */
   codeToolEffects?: boolean;
+  pythonRuntime?: PythonExecutionRuntime;
   requirements?: Partial<ModelRequirements>;
   modelRouter?: ModelRouter;
   onProviderInterrupted?: (checkpoint: ProviderContinuationCheckpoint) => Promise<void> | void;
@@ -705,6 +710,7 @@ export function openclawAgent(options: Options) {
           tools.push(
             codeExecutionTool({
               runtime: copied,
+              pythonRuntime: options.pythonRuntime,
               allowEffects: options.codeToolEffects,
               tools: () =>
                 tools

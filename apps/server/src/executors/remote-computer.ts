@@ -12,6 +12,8 @@ import { computerCommandSchema, workspacePath } from "../computer.ts";
 import {
   type ComputerBackend,
   type ComputerDispatchOptions,
+  type ComputerPythonInput,
+  type ComputerPythonOptions,
   commandReceiptSchema,
   computerSearchParameters,
   computerSearchReceipt,
@@ -22,9 +24,16 @@ import { FileVersions } from "../file-versions.ts";
 import {
   type ExecutorDispatchContext,
   type ExecutorOperation,
+  type ExecutorReceipt,
   type ExecutorRequest,
   executorRequestSchema,
 } from "./protocol.ts";
+import { dispatchPythonRequests } from "./python-dispatch.ts";
+import {
+  nativePythonArgsSchema,
+  pythonResourceKey,
+  pythonResultSchema,
+} from "./python-protocol.ts";
 import type { ExecutorRegistry } from "./registry.ts";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -52,6 +61,7 @@ export class RemoteComputerBackend implements ComputerBackend {
     readonly options: {
       executorId: string;
       enabled?: boolean;
+      pythonEnabled?: boolean;
       timeoutMs?: number;
       fileWaitMs?: number;
       pollMs?: number;
@@ -76,6 +86,69 @@ export class RemoteComputerBackend implements ComputerBackend {
       retentionDays: options.retentionDays,
       maxVersionBytes: options.maxVersionBytes,
     });
+  }
+  pythonResourceKey(owner: string, sessionId: string) {
+    this.check(owner);
+    return pythonResourceKey(this.options.executorId, owner, sessionId);
+  }
+  async pythonAvailable(owner: string) {
+    if (this.options.pythonEnabled !== true || this.options.enabled === false) return false;
+    this.check(owner);
+    const node = await this.registry.node(this.options.executorId);
+    return Boolean(
+      node?.connected &&
+        node.reconciled &&
+        !node.hello.readiness.quarantined &&
+        node.hello.readiness.account.state === "ready" &&
+        node.hello.readiness.runtime.state === "ready" &&
+        node.hello.capabilities.some((cap) => cap.name === "python" && cap.version === 1),
+    );
+  }
+  async python(owner: string, input: ComputerPythonInput, options: ComputerPythonOptions) {
+    if (!(await this.pythonAvailable(owner)))
+      throw new AppError("Native Python is not available on the connected executor", 409);
+    const args = nativePythonArgsSchema.parse({
+      command: "Python cell",
+      cwd: "/workspace",
+      background: false,
+      timeoutMs: input.wallClockMs,
+      pythonCell: {
+        owner,
+        sessionId: input.sessionId,
+        code: input.code,
+        tools: input.tools,
+        reset: input.reset,
+        maxToolCalls: input.maxToolCalls,
+        outputBytes: 131072,
+      },
+    });
+    const operation = await this.submit(
+      owner,
+      { kind: "command", capability: "python", capabilityVersion: 1, args },
+      options,
+    );
+    // Save physical occupancy before waiting, even if transport later fails.
+    await this.command(owner, operation.id);
+    let receipt: ExecutorReceipt;
+    try {
+      receipt = await dispatchPythonRequests(
+        this.registry,
+        owner,
+        operation,
+        options,
+        this.options.pollMs,
+      );
+    } catch (error) {
+      if (options.signal?.aborted) await this.cancel(owner, operation.id).catch(() => {});
+      await this.command(owner, operation.id);
+      throw error;
+    }
+    return {
+      command: await this.command(owner, operation.id),
+      ...(receipt.data?.result !== undefined
+        ? { result: pythonResultSchema.parse(receipt.data.result) }
+        : {}),
+    };
   }
   private check(owner: string) {
     const registration = this.registry.registration(this.options.executorId);
@@ -369,7 +442,38 @@ export class RemoteComputerBackend implements ComputerBackend {
       startedAt: operation.createdAt,
     };
     let receipt = intent;
-    if (delivery.receipt?.data) {
+    if (operation.capability === "python" && delivery.receipt) {
+      nativePythonArgsSchema.parse(args);
+      const result =
+        delivery.receipt.data?.result !== undefined
+          ? pythonResultSchema.parse(delivery.receipt.data.result)
+          : undefined;
+      if (
+        delivery.receipt.status === "succeeded" &&
+        (result?.status !== "ok" || delivery.receipt.data?.cellSettled !== true)
+      )
+        throw new AppError("Native successful Python receipt is malformed", 502);
+      receipt = {
+        ...intent,
+        stdout: result?.stdout ?? "",
+        stderr: result?.stderr ?? delivery.receipt.message ?? "",
+        truncated: Boolean(result?.stdout_clipped || result?.stderr_clipped),
+        cleanupConfirmed: delivery.receipt.data?.cleanupConfirmed === true,
+        ...(delivery.receipt.status !== "running"
+          ? {
+              status:
+                delivery.receipt.status === "succeeded"
+                  ? ("succeeded" as const)
+                  : delivery.receipt.status === "failed"
+                    ? ("failed" as const)
+                    : delivery.receipt.status === "rejected_not_dispatched"
+                      ? ("rejected_not_dispatched" as const)
+                      : ("interrupted" as const),
+              completedAt: new Date().toISOString(),
+            }
+          : {}),
+      };
+    } else if (delivery.receipt?.data) {
       const parsed = commandReceiptSchema.safeParse(delivery.receipt.data);
       if (parsed.success) {
         if (

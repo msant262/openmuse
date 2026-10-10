@@ -155,9 +155,17 @@ class NativePythonJobs:
             result = job.controller.execute(job.scope, cell["code"], tools=tools,
                 should_continue=lambda: self._continue(job), timeout_seconds=job.operation["args"]["timeoutMs"] / 1000,
                 reset=cell["reset"], max_tool_calls=cell["maxToolCalls"], output_bytes=cell["outputBytes"])
-            status = ("succeeded" if result["status"] == "ok" else "failed" if result["status"] in ("error", "not_started")
+            # An accepted host review/input reply intentionally stops the cell.
+            # Known containment is a failed/stopped program, not an ambiguous
+            # source effect. Any separate uncertain host tool stays uncertain in
+            # its own journal. Cancellation/timeout/unconfirmed cleanup do not
+            # gain this classification and must still prevent blind replay.
+            stopped_by_host = (job.paused and not job.cancelled.is_set()
+                and result["status"] == "paused" and result.get("cleanup_confirmed") is True)
+            status = ("succeeded" if result["status"] == "ok" else "failed" if result["status"] in ("error", "not_started") or stopped_by_host
                       else "outcome_unknown")
             self._record(job, status, {"result": result, "cellSettled": True,
+                "stoppedByHost": stopped_by_host,
                 "cleanupConfirmed": result.get("cleanup_confirmed") is True,
                 "stateLost": result.get("state_lost") is True,
                 "hostCallPending": result.get("host_call_pending") is True})

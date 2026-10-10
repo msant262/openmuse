@@ -6,6 +6,7 @@ import { workspacePath } from "./computer.ts";
 import {
   type ComputerBackend,
   type ComputerDispatchOptions,
+  type ComputerPythonExecution,
   computerCommandCleanupConfirmed,
 } from "./computer-contract.ts";
 import { physicalComputerResources as physicalResources } from "./computer-resource-scope.ts";
@@ -115,6 +116,8 @@ export function auditedComputer(
   const readCommand = backend.command?.bind(backend);
   const cancelCommand = backend.cancel?.bind(backend);
   const mediaCommand = backend.media?.bind(backend);
+  const pythonCommand = backend.python?.bind(backend);
+  const pythonKey = backend.pythonResourceKey?.bind(backend);
   const inspectArtifact = backend.artifact?.bind(backend);
   const searchFiles = backend.search?.bind(backend);
   const canonicalFilePath = (path: string) => {
@@ -230,6 +233,7 @@ export function auditedComputer(
     tool: string,
     options: ComputerDispatchOptions,
     operation: (bound: typeof options) => Promise<ComputerCommand>,
+    primaryResourceKey = `cpu-heavy:${hostId}`,
   ) =>
     withActivePreflight(async (attemptId) => {
       backend.assertConfigured?.();
@@ -243,7 +247,7 @@ export function auditedComputer(
         )
         .digest("hex");
       const requests = [
-        { key: `cpu-heavy:${hostId}`, units: 1, mode: "exclusive" as const },
+        { key: primaryResourceKey, units: 1, mode: "exclusive" as const },
         { key: `system-admin:${hostId}`, units: 1, mode: "shared" as const },
       ];
       const priorReceipt = await log.db.get<ComputerCommand>(owner, "computer-commands", receiptId);
@@ -407,6 +411,28 @@ export function auditedComputer(
       },
     });
   return {
+    ...(backend.pythonAvailable && { pythonAvailable: backend.pythonAvailable.bind(backend) }),
+    ...(backend.pythonResourceKey && {
+      pythonResourceKey: backend.pythonResourceKey.bind(backend),
+    }),
+    ...(pythonCommand &&
+      pythonKey && {
+        python: async (owner, input, options) => {
+          let execution: ComputerPythonExecution | undefined;
+          await command(
+            owner,
+            "python",
+            options,
+            async (bound) => {
+              execution = await pythonCommand(owner, input, { ...options, ...bound });
+              return execution.command;
+            },
+            pythonKey(owner, input.sessionId),
+          );
+          if (!execution) throw new AppError("Python execution receipt is missing", 503);
+          return execution;
+        },
+      }),
     ...(recovery && { recovery }),
     ...(searchFiles && {
       search: (owner, path, parameters, options) =>

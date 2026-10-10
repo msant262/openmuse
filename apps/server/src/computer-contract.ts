@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { ComputerCommand } from "../../../packages/domain/src/computer.ts";
 import type { ComputerService } from "./computer.ts";
-import type { ExecutorDispatchContext } from "./executors/protocol.ts";
+import type { ExecutorDispatchContext, ExecutorOperation } from "./executors/protocol.ts";
+import type { PythonResult, PythonRpc } from "./executors/python-protocol.ts";
 import type { FileVersions } from "./file-versions.ts";
 
 /** Semantic uncertainty survives cleanup. Only explicit physical confirmation
@@ -71,6 +72,20 @@ export type ComputerDispatchOptions = {
   /** Owned task journal context, never model-selected account/epoch/fence. */
   dispatchContext?: ExecutorDispatchContext;
 };
+export type ComputerPythonInput = {
+  /** Owner and conversation are composed by the task driver, never the model. */
+  sessionId: string;
+  code: string;
+  tools: string[];
+  reset: boolean;
+  wallClockMs: number;
+  maxToolCalls: number;
+};
+export type ComputerPythonOptions = ComputerDispatchOptions & {
+  call: (parent: ExecutorOperation, request: PythonRpc) => Promise<unknown>;
+  shouldContinue: () => boolean;
+};
+export type ComputerPythonExecution = { command: ComputerCommand; result?: PythonResult };
 export const computerSearchParameters = z.object({
   pattern: z.string().min(1).max(1024),
   target: z.enum(["content", "files"]).default("content"),
@@ -131,6 +146,13 @@ type BaseComputerBackend = Pick<
   | "writeBytes"
 >;
 export type ComputerBackend = Omit<BaseComputerBackend, "execute"> & {
+  pythonAvailable?: (owner: string) => Promise<boolean>;
+  pythonResourceKey?: (owner: string, sessionId: string) => string;
+  python?: (
+    owner: string,
+    input: ComputerPythonInput,
+    options: ComputerPythonOptions,
+  ) => Promise<ComputerPythonExecution>;
   search?: (
     owner: string,
     path: string,

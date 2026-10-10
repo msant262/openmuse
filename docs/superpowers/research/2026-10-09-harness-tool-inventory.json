@@ -289,7 +289,7 @@
   "implementationChecks": [
     {
       "surface": "execute_code.python",
-      "status": "native-transport-implemented-host-dispatch-pending",
+      "status": "host-dispatch-implemented-production-acceptance-pending",
       "productionEnabled": false,
       "upstream": "e0550c97bbd916cd5ff8fa0450e6291c31921b94",
       "unmodifiedSourceSha256": "ab88721b4a82c6b32d4160b441daccbb0e84e44c100d7bb29bcb6491a882ca5f",
@@ -304,11 +304,15 @@
         "supervisor pause, cancellation and same-ID receipt retransmission",
         "durable unit ownership before native dispatch and startup cleanup without replay",
         "actual registered native unit: UID/GID, cgroup, RAM, persistence and descendant timeout cleanup",
-        "per-unit idle RAM reservations and physical snapshot accounting"
+        "per-unit idle RAM reservations and physical snapshot accounting",
+        "local actual M3/M4 private reply ownership, node authentication and current request fencing",
+        "original host task dispatcher with derived call identity and unrelated-effect barriers",
+        "copied agent optional Python selection preserves full host results and JavaScript behavior",
+        "known host review stop is terminal only with confirmed containment"
       ],
       "pending": [
-        "matching API cell/reply authority and private reply grants",
-        "original host dispatcher and approval resumption",
+        "owned spill-file delivery and retention",
+        "full API/native nested-command and approval-resumption verification",
         "ordinary Luna chat acceptance in the published app"
       ],
       "acceptanceApproved": false

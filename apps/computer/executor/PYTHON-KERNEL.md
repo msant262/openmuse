@@ -1,6 +1,6 @@
 # Persistent Python integration boundary
 
-Status: core and native transport implemented; **disabled in production and not
+Status: core, native transport and API/host integration implemented locally; **disabled in production and not
 exposed in the published `execute_code` tool or native capability catalog**.
 
 `python_kernel.py` owns a conversation's interpreter and installs fresh caller
@@ -47,6 +47,23 @@ approval state, executor epoch or resource fence. Interpreter output and its
 frames remain untrusted data. Only the original host journal can establish an
 effect's actual receipt or a user's decision.
 
+The API now validates cell/reply envelopes, owns the per-conversation M3 resource
+lease and delivers bounded full replies through a node-authenticated private
+endpoint. It derives host call IDs from the canonical parent and root request
+sequence/digest. A private async scope permits only that exact callback to pass
+its own waiting cell's effect barrier; other running or uncertain effects still
+block it. New Python cells also check pending effects before creation and at the
+final dispatch barrier. Ordinary host tools keep their task journal, full-result
+path and approval policy. API reply envelopes retain metadata only; the same
+claimed control can recover a lost response without repeating the host tool.
+
+The copied OpenClaw host has an optional Python runtime alongside its unchanged
+JavaScript runtime. Python appears only when the explicit API enable flag and
+the connected/reconciled native capability both permit it. Conversation scope
+comes from the task's actual origin thread; the model cannot choose the owner,
+session, native account, memory reservation or fence. `finish_task` is excluded
+from the Python cell catalog so completion occurs after the cell settles.
+
 Cells serialize per session. Errors preserve variables; reset, exit, timeout,
 pause and protocol failure report their state consequences. A pending review
 stops the interpreter before later source lines can execute; it requires a new
@@ -54,6 +71,10 @@ cell after the ordinary host operation settles. It never replays the old cell.
 Calls from old contexts are refused even after a new cell starts. A callback
 that outlives timeout blocks another cell for the same scope until it settles.
 Failed process cleanup also blocks replacement until the exact unit is stopped.
+An accepted host `continue:false` reply with confirmed containment records a
+failed/stopped cell, not an uncertain execution that would block approval
+resumption forever. It never records source success or settles a separate host
+effect. Cancellation, timeout and unconfirmed containment remain uncertain.
 
 Python receives full tool results. Controller diagnostics retain bounded
 previews, not a second transcript of every large result. Exact args/results
@@ -64,22 +85,15 @@ and retention integration before production activation.
 
 The following work is required before enabling this surface:
 
-1. Implement the matching API protocol schemas, canonical cell/reply authority,
-   private reply-grant endpoint and native receipt polling. Derive host call IDs
-   from the parent canonical operation and verified root sequence. A child cannot
-   select these IDs. Fresh epoch/revision/session fencing and effect barriers must
-   remain authoritative; only the explicitly owned running Python parent can be
-   bypassed while dispatching its verified host callback, never unrelated
-   pending or uncertain effects. Preserve uncertain outcomes without replay.
-2. Route each callback through the existing `executeTool`/task journal and
-   original approval policy, with the current foreground/task catalog. A Python
-   reply cannot stand in for an effect receipt, attach a file or finish a task.
-   Make nested native-command admission and cancellation use the original host
-   policy without deadlocking on the outer cell's session lease.
-3. Connect optional Python execution to the copied OpenClaw host; preserve
-   existing JavaScript behavior and honest availability metadata. Complete
-   ordinary Luna chats in the published app, including persistence, real
-   Workspace reads, delivery, actual UI approval/denial and cancellation.
+1. Complete owned stdout spill-file delivery/retention and verify nested native
+   command admission/cancellation through the full API/native path. Local
+   dispatcher fixtures are not proof of native provider effects.
+2. Publish the compatible API protocol before enabling the native capability,
+   retaining ordinary task leases, per-unit RAM and exact rollback ownership.
+3. Complete ordinary Luna chats in the published app, including persistence,
+   real Workspace reads, file delivery, actual UI approval/denial, approval
+   resumption and cancellation. Preserve existing JavaScript behavior and honest
+   availability metadata. The acceptance gate remains false until these pass.
 
 Local verification:
 

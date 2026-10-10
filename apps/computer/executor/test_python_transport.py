@@ -170,12 +170,34 @@ class PythonTransportTests(unittest.TestCase):
         reply = self.reply(parent, rpc, {"paused": True, "actionId": "host-review"}, proceed=False)
         self.jobs.reply(reply)
         observed = self.final(parent)
-        self.assertEqual(observed["status"], "outcome_unknown")
+        self.assertEqual(observed["status"], "failed")
+        self.assertTrue(observed["data"]["stoppedByHost"])
         self.assertEqual(observed["data"]["result"]["status"], "paused")
         self.assertTrue(observed["data"]["cleanupConfirmed"])
         self.assertEqual(observed["data"]["result"]["tool_calls"][0]["result"]["actionId"], "host-review")
         self.assertFalse(Path(self.directory.name, "must-not-exist").exists())
         self.assertEqual(len(self.consumed), 1)
+
+    def test_review_without_confirmed_containment_remains_uncertain(self):
+        parent = self.operation("unconfirmed-review", "from hermes_tools import change\nchange({})\nopen('must-not-exist', 'w').write('bad')", ["change"])
+        self.jobs.start(parent); rpc = self.pending(parent)
+        controller = self.jobs.controllers["owner"][0]
+        kernel = controller.registry.kernels[("node", "owner", "conversation")]
+        stop = kernel.handle.stop
+        def unconfirmed():
+            stop()
+            return False
+        kernel.handle.stop = unconfirmed
+        try:
+            self.jobs.reply(self.reply(parent, rpc, {"paused": True}, proceed=False))
+            observed = self.final(parent)
+            self.assertEqual(observed["status"], "outcome_unknown")
+            self.assertFalse(observed["data"]["cleanupConfirmed"])
+            self.assertFalse(observed["data"].get("stoppedByHost", False))
+            self.assertFalse(Path(self.directory.name, "must-not-exist").exists())
+        finally:
+            kernel.handle.stop = stop
+            controller.reconcile_cleanup(("node", "owner", "conversation"))
 
     def test_cancellation_stops_only_the_owned_cell_and_does_not_replay_source(self):
         first = self.operation("cancel", "import time\nwhile True: time.sleep(.01)")

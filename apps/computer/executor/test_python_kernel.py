@@ -209,6 +209,9 @@ class PythonKernelTests(unittest.TestCase):
         self.assertTrue(result["state_lost"])
 
     def test_tool_thread_that_outlives_timeout_blocks_new_cells_until_settled(self):
+        # This test times an attached host callback, not a cold interpreter
+        # launch competing with other regression processes for CPU/RAM.
+        self.assertEqual(self.run_cell("print('ready')")["status"], "ok")
         entered, release = threading.Event(), threading.Event()
         def pending(args):
             entered.set()
@@ -227,6 +230,14 @@ class PythonKernelTests(unittest.TestCase):
         while self.kernels.pending_scopes and time.monotonic() < deadline:
             time.sleep(.01)
         self.assertEqual(self.run_cell("print('next cell')")["stdout"], "next cell\n")
+
+    def test_full_tool_result_near_private_byte_budget_is_not_inflated_by_frame_whitespace(self):
+        value = {"values": [0] * 3_000_000}
+        self.assertLess(len(json.dumps({"result": value, "continue": True}, separators=(",", ":")).encode()), 8 * 1024**2 - 1024)
+        observed = self.kernels.execute(self.scope, "from hermes_tools import read_sample\nprint(len(read_sample({})['values']))",
+            tools={"read_sample": lambda args: value}, should_continue=lambda: True, timeout_seconds=10)
+        self.assertEqual(observed["status"], "ok", observed)
+        self.assertEqual(observed["stdout"], "3000000\n")
 
     def test_idle_reaping_and_lru_bound_only_stop_unattached_sessions(self):
         self.kernels.idle_seconds = .15

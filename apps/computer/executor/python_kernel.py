@@ -107,7 +107,7 @@ class _Kernel:
             pass
 
     def send(self, value):
-        encoded = (json.dumps(value, ensure_ascii=False, allow_nan=False) + "\n").encode()
+        encoded = (json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n").encode()
         if len(encoded) > MAX_WIRE_BYTES:
             raise ValueError("Python message exceeds the private transport limit")
         with self.write_lock:
@@ -422,7 +422,7 @@ class PythonKernels:
                     return authority.tools[name](args)
                 value = authority.context.run(execute)
                 # Bound the transport before claiming the host result was sent.
-                encoded = json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
+                encoded = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
                 with authority.lock:
                     entry.update(status="settled", result_preview=encoded[:1000].decode(errors="ignore"))
                     if not authority.should_continue():

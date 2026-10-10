@@ -12,6 +12,7 @@ export const capabilitySchema = z.enum([
   "browser.drag",
   "desktop",
   "command",
+  "python",
   "files",
   "transcribe",
 ]);

@@ -5,6 +5,7 @@ import { designReferenceInstructions, designReferenceTools } from "../design-cat
 import { desktopInstructions, desktopTools } from "../desktop-tools.ts";
 import { DocumentReview, documentReviewArgs } from "../document-review.ts";
 import { DRIVE_REMOVAL_PENDING_TARGET } from "../drive-removal.ts";
+import { pythonHostCallId, pythonRpcWire } from "../executors/python-protocol.ts";
 import { googleWorkspaceReadTool, googleWorkspaceTools } from "../google-workspace-tools.ts";
 import { humanizerContext } from "../humanizer-context.ts";
 import { personalInstructions, personalTools } from "../personal-tools.ts";
@@ -25,6 +26,7 @@ import {
 import type { ToolCallRecord } from "./openclaw/tool-call-record.ts";
 import { getNoProgressStreak } from "./openclaw/tool-loop-no-progress.ts";
 import { calculateMaxToolResultCharsWithCap } from "./openclaw/tool-result-limits.ts";
+import { withNativePythonHostCall } from "./python-call-scope.ts";
 import { taskActivity } from "./task-activity.ts";
 import "../config.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -615,7 +617,7 @@ export async function executeModelTask(
           repairable: true,
           missing: completion.remaining,
           instruction:
-            "The requested program/command has not completed with a successful execution receipt. Continue the already authorized work in the appropriate runtime: execute_code can execute JavaScript calculations, while Python, shell commands and other requested runtimes require run_computer_command. Start the computer if needed and obtain the actual result. A source file or anticipated output does not prove execution. Reuse and poll pending commands; never replay an uncertain effect. If an observed blocker prevents execution, report that concrete blocker with outcome=partial rather than asking permission to do the requested work.",
+            "The requested program/command has not completed with a successful execution receipt. Continue the already authorized work in the appropriate runtime: execute_code supports the languages listed in its current schema; use run_computer_command for other computer runtimes and shell work. Start the computer if needed and obtain the actual result. A source file or anticipated output does not prove execution. Reuse and poll pending commands; never replay an uncertain effect. If an observed blocker prevents execution, report that concrete blocker with outcome=partial rather than asking permission to do the requested work.",
         };
       }
     }
@@ -2752,6 +2754,7 @@ export async function executeModelTask(
     conversationContext: undefined,
     delegatedBrief: task.state.conversationContext ? undefined : task.state.delegatedBrief,
   };
+  const pythonExecutor = service.computer.python?.bind(service.computer);
   const agent = openclawAgent({
     dataDir: config.dataDir,
     projectToolResult: (name, result, contextTokens) =>
@@ -2773,6 +2776,58 @@ export async function executeModelTask(
     requiredOperationIds: () => service.journal.requiredHistoryIds(owner, task.id),
     workClass: "background",
     codeToolEffects: true,
+    ...((await service.computer.pythonAvailable?.(owner)) && pythonExecutor
+      ? {
+          pythonRuntime: {
+            execute: async (input) => {
+              const sessionId = `conversation:${createHash("sha256")
+                .update(
+                  JSON.stringify(
+                    typeof task.input.routineId === "string"
+                      ? ["routine", task.input.routineId]
+                      : ["thread", task.originThreadId ?? task.id],
+                  ),
+                )
+                .digest("hex")}`;
+              return pythonExecutor(
+                owner,
+                {
+                  sessionId,
+                  code: input.code,
+                  reset: input.reset,
+                  wallClockMs: input.wallClockMs,
+                  maxToolCalls: input.maxToolCalls,
+                  tools: input.tools.map((tool) => tool.name),
+                },
+                {
+                  signal: input.signal,
+                  shouldContinue: input.shouldContinue,
+                  call: (parent, request) =>
+                    withNativePythonHostCall(
+                      service.journal,
+                      owner,
+                      parent,
+                      pythonRpcWire(request),
+                      async () => {
+                        const tool = input.tools.find((tool) => tool.name === request.name);
+                        if (!tool)
+                          throw new AppError(
+                            "Python requested a tool outside this task's catalog",
+                            403,
+                          );
+                        return tool.execute(
+                          pythonHostCallId(parent.id, request),
+                          request.args,
+                          true,
+                        );
+                      },
+                    ),
+                },
+              );
+            },
+          },
+        }
+      : {}),
     onProviderInterrupted: async (checkpoint) => {
       const saved = providerContinuationCheckpointSchema.parse(checkpoint);
       task = await ctx.checkpoint({ state: { ...task.state, providerCheckpoint: saved } });

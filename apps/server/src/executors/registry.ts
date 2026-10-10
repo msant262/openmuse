@@ -317,7 +317,7 @@ export class ExecutorRegistry {
     const readiness = node.hello.readiness;
     if (readiness.quarantined || readiness.account.state !== "ready") return false;
     if (operation.capability === "files") return readiness.files.state === "ready";
-    if (operation.capability === "command" || operation.capability === "transcribe")
+    if (["command", "python", "transcribe"].includes(operation.capability))
       return readiness.runtime.state === "ready";
     if (operation.capability === "desktop")
       return [readiness.display, readiness.capture, readiness.input].every(

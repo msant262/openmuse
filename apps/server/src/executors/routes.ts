@@ -6,6 +6,7 @@ import { acceptDesktopFrame } from "../desktop-frames.ts";
 import { consumeDesktopText } from "../desktop-input.ts";
 import { AppError } from "../errors.ts";
 import { executorReceiptSchema, safeOperationId } from "./protocol.ts";
+import { consumePythonReply } from "./python-replies.ts";
 import type { ExecutorRegistry } from "./registry.ts";
 
 /** These routes intentionally live outside /api session auth. The independent
@@ -39,6 +40,13 @@ export function executorRoutes(registry: ExecutorRegistry) {
     registry.authenticate(id, c.req.header("authorization"));
     return c.json(
       await consumeBrowserFile(registry, id, c.req.param("reference"), await c.req.json()),
+    );
+  });
+  app.post("/:executorId/python-replies/:reference/consume", async (c) => {
+    const id = c.req.param("executorId");
+    registry.authenticate(id, c.req.header("authorization"));
+    return c.json(
+      await consumePythonReply(registry, id, c.req.param("reference"), await c.req.json()),
     );
   });
   app.post("/:executorId/desktop/frame", async (c) => {

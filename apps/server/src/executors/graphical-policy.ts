@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nativePythonReplyArgsSchema } from "./python-protocol.ts";
 import {
   browserCdpInputSchema,
   browserConsoleInputSchema,
@@ -144,6 +145,10 @@ const browserArgsSchema = (uploadSchema: z.ZodType) =>
 export const nativeBrowserRequestArgsSchema = browserArgsSchema(browserUploadSchema);
 export const nativeBrowserArgsSchema = browserArgsSchema(nativeUploadReferenceSchema);
 export function nativeInspection(kind: string, args: Record<string, unknown>) {
+  if (kind === "session" && args.operation === "python-reply") {
+    nativePythonReplyArgsSchema.parse(args);
+    return true;
+  }
   if (kind === "file")
     return ["list", "search", "read", "read_binary", "stat"].includes(String(args.operation));
   if (kind === "desktop") return nativeDesktopArgsSchema.parse(args).operation === "observe";

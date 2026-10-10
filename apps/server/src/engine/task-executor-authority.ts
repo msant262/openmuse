@@ -20,9 +20,20 @@ import {
   nativeGraphicalReset,
   nativeInspection,
 } from "../executors/graphical-policy.ts";
+import {
+  nativePythonArgsSchema,
+  nativePythonReplyArgsSchema,
+  pythonResourceKey,
+  pythonRpcSchema,
+} from "../executors/python-protocol.ts";
 import { ResourceBusyError } from "./resource-leases.ts";
 import { RuntimePause } from "./runtime-pause.ts";
-import { currentTaskScope, type JournalOperation, type TaskJournal } from "./task-journal.ts";
+import {
+  currentTaskScope,
+  type JournalOperation,
+  type TaskJournal,
+  TaskOutcomeUnknownError,
+} from "./task-journal.ts";
 
 // Structural M6 seam: the standalone M4 base does not import an absent registry.
 export type NativeDispatchContext =
@@ -280,8 +291,54 @@ export class TaskExecutorAuthority {
       throw new AppError("Native inspection does not match concrete operation", 422);
     let resourceKey = `system-admin:${registration.hostId}`;
     const reset = nativeGraphicalReset(request.kind, request.args);
-    const exclusive = !inspection && !reset;
-    if (request.kind === "command" || request.kind === "media")
+    const pythonReply = request.kind === "session" && request.args.operation === "python-reply";
+    if (pythonReply && request.capability !== "python")
+      throw new AppError("Python reply requires its private capability", 422);
+    const exclusive = request.capability === "python" || (!inspection && !reset);
+    if (request.capability === "python") {
+      if (request.kind === "command") {
+        const args = nativePythonArgsSchema.parse(request.args);
+        if (args.pythonCell.owner !== owner)
+          throw new AppError("Python namespace belongs to another owner", 403);
+        z.object({
+          memoryBytes: z
+            .number()
+            .int()
+            .min(16 * 1024 ** 2),
+          heavy: z.literal(false),
+        })
+          .strict()
+          .parse(trusted.resourceBudget);
+        resourceKey = pythonResourceKey(request.executorId, owner, args.pythonCell.sessionId);
+        const pending = (await this.journal.operations(owner, trusted.taskId)).filter(
+          (operation) =>
+            operation.effect &&
+            ["dispatching", "running", "outcome_unknown"].includes(operation.status),
+        );
+        if (pending.length)
+          throw new TaskOutcomeUnknownError(pending.map((operation) => operation.id));
+      } else if (pythonReply) {
+        const target = await this.pythonReplyTarget(owner, request, executorEpoch);
+        if (
+          target.taskId !== task.id ||
+          target.revision !== trusted.desiredRevision ||
+          target.runToken !== trusted.runToken ||
+          target.resourceHoldTaskId !== holdTaskId ||
+          target.resourceLeaseIds.length !== leases.length ||
+          !leases.every((lease) => target.resourceLeaseIds.includes(lease.id))
+        )
+          throw new AppError("Python reply does not own the current task and session leases", 409);
+        resourceKey = String(target.nativeEnvelope?.resourceKey);
+      } else throw new AppError("Python capability requires a cell or a bound private reply", 422);
+      if (
+        !leases.some(
+          (lease) =>
+            lease.request.key === `system-admin:${registration.hostId}` &&
+            lease.request.mode === "shared",
+        )
+      )
+        throw new ResourceBusyError([]);
+    } else if (request.kind === "command" || request.kind === "media")
       resourceKey = `cpu-heavy:${registration.hostId}`;
     else if (request.kind === "desktop" || request.kind === "browser") {
       const session = await this.graphicalSession(owner, request, executorEpoch, context);
@@ -391,6 +448,38 @@ export class TaskExecutorAuthority {
     });
     return envelope;
   }
+  private async pythonReplyTarget(owner: string, request: NativeRequest, epoch: number) {
+    const args = nativePythonReplyArgsSchema.parse(request.args);
+    const target = await this.journal.db.get<JournalOperation>(
+      owner,
+      "task-operations",
+      args.operationId,
+    );
+    if (
+      target?.status !== "running" ||
+      target.executorId !== request.executorId ||
+      target.executorEpoch !== epoch ||
+      target.nativeEnvelope?.kind !== "command" ||
+      target.nativeEnvelope?.capability !== "python"
+    )
+      throw new AppError("Python reply has no current owned native cell", 409);
+    const cell = nativePythonArgsSchema.parse(target.args).pythonCell;
+    if (
+      cell.owner !== owner ||
+      target.nativeEnvelope.resourceKey !==
+        pythonResourceKey(request.executorId, owner, cell.sessionId)
+    )
+      throw new AppError("Python reply namespace binding changed", 403);
+    const receipt = target.receipt as
+      | { status?: string; data?: { pythonRpc?: unknown } }
+      | undefined;
+    if (receipt?.status !== "running")
+      throw new AppError("Python request receipt is not current", 409);
+    const rpc = pythonRpcSchema.parse(receipt.data?.pythonRpc);
+    if (rpc.sequence !== args.requestSequence || rpc.sha256 !== args.requestHash)
+      throw new AppError("Python reply request sequence or digest changed", 409);
+    return target;
+  }
   private async containment(
     owner: string,
     request: NativeRequest,
@@ -414,6 +503,7 @@ export class TaskExecutorAuthority {
     );
     if (
       !target?.nativeEnvelope ||
+      !["command", "media"].includes(String(target.nativeEnvelope.kind)) ||
       target.executorId !== request.executorId ||
       target.taskId !== trusted.taskId ||
       target.runToken !== trusted.runToken ||
@@ -433,8 +523,21 @@ export class TaskExecutorAuthority {
       )
     )
       throw new ResourceBusyError([]);
+    const targetKey =
+      target.nativeEnvelope.capability === "python"
+        ? pythonResourceKey(
+            request.executorId,
+            owner,
+            nativePythonArgsSchema.parse(target.args).pythonCell.sessionId,
+          )
+        : `cpu-heavy:${hostId}`;
+    if (
+      target.nativeEnvelope.capability === "python" &&
+      target.nativeEnvelope.resourceKey !== targetKey
+    )
+      throw new AppError("Python cancellation session binding changed", 409);
     const resource = handles.find(
-      (lease) => lease?.request.key === `cpu-heavy:${hostId}` && lease.request.mode === "exclusive",
+      (lease) => lease?.request.key === targetKey && lease.request.mode === "exclusive",
     );
     if (!resource) throw new ResourceBusyError([]);
     const createdAt = new Date().toISOString();
@@ -515,6 +618,38 @@ export class TaskExecutorAuthority {
           : undefined,
       );
       if (manual) await this.device(owner, manual.deviceId);
+    }
+    if (
+      operation.kind === "command" &&
+      operation.capability === "python" &&
+      stored.status === "queued"
+    ) {
+      const pending = (await this.journal.operations(owner, stored.taskId)).filter(
+        (other) =>
+          other.id !== stored.id &&
+          other.effect &&
+          ["dispatching", "running", "outcome_unknown"].includes(other.status),
+      );
+      if (pending.length) throw new TaskOutcomeUnknownError(pending.map((other) => other.id));
+    }
+    if (operation.kind === "session" && operation.capability === "python") {
+      const target = await this.pythonReplyTarget(owner, request, operation.executorEpoch);
+      if (
+        target.taskId !== operation.taskId ||
+        target.revision !== operation.revision ||
+        target.runToken !== stored.runToken ||
+        target.nativeEnvelope?.resourceKey !== operation.resourceKey ||
+        target.resourceFence !== operation.resourceFence
+      )
+        throw new AppError("Python reply task, epoch or resource fence changed", 409);
+      await this.journal.authorizeDispatch(
+        owner,
+        target.id,
+        target.revision,
+        target.runToken,
+        undefined,
+        true,
+      );
     }
     await this.journal.authorizeDispatch(owner, operation.id, operation.revision, stored.runToken);
   }

@@ -193,7 +193,9 @@ export async function createApp(
       const context = await currentExecutorContext(
         owner,
         id,
-        { memoryBytes: (config.nativeCommandMemoryMb ?? 3072) * 1024 ** 2, heavy: true },
+        request?.capability === "python"
+          ? { memoryBytes: (config.nativePythonMemoryMb ?? 512) * 1024 ** 2, heavy: false }
+          : { memoryBytes: (config.nativeCommandMemoryMb ?? 3072) * 1024 ** 2, heavy: true },
         currentComputerResourceScope(owner),
       );
       if (!context && request?.kind === "cancel" && typeof request.args.operationId === "string") {
@@ -226,6 +228,7 @@ export async function createApp(
       ? new RemoteComputerBackend(executors, {
           executorId: config.nativeExecutorId,
           enabled: config.computerEnabled,
+          pythonEnabled: config.nativePythonEnabled,
           timeoutMs: config.computerCommandTimeoutMs,
           context: nativeContext,
           manualContext: options.nativeManualContext,

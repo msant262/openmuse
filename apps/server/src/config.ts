@@ -88,6 +88,8 @@ export interface Config {
   nativeExecutors?: ExecutorRegistration[];
   nativeExecutorId?: string;
   nativeCommandMemoryMb?: number;
+  nativePythonEnabled?: boolean;
+  nativePythonMemoryMb?: number;
   fileVersionRetentionDays?: number;
   fileVersionMaxBytes?: number;
   allowedOrigins: string[];
@@ -287,6 +289,8 @@ export function readConfig(): Config {
       : undefined,
     nativeExecutorId: process.env.NATIVE_EXECUTOR_ID?.trim(),
     nativeCommandMemoryMb: integer("NATIVE_COMMAND_MEMORY_MB", 3072, 256, 1048576),
+    nativePythonEnabled: process.env.NATIVE_PYTHON_ENABLED === "true",
+    nativePythonMemoryMb: integer("NATIVE_PYTHON_MEMORY_MB", 512, 64, 1048576),
     fileVersionRetentionDays: integer("FILE_VERSION_RETENTION_DAYS", 30, 1, 36500),
     fileVersionMaxBytes: integer("FILE_VERSION_MAX_BYTES", 2 * 1024 ** 3, 1024 ** 2, 1024 ** 4),
     allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "http://localhost:8081,http://127.0.0.1:8081")

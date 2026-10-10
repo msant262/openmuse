@@ -431,6 +431,7 @@ export type ExecutorCapability =
   | "browser.drag"
   | "desktop"
   | "command"
+  | "python"
   | "files"
   | "transcribe";
 

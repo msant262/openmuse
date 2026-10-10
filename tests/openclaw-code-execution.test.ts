@@ -10,6 +10,82 @@ import { openclawAgent } from "../apps/server/src/engine/openclaw-agent.ts";
 import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("native Python selection retains the copied agent's ordinary host hook and exact programmatic tool data", async (t) => {
+  await modelFixture(t, (index) =>
+    index === 0
+      ? {
+          name: "tool_call",
+          arguments: {
+            id: "okami_execute_code",
+            args: {
+              language: "python",
+              code: "from hermes_tools import read_sample\nprint(read_sample({}))",
+              resetPython: true,
+            },
+          },
+        }
+      : undefined,
+  );
+  const f = await taskRuntime(t);
+  const calls: string[] = [];
+  let nativeRuns = 0;
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers: richChatFixtureProviders(f.directory),
+    prompt: "Calculate from actual values.",
+    codeToolEffects: true,
+    executeTool: async (call, execute) => {
+      calls.push(call.name);
+      return execute();
+    },
+    projectToolResult: async (name, value) => (name === "read_sample" ? { value: 0 } : value),
+    pythonRuntime: {
+      execute: async (input) => {
+        nativeRuns++;
+        assert.equal(input.reset, true);
+        assert.equal(
+          input.tools.some((tool) => ["finish_task", "execute_code"].includes(tool.name)),
+          false,
+        );
+        const tool = input.tools.find((tool) => tool.name === "read_sample");
+        assert.ok(tool);
+        assert.deepEqual(await tool.execute("native-owned-call", {}, true), { value: 42 });
+        return { command: { status: "succeeded" }, result: { stdout: "42\n" } };
+      },
+    },
+    tools: [
+      defineTool({
+        name: "read_sample",
+        description: "Read actual values.",
+        parameters: z.object({}),
+        execute: async () => ({ value: 42 }),
+      }),
+      defineTool({
+        name: "finish_task",
+        description: "Finish delivery.",
+        parameters: z.object({}),
+        execute: async () => assert.fail("cell cannot finish its still-running task"),
+      }),
+    ],
+  });
+  const events = await lastValueFrom(
+    agent
+      .run({
+        threadId: randomUUID(),
+        runId: randomUUID(),
+        messages: [{ id: randomUUID(), role: "user", content: "Compute using Python." }],
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR), JSON.stringify(events));
+  assert.equal(nativeRuns, 1, JSON.stringify(events));
+  assert.deepEqual(calls, ["execute_code", "read_sample"]);
+});
+
 test("original Code Mode batches real host reads and records each child through the normal dispatch boundary", async (t) => {
   const fixture = await modelFixture(t, (index) =>
     index === 0

@@ -36,7 +36,7 @@ original_input = sys.stdin.buffer
 
 
 def send(value):
-    body = json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
+    body = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
     if len(body) > MAX_WIRE_BYTES:
         raise ValueError("Python frame exceeds the private transport limit")
     # A cell can write directly to fd 1 without a newline. Preserve the

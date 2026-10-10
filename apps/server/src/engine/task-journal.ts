@@ -13,6 +13,7 @@ import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { AppError, NativePreflightRejection } from "../errors.ts";
 import type { Files } from "../files.ts";
+import { nativePythonParentForCall } from "./python-call-scope.ts";
 import { ResourceBusyError } from "./resource-leases.ts";
 import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
 import { completedMessages, publicJournalValue, publicToolArguments } from "./task-history.ts";
@@ -561,6 +562,7 @@ export class TaskJournal {
     effect: boolean,
   ): Promise<unknown> {
     if (!task.leaseId) throw new LostLeaseError();
+    const pythonParent = await nativePythonParentForCall(this, owner, task, call);
     const browserBinding =
       call.name === "browser_act"
         ? await this.browserBinding(owner, task.id, call.args)
@@ -618,6 +620,7 @@ export class TaskJournal {
       const pending = operations.filter(
         (other) =>
           other.id !== op.id &&
+          other.id !== pythonParent &&
           !confirmedStarts.has(other.id) &&
           other.effect &&
           ["dispatching", "running", "outcome_unknown"].includes(other.status),
