@@ -22,6 +22,87 @@ const folder = (id: string, name: string) => ({
   webViewLink: `https://drive.google.com/drive/folders/${id}`,
 });
 
+test("a dated file name does not broaden into thousands of numeric content matches", async () => {
+  const calls: Record<string, unknown>[] = [];
+  const docs = ["one", "two"].map((id) => ({
+    id,
+    name: "Okami teste Workspace 10 outubro",
+    mimeType: "application/vnd.google-apps.document",
+  }));
+  const result = await searchGoogleDrive(
+    driveSearchSchema.parse({ query: docs[0].name, account: "work", kind: "files", limit: 100 }),
+    accounts,
+    async (_account, parameters) => {
+      calls.push(parameters);
+      const broad = /name contains '10'|or fullText contains '10'/.test(String(parameters.q));
+      return {
+        files: broad
+          ? [...docs, { id: "unrelated", name: "invoice 10.pdf", mimeType: "application/pdf" }]
+          : docs,
+      };
+    },
+  );
+  assert.equal(result.totalMatches, 2);
+  assert.equal(result.nextOffset, null);
+  assert.deepEqual(
+    result.files.map((f) => f.id),
+    ["one", "two"],
+  );
+  assert.doesNotMatch(String(calls[0].q), /name contains '10'|or fullText contains '10'/);
+});
+
+test("unrelated content hits do not inflate name shortlist counts or pages", async () => {
+  const result = await searchGoogleDrive(
+    driveSearchSchema.parse({
+      query: "Okami teste Workspace 10 outubro",
+      account: "work",
+      kind: "files",
+      limit: 1,
+    }),
+    accounts,
+    async (_account, parameters) =>
+      parameters.pageToken
+        ? {
+            files: [
+              {
+                id: "two",
+                name: "Okami teste Workspace 10 outubro",
+                mimeType: "application/vnd.google-apps.document",
+              },
+            ],
+          }
+        : {
+            files: [
+              {
+                id: "one",
+                name: "Okami teste Workspace 10 outubro",
+                mimeType: "application/vnd.google-apps.document",
+              },
+              { id: "unrelated", name: "invoice 10.pdf", mimeType: "application/pdf" },
+            ],
+            nextPageToken: "next",
+          },
+  );
+  assert.equal(result.totalMatches, 2);
+  assert.equal(result.accounts[0].scanned, 3);
+  assert.equal(result.accounts[0].matched, 2);
+  assert.equal(result.nextOffset, 1);
+  assert.equal(result.accounts[0].pages, 2);
+});
+
+test("a punctuation-only file name still produces a valid provider query", async () => {
+  const result = await searchGoogleDrive(
+    driveSearchSchema.parse({ query: "---", account: "work", kind: "files" }),
+    accounts,
+    async (_account, parameters) => {
+      assert.doesNotMatch(String(parameters.q), /\(\)/);
+      return { files: [{ id: "punctuation", name: "---", mimeType: "text/plain" }] };
+    },
+  );
+  assert.equal(result.complete, true);
+  assert.equal(result.files[0]?.id, "punctuation");
+});
+
 test("a paginated folder listing distinguishes files, folders and shortcuts before limiting presentation", async () => {
   const result = await searchGoogleDrive(
     driveSearchSchema.parse({ parentId: "moving", account: "work", limit: 1 }),

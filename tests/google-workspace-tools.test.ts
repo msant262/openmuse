@@ -818,6 +818,61 @@ test("Drive trash does not certify a successful PATCH when provider readback sti
   assert.equal(await server.db.get("owner", "google-workspace-receipts", action.id), null);
 });
 
+test("an ordinary Drive deletion cannot prepare permanent deletion instead of recoverable trash", async (t) => {
+  const server = await fixture(t);
+  let reads = 0;
+  t.mock.method(
+    server.workspace,
+    "google",
+    () =>
+      new GoogleClient({
+        getAccessToken: async () => "fixture",
+        fetch: async () => {
+          reads++;
+          return Response.json({ id: "selected-file", name: "Study notes" });
+        },
+      }),
+  );
+  for (const prompt of [
+    "Apague do Drive o arquivo “Study notes”.",
+    "Apague do Drive o arquivo, mas não permanentemente.",
+    "Apague do Drive o arquivo “Permanent deletion”.",
+    "Delete this Drive file, but don't permanently delete it.",
+  ]) {
+    const task = await server.agent.createTask("owner", { prompt });
+    await assert.rejects(
+      server.agent.googleWorkspace.execute(
+        "owner",
+        {
+          toolId: "drive.files.delete",
+          account: "work@example.com",
+          parameters: { fileId: "selected-file" },
+          operationId: task.id,
+        },
+        { taskId: task.id },
+      ),
+      /drive\.files\.update|recoverable|lixeira/i,
+    );
+  }
+  assert.equal(reads, 0);
+  assert.equal((await server.db.list("owner", "actions")).length, 0);
+  const explicit = await server.agent.createTask("owner", {
+    prompt: "Apague permanentemente do Drive o arquivo “Study notes”.",
+  });
+  const result = await server.agent.googleWorkspace.execute(
+    "owner",
+    {
+      toolId: "drive.files.delete",
+      account: "work@example.com",
+      parameters: { fileId: "selected-file" },
+      operationId: explicit.id,
+    },
+    { taskId: explicit.id },
+  );
+  assert.equal(result.approvalRequired, true);
+  assert.equal(reads, 1);
+});
+
 test("a legacy Drive approval without reviewed identity cannot dispatch a removal", async (t) => {
   const server = await fixture(t);
   let writes = 0;

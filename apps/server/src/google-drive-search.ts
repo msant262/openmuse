@@ -81,6 +81,13 @@ export const normalizedDriveName = (name: string) =>
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]/gu, "");
 const quote = (value: string) => `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+const nameTerms = (query: string) => {
+  const terms = query.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const meaningful = terms.filter(
+    (term) => /\p{L}/u.test(term) && !/^(de|da|do|das|dos|the|of|and)$/i.test(term),
+  );
+  return meaningful.length ? meaningful : terms;
+};
 
 /** Drive name contains is a prefix search. Include word search and a compact
  * spelling so MOVING DE finds MovingDE without model retries or human input. */
@@ -92,16 +99,17 @@ export function driveNameQuery(input: DriveSearchInput) {
   if (input.kind === "files") conditions.push(`mimeType != ${quote(folderMime)}`);
   if (input.query) {
     const terms = input.query.match(/[\p{L}\p{N}]+/gu) ?? [];
-    const meaningful = terms.filter((term) => !/^(de|da|do|das|dos|the|of|and)$/i.test(term));
+    const meaningful = nameTerms(input.query);
     const values = new Set([
       input.query,
       terms.join(""),
       ...(meaningful.length ? meaningful : terms),
     ]);
     const clauses = [...values].filter(Boolean).map((term) => `name contains ${quote(term)}`);
-    clauses.push(
-      ...(meaningful.length ? meaningful : terms).map((term) => `fullText contains ${quote(term)}`),
-    );
+    if (meaningful.length)
+      clauses.push(
+        `(${meaningful.map((term) => `fullText contains ${quote(term)}`).join(" and ")})`,
+      );
     conditions.push(`(${clauses.join(" or ")})`);
   }
   return conditions.join(" and ");
@@ -238,6 +246,14 @@ export async function searchGoogleDrive(
               continue;
             const rank = rankName(file.name, rankingQuery);
             if (input.recursive && rankingQuery && rank === 4) continue;
+            if (
+              rankingQuery &&
+              rank === 4 &&
+              !nameTerms(rankingQuery).some((term) =>
+                normalizedDriveName(file.name).includes(normalizedDriveName(term)),
+              )
+            )
+              continue;
             observation.matched++;
             if (actualMime === folderMime) observation.folderCount++;
             else observation.fileCount++;
