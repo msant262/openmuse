@@ -406,72 +406,6 @@ export async function executeModelTask(
         : "No image was generated. The observed facts suffice; correct only these gaps in the visual brief while preserving the requested form, all entities and all categories.",
     };
   };
-  const documentBrief = async (args: z.output<typeof documentArgs>) => {
-    // Check explicit selection constraints before expensive rendering, while
-    // final delivery still checks actual document bytes and visual evidence.
-    if (!requiresAccessConstraintReview(task) || !["pdf", "docx", "pptx"].includes(args.format))
-      return undefined;
-    const revision = Number(task.state.appliedRevision ?? 0);
-    const operations = await service.journal.operations(owner, task.id);
-    const content = JSON.stringify({ title: args.title, content: args.content });
-    const key = imageBriefKey(content, revision, operations);
-    const previous = task.state.documentBriefReview as
-      | {
-          key?: string;
-          complete?: boolean;
-          missing?: string[];
-          nextSteps?: string[];
-          needsMoreResearch?: boolean;
-          accessAudit?: Awaited<ReturnType<typeof reviewResearchDelivery>>["accessAudit"];
-          requestAudit?: Awaited<ReturnType<typeof reviewResearchDelivery>>["requestAudit"];
-        }
-      | undefined;
-    let review = previous?.key === key ? previous : undefined;
-    if (!review) {
-      try {
-        review = await reviewResearchDelivery({
-          task: { ...task, artifactIds: [] },
-          summary: args.content,
-          operations,
-          model: selectedModel,
-          fallbacks: [],
-          stage: "access_selection",
-          providers: config.modelProviders ?? modelProviderConfig(config.dataDir),
-          signal,
-          structured: false,
-          proposedDocument: true,
-        });
-      } catch (error) {
-        if (!(error instanceof ResearchReviewUnavailableError)) throw error;
-        return waitForReview(error, {
-          pendingDocumentGeneration: { args, revision, sourceOperationId: taskOperationId() },
-        });
-      }
-      await ctx.guard();
-      task = await ctx.checkpoint({
-        state: {
-          ...task.state,
-          researchReviewFailure: null,
-          documentBriefReview: { ...review, key, revision },
-        },
-      });
-    }
-    if (review.complete) return undefined;
-    return {
-      attachment: false,
-      rendered: false,
-      repairable: true,
-      missing: review.missing,
-      nextSteps: review.nextSteps,
-      needsMoreResearch: review.needsMoreResearch,
-      accessAudit: review.accessAudit,
-      requestAudit: review.requestAudit,
-      descriptiveFieldPolicy: DESCRIPTIVE_FIELD_SCOPE,
-      instruction: review.needsMoreResearch
-        ? "No document was rendered. accessAudit identifies each selected option's assessed eligibility and source; requestAudit distinguishes satisfied fields from actual gaps. These assessments are not new source reads. Repair the failed options and requirements while keeping supported facts. Replace an unsuitable or unconfirmed option rather than asking the person to relax clear criteria. A design change or another operationId cannot fix unchanged facts."
-        : "No document was rendered. The observed sources suffice; correct only the content gaps in missing and nextSteps using those saved observations. Keep qualified options and supported facts. Recover your latest proposed content using read_tool_output (tool=create_document, part=arguments, pointer=/content) if needed, then retry create_document with corrected content. Do not restart research or ask permission to correct your own text. Preserve the original requirements.",
-    };
-  };
   const deliver = async (
     summary: string,
     deliveryOutcome: "completed" | "partial",
@@ -657,7 +591,7 @@ export async function executeModelTask(
           }),
           instruction:
             (authoringContinuation
-              ? 'The requested file has not been created. This missing file receipt does not establish missing source facts. Resume the latest draft with read_tool_output({"tool":"create_document","part":"arguments","pointer":"/content"}) when available, then create the requested file with create_document. Keep supported facts and apply any specific content preflight corrections; do not restart research just because the attachment is missing. The content preflight and final delivery review still check the evidence and original requirements. '
+              ? 'The requested file has not been created. This missing file receipt does not establish missing source facts. Resume the latest draft with read_tool_output({"tool":"create_document","part":"arguments","pointer":"/content"}) when available, then create the requested file with create_document. Keep supported facts and apply any specific content preflight corrections; do not restart research just because the attachment is missing. The final delivery review checks the actual file against the evidence and original requirements. '
               : "") +
             (unresolvedPartial
               ? "You declared this same delivery partial, and no source evidence or selected artifact has changed since then. Changing only outcome to completed cannot resolve the missing requirements. Continue the research or correct the artifact; if the concrete paths remain blocked, report partial honestly. "
@@ -1359,7 +1293,6 @@ export async function executeModelTask(
     ...mediaTools(service.media, service.computer, owner, `task:${task.id}`, {
       model: () => selectedModel,
       ...(config.researchReviewEnabled && { imageBrief }),
-      documentBrief,
       revision: () => Number(task.state.appliedRevision ?? 0),
       signal,
       queue: serial,
@@ -1370,7 +1303,10 @@ export async function executeModelTask(
         const artifactIds = task.artifactIds.filter((entry) => entry !== replacesFileId);
         if (!artifactIds.includes(id)) artifactIds.push(id);
         if (artifactIds.join() !== task.artifactIds.join())
-          task = await ctx.checkpoint({ artifactIds });
+          task = await ctx.checkpoint({
+            artifactIds,
+            state: { ...task.state, documentBriefReview: null },
+          });
       },
       before: async () => {
         if (outcome) throw new Error("Task is waiting or finished");
@@ -2701,7 +2637,7 @@ export async function executeModelTask(
       (task.state.completedDocumentGeneration &&
       (task.state.completedDocumentGeneration as { revision?: number }).revision ===
         Number(task.state.appliedRevision ?? 0)
-        ? `\nThe saved document content check and creation have completed. Its previous waiting_provider receipt is historical and resolved. Inspect the actual document, confirm its visual review and deliver it; do not create the same file again: ${JSON.stringify(task.state.completedDocumentGeneration)}\n`
+        ? `\nThe saved document creation has completed; its final content has not yet been verified. Its previous waiting_provider receipt is historical and resolved. Inspect the actual document, confirm its visual review and submit the final content review before delivery; do not create the same file again: ${JSON.stringify(task.state.completedDocumentGeneration)}\n`
         : "") +
       (task.state.completedImageGeneration &&
       (task.state.completedImageGeneration as { revision?: number }).revision ===

@@ -31,6 +31,19 @@ export class ToolOutputStore {
   private outputs = new Map<string, string>();
   private documentArguments = new Map<string, string>();
   private toolNames = new Map<string, string>();
+  private producerAliases = new Map<string, string>();
+  /** Only names actually registered by this run's dispatcher are aliases. */
+  registerProducers(producers: readonly { name: string; aliases: readonly string[] }[]) {
+    const aliases = new Map(producers.map(({ name }) => [name, name]));
+    for (const producer of producers)
+      for (const alias of producer.aliases) {
+        const existing = aliases.get(alias);
+        if (existing !== undefined && existing !== producer.name)
+          throw new Error(`Ambiguous preserved-output producer: ${alias}`);
+        aliases.set(alias, producer.name);
+      }
+    this.producerAliases = aliases;
+  }
   private projectionDependencies: { toolCallId: string; dependsOnToolCallId: string }[] = [];
   dependencies(): readonly { toolCallId: string; dependsOnToolCallId: string }[] {
     return this.projectionDependencies;
@@ -256,12 +269,15 @@ export class ToolOutputStore {
     },
     maxBytes = 12000,
   ) {
-    if (Boolean(args.toolCallId) === Boolean(args.tool))
-      throw new Error("Choose one exact toolCallId or the latest output from a named tool");
+    if (!args.toolCallId && !args.tool)
+      throw new Error("Provide an exact toolCallId or a producing tool name");
     const source = args.part === "arguments" ? this.documentArguments : this.outputs;
+    const producer = args.tool && (this.producerAliases.get(args.tool) ?? args.tool);
     const toolCallId =
       args.toolCallId ??
-      [...source.keys()].reverse().find((id) => this.toolNames.get(id) === args.tool);
+      [...source.keys()].reverse().find((id) => this.toolNames.get(id) === producer);
+    if (args.toolCallId && producer && this.toolNames.get(args.toolCallId) !== producer)
+      throw new Error("The recorded toolCallId does not belong to that producing tool");
     let text = toolCallId && source.get(toolCallId);
     if (text === undefined) throw new Error("Tool output unavailable in this task or conversation");
     if (args.pointer) {

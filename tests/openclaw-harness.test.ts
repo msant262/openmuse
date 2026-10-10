@@ -534,78 +534,92 @@ test("large batched receipts stay valid and recoverable through native discovery
   );
 });
 
-test("native tool discovery can recover the latest rejected document draft by producing tool name", async (t) => {
-  const f = await taskRuntime(t);
-  const content = "Preserved original draft. ".repeat(500);
-  let writes = 0;
-  const fixture = await modelFixture(
-    t,
-    (i) => {
-      if (i === 0) return { name: "create_document", arguments: { content } };
-      if (i === 1)
-        return {
-          name: "read_tool_output",
-          arguments: {
-            tool: "create_document",
-            part: "arguments",
-            pointer: "/content",
-            offset: 0,
-            limit: 16000,
-          },
-        };
-      if (i === 2) {
-        const input = JSON.parse(fixture.requests[i].body).input;
-        const recovered = JSON.parse(
-          input.findLast((item: { type: string }) => item.type === "function_call_output").output,
-        );
-        assert.equal(recovered.error, undefined, JSON.stringify(recovered));
-        assert.equal(recovered.content, content);
-        assert.equal(recovered.selectedByTool, "create_document");
-        assert.ok(recovered.toolCallId);
-        assert.equal(recovered.nextOffset, null);
-      }
-      return undefined;
-    },
-    { text: (i) => (i === 2 ? "Draft recovered." : undefined) },
-  );
-  const agent = openclawAgent({
-    dataDir: f.directory,
-    model: "openai/fixture",
-    providers: richChatFixtureProviders(f.directory),
-    prompt: "Recover the rejected draft without rendering another file.",
-    tools: [
-      defineTool({
-        name: "create_document",
-        description: "Propose a document",
-        parameters: z.object({ content: z.string() }),
-        execute: async () => {
-          writes++;
+for (const { tool, pinned } of [
+  { tool: "create_document", pinned: true },
+  { tool: "okami_create_document", pinned: true },
+  { tool: "openclaw:okami-host:okami_create_document", pinned: true },
+  { tool: "openclaw:okami-host:okami_create_document", pinned: false },
+]) {
+  test(`native discovery recovers draft arguments by its registered producer ${tool} (pinned: ${pinned})`, async (t) => {
+    const f = await taskRuntime(t);
+    const content = "Preserved original draft. ".repeat(500);
+    let writes = 0;
+    const fixture = await modelFixture(
+      t,
+      (i) => {
+        if (i === 0) return { name: "create_document", arguments: { content } };
+        if (i === 1) {
+          const input = JSON.parse(fixture.requests[i].body).input;
+          const previous = input.findLast(
+            (item: { type: string }) => item.type === "function_call_output",
+          );
+          const toolCallId = previous.call_id;
           return {
-            attachment: false,
-            rendered: false,
-            repairable: true,
-            missing: ["Correct wording in the draft"],
+            name: "read_tool_output",
+            arguments: {
+              tool,
+              ...(pinned && { toolCallId }),
+              part: "arguments",
+              pointer: "/content",
+              offset: 0,
+              limit: 16000,
+            },
           };
-        },
-      }),
-    ],
+        }
+        if (i === 2) {
+          const input = JSON.parse(fixture.requests[i].body).input;
+          const recovered = JSON.parse(
+            input.findLast((item: { type: string }) => item.type === "function_call_output").output,
+          );
+          assert.equal(recovered.error, undefined, JSON.stringify(recovered));
+          assert.equal(recovered.content, content);
+          assert.equal(recovered.selectedByTool, tool);
+          assert.ok(recovered.toolCallId);
+          assert.equal(recovered.nextOffset, null);
+        }
+        return undefined;
+      },
+      { text: (i) => (i === 2 ? "Draft recovered." : undefined) },
+    );
+    const agent = openclawAgent({
+      dataDir: f.directory,
+      model: "openai/fixture",
+      providers: richChatFixtureProviders(f.directory),
+      prompt: "Recover the rejected draft without rendering another file.",
+      tools: [
+        defineTool({
+          name: "create_document",
+          description: "Propose a document",
+          parameters: z.object({ content: z.string() }),
+          execute: async () => {
+            writes++;
+            return {
+              attachment: false,
+              rendered: false,
+              repairable: true,
+              missing: ["Correct wording in the draft"],
+            };
+          },
+        }),
+      ],
+    });
+    const events = await lastValueFrom(
+      agent
+        .run({
+          threadId: randomUUID(),
+          runId: randomUUID(),
+          messages: [{ id: randomUUID(), role: "user", content: "Recover the original draft." }],
+          tools: [],
+          context: [],
+          state: {},
+        })
+        .pipe(toArray()),
+    );
+    assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR));
+    assert.equal(fixture.requests.length, 3);
+    assert.equal(writes, 1);
   });
-  const events = await lastValueFrom(
-    agent
-      .run({
-        threadId: randomUUID(),
-        runId: randomUUID(),
-        messages: [{ id: randomUUID(), role: "user", content: "Recover the original draft." }],
-        tools: [],
-        context: [],
-        state: {},
-      })
-      .pipe(toArray()),
-  );
-  assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR));
-  assert.equal(fixture.requests.length, 3);
-  assert.equal(writes, 1);
-});
+}
 
 test("host instructions that fit the native context reach the provider without being duplicated", async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), "okami-harness-context-"));

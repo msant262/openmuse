@@ -680,8 +680,8 @@ export function openclawAgent(options: Options) {
                 .default(Math.min(16000, outputBudget)),
             })
             .refine(
-              (args) => Boolean(args.toolCallId) !== Boolean(args.tool),
-              "Choose toolCallId or tool, not both",
+              (args) => Boolean(args.toolCallId || args.tool),
+              "Provide toolCallId or tool; when both are provided they must identify the same producer",
             );
           const tools: ToolDefinition[] = [
             ...options.tools,
@@ -727,6 +727,12 @@ export function openclawAgent(options: Options) {
           );
           const names = tools.map((tool) => nativeName(tool.name));
           const registry = new Set(tools.map((tool) => tool.name));
+          outputs.registerProducers(
+            tools.map((tool) => ({
+              name: tool.name,
+              aliases: [nativeName(tool.name), `openclaw:okami-host:${nativeName(tool.name)}`],
+            })),
+          );
           const schemas = new Map(
             tools.map((tool) => [
               tool.name,

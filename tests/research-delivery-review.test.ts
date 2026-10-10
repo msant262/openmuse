@@ -318,6 +318,12 @@ test("a document wording repair stays a content correction through an unnecessar
             operationId: "incorrect",
           },
         },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: { summary: "Comparison attached.", artifactIds: [fileId] },
+        },
         {
           name: "ask_user",
           arguments: { question: "Posso continuar pesquisando e trocar o curso?" },
@@ -329,6 +335,7 @@ test("a document wording repair stays a content correction through an unnecessar
             format: "pdf",
             content: content("costs €20"),
             operationId: "corrected",
+            replaceFileId: fileId,
           },
         },
         { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
@@ -386,7 +393,7 @@ test("a document wording repair stays a content correction through an unnecessar
   });
   await f.agent.worker.tick();
   const operations = await f.agent.journal.operations("owner", task.id);
-  const correction = operations.find((op) => op.toolName === "create_document")?.receipt as {
+  const correction = operations.find((op) => op.toolName === "finish_task")?.receipt as {
     instruction: string;
     needsMoreResearch: boolean;
   };
@@ -408,10 +415,10 @@ test("a document wording repair stays a content correction through an unnecessar
     limit: 10000,
   });
   assert.match(extracted.text, /certificate costs €20/);
-  assert.equal(fixture.reviewRequests.length, 3);
+  assert.equal(fixture.reviewRequests.length, 2);
 });
 
-test("free-course PDF content is rejected before rendering, then actual corrected bytes and pixels pass delivery", async (t) => {
+test("an unqualified rendered PDF is withheld until its corrected bytes and pixels pass delivery", async (t) => {
   let fileId = "",
     receiptId = "";
   const rendered: string[] = [];
@@ -429,6 +436,12 @@ test("free-course PDF content is rejected before rendering, then actual correcte
             content: "Premium AI: free registration, full access unconfirmed.",
           },
         },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: { summary: "Comparison attached.", artifactIds: [fileId] },
+        },
         {
           name: "ask_user",
           arguments: {
@@ -442,6 +455,7 @@ test("free-course PDF content is rejected before rendering, then actual correcte
             name: "Courses",
             format: "pdf",
             operationId: "verified",
+            replaceFileId: fileId,
             content:
               "# Open AI\n\nAll lessons and exercises are free with no trial or subscription. Beginner generative AI, English, two hours. Optional certificate €20.\n\nSource: https://courses.example/open",
           },
@@ -471,9 +485,7 @@ test("free-course PDF content is rejected before rendering, then actual correcte
                   quote: "Free registration; full-course access requires a paid subscription.",
                 },
               ],
-              nextSteps: [
-                "Read the actual free-content policy or replace this option before creating the PDF",
-              ],
+              nextSteps: ["Read the actual free-content policy or replace this option in the PDF"],
             }
           : {
               complete: true,
@@ -528,13 +540,9 @@ test("free-course PDF content is rejected before rendering, then actual correcte
     0,
     "replacing the agent's unqualified choice requires no new user answer",
   );
-  assert.equal(
-    rendered.length,
-    1,
-    "unverified content must not consume rendering or visual-review work",
-  );
-  assert.ok(rendered[0].includes("Open AI"));
-  const rejectedOutput = JSON.parse(fixture.requests[2].body)
+  assert.equal(rendered.length, 2, "a rejected local draft is replaced before delivery");
+  assert.ok(rendered[1].includes("Open AI"));
+  const rejectedOutput = JSON.parse(fixture.requests[5].body)
     .input.filter((item: { type: string }) => item.type === "function_call_output")
     .at(-1);
   assert.ok(rejectedOutput);
@@ -557,8 +565,8 @@ test("free-course PDF content is rejected before rendering, then actual correcte
   assert.deepEqual(saved.artifactIds, [fileId]);
   assert.equal(
     fixture.reviewRequests.length,
-    3,
-    "two content briefs and the actual delivered document are checked",
+    2,
+    "each selected version is checked once against its actual delivered bytes",
   );
 });
 
@@ -800,7 +808,98 @@ test("wording-only rejection remains bound to the actual document until its byte
     assert.match(fixture.requests[i].body, /Correct the document: the certificate costs €20/);
 });
 
-test("an unavailable document content check resumes exact generation once without a user answer", async (t) => {
+test("a researched PDF has one factual check on its actual reviewed bytes, not a second pre-render review", async (t) => {
+  let fileId = "",
+    receiptId = "",
+    generations = 0,
+    visualReviews = 0;
+  const fixture = await modelFixture(
+    t,
+    (i) =>
+      [
+        { name: "web_fetch", arguments: { url: "https://courses.example/open" } },
+        {
+          name: "create_document",
+          arguments: {
+            name: "Open-course",
+            format: "pdf",
+            operationId: "draft",
+            content:
+              "# Open AI\n\nAll lessons are free. English, two hours, optional certificate €20.\n\nSource: https://courses.example/open",
+          },
+        },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: { summary: "The comparison PDF is attached.", artifactIds: [fileId] },
+        },
+      ][i],
+    {
+      researchReview: (body) => {
+        assert.equal(generations, 1, "facts are checked against the actual created document");
+        assert.equal(visualReviews, 1, "delivery retains its required visual inspection");
+        const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
+        assert.equal(input.proposedDocument, false);
+        assert.deepEqual(input.artifacts, [fileId]);
+        assert.equal(input.documents.length, 1);
+        assert.match(input.documents[0].text, /optional certificate €20/);
+        return {
+          complete: true,
+          missing: [],
+          nextSteps: [],
+          accessAudit: [
+            {
+              option: "Open AI",
+              access: "free",
+              sourceUrl: "https://courses.example/open",
+              quote: "All lessons are free.",
+            },
+          ],
+        };
+      },
+    },
+  );
+  const f = await baseTaskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: false,
+  });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
+    url,
+    contentType: "text/html",
+    body: "<main>All lessons are free. English, two hours, optional certificate €20.</main>",
+  }));
+  const create = f.agent.media.createDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "createDocument", async (...args: Parameters<typeof create>) => {
+    const result = await create(...args);
+    generations++;
+    fileId = result.fileId;
+    return result;
+  });
+  const inspect = f.agent.media.inspectDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "inspectDocument", async (...args: Parameters<typeof inspect>) => {
+    const result = await inspect(...args);
+    visualReviews++;
+    receiptId = result.receiptId;
+    return result;
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt:
+      "Research a free AI course and deliver a PDF comparing language, duration and optional certificate cost.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.question ?? saved.result);
+  assert.equal(saved.completion?.status, "verified");
+  assert.equal(fixture.reviewRequests.length, 1);
+  assert.equal(read.mock.callCount(), 1);
+  assert.equal((await f.db.list("owner", "interaction-requests")).length, 0);
+  assert.deepEqual(saved.artifactIds, [fileId]);
+});
+
+test("an unavailable final document check resumes its saved reviewed file without generating or reading again", async (t) => {
   let unavailable = true,
     fileId = "",
     receiptId = "",
@@ -879,10 +978,15 @@ test("an unavailable document content check resumes exact generation once withou
   await f.agent.worker.tick();
   let saved = await f.agent.getTask("owner", task.id);
   assert.equal(saved.status, "waiting_provider");
-  assert.equal(generations, 0);
-  assert.equal(saved.artifactIds.length, 0);
-  assert.ok(saved.state.pendingDocumentGeneration);
-  assert.equal(fixture.requests.length, 2);
+  assert.equal(generations, 1);
+  assert.deepEqual(saved.artifactIds, [fileId]);
+  assert.deepEqual(
+    (await f.agent.detail("owner", task.id)).files,
+    [],
+    "an unverified draft is withheld from delivery",
+  );
+  assert.ok(saved.state.pendingResearchDelivery);
+  assert.equal(fixture.requests.length, 5);
   unavailable = false;
   const { sharedModelRouter } = await import("../apps/server/src/providers/model-router.ts");
   const cooldown = sharedModelRouter(f.agent.config.modelProviders!).health.get(
@@ -896,7 +1000,12 @@ test("an unavailable document content check resumes exact generation once withou
   assert.equal(generations, 1);
   assert.equal(read.mock.callCount(), 1);
   assert.deepEqual(saved.artifactIds, [fileId]);
-  assert.equal(saved.state.pendingDocumentGeneration, null);
+  assert.equal(saved.state.pendingResearchDelivery, null);
+  assert.equal(
+    fixture.requests.length,
+    5,
+    "resuming a saved final check does not restart the agent's work",
+  );
 });
 
 test("selection review checks the selected replacement document and omits discarded drafts", async (t) => {

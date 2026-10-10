@@ -18,6 +18,42 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const file = (character: string) => character.repeat(64);
 
+test("output recovery accepts a matching name with a pinned ID and rejects mismatches or another run", () => {
+  const store = new ToolOutputStore();
+  store.observe([
+    ...creation("older", file("a"), "Original content"),
+    ...creation("newer", file("b"), "Revised content"),
+  ]);
+  const request = {
+    toolCallId: "older",
+    tool: "create_document",
+    part: "arguments" as const,
+    pointer: "/content",
+    offset: 0,
+    limit: 100,
+  };
+  assert.equal(
+    store.read(request).content,
+    "Original content",
+    "the explicit ID pins the older version",
+  );
+  assert.ok("error" in store.readTool({ ...request, tool: "web_fetch" }));
+  assert.ok("error" in store.readTool({ ...request, toolCallId: "not-recorded" }));
+  assert.ok("error" in new ToolOutputStore().readTool(request));
+  assert.ok("error" in store.readTool({ ...request, toolCallId: undefined, tool: undefined }));
+  store.registerProducers([
+    { name: "create_document", aliases: ["openclaw:okami-host:okami_create_document"] },
+  ]);
+  const discovered = { ...request, tool: "openclaw:okami-host:okami_create_document" };
+  assert.equal(store.read(discovered).content, "Original content");
+  assert.equal(store.read({ ...discovered, toolCallId: undefined }).content, "Revised content");
+  assert.ok(
+    "error" in
+      store.readTool({ ...discovered, tool: "openclaw:another-host:okami_create_document" }),
+  );
+  assert.ok("error" in new ToolOutputStore().readTool(discovered));
+});
+
 test("a rejected document preflight keeps its exact repairable arguments without claiming a rendered file", () => {
   const messages = creation(
     "actual-brief-id",

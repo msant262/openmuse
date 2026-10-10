@@ -306,7 +306,10 @@ test("chat document authoring delegates durably and publishes only after the wor
           prompt: "Crie um PDF. Seções obrigatórias: Operação, Limitações.",
         },
       };
-    if (!names.includes("finish_task")) return undefined;
+    // After inspection the real executor requires the confirmation turn and
+    // temporarily removes completion. The fixture must answer that turn too.
+    if (!names.includes("finish_task") && !names.includes("confirm_document_review"))
+      return undefined;
     if (resending) {
       const file = (await server.files.list("owner"))[0];
       if (phase++ === 0) return { name: "attach_saved_file", arguments: { fileId: file.id } };
@@ -351,7 +354,20 @@ test("chat document authoring delegates durably and publishes only after the wor
   assert.equal(fixture.requests.length, 2, "chat completes without waiting for document authoring");
   await server.agent.worker.tick();
   const task = await server.agent.getTask("owner", tasks[0].id);
-  assert.equal(task.status, "succeeded", task.error ?? task.question);
+  assert.equal(
+    task.status,
+    "succeeded",
+    JSON.stringify({
+      error: task.error,
+      question: task.question,
+      nextRunAt: task.nextRunAt,
+      completion: task.completion,
+      lastUpdate: task.state.lastUpdate,
+      requests: fixture.requests.length,
+      phase,
+      lastOfferedTools: offeredHostTools(fixture.requests.at(-1)?.body ?? "{}"),
+    }),
+  );
   assert.equal(task.artifactIds.length, 1);
   assert.equal(task.completion?.status, "verified");
   const bytes = await server.files.bytes("owner", task.artifactIds[0]);
