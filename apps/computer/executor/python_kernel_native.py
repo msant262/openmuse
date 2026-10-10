@@ -98,16 +98,29 @@ class NativePythonLauncher:
             # Stop only the exact owned unit, including its descendants. Do
             # not kill all processes for the registered user or reset its desktop.
             try:
-                self.runtime.runner(["systemctl", "stop", unit])
-                fields = dict(line.split("=", 1) for line in self.runtime.runner([
-                    "systemctl", "show", unit, "--property=LoadState,ActiveState,ControlGroup"]).splitlines() if "=" in line)
+                try:
+                    self.runtime.runner(["systemctl", "stop", unit])
+                except subprocess.CalledProcessError:
+                    # An exited transient unit may already have been collected.
+                    # A stop error alone proves neither live nor stopped state.
+                    pass
+                try:
+                    observed = self.runtime.runner([
+                        "systemctl", "show", unit, "--property=LoadState,ActiveState,ControlGroup"])
+                except subprocess.CalledProcessError as error:
+                    observed = error.stdout or ""
+                    if isinstance(observed, bytes):
+                        observed = observed.decode(errors="replace")
+                fields = dict(line.split("=", 1) for line in observed.splitlines() if "=" in line)
+                confirmed = fields.get("LoadState") == "not-found" or fields.get("ActiveState") in ("inactive", "failed")
+                if not confirmed:
+                    return False
                 process.wait(timeout=10)
                 group = fields.get("ControlGroup", "")
                 if group and self.runtime.populated(group):
                     return False
                 if expected.exists() and "populated 1" in (expected / "cgroup.events").read_text():
                     return False
-                confirmed = fields.get("LoadState") == "not-found" or fields.get("ActiveState") in ("inactive", "failed")
                 if confirmed:
                     with self.lock:
                         self.units.pop(unit, None)

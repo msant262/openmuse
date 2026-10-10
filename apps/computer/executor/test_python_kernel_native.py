@@ -1,8 +1,11 @@
 """The interpreter may only use registered native units and directory anchors."""
 import os
 from pathlib import Path
+import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from .job_runtime import JobRuntime
 from .python_kernel_native import NativePythonLauncher
@@ -73,6 +76,40 @@ class NativePythonLauncherTests(unittest.TestCase):
         self.runtime.home_fd = None
         with self.assertRaisesRegex(ValueError, "anchors"):
             self.launcher.command(self.scope, "@@sentinel@@")
+
+    def test_already_garbage_collected_unit_is_still_confirmed_stopped(self):
+        calls = []
+        def runner(args):
+            calls.append(args)
+            if args[1] == "stop":
+                raise subprocess.CalledProcessError(5, args)
+            return "LoadState=not-found\nActiveState=inactive\nControlGroup=\n"
+        self.runtime.runner = runner
+        process = SimpleNamespace(wait=lambda timeout: 0)
+        with patch("executor.python_kernel_native.os.geteuid", return_value=0), \
+                patch.object(self.launcher, "_source_is_trusted"), \
+                patch("executor.python_kernel_native.subprocess.Popen", return_value=process) as popen:
+            handle = self.launcher(self.scope, "@@sentinel@@")
+        self.assertTrue(handle.stop())
+        self.assertTrue(handle.stop())
+        self.assertEqual(self.launcher.units, {})
+        self.assertEqual(popen.call_args.kwargs["env"],
+                         {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"})
+        self.assertTrue(all(call[-1] == calls[0][-1] for call in calls if call[1] == "stop"))
+
+    def test_failed_stop_of_a_live_unit_does_not_confirm_cleanup(self):
+        def runner(args):
+            if args[1] == "stop":
+                raise subprocess.CalledProcessError(1, args)
+            return "LoadState=loaded\nActiveState=active\nControlGroup=\n"
+        self.runtime.runner = runner
+        process = SimpleNamespace(wait=lambda timeout: 0)
+        with patch("executor.python_kernel_native.os.geteuid", return_value=0), \
+                patch.object(self.launcher, "_source_is_trusted"), \
+                patch("executor.python_kernel_native.subprocess.Popen", return_value=process):
+            handle = self.launcher(self.scope, "@@sentinel@@")
+        self.assertFalse(handle.stop())
+        self.assertEqual(len(self.launcher.units), 1)
 
 
 if __name__ == "__main__":
