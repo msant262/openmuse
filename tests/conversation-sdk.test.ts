@@ -85,6 +85,57 @@ test("read-only reconnect surfaces a swallowed SDK connection error without star
   assert.equal(runs, 0);
 });
 
+test("one failed SDK reconnect emits both run and connection errors, then recovers on its live snapshot", async () => {
+  const failure = new TypeError("Failed to fetch");
+  const events = new Subject<BaseEvent>();
+  let connects = 0;
+  let runs = 0;
+  class RecoveringAgent extends AbstractAgent {
+    run() {
+      runs++;
+      return throwError(() => new Error("Must not run"));
+    }
+    connect() {
+      connects++;
+      return connects === 1 ? throwError(() => failure) : events;
+    }
+  }
+  const agent = new RecoveringAgent({ agentId: "default", threadId: "recovered-thread" });
+  const core = new CopilotKitCore({ agents__unsafe_dev_only: { default: agent } });
+  const emitted: { code: string; error: unknown }[] = [];
+  const diagnostic = core.subscribe({
+    onError: (event) => {
+      emitted.push(event);
+    },
+  });
+  let restored = 0;
+  const connect = () =>
+    connectConversationStream(
+      "default",
+      agent,
+      () => core.connectAgent({ agent }),
+      (onError) => core.subscribe({ onError }),
+      () => restored++,
+    );
+  await assert.rejects(connect(), (error) => error === failure);
+  assert.deepEqual(
+    emitted.map((event) => event.code),
+    ["agent_run_failed_event", "agent_connect_failed"],
+  );
+  assert.ok(emitted.every((event) => event.error === failure));
+  const recovered = connect();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  events.next({ type: EventType.RUN_STARTED, threadId: "recovered-thread", runId: "retry" });
+  events.next({ type: EventType.MESSAGES_SNAPSHOT, messages: [] });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(restored, 1);
+  assert.equal(runs, 0);
+  events.next({ type: EventType.RUN_FINISHED, threadId: "recovered-thread", runId: "retry" });
+  events.complete();
+  await recovered;
+  diagnostic.unsubscribe();
+});
+
 test("an emitted CopilotKit run error stops the queue even when runAgent resolves", async () => {
   let attempts = 0;
   class FailingAgent extends AbstractAgent {

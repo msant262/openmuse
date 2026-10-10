@@ -649,7 +649,10 @@ export function ChatScreen({
                 () => {
                   if (active) restoreConnection();
                 },
-              );
+              ).catch((cause) => {
+                connectionRetry.current = Date.now() + 5000;
+                throw cause;
+              });
             } finally {
               runLock.current = false;
             }
@@ -824,6 +827,7 @@ export function ChatScreen({
     )
       .catch((e) => {
         seenRoutinePost.current = "";
+        connectionRetry.current = Date.now() + 5000;
         setHistoryError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
@@ -891,7 +895,7 @@ export function ChatScreen({
           setReceivedMessage(id);
           setError("");
           markAccepted(threadId);
-          void syncReplay().catch((cause) => setError(String(cause)));
+          void syncReplay().catch((cause) => setHistoryError(String(cause)));
         } else await run(message);
         choiceCompletions.current.get(message.id)?.resolve();
       } catch (error) {
@@ -982,22 +986,10 @@ export function ChatScreen({
     if (active && prompt && isReady && loaded && claimPrompt(prompt.id) && prompt.text.trim())
       void enqueue(prompt.text).catch((cause) => setSaveError(String(cause)));
   }, [active, prompt, isReady, loaded, enqueue, claimPrompt]);
-  useEffect(() => {
-    const subscription = copilotkit.subscribe({
-      onError: (event) => {
-        if (event.context?.agentId && event.context.agentId !== agentId) return;
-        if (event.context?.threadId && event.context.threadId !== threadId) return;
-        const failure = event.error instanceof Error ? event.error : new Error(String(event.error));
-        if (event.code === "agent_connect_failed") {
-          connectionRetry.current = Date.now() + 5000;
-          setHistoryError(failure.message);
-          return;
-        }
-        setError(failure.message);
-      },
-    });
-    return () => subscription.unsubscribe();
-  }, [copilotkit, agentId, threadId, queue]);
+  // Each invocation owns its failures through runConversationTurn or
+  // connectConversationStream. The SDK emits both onRunFailed and connectFailed
+  // for one failed reconnect; a global listener incorrectly treats the first as
+  // a failed message and leaves a second warning after the connection recovers.
   async function stop() {
     queue.pause();
     try {
@@ -1760,7 +1752,16 @@ export function ChatScreen({
                 onPress={() => {
                   void (
                     interrupted
-                      ? copilotkit.connectAgent({ agent }).then(() => setError(""))
+                      ? connectConversationStream(
+                          agentId,
+                          agent,
+                          () => copilotkit.connectAgent({ agent }),
+                          (onError) => copilotkit.subscribe({ onError }),
+                          () => {
+                            restoreConnection();
+                            setError("");
+                          },
+                        )
                       : queue instanceof MessageOutbox
                         ? enqueue("Continue the previous reply using its saved task receipts.")
                         : run()
