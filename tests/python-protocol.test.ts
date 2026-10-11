@@ -132,3 +132,73 @@ test("reply controls preserve only bounded private delivery metadata", () => {
     false,
   );
 });
+
+test("fresh Python source carries an explicit lifecycle and the full browser-script timeout", () => {
+  const args = {
+    command: "Python cell",
+    cwd: "/workspace/cards/owned-browser",
+    background: false,
+    timeoutMs: 1_800_000,
+    pythonCell: {
+      owner: "owner",
+      sessionId: "browser-script:owned-task:research",
+      code: "print('fresh source')",
+      tools: ["browser_harness_rpc"],
+      reset: false,
+      fresh: true,
+      maxToolCalls: 100,
+      outputBytes: 131072,
+    },
+  };
+  const checked = nativePythonArgsSchema.safeParse(args);
+  assert.equal(
+    checked.success,
+    true,
+    "native source must retain fresh lifecycle and 30-minute timeout",
+  );
+  if (checked.success) assert.deepEqual(checked.data, args);
+  for (const fresh of [1, 0, "true", null]) {
+    assert.equal(
+      nativePythonArgsSchema.safeParse({
+        ...args,
+        pythonCell: { ...args.pythonCell, fresh },
+      }).success,
+      false,
+    );
+  }
+});
+
+test("copied browser helper bootstrap requires its named session, fresh lifecycle and owned RPC catalog", () => {
+  const args = {
+    command: "Python cell",
+    cwd: "/workspace",
+    background: false,
+    timeoutMs: 300000,
+    pythonCell: {
+      owner: "owner",
+      sessionId: "owned-task:browser:research",
+      code: "print(page_info())",
+      tools: ["browser_harness_rpc"],
+      reset: false,
+      fresh: true,
+      browserSession: "research",
+      maxToolCalls: 100,
+      outputBytes: 131072,
+    },
+  };
+  assert.deepEqual(nativePythonArgsSchema.parse(args), args);
+  for (const change of [
+    { browserSession: "../other" },
+    { browserSession: "" },
+    { browserSession: null },
+    { fresh: false },
+    { tools: [] },
+  ])
+    assert.equal(
+      nativePythonArgsSchema.safeParse({
+        ...args,
+        pythonCell: { ...args.pythonCell, ...change },
+      }).success,
+      false,
+    );
+});

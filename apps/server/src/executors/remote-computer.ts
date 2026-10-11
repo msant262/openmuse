@@ -32,6 +32,7 @@ import {
 import { dispatchPythonRequests } from "./python-dispatch.ts";
 import {
   nativePythonArgsSchema,
+  pythonCapabilityCompatible,
   pythonResourceKey,
   pythonResultSchema,
 } from "./python-protocol.ts";
@@ -92,7 +93,7 @@ export class RemoteComputerBackend implements ComputerBackend {
     this.check(owner);
     return pythonResourceKey(this.options.executorId, owner, sessionId);
   }
-  async pythonAvailable(owner: string) {
+  async pythonAvailable(owner: string, options: { fresh?: boolean } = {}) {
     if (this.options.pythonEnabled !== true || this.options.enabled === false) return false;
     this.check(owner);
     const node = await this.registry.node(this.options.executorId);
@@ -103,7 +104,9 @@ export class RemoteComputerBackend implements ComputerBackend {
         node.hello.readiness.account.state === "ready" &&
         node.hello.readiness.runtime.state === "ready" &&
         node.hello.capabilities.some(
-          (cap) => cap.name === "python" && [1, 2].includes(cap.version),
+          (cap) =>
+            cap.name === "python" &&
+            (options.fresh ? cap.version === 3 : [1, 2, 3].includes(cap.version)),
         ),
     );
   }
@@ -124,24 +127,34 @@ export class RemoteComputerBackend implements ComputerBackend {
           code: input.code,
           tools: input.tools,
           reset: input.reset,
+          ...(input.fresh !== undefined ? { fresh: input.fresh } : {}),
+          ...(input.browserSession !== undefined ? { browserSession: input.browserSession } : {}),
           maxToolCalls: input.maxToolCalls,
           outputBytes: 131072,
         },
       });
     });
     const capabilityVersion =
-      args.cwd === "/workspace" &&
-      node?.hello.capabilities.some((cap) => cap.name === "python" && cap.version === 1)
-        ? 1
-        : 2;
+      input.fresh !== undefined || args.timeoutMs > 900_000
+        ? 3
+        : args.cwd === "/workspace" &&
+            node?.hello.capabilities.some((cap) => cap.name === "python" && cap.version === 1)
+          ? 1
+          : node?.hello.capabilities.some((cap) => cap.name === "python" && cap.version === 3) &&
+              !node?.hello.capabilities.some((cap) => cap.name === "python" && cap.version === 2)
+            ? 3
+            : 2;
     nativePreflight(owner, () => {
       if (
+        !pythonCapabilityCompatible(capabilityVersion, args) ||
         !node?.hello.capabilities.some(
           (cap) => cap.name === "python" && cap.version === capabilityVersion,
         )
       )
         throw new AppError(
-          "Native Python workspace capability is incompatible; update the executor before dispatch",
+          capabilityVersion === 3
+            ? "Fresh Python lifecycle or extended timeout requires native capability version 3; update the executor before dispatch"
+            : "Native Python workspace capability is incompatible; update the executor before dispatch",
           409,
         );
     });

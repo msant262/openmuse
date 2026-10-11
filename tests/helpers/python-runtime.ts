@@ -42,6 +42,8 @@ export async function pythonRuntime(
     cwd?: string;
     capabilityVersion?: number;
     advertisedPythonVersions?: number[];
+    fresh?: boolean;
+    browserSession?: string;
   } = {},
 ) {
   const server = await taskRuntime(t);
@@ -84,6 +86,8 @@ export async function pythonRuntime(
           code: cell.code ?? "print(42)",
           tools,
           reset: false,
+          ...(cell.fresh !== undefined ? { fresh: cell.fresh } : {}),
+          ...(cell.browserSession !== undefined ? { browserSession: cell.browserSession } : {}),
           maxToolCalls: 100,
           outputBytes: 131072,
         },

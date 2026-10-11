@@ -2,6 +2,7 @@
 import contextvars
 import base64
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -53,6 +54,194 @@ class PythonKernelTests(unittest.TestCase):
     def run_cell(self, code, **options):
         return self.kernels.execute(self.scope, code, tools={}, should_continue=lambda: True,
                                     timeout_seconds=5, **options)
+
+    def fresh_cell(self, code, **options):
+        self.assertIn("fresh", inspect.signature(self.kernels.execute).parameters,
+                      "The browser harness needs a fresh process lifecycle, not namespace reset")
+        return self.run_cell(code, fresh=True, **options)
+
+    def browser_cell(self, code, callback, session="research", **options):
+        self.assertIn("browser_session", inspect.signature(self.kernels.execute).parameters,
+                      "The original browser helpers need a bound native transport")
+        return self.kernels.execute(self.scope, code, fresh=True, browser_session=session,
+            tools={"browser_harness_rpc": callback}, should_continue=lambda: True,
+            timeout_seconds=5, **options)
+
+    def test_browser_helpers_are_preimported_and_use_the_current_owned_host_rpc(self):
+        requests = []
+        def callback(args):
+            requests.append(args)
+            request = args["request"]
+            if request.get("meta") == "pending_dialog": return {"dialog": None}
+            if request.get("method") == "Page.navigate": return {"result": {"frameId": "owned-frame"}}
+            if request.get("method") == "Runtime.evaluate":
+                return {"result": {"result": {"type": "string", "value": json.dumps({
+                    "url": "https://example.org/owned", "title": "Owned page", "w": 1280,
+                    "h": 720, "sx": 0, "sy": 0, "pw": 1280, "ph": 720,
+                })}}}
+            raise AssertionError(request)
+        result = self.browser_cell("print(goto_url('https://example.org/owned')['frameId'])\n"
+            "print(page_info()['title'])", callback)
+        self.assertEqual(result["status"], "ok", result)
+        self.assertEqual(result["stdout"], "owned-frame\nOwned page\n")
+        self.assertTrue(all(req["session"] == "research" and req["timeoutMs"] == 5000 for req in requests))
+        self.assertEqual(len(requests), 3)
+        self.assertTrue(result["cleanup_confirmed"])
+        self.assertIsNotNone(self.children[0].poll())
+
+    def test_browser_workspace_agent_helpers_and_future_imports_work_without_source_rewriting(self):
+        Path(self.directory.name, "agent_helpers.py").write_text(
+            "from browser_harness.helpers import js\n"
+            "print('workspace helpers loaded')\n"
+            "def own_title(): return js('document.title')\n")
+        def callback(args):
+            self.assertEqual(args["session"], "documents")
+            self.assertEqual(args["request"]["params"]["expression"], "document.title")
+            return {"result": {"result": {"type": "string", "value": "Owned document"}}}
+        result = self.browser_cell("from __future__ import annotations\n"
+            "from pathlib import Path\nPath('browser-document.txt').write_text(own_title())\n"
+            "print(own_title())", callback, session="documents")
+        self.assertEqual(result["status"], "ok", result)
+        self.assertEqual(result["stdout"], "workspace helpers loaded\nOwned document\n")
+        self.assertEqual(Path(self.directory.name, "browser-document.txt").read_text(), "Owned document")
+
+    def test_original_browser_screenshot_writes_host_bytes_in_the_persistent_workspace(self):
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZuoAAAAASUVORK5CYII=")
+        def callback(args):
+            self.assertEqual(args["request"]["method"], "Page.captureScreenshot")
+            self.assertEqual(args["timeoutMs"], 60000)
+            return {"result": {"data": base64.b64encode(png).decode()}}
+        result = self.browser_cell("print(capture_screenshot('owned-page.png'))", callback)
+        self.assertEqual(result["status"], "ok", result)
+        self.assertEqual(result["stdout"], "owned-page.png\n")
+        self.assertEqual(Path(self.directory.name, "owned-page.png").read_bytes(), png)
+        self.assertTrue(result["cleanup_confirmed"])
+
+    def test_original_browser_helper_error_is_not_reported_as_success(self):
+        result = self.browser_cell("goto_url('https://example.org/owned')\n"
+            "from pathlib import Path\nPath('must-not-continue').write_text('wrong')",
+            lambda args: {"error": "Native browser is controlled by the user"})
+        self.assertEqual(result["status"], "error")
+        self.assertIn("Native browser is controlled by the user", result["traceback"])
+        self.assertFalse(Path(self.directory.name, "must-not-continue").exists())
+        self.assertTrue(result["cleanup_confirmed"])
+
+    def test_browser_bootstrap_rejects_unbound_or_persistent_source_before_launch(self):
+        self.assertIn("browser_session", inspect.signature(self.kernels.execute).parameters)
+        for session, fresh, tools in [
+            ("../other", True, {"browser_harness_rpc": lambda args: {}}),
+            ("research", False, {"browser_harness_rpc": lambda args: {}}),
+            ("research", True, {}),
+        ]:
+            with self.assertRaisesRegex(ValueError, "browser|Browser"):
+                self.kernels.execute(self.scope, "print('must not run')", browser_session=session,
+                    fresh=fresh, tools=tools, should_continue=lambda: True)
+        self.assertEqual(self.children, [])
+
+    def test_fresh_calls_preserve_workspace_but_replace_process_and_all_python_state(self):
+        first = self.fresh_cell("import os, sys, types, builtins\nfrom pathlib import Path\n"
+            "private_value = 41\nsys.modules['owned_probe'] = types.ModuleType('owned_probe')\n"
+            "os.environ['OWNED_BROWSER_PROBE'] = 'first'\nbuiltins.owned_probe = 42\n"
+            "Path('browser-proof.txt').write_text('persistent workspace')\nprint(os.getpid())")
+        self.assertEqual(first["status"], "ok")
+        self.assertTrue(first["cleanup_confirmed"])
+        self.assertTrue(first["state_lost"])
+        self.assertIsNotNone(self.children[0].poll())
+        second = self.fresh_cell("import os, sys, builtins\nfrom pathlib import Path\n"
+            "print('private_value' in globals(), 'owned_probe' in sys.modules, "
+            "'OWNED_BROWSER_PROBE' in os.environ, hasattr(builtins, 'owned_probe'))\n"
+            "print(Path('browser-proof.txt').read_text())\nprint(os.getpid())")
+        self.assertEqual(second["status"], "ok")
+        self.assertTrue(second["cleanup_confirmed"])
+        self.assertFalse(second["reused"])
+        self.assertIn("False False False False\npersistent workspace\n", second["stdout"])
+        self.assertNotEqual(first["stdout"].strip(), second["stdout"].strip().splitlines()[-1])
+        self.assertEqual(len(self.children), 2)
+        self.assertEqual(self.kernels.registry.kernels, {})
+
+    def test_fresh_error_closes_process_and_keeps_actual_workspace_output(self):
+        failed = self.fresh_cell("from pathlib import Path\nvalue = 99\n"
+            "Path('before-error.txt').write_text('actual output')\nraise ValueError('owned failure')")
+        self.assertEqual(failed["status"], "error")
+        self.assertTrue(failed["cleanup_confirmed"])
+        self.assertIn("owned failure", failed["traceback"])
+        self.assertIsNotNone(self.children[0].poll())
+        after = self.fresh_cell("from pathlib import Path\nprint('value' in globals())\n"
+            "print(Path('before-error.txt').read_text())")
+        self.assertEqual(after["stdout"], "False\nactual output\n")
+
+    def test_fresh_success_stops_spawned_descendants_before_claiming_cleanup(self):
+        result = self.fresh_cell("import subprocess\nfrom pathlib import Path\n"
+            "p = subprocess.Popen(['/bin/sleep', '60'])\nPath('fresh-child-pid').write_text(str(p.pid))\n"
+            "print('script finished')")
+        self.assertEqual(result["stdout"], "script finished\n")
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["cleanup_confirmed"])
+        pid = int(Path(self.directory.name, "fresh-child-pid").read_text())
+        status = Path(f"/proc/{pid}/stat")
+        self.assertTrue(not status.exists() or status.read_text().split()[2] == "Z")
+        self.assertIsNotNone(self.children[0].poll())
+
+    def test_fresh_unconfirmed_cleanup_cannot_claim_success_or_start_a_replacement(self):
+        self.assertIn("fresh", inspect.signature(self.kernels.execute).parameters)
+        original_launch = self.kernels.launch
+        confirmed = [False]
+        def launch(scope, sentinel):
+            handle = original_launch(scope, sentinel)
+            stop = handle.stop
+            handle.stop = lambda: stop() and confirmed[0]
+            return handle
+        self.kernels.launch = launch
+        result = self.fresh_cell("value = 42\nprint('actual script result')")
+        self.assertEqual(result["stdout"], "actual script result\n")
+        self.assertEqual(result["status"], "interrupted")
+        self.assertFalse(result["cleanup_confirmed"])
+        self.assertIn("cleanup", result["error"])
+        with self.assertRaisesRegex(RuntimeError, "cleanup is unconfirmed"):
+            self.fresh_cell("print('must not start')")
+        self.assertEqual(len(self.children), 1)
+        confirmed[0] = True
+        self.assertTrue(self.kernels.reconcile_cleanup(self.scope))
+        self.assertEqual(self.fresh_cell("print('value' in globals())")["stdout"], "False\n")
+
+    def test_fresh_pending_host_call_fences_replacement_without_repeating_the_call(self):
+        self.assertIn("fresh", inspect.signature(self.kernels.execute).parameters)
+        entered, release = threading.Event(), threading.Event()
+        active = [True]
+        seen, results = [], []
+        def pending(args):
+            seen.append(args)
+            entered.set()
+            release.wait(timeout=5)
+            return {"actual": "settled"}
+        def run():
+            results.append(self.kernels.execute(self.scope,
+                "from hermes_tools import pending\npending({'owned': True})\n"
+                "open('after-retirement.txt', 'w').write('must not run')",
+                tools={"pending": pending}, should_continue=lambda: active[0],
+                timeout_seconds=5, fresh=True))
+        thread = threading.Thread(target=run)
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(timeout=2))
+            active[0] = False
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(results[0]["status"], "paused")
+            self.assertTrue(results[0]["cleanup_confirmed"])
+            self.assertTrue(results[0]["host_call_pending"])
+            with self.assertRaisesRegex(RuntimeError, "host call is still pending"):
+                self.fresh_cell("print('must not start')")
+            self.assertEqual(seen, [{"owned": True}])
+            self.assertFalse(Path(self.directory.name, "after-retirement.txt").exists())
+        finally:
+            active[0] = False
+            release.set()
+            thread.join(timeout=3)
+        deadline = time.monotonic() + 2
+        while self.kernels.pending_scopes and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertEqual(self.fresh_cell("print('resumed')")["stdout"], "resumed\n")
 
     def test_host_workspace_is_used_by_real_interpreter_and_reused_on_resume(self):
         directory = Path(self.directory.name) / "cards" / "first"

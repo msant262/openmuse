@@ -133,7 +133,10 @@ class NativePythonLauncher:
     def _source_is_trusted():
         # Fixed code is installed by the root coordinator. The registered bot
         # must never replace the supervisor-side launcher or child runner.
-        for path in [RUNNER_PATH, RUNNER_PATH.parent / "vendor" / "hermes_code_kernel.py"]:
+        browser_source = RUNNER_PATH.parent / "vendor" / "browser_harness"
+        for path in [RUNNER_PATH, RUNNER_PATH.parent / "vendor" / "hermes_code_kernel.py",
+                     RUNNER_PATH.with_name("browser_harness_native.py"),
+                     *[browser_source / name for name in ("__init__.py", "helpers.py", "paths.py", "recorder.py")]]:
             for entry in [path, *path.parents]:
                 info = entry.lstat()
                 if (info.st_uid != 0 or info.st_mode & 0o022 or

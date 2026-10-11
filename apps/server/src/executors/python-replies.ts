@@ -9,6 +9,7 @@ import {
   PYTHON_WIRE_BYTES,
   type PythonReplyValue,
   parsePythonRpc,
+  pythonBrowserRequestBound,
   pythonReplyValueSchema,
 } from "./python-protocol.ts";
 import type { ExecutorRegistry } from "./registry.ts";
@@ -54,13 +55,15 @@ export async function currentPythonRequest(
     delivery.operation.executorEpoch !== parent.executorEpoch ||
     delivery.operation.kind !== "command" ||
     delivery.operation.capability !== "python" ||
-    ![1, 2].includes(delivery.operation.capabilityVersion) ||
+    ![1, 2, 3].includes(delivery.operation.capabilityVersion) ||
     delivery.operation.capabilityVersion !== parent.capabilityVersion ||
     delivery.receipt?.status !== "running"
   )
     throw new AppError("Python cell has no current claimed request", 409);
   const cell = nativePythonArgsSchema.parse(delivery.operation.args).pythonCell;
   const request = parsePythonRpc(delivery.receipt.data?.pythonRpc);
+  if (!pythonBrowserRequestBound(cell, request))
+    throw new AppError("Python RPC does not match its bound browser session", 403);
   if (
     cell.owner !== owner ||
     !cell.tools.includes(request.name) ||
@@ -135,7 +138,7 @@ export async function consumePythonReply(
     delivery?.state !== "claimed" ||
     delivery.operation.kind !== "session" ||
     delivery.operation.capability !== "python" ||
-    ![1, 2].includes(delivery.operation.capabilityVersion) ||
+    ![1, 2, 3].includes(delivery.operation.capabilityVersion) ||
     !delivery.operation.inspection ||
     delivery.operation.executorId !== executorId ||
     delivery.operation.executorEpoch !== input.epoch

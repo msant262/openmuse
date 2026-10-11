@@ -13,6 +13,7 @@ import time
 import uuid
 
 from .python_kernel import PythonKernels, MAX_WIRE_BYTES, python_workspace
+from .browser_harness_native import RPC_TOOL, validate_browser_session
 
 
 def python_resource_key(executor_id, owner, session_id):
@@ -26,30 +27,37 @@ def _integer(value, low, high):
 
 def validate_cell(operation):
     version = operation.get("capabilityVersion", 1)
-    if not _integer(version, 1, 2):
+    if not _integer(version, 1, 3):
         raise ValueError("Incompatible private Python capability version")
     if operation.get("kind") != "command" or operation.get("capability") != "python" or operation.get("inspection") is not False:
         raise ValueError("Python requires its own mutating native capability")
     args = operation.get("args", {})
     if (set(args) != {"command", "cwd", "timeoutMs", "background", "pythonCell"}
             or args.get("command") != "Python cell"
-            or args.get("background") is not False or not _integer(args.get("timeoutMs"), 1, 900000)):
+            or args.get("background") is not False or not _integer(args.get("timeoutMs"), 1, 1800000 if version == 3 else 900000)):
         raise ValueError("Invalid private Python command envelope")
     cwd = python_workspace(args.get("cwd"))
     if version == 1 and cwd != "/workspace":
         raise ValueError("Python workspace requires native capability version 2")
     cell = args.get("pythonCell")
-    if not isinstance(cell, dict) or set(cell) != {"owner", "sessionId", "code", "tools", "reset", "maxToolCalls", "outputBytes"}:
+    fields = {"owner", "sessionId", "code", "tools", "reset", "maxToolCalls", "outputBytes"}
+    if (not isinstance(cell, dict) or not fields.issubset(cell)
+            or set(cell) - fields - ({"fresh", "browserSession"} if version == 3 else set())):
         raise ValueError("Invalid private Python cell")
     if (any(not isinstance(cell[key], str) or not 1 <= len(cell[key]) <= 256 for key in ("owner", "sessionId"))
             or not isinstance(cell["code"], str) or not 1 <= len(cell["code"]) <= 200000
-            or type(cell["reset"]) is not bool or not _integer(cell["maxToolCalls"], 1, 200)
+            or type(cell["reset"]) is not bool or "fresh" in cell and type(cell["fresh"]) is not bool
+            or not _integer(cell["maxToolCalls"], 1, 200)
             or not _integer(cell["outputBytes"], 256, 131072)
             or not isinstance(cell["tools"], list) or len(cell["tools"]) > 512
             or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,255}", name)
                    or name == "execute_code" for name in cell["tools"])
             or len(set(cell["tools"])) != len(cell["tools"])):
         raise ValueError("Invalid Python source, tool catalog or budgets")
+    if "browserSession" in cell:
+        validate_browser_session(cell["browserSession"])
+        if cell.get("fresh") is not True or RPC_TOOL not in cell["tools"]:
+            raise ValueError("Browser helpers require a fresh cell and their bound RPC catalog")
     budget = operation.get("resourceBudget", {})
     if (set(budget) != {"memoryBytes", "heavy"} or budget.get("heavy") is not False
             or not _integer(budget.get("memoryBytes"), 16 * 1024**2, 1024**4)
@@ -59,7 +67,7 @@ def validate_cell(operation):
 
 
 def validate_reply(operation):
-    if not _integer(operation.get("capabilityVersion", 1), 1, 2):
+    if not _integer(operation.get("capabilityVersion", 1), 1, 3):
         raise ValueError("Incompatible private Python reply capability version")
     args = operation.get("args", {})
     if (operation.get("kind") != "session" or operation.get("capability") != "python"
@@ -166,7 +174,8 @@ class NativePythonJobs:
             result = job.controller.execute(job.scope, cell["code"], tools=tools,
                 should_continue=lambda: self._continue(job), timeout_seconds=job.operation["args"]["timeoutMs"] / 1000,
                 reset=cell["reset"], max_tool_calls=cell["maxToolCalls"], output_bytes=cell["outputBytes"],
-                cwd=job.operation["args"]["cwd"])
+                cwd=job.operation["args"]["cwd"], fresh=cell.get("fresh", False),
+                browser_session=cell.get("browserSession"))
             # An accepted host review/input reply intentionally stops the cell.
             # Known containment is a failed/stopped program, not an ambiguous
             # source effect. Any separate uncertain host tool stays uncertain in
@@ -193,6 +202,10 @@ class NativePythonJobs:
 
     def _rpc(self, job, name, args):
         self.guard(job.operation)
+        if name == RPC_TOOL:
+            session = job.operation["args"]["pythonCell"].get("browserSession")
+            if not session or args.get("session") != session:
+                raise ValueError("Python RPC does not match its bound browser session")
         raw = json.dumps({"name": name, "args": args}, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
         if len(raw.encode()) > MAX_WIRE_BYTES - 1024:
             raise ValueError("Python tool request exceeds the private transport budget")

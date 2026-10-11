@@ -24,6 +24,198 @@ import { executorRoutes } from "../apps/server/src/executors/routes.ts";
 import { nodeToken } from "./helpers/executors.ts";
 import { pythonRuntime } from "./helpers/python-runtime.ts";
 
+test("copied browser helpers cross the actual API/native protocol under their canonical task scope", {
+  timeout: 45_000,
+}, async (t) => {
+  await pythonRuntime(
+    t,
+    async ({ server, registry, task, operation }) => {
+      const native = await peer(registry, operation);
+      let calls = 0;
+      try {
+        const driven = dispatchPythonRequests(
+          registry,
+          "owner",
+          operation,
+          {
+            shouldContinue: () => true,
+            call: (parent, request) =>
+              withNativePythonHostCall(
+                server.agent.journal,
+                "owner",
+                parent,
+                pythonRpcWire(request),
+                () =>
+                  server.agent.journal.run(
+                    "owner",
+                    task,
+                    {
+                      id: `browser-native:${pythonHostCallId(parent.id, request)}`,
+                      toolCallId: pythonHostCallId(parent.id, request),
+                      name: request.name,
+                      args: request.args,
+                    },
+                    async () => {
+                      assert.deepEqual(request.args, {
+                        session: "documents",
+                        timeoutMs: 5000,
+                        request: {
+                          method: "Page.navigate",
+                          params: { url: "https://example.org/owned" },
+                          session_id: null,
+                        },
+                      });
+                      calls++;
+                      // This is the backend fixture; the interpreter and transport are real.
+                      return { result: { frameId: "observed-owned-frame" } };
+                    },
+                    true,
+                  ),
+              ),
+          },
+          5,
+        );
+        await native.start();
+        const observed = await driven;
+        assert.equal(observed.status, "succeeded", JSON.stringify(observed));
+        assert.equal(
+          observed.data?.result && (observed.data.result as { stdout: string }).stdout,
+          "observed-owned-frame\n",
+        );
+        assert.equal(observed.data?.cleanupConfirmed, true);
+        assert.deepEqual(await native.command({ kind: "processes" }), { launched: 1, live: 0 });
+        assert.deepEqual(await native.command({ kind: "inspect", path: "browser-observed.txt" }), {
+          exists: true,
+          children: 1,
+        });
+        assert.equal(calls, 1);
+      } finally {
+        await native.close();
+      }
+    },
+    ["browser_harness_rpc"],
+    {
+      capabilityVersion: 3,
+      advertisedPythonVersions: [3],
+      fresh: true,
+      browserSession: "documents",
+      code:
+        "from pathlib import Path\nframe = goto_url('https://example.org/owned')['frameId']\n" +
+        "Path('browser-observed.txt').write_text(frame)\nprint(frame)",
+    },
+  );
+});
+
+test("fresh native source settles its actual RPC and closes before returning a successful command", {
+  timeout: 45_000,
+}, async (t) => {
+  await pythonRuntime(
+    t,
+    async ({ server, registry, task, operation }) => {
+      assert.equal(operation.capabilityVersion, 3);
+      const native = await peer(registry, operation);
+      let calls = 0;
+      try {
+        const driven = dispatchPythonRequests(
+          registry,
+          "owner",
+          operation,
+          {
+            shouldContinue: () => true,
+            call: (parent, request) =>
+              withNativePythonHostCall(
+                server.agent.journal,
+                "owner",
+                parent,
+                pythonRpcWire(request),
+                () =>
+                  server.agent.journal.run(
+                    "owner",
+                    task,
+                    {
+                      id: `fresh-native:${pythonHostCallId(parent.id, request)}`,
+                      toolCallId: pythonHostCallId(parent.id, request),
+                      name: request.name,
+                      args: request.args,
+                    },
+                    async () => {
+                      calls++;
+                      return { observed: "actual host result" };
+                    },
+                    true,
+                  ),
+              ),
+          },
+          5,
+        );
+        await native.start();
+        const observed = await driven;
+        assert.equal(observed.status, "succeeded", JSON.stringify(observed));
+        assert.equal(observed.data?.cleanupConfirmed, true);
+        assert.equal(observed.data?.stateLost, true);
+        const backend = new RemoteComputerBackend(registry, {
+          executorId: operation.executorId,
+          pythonEnabled: true,
+        });
+        const command = await backend.command("owner", operation.id);
+        assert.equal(command.stdout, "actual host result\n");
+        assert.equal(command.cleanupConfirmed, true);
+        assert.deepEqual(await native.command({ kind: "processes" }), { launched: 1, live: 0 });
+        assert.equal(calls, 1);
+        assert.deepEqual(await native.command({ kind: "operation", operation }), {
+          replayed: true,
+        });
+        assert.equal(calls, 1);
+        assert.deepEqual(await native.command({ kind: "inspect", path: "fresh-owned.txt" }), {
+          exists: true,
+          children: 1,
+        });
+      } finally {
+        await native.close();
+      }
+    },
+    ["read_sample"],
+    {
+      capabilityVersion: 3,
+      advertisedPythonVersions: [1, 2, 3],
+      fresh: true,
+      timeoutMs: 1_800_000,
+      code:
+        "from pathlib import Path\nfrom hermes_tools import read_sample\n" +
+        "Path('fresh-owned.txt').write_text('actual script output')\n" +
+        "print(read_sample({'owned': True})['observed'])",
+    },
+  );
+});
+
+test("a legacy peer cannot silently turn fresh browser source into a persistent Python cell", async (t) => {
+  await pythonRuntime(t, async ({ server, registry, task, operation }) => {
+    const backend = new RemoteComputerBackend(registry, {
+      executorId: operation.executorId,
+      pythonEnabled: true,
+    });
+    const before = await server.agent.journal.operations("owner", task.id);
+    await assert.rejects(
+      () =>
+        backend.python(
+          "owner",
+          {
+            sessionId: "browser-script:owned-task:research",
+            code: "print('must not run')",
+            fresh: true,
+            tools: [],
+            reset: false,
+            wallClockMs: 5000,
+            maxToolCalls: 100,
+          },
+          { shouldContinue: () => true, call: async () => assert.fail("not dispatched") },
+        ),
+      /fresh.*capability|capability.*fresh|version 3/i,
+    );
+    assert.deepEqual(await server.agent.journal.operations("owner", task.id), before);
+  });
+});
+
 test("Python v2 delivers a file from its actual task directory through the original host RPC", {
   timeout: 45_000,
 }, async (t) => {

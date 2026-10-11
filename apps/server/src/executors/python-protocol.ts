@@ -28,10 +28,23 @@ export const pythonCellSchema = z
       .max(512)
       .refine((names) => new Set(names).size === names.length),
     reset: z.boolean(),
+    /** Native v3: stop the complete interpreter unit after every source call. */
+    fresh: z.boolean().optional(),
+    /** Native v3: load copied helpers with this owned browser session. */
+    browserSession: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/)
+      .optional(),
     maxToolCalls: z.number().int().min(1).max(200),
     outputBytes: z.number().int().min(256).max(131072),
   })
-  .strict();
+  .strict()
+  .refine(
+    (cell) =>
+      cell.browserSession === undefined ||
+      (cell.fresh === true && cell.tools.includes("browser_harness_rpc")),
+    "Browser helpers require a fresh cell and their bound RPC catalog",
+  );
 export const nativePythonArgsSchema = z
   .object({
     command: z.literal("Python cell"),
@@ -46,11 +59,21 @@ export const nativePythonArgsSchema = z
         return z.NEVER;
       }
     }),
-    timeoutMs: z.number().int().min(1).max(900_000),
+    timeoutMs: z.number().int().min(1).max(1_800_000),
     background: z.literal(false),
     pythonCell: pythonCellSchema,
   })
   .strict();
+export function pythonCapabilityCompatible(
+  version: number,
+  args: z.output<typeof nativePythonArgsSchema>,
+) {
+  return (
+    [1, 2, 3].includes(version) &&
+    (version !== 1 || args.cwd === "/workspace") &&
+    (version === 3 || (args.pythonCell.fresh === undefined && args.timeoutMs <= 900_000))
+  );
+}
 export const nativePythonReplyArgsSchema = z
   .object({
     operation: z.literal("python-reply"),
@@ -83,6 +106,15 @@ export function parsePythonRpc(raw: unknown) {
   return { ...rpc, ...call };
 }
 export type PythonRpc = ReturnType<typeof parsePythonRpc>;
+export function pythonBrowserRequestBound(
+  cell: z.infer<typeof pythonCellSchema>,
+  request: Pick<PythonRpc, "name" | "args">,
+) {
+  return (
+    request.name !== "browser_harness_rpc" ||
+    (cell.browserSession !== undefined && request.args.session === cell.browserSession)
+  );
+}
 export function pythonRpcWire(request: Pick<PythonRpc, "sequence" | "json" | "sha256">) {
   return { sequence: request.sequence, json: request.json, sha256: request.sha256 };
 }

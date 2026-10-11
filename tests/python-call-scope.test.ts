@@ -8,6 +8,35 @@ import {
 import { pythonHostCallId } from "../apps/server/src/executors/python-protocol.ts";
 import { pythonRuntime } from "./helpers/python-runtime.ts";
 
+test("a copied browser source cannot route its current canonical RPC to another named session", async (t) => {
+  await pythonRuntime(
+    t,
+    async ({ server, operation, rpc }) => {
+      const request = await rpc("browser_harness_rpc", {
+        session: "other",
+        timeoutMs: 5000,
+        request: { meta: "current_tab" },
+      });
+      let effects = 0;
+      await assert.rejects(
+        () =>
+          withNativePythonHostCall(server.agent.journal, "owner", operation, request, async () => {
+            effects++;
+          }),
+        /browser.*session|session.*browser/i,
+      );
+      assert.equal(effects, 0);
+    },
+    ["browser_harness_rpc"],
+    {
+      capabilityVersion: 3,
+      advertisedPythonVersions: [3],
+      fresh: true,
+      browserSession: "documents",
+    },
+  );
+});
+
 test("only the exact host tool call can run under its claimed Python parent, and replay preserves its receipt", async (t) => {
   await pythonRuntime(t, async ({ server, task, operation, rpc }) => {
     const journal = server.agent.journal;

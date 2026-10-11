@@ -23,6 +23,7 @@ import {
 import {
   nativePythonArgsSchema,
   nativePythonReplyArgsSchema,
+  pythonCapabilityCompatible,
   pythonResourceKey,
   pythonRpcSchema,
 } from "../executors/python-protocol.ts";
@@ -299,10 +300,7 @@ export class TaskExecutorAuthority {
     if (request.capability === "python") {
       if (request.kind === "command") {
         const args = nativePythonArgsSchema.parse(request.args);
-        if (
-          ![1, 2].includes(request.capabilityVersion ?? 1) ||
-          (args.cwd !== "/workspace" && (request.capabilityVersion ?? 1) !== 2)
-        )
+        if (!pythonCapabilityCompatible(request.capabilityVersion ?? 1, args))
           throw new AppError(
             "Python workspace requires the compatible native capability version",
             409,

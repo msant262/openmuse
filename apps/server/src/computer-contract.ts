@@ -80,6 +80,10 @@ export type ComputerPythonInput = {
   code: string;
   tools: string[];
   reset: boolean;
+  /** Host-selected browser-script lifecycle; requires native Python v3. */
+  fresh?: boolean;
+  /** Host-bound copied browser helpers; never selects an owner or CDP port. */
+  browserSession?: string;
   wallClockMs: number;
   maxToolCalls: number;
 };
@@ -148,7 +152,7 @@ type BaseComputerBackend = Pick<
   | "writeBytes"
 >;
 export type ComputerBackend = Omit<BaseComputerBackend, "execute"> & {
-  pythonAvailable?: (owner: string) => Promise<boolean>;
+  pythonAvailable?: (owner: string, options?: { fresh?: boolean }) => Promise<boolean>;
   pythonResourceKey?: (owner: string, sessionId: string) => string;
   python?: (
     owner: string,

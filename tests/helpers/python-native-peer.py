@@ -161,6 +161,9 @@ try:
             elif command["kind"] == "inspect":
                 value = {"exists": (workspace / command["path"]).exists(),
                          "children": len(children)}
+            elif command["kind"] == "processes":
+                value = {"launched": len(children),
+                         "live": sum(child.poll() is None for child in children)}
             elif command["kind"] == "units":
                 value = [{**record, "properties": dict(line.split("=", 1) for line in
                          subprocess.check_output(["systemctl", "show", record["unit"],

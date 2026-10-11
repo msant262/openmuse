@@ -7,6 +7,7 @@ import {
   nativePythonArgsSchema,
   type PythonRpc,
   parsePythonRpc,
+  pythonBrowserRequestBound,
   pythonHostCallId,
   pythonResourceKey,
   pythonRpcSchema,
@@ -29,12 +30,14 @@ async function validate(frame: Frame) {
     stored.resourceFence !== parent.resourceFence ||
     stored.nativeEnvelope?.kind !== "command" ||
     stored.nativeEnvelope.capability !== "python" ||
-    ![1, 2].includes(Number(stored.nativeEnvelope.capabilityVersion)) ||
+    ![1, 2, 3].includes(Number(stored.nativeEnvelope.capabilityVersion)) ||
     stored.nativeEnvelope.capabilityVersion !== parent.capabilityVersion ||
     stored.nativeEnvelope.resourceKey !== parent.resourceKey
   )
     throw new AppError("Python host call has no current canonical parent scope", 409);
   const cell = nativePythonArgsSchema.parse(stored.args).pythonCell;
+  if (!pythonBrowserRequestBound(cell, request))
+    throw new AppError("Python RPC does not match its bound browser session", 403);
   if (
     cell.owner !== owner ||
     parent.resourceKey !== pythonResourceKey(parent.executorId, owner, cell.sessionId) ||

@@ -1,0 +1,33 @@
+{
+  "repository": "https://github.com/browser-use/browser-harness",
+  "commit": "dbf0e4f3a37ebc31aaeaf9d378ab1760b5776c15",
+  "license": "MIT",
+  "files": {
+    "helpers.py": {
+      "source": "src/browser_harness/helpers.py",
+      "sha256": "5ea8560a01b74281833923720ffd23ca8e4f6b873c2419c821f7695a04091cf3",
+      "modified": false
+    },
+    "paths.py": {
+      "source": "src/browser_harness/paths.py",
+      "sha256": "ba3c6e4c91a8e5f8add837eedd51a1aa391f47a7d11c79db47ac8b8146267ad7",
+      "modified": false
+    },
+    "recorder.py": {
+      "source": "src/browser_harness/recorder.py",
+      "sha256": "ccf987870ab88cff7dbefe586165eaac122bba53dc73813e8202d65c840814e8",
+      "modified": false
+    },
+    "LICENSE": {
+      "source": "LICENSE",
+      "sha256": "5afa3d97bf1e6f998d587fa101e3fe0d0c416840b7fe77bcd6ae97690a334631",
+      "modified": false
+    },
+    "__init__.py": {
+      "source": "src/browser_harness/__init__.py",
+      "sha256": "b159e84a2701448a4905041f48b27bf6d26cc420b597b82e4fdeabbd7fe26c2f",
+      "modified": false
+    }
+  },
+  "transport": "Original helpers are unchanged; the app injects its owned native RPC transport in place of daemon IPC. Daemon/cloud/CLI are not installed."
+}

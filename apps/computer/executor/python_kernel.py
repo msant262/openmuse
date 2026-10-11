@@ -20,6 +20,7 @@ import time
 from typing import Callable
 
 from .vendor.hermes_code_kernel import KernelRegistry
+from .browser_harness_native import RPC_TOOL, validate_browser_session
 
 RUNNER_PATH = Path(__file__).with_name("python_kernel_runner.py")
 MAX_WIRE_BYTES = 8 * 1024**2
@@ -296,7 +297,8 @@ class PythonKernels:
             self.reaper.join(timeout=1)
 
     def execute(self, scope, code, *, tools, should_continue, timeout_seconds=300,
-                max_tool_calls=100, reset=False, output_bytes=131072, cwd="/workspace"):
+                max_tool_calls=100, reset=False, output_bytes=131072, cwd="/workspace", fresh=False,
+                browser_session=None):
         if not isinstance(code, str) or not 1 <= len(code) <= 200000:
             raise ValueError("Python cell code must contain 1–200000 characters")
         if (not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool)
@@ -304,9 +306,13 @@ class PythonKernels:
                 or not isinstance(max_tool_calls, int) or isinstance(max_tool_calls, bool) or not 1 <= max_tool_calls <= 200
                 or not isinstance(output_bytes, int) or isinstance(output_bytes, bool) or not 256 <= output_bytes <= 131072
                 or not isinstance(tools, dict) or any(not isinstance(name, str) or not callable(tool) for name, tool in tools.items())
-                or not callable(should_continue) or not isinstance(reset, bool)):
+                or not callable(should_continue) or not isinstance(reset, bool) or type(fresh) is not bool):
             raise ValueError("Invalid Python cell time, call or output budget")
-        kernel, state_reset = self._acquire(scope, reset, python_workspace(cwd))
+        if browser_session is not None:
+            validate_browser_session(browser_session)
+            if not fresh or RPC_TOOL not in tools:
+                raise ValueError("Browser helpers require a fresh source call with its owned browser RPC")
+        kernel, state_reset = self._acquire(scope, reset or fresh, python_workspace(cwd))
         authority = _Authority(tools, should_continue, max_tool_calls)
         identity = secrets.token_hex(24)
         start = time.monotonic()
@@ -327,7 +333,10 @@ class PythonKernels:
                 with kernel.buffer_lock:
                     kernel.raw.clear()
                     kernel.stderr.clear()
-                kernel.send(dict(kind="cell", id=identity, code=code, tools=list(tools), output_bytes=output_bytes))
+                request = dict(kind="cell", id=identity, code=code, tools=list(tools), output_bytes=output_bytes)
+                if browser_session is not None:
+                    request["browser_session"] = browser_session
+                kernel.send(request)
                 while True:
                     if kernel.closed:
                         result["status"] = "interrupted"
@@ -399,6 +408,15 @@ class PythonKernels:
             raise
         finally:
             authority.retire()
+            if fresh:
+                # Browser scripts retain their workspace/browser state, never
+                # Python globals, modules, environment changes or descendants.
+                # A successful source result is not proof of native cleanup.
+                result["cleanup_confirmed"] = self._stop(kernel)
+                result["state_lost"] = True
+                self.registry.discard(scope, kernel)
+                if not result["cleanup_confirmed"] and result.get("status") in ("ok", "error"):
+                    result.update(status="interrupted", error="Fresh Python process cleanup is unconfirmed; reconcile its exact native unit before another script")
             with authority.lock:
                 result["tool_calls"] = [dict(item) for item in authority.calls]
                 result["host_call_pending"] = authority.inflight

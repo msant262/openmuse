@@ -28,6 +28,7 @@ spec.loader.exec_module(upstream)
 MAX_WIRE_BYTES = 8 * 1024**2
 SPILL_BYTES = 5 * 1024**2
 authority = contextvars.ContextVar("python_cell_authority", default=None)
+browser_binding = contextvars.ContextVar("python_browser_session", default=None)
 frames = queue.Queue(maxsize=8)
 pending = {}
 pending_lock, output_lock = threading.Lock(), threading.Lock()
@@ -123,6 +124,23 @@ exec(upstream.RUNNER_CELL_SOURCE, cell)
 cell["GLOBALS"]["tools"] = tools
 
 
+def execute_source(program, namespace):
+    session = browser_binding.get()
+    if session is not None:
+        # This hook runs inside the unchanged Hermes capture/exception handler.
+        # The user's compiled source, including __future__ imports and line
+        # numbers, remains unchanged. Workspace helper output is captured too.
+        adapter_path = Path(__file__).with_name("browser_harness_native.py")
+        adapter_spec = importlib.util.spec_from_file_location("_okami_browser_native", adapter_path)
+        adapter = importlib.util.module_from_spec(adapter_spec)
+        adapter_spec.loader.exec_module(adapter)
+        namespace.update(adapter.browser_helpers(session, workspace, call_tool))
+    return exec(program, namespace)
+
+
+cell["exec"] = execute_source
+
+
 def clip(text):
     limit = cell["_CAPTURE_LIMIT"]
     encoded = text.encode("utf-8", errors="replace")
@@ -153,6 +171,7 @@ while True:
     execution_count += 1
     cell["_CAPTURE_LIMIT"] = request["output_bytes"]
     binding = authority.set((request["id"], frozenset(request["tools"])))
+    browser_token = browser_binding.set(request.get("browser_session"))
     try:
         result, full_stdout = cell["run_cell"](request, execution_count)
         result["kind"] = "result"
@@ -164,4 +183,5 @@ while True:
         if result["status"] == "exit":
             break
     finally:
+        browser_binding.reset(browser_token)
         authority.reset(binding)

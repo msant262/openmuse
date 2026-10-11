@@ -120,6 +120,68 @@ class PythonTransportTests(unittest.TestCase):
         self.assertEqual(observed["data"]["result"]["stdout"], "10\n")
         self.assertEqual(len(self.children), 1)
 
+    def test_v3_fresh_scripts_use_new_processes_with_the_same_owned_workspace(self):
+        first = self.operation("fresh-first", "from pathlib import Path\nvalue = 42\n"
+            "Path('fresh-proof.txt').write_text('owned bytes')", version=3, received=False)
+        first["args"]["pythonCell"]["fresh"] = True
+        first["args"]["timeoutMs"] = 1800000
+        try:
+            validate_cell(first)
+        except ValueError as error:
+            self.fail(f"Fresh Python requires its negotiated native protocol: {error}")
+        self.journal.receive(first)
+        self.jobs.start(first)
+        observed = self.final(first)
+        self.assertEqual(observed["status"], "succeeded", observed)
+        self.assertTrue(observed["data"]["cleanupConfirmed"])
+        self.assertTrue(observed["data"]["stateLost"])
+        self.assertIsNotNone(self.children[0].poll())
+        second = self.operation("fresh-second", "from pathlib import Path\n"
+            "print('value' in globals(), Path('fresh-proof.txt').read_text())",
+            version=3, received=False)
+        second["args"]["pythonCell"]["fresh"] = True
+        self.journal.receive(second)
+        self.jobs.start(second)
+        observed = self.final(second)
+        self.assertEqual(observed["status"], "succeeded", observed)
+        self.assertEqual(observed["data"]["result"]["stdout"], "False owned bytes\n")
+        self.assertFalse(observed["data"]["result"]["reused"])
+        self.assertTrue(observed["data"]["cleanupConfirmed"])
+        self.assertEqual(len(self.children), 2)
+
+    def test_v3_fresh_rpc_accepts_its_exact_private_reply_then_closes_the_process(self):
+        parent = self.operation("fresh-rpc", "from hermes_tools import read_drive\n"
+            "print(read_drive({'query': 'MovingDE'})['observed'])", ["read_drive"],
+            version=3, received=False)
+        parent["args"]["pythonCell"]["fresh"] = True
+        try:
+            validate_cell(parent)
+        except ValueError as error:
+            self.fail(f"Fresh Python protocol is absent: {error}")
+        self.journal.receive(parent)
+        self.jobs.start(parent)
+        rpc = self.pending(parent)
+        control = self.reply(parent, rpc, {"observed": "actual returned value"})
+        self.jobs.reply(control)
+        observed = self.final(parent)
+        self.assertEqual(observed["status"], "succeeded", observed)
+        self.assertEqual(observed["data"]["result"]["stdout"], "actual returned value\n")
+        self.assertTrue(observed["data"]["cleanupConfirmed"])
+        self.assertEqual(len(self.consumed), 1)
+        self.assertIsNotNone(self.children[0].poll())
+
+    def test_old_protocol_rejects_fresh_lifecycle_and_long_timeout_before_launch(self):
+        for version in (1, 2):
+            for fresh, timeout in ((True, 2000), (False, 2000), (None, 900001)):
+                operation = self.operation(f"old-fresh-{len(self.operations)}", "print('never')",
+                    version=version, received=False)
+                if fresh is not None:
+                    operation["args"]["pythonCell"]["fresh"] = fresh
+                operation["args"]["timeoutMs"] = timeout
+                with self.assertRaises(ValueError):
+                    validate_cell(operation)
+        self.assertEqual(self.children, [])
+
     def test_v2_cell_runs_in_host_bound_workspace_and_resumes_same_interpreter(self):
         directory = Path(self.directory.name) / "cards" / "one"
         directory.mkdir(parents=True)
@@ -138,10 +200,61 @@ class PythonTransportTests(unittest.TestCase):
         self.assertEqual(len(self.children), 1)
 
     def test_old_python_protocol_cannot_silently_ignore_a_custom_workspace(self):
-        for version, cwd in [(1, "/workspace/cards/one"), (3, "/workspace"), (2, "/workspace/../outside"), (2, "relative")]:
+        for version, cwd in [(1, "/workspace/cards/one"), (4, "/workspace"), (2, "/workspace/../outside"), (2, "relative")]:
             operation = self.operation(f"bad-cwd-{len(self.operations)}", "print('never')", received=False, cwd=cwd, version=version)
             with self.assertRaises(ValueError): validate_cell(operation)
         self.assertEqual(len(self.children), 0)
+
+    def test_v3_copied_browser_helper_uses_bound_rpc_and_writes_observed_output(self):
+        parent = self.operation("browser-helper", "from pathlib import Path\n"
+            "Path('observed-browser.txt').write_text(goto_url('https://example.org/owned')['frameId'])",
+            ["browser_harness_rpc"], version=3, received=False)
+        parent["args"]["pythonCell"].update(fresh=True, browserSession="documents")
+        try:
+            validate_cell(parent)
+        except ValueError as error:
+            self.fail(f"Copied browser helper binding is absent from native protocol: {error}")
+        self.journal.receive(parent)
+        self.jobs.start(parent)
+        rpc = self.pending(parent)
+        body = json.loads(rpc["json"])
+        self.assertEqual(body, {"name": "browser_harness_rpc", "args": {
+            "session": "documents", "timeoutMs": 5000,
+            "request": {"method": "Page.navigate", "params": {"url": "https://example.org/owned"}, "session_id": None},
+        }})
+        self.jobs.reply(self.reply(parent, rpc, {"result": {"frameId": "owned-frame"}}))
+        observed = self.final(parent)
+        self.assertEqual(observed["status"], "succeeded", observed)
+        self.assertEqual(Path(self.directory.name, "observed-browser.txt").read_text(), "owned-frame")
+        self.assertTrue(observed["data"]["cleanupConfirmed"])
+        self.assertIsNotNone(self.children[0].poll())
+
+    def test_browser_helper_binding_requires_v3_freshness_and_its_catalog_before_launch(self):
+        for version, fresh, name, tools in [
+            (1, True, "documents", ["browser_harness_rpc"]),
+            (2, True, "documents", ["browser_harness_rpc"]),
+            (3, False, "documents", ["browser_harness_rpc"]),
+            (3, True, "../other", ["browser_harness_rpc"]),
+            (3, True, "documents", []),
+        ]:
+            parent = self.operation(f"bad-browser-{len(self.operations)}", "print('never')",
+                tools, version=version, received=False)
+            parent["args"]["pythonCell"].update(fresh=fresh, browserSession=name)
+            with self.assertRaises(ValueError): validate_cell(parent)
+        self.assertEqual(self.children, [])
+
+    def test_browser_script_cannot_redirect_its_rpc_to_another_named_session(self):
+        parent = self.operation("browser-wrong-session", "from hermes_tools import browser_harness_rpc\n"
+            "browser_harness_rpc({'session':'other','request':{'meta':'current_tab'},'timeoutMs':5000})",
+            ["browser_harness_rpc"], version=3, received=False)
+        parent["args"]["pythonCell"].update(fresh=True, browserSession="documents")
+        self.journal.receive(parent)
+        self.jobs.start(parent)
+        observed = self.final(parent)
+        self.assertEqual(observed["status"], "failed", observed)
+        self.assertIn("bound browser session", observed["data"]["result"]["traceback"])
+        self.assertEqual(self.consumed, [])
+        self.assertEqual(self.jobs.active[parent["id"]].sequence, 0)
 
     def test_root_sequence_and_private_reply_deliver_the_full_result_once(self):
         parent = self.operation("rpc", "from hermes_tools import read_drive\nprint(len(read_drive({'query': 'MovingDE'})['files']))", ["read_drive"])
