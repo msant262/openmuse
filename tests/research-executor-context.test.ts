@@ -13,6 +13,152 @@ import { preservePublicSource } from "../apps/server/src/public-web.ts";
 import { modelFixture, richChatFixtureProviders } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("batch search context indexes repeated results without losing query evidence or alternate snippets", async (t) => {
+  const f = await taskRuntime(t);
+  const shared = {
+    url: "https://academy.example/course",
+    title: "Introductory course",
+    snippet: "Observed search lead. ".repeat(40),
+  };
+  const alternate = { ...shared, snippet: "A different query matched this separate excerpt." };
+  const other = {
+    url: "https://academy.example/faq",
+    title: "Course FAQ",
+    snippet: "Certificate policy search lead. ".repeat(30),
+  };
+  const provenance = { backend: "http", fullPagesRead: false, observedAt: "2026-10-11T21:00:00Z" };
+  const receipt = {
+    status: "partial",
+    queries: ["course language", "certificate cost", "duration"],
+    sources: [shared, other],
+    searches: [
+      { status: "ok", query: "course language", sources: [shared, other], provenance },
+      { status: "ok", query: "certificate cost", sources: [other, alternate], provenance },
+      {
+        status: "unavailable",
+        query: "duration",
+        sources: [],
+        error: "Search provider unavailable",
+        code: "SEARCH_UNAVAILABLE",
+        provenance,
+      },
+    ],
+    truncated: false,
+    fullPagesRead: false,
+  };
+  const original = structuredClone(receipt);
+  const view = (await recoverResearchToolResult(
+    f.files,
+    "owner",
+    "search_web",
+    receipt,
+    1048576,
+  )) as {
+    sources: (typeof shared)[];
+    searches: Array<Record<string, unknown> & { sourceIndices: number[] }>;
+    _contextProjection: { kind: string };
+  };
+  assert.equal(view._contextProjection?.kind, "indexed_search_sources");
+  assert.equal(view.sources.length, 3, "different snippets at one URL remain distinct evidence");
+  const reconstructed = view.searches.map(({ sourceIndices, ...search }) => ({
+    ...search,
+    sources: sourceIndices.map((index) => view.sources[index]),
+  }));
+  assert.deepEqual(reconstructed, receipt.searches);
+  assert.deepEqual(view.sources.slice(0, receipt.sources.length), receipt.sources);
+  assert.equal((view as Record<string, unknown>).fullPagesRead, false);
+  assert.equal((view as Record<string, unknown>).status, "partial");
+  assert.deepEqual(receipt, original, "UI, canonical receipts and source evidence remain exact");
+  assert.ok(JSON.stringify(view).length < JSON.stringify(receipt).length * 0.85);
+  assert.deepEqual(
+    await recoverResearchToolResult(f.files, "owner", "web_extract", receipt, 1048576),
+    receipt,
+    "the shape alone never changes another tool's result",
+  );
+});
+
+test("the copied executor sends batch search evidence once while preserving full canonical output", async (t) => {
+  const f = await taskRuntime(t);
+  const sources = Array.from({ length: 8 }, (_, i) => ({
+    url: `https://academy.example/course-${i}`,
+    title: `Course ${i}`,
+    snippet: `Search lead ${i}. ${"Observed syllabus snippet. ".repeat(32)}`,
+  }));
+  const receipt = {
+    status: "ok",
+    queries: ["introductory courses", "free certificates"],
+    sources,
+    searches: [
+      {
+        status: "ok",
+        query: "introductory courses",
+        sources,
+        provenance: { fullPagesRead: false },
+      },
+      {
+        status: "ok",
+        query: "free certificates",
+        sources: [...sources].reverse(),
+        provenance: { fullPagesRead: false },
+      },
+    ],
+    fullPagesRead: false,
+    truncated: false,
+  };
+  const original = structuredClone(receipt);
+  const fixture = await modelFixture(t, (index) =>
+    index === 0 ? { name: "search_web", arguments: { query: "introductory courses" } } : undefined,
+  );
+  let canonical: ModelMessage[] = [];
+  const agent = openclawAgent({
+    dataDir: f.directory,
+    model: "openai/fixture",
+    providers: richChatFixtureProviders(f.directory),
+    toolSearch: false,
+    prompt: "Research introductory courses with the available search and reading tools.",
+    tools: [
+      defineTool({
+        name: "search_web",
+        description: "Search public course sources",
+        parameters: z.object({ query: z.string() }),
+        execute: async () => receipt,
+      }),
+    ],
+    projectToolResult: (name, result, tokens) =>
+      recoverResearchToolResult(f.files, "owner", name, result, tokens),
+    onMessages: async (messages) => {
+      canonical = messages;
+    },
+  });
+  const events = await lastValueFrom(
+    agent
+      .run({
+        threadId: randomUUID(),
+        runId: randomUUID(),
+        messages: [{ id: randomUUID(), role: "user", content: "Find introductory courses." }],
+        tools: [],
+        context: [],
+        state: {},
+      })
+      .pipe(toArray()),
+  );
+  assert.ok(!events.some((event) => event.type === EventType.RUN_ERROR), JSON.stringify(events));
+  assert.equal(fixture.requests.length, 2);
+  const next = JSON.parse(fixture.requests[1].body).input.find(
+    (item: { type: string }) => item.type === "function_call_output",
+  );
+  const view = JSON.parse(next.output);
+  assert.equal(view._contextProjection?.kind, "indexed_search_sources");
+  assert.deepEqual(view.sources, sources);
+  assert.deepEqual(view.searches[1].sourceIndices, [7, 6, 5, 4, 3, 2, 1, 0]);
+  assert.ok(next.output.length < JSON.stringify(receipt).length * 0.5);
+  assert.equal(view.fullPagesRead, false, "search snippets never become page-read evidence");
+  assert.deepEqual(JSON.parse(String(canonical.find((m) => m.role === "tool")?.content)), original);
+  const resultEvent = events.find((event) => event.type === EventType.TOOL_CALL_RESULT);
+  assert.deepEqual(JSON.parse(String(resultEvent?.content)), original);
+  assert.deepEqual(receipt, original);
+});
+
 for (const [contextTokens, paragraphs] of [
   [131072, 1300],
   [1048576, 10000],

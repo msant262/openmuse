@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Files } from "../files.ts";
-import type { JournalOperation } from "./task-journal.ts";
 import { resolveLiveToolResultMaxChars } from "./openclaw/tool-result-limits.ts";
+import type { JournalOperation } from "./task-journal.ts";
 
 /** Expand only byte-verified public sources from this owner's recorded reads.
  * This is an ephemeral review projection: no journal, network or file writes. */
@@ -102,16 +102,75 @@ async function recoverToolResult(
   return value;
 }
 
+/** A batch repeats its source bodies in the aggregate and in each search.
+ * Index only this inference view; preserve ordering, query provenance and every
+ * distinct snippet, including alternate evidence from the same URL. */
+function indexedSearchSources(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const receipt = value as Record<string, unknown>;
+  const source = (item: unknown): item is Record<string, unknown> =>
+    Boolean(
+      item &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        typeof (item as Record<string, unknown>).url === "string" &&
+        typeof (item as Record<string, unknown>).title === "string" &&
+        typeof (item as Record<string, unknown>).snippet === "string",
+    );
+  if (
+    Object.hasOwn(receipt, "_contextProjection") ||
+    !Array.isArray(receipt.sources) ||
+    !receipt.sources.every(source) ||
+    !Array.isArray(receipt.searches) ||
+    !receipt.searches.every(
+      (search) =>
+        search &&
+        typeof search === "object" &&
+        !Array.isArray(search) &&
+        !Object.hasOwn(search, "sourceIndices") &&
+        Array.isArray(search.sources) &&
+        search.sources.every(source),
+    )
+  )
+    return value;
+  const sources: Record<string, unknown>[] = [...receipt.sources];
+  const indices = new Map(sources.map((item, index) => [JSON.stringify(item), index]));
+  const searches = receipt.searches.map(({ sources: found, ...search }) => ({
+    ...search,
+    sourceIndices: (found as Record<string, unknown>[]).map((item) => {
+      const key = JSON.stringify(item);
+      let index = indices.get(key);
+      if (index === undefined) {
+        index = sources.length;
+        sources.push(item);
+        indices.set(key, index);
+      }
+      return index;
+    }),
+  }));
+  const projected = {
+    ...receipt,
+    sources,
+    searches,
+    _contextProjection: {
+      kind: "indexed_search_sources",
+      note: "Each search.sourceIndices lists zero-based entries in sources, in its original order. All distinct titles/snippets and query provenance are preserved. These are search leads, not page reads. Canonical output remains available with read_tool_output.",
+    },
+  };
+  return JSON.stringify(projected).length < JSON.stringify(value).length ? projected : value;
+}
+
 /** The executor sees already-read, verified sources without changing the tool's
  * requested excerpt or issuing another network read. Oversized sources retain
  * their original excerpt and read_web_source reference. */
-export function recoverResearchToolResult(
+export async function recoverResearchToolResult(
   files: Files,
   owner: string,
   toolName: string,
   value: unknown,
   contextTokens: number,
 ) {
+  if (toolName === "search_web") return indexedSearchSources(value);
   const characters = resolveLiveToolResultMaxChars({ contextWindowTokens: contextTokens });
   return recoverToolResult(toolName, value, sourceRecovery(files, owner, characters / 4));
 }
