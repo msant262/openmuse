@@ -1,6 +1,63 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Estado atual — atualização das 17:47 UTC
+## Estado atual — conferência das 18:47 UTC
+
+**Ainda não terminou. API e web foram atualizados, o leitor PDF funciona no
+app publicado e a limpeza desta rodada foi concluída. O pedido normal de
+pesquisa/PDF voltou a falhar no aceite de autonomia e rapidez.**
+
+| Frente | Feito e comprovado | Pendência / limite |
+| --- | --- | --- |
+| Código e publicação | Implementação `8415419b` e ajuste web `e1fd91f9` na main local/remota. API publicada na imagem `f6212f30`; web no release `harness80-20261011-e1fd91f9`. Sete hashes compilados e HTML/bundle/runtime/worker nas origens privada e pública conferidos. | Navegador e executor físico mantidos. **Nenhum APK novo** nesta rodada. |
+| Leitor PDF | Páginas desenhadas com PDF.js local, autenticação, texto selecionável e links. As três páginas de um arquivo real apareceram no leitor público, com pixels diferentes e legíveis. Navegação/zoom no mesmo layout não fizeram novo download; fechar liberou o bitmap. Zero erros JS no período observado. | Largura de celular **simulada**, sem aparelho físico. Trocar entre os layouts desktop/celular reiniciou a página e baixou o PDF novamente. A verificação usou arquivo real existente, pois o QA não entregou seu rascunho. |
+| Paginação | A reprodução exata do PDF anterior passou de três páginas para duas, mantendo texto e links; ajustados título e distribuição de colunas. | **Não resolve todos os PDFs.** O novo conteúdo do pedido normal voltou a deixar uma terceira página quase vazia. |
+| Testes locais | **47/47 testes relacionados passaram**, zero falhas/cancelamentos/ignorados; verificações específicas do leitor repetidas após correções também passaram. TypeScript raiz/mobile, builds, exportação web e lint passaram. | Grupos sobrepostos não foram somados. Esses controles não aprovaram o fluxo natural inteiro. |
+| Pedido normal pelo chat | Mensagem comum enviada uma vez, conversa nova, **39 respostas somente de Luna**, sem fallback, respostas do operador ou resgate. Criou dois PDFs; o último tem **56.704 bytes e três páginas**. | **Reprovado: zero arquivos finais entregues.** Após **636,532s (10min36,532s)**, somente esse QA foi cancelado depois do loop observado. Seis tentativas de conclusão parcial receberam continuação reparável; o agente não corrigiu o arquivo nesse intervalo. |
+| Causa observada no fluxo | A revisão atual contradisse os bytes do PDF: disse que Great Learning estava fora da comparação e falou de duração de um curso IBM que não estava no arquivo. A pergunta para “retomar” foi bloqueada corretamente pelo guard de reparo, sem criar interação. | A validação do vínculo/hash da revisão não garante uma avaliação factual correta. O agente voltou a tentar encerrar. **Causa completa e correção desse loop ainda pendentes.** |
+| Inicialização / consumo | Medição real: criação do app **58,376s** e preparo do harness **8,249s**; HTTP pronto em 71,735s. Publicação da API levou 77,70s. Amostra durante o QA: **979,7 MiB / 16,84% CPU** na API. | A espera está principalmente em `createApp`; causa interna ainda não provada. A amostra não mede pico, GPU, celular ou estabilidade sustentada. |
+| Limpeza do app | Recolhidos **oito registros próprios do teste**: tarefa, conversa, cinco arquivos/previews e inbox. **1.904 registros fora da seleção permaneceram iguais.** Recibos canônicos preservados; navegador temporário fechado e dispositivo revogado. | Nenhum procedimento novo precisou ser arquivado. A verificação inicial de fechamento do inspector foi precoce; a conferência posterior confirmou que ele fechou. |
+| Dados reais | **13 conferências finais passaram**: companions/perfil, duas conversas, 58 arquivos, três memórias, 35 procedimentos e **três contas Google simultâneas** preservados. | Somente assinatura/expiração dos URLs temporários mudou; campos armazenados e rotas permaneceram iguais. Memória/proatividade completas continuam sem aprovação. |
+| Armazenamento | Retirada uma imagem Docker antiga da API, seu contexto e release; também o candidato web descartado e seu arquivo. Aumento medido de espaço livre: **481.329.152 bytes (~459,0 MiB)** na VPS. Retirados localmente dois archives obsoletos e 232 arquivos do export descartado: **99.520.512 bytes (~94,9 MiB)** de espaço livre adicional. | Versões atuais/de recuperação, APK publicado, volumes, perfis e dados reais preservados. Os 12 APKs antigos retirados anteriormente estão no histórico; não houve nova remoção de APK nesta rodada. |
+| Disponibilidade | Às **18:46:44 UTC**, página e `/api/health` públicos HTTP 200; API, navegador e OpenBao saudáveis; manutenção desligada, seis contadores de trabalho ativo em zero. | Conferência pontual. As 44 operações históricas incertas continuam preservadas. |
+| Google Workspace / ferramentas | Casos anteriores conferiram Drive com nome aproximado, Gmail/labels/arquivo/rascunho/card/envio, Docs/Sheets/Slides e calendário/exclusão após aprovação. | **Todas as operações Workspace e equivalência integral Hermes/OpenClaw ainda não estão aprovadas.** |
+
+[Implementação, publicação e evidências desta rodada](2026-10-11-pdf-reader-startup.md).
+[Inventário de contratos ainda pendentes](2026-10-09-harness-tool-inventory.json).
+**36 evidências privadas** desta rodada foram copiadas da VPS com SHA-256
+conferido, em diretório 0700 e arquivos 0600, fora do Git.
+A meta permanece ativa. O próximo trabalho precisa corrigir o loop e a revisão
+contraditória, completar a pesquisa factual e medir as fases internas da
+inicialização, além dos contratos de ferramentas ainda abertos.
+
+## Histórico — conferência das 18:14 UTC
+
+**O trabalho completo ainda não terminou. Há correções publicadas e novos
+ajustes verificados localmente; o critério de entrega integral não foi atendido.**
+
+| Frente | Resultado comprovado | Situação |
+| --- | --- | --- |
+| App publicado | Página e `/api/health` responderam **HTTP 200 às 18:13:59 UTC**; API, navegador e OpenBao saudáveis. API permanece em `10b4cf18`. | Disponibilidade pontual confirmada. Não comprova estabilidade sustentada. |
+| Pesquisa / conclusão | Correções publicadas preservam consultas e fontes, rejeitam revisão de arquivo antigo e continuam reparos de documentos públicos sem pedir ao usuário decisões dispensáveis. Último pedido normal entregou PDF real usando somente Luna, sem intervenção. | Levou **5min08,319s** e deixou campos sem comprovação. O aceite completo continua reprovado. |
+| Google Workspace | Casos publicados conferiram Drive com nome aproximado, Gmail com rascunho/card/envio, labels e arquivo, Docs/Sheets/Slides e exclusão após aprovação. | São casos específicos. Todas as operações e a conclusão autônoma de todos os fluxos ainda não estão aprovadas. |
+| Contas / memória | Última conferência de preservação manteve **três contas Google simultâneas**, companions, dados reais, três memórias e 35 procedimentos. Falha anterior da fila de aprendizado foi reproduzida e corrigida. | Aprendizado automático e proatividade completos continuam sem aprovação. Não houve nova escrita nos dados reais nesta atualização. |
+| Limpeza | Retirados registros próprios de testes, imagens Docker, contextos/releases e **12 APKs antigos**, preservando dados reais, versões atuais e recuperação. A última rodada liberou **~415,1 MiB na VPS**. | Limpeza dessa rodada concluída; comprovantes e medições anteriores estão no histórico abaixo. Não somei tamanhos nominais de imagens com camadas compartilhadas. |
+| Leitor PDF — novo ajuste local | Substituído iframe por páginas desenhadas com PDF.js, autenticação, texto selecionável, links clicáveis, navegação e zoom sem baixar novamente. Troca/fechamento libera o bitmap anterior; falha mostra recuperação explícita. Runtime e worker só carregam ao abrir um PDF. | **Ainda fora do commit e da publicação.** Teste em navegador real comprova pixels, links, uma única transferência durante navegação e recuperação de falha. Largura de celular simulada; celular físico ainda pendente. |
+| Paginação — novo ajuste local | Reprodução do PDF anterior agora ocupa **duas páginas**, preservando texto e links. Corrigida coluna de título vazia e distribuição das colunas de tabela. | **Ainda fora do commit e da publicação.** Essa reprodução local não aprova o conteúdo factual da pesquisa. |
+| Verificação local desta etapa | **47/47 testes relacionados passaram**, sem falhas/cancelamentos/ignorados; TypeScript raiz/mobile e exportação web passaram. Assets PDF separados conferidos. Lint sem erros, com um aviso no teste. | Nenhum novo pedido normal pelo chat publicado nesta etapa. Não somei estes testes às suítes anteriores, que têm sobreposição. |
+| Performance / cobertura completa | Leitor passa a reutilizar o download e desenhar uma página por vez. | Consumo e lentidão geral, startup de cerca de 74s, celular e equivalência integral Hermes/OpenClaw permanecem sem solução comprovada. |
+
+Falta publicar e verificar os novos ajustes no app; impedir conclusão de pesquisa
+com campos ainda sem comprovação; reduzir repetição/latência com causa medida;
+e completar o aceite natural de ferramentas, Workspace, memória/proatividade e UX.
+A meta permanece ativa. Os resultados de cada teste e suas limitações seguem abaixo.
+
+Evidências locais desta etapa: `round80-full-document-suite.log`,
+`round80-root-typecheck-final.log`, `round80-mobile-typecheck.log`,
+`round80-web-build.log`, `round80-web-assets-proof.json` e
+`round80-biome-final.log`, em `artifacts/harness-parity-20261009/`, fora do Git.
+Conferência atual de produção: `harness80-status-production.json` na VPS.
+
+## Histórico — atualização das 17:47 UTC
 
 **Ainda não entregue como um todo. A correção de continuação está publicada,
 e o novo pedido normal entregou um PDF sem intervenção. A pesquisa completa,
