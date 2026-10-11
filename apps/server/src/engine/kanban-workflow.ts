@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { posix } from "node:path";
 import { attachmentLimit } from "../../../../packages/domain/src/attachments.ts";
 import { decodeBase64 } from "../base64.ts";
 import { bindingHash } from "../conversation-inbox.ts";
@@ -43,6 +44,27 @@ type Summary = Pick<
   commentCount: number;
   attachmentCount: number;
 };
+export type KanbanCreate = {
+  title: string;
+  body?: string;
+  assignee: string;
+  tenant?: string;
+  priority?: number;
+  parents?: string[];
+  workspaceKind?: "scratch" | "dir" | "worktree";
+  workspacePath?: string;
+  project?: string;
+  triage?: boolean;
+  idempotencyKey?: string;
+  maxRuntimeSeconds?: number;
+  initialStatus?: "running" | "blocked";
+  skills?: string[];
+  goalMode?: boolean;
+  completionContract?: string;
+  goalMaxTurns?: number;
+  model?: string;
+  provider?: string;
+};
 export type KanbanCard = {
   id: string;
   revision: number;
@@ -65,6 +87,17 @@ export type KanbanCard = {
   blockKind: BlockKind | null;
   blockCount: number;
   reason: string | null;
+  workspaceKind?: "scratch" | "dir" | "worktree";
+  workspacePath?: string;
+  project?: string;
+  idempotencyKey?: string;
+  branchName?: string;
+  maxRuntimeSeconds?: number;
+  skills?: string[];
+  completionContract?: string;
+  goalMaxTurns?: number;
+  model?: string;
+  provider?: string;
 };
 export type Handoff = {
   summary?: string;
@@ -86,6 +119,7 @@ export type KanbanAttachment = {
 };
 type Mutation = Parameters<Store["durableMutation"]>[3][number];
 type Change = { patch: Partial<KanbanCard>; outcome?: string; extra?: Mutation[]; audit?: unknown };
+export type KanbanProject = { id: string; slug: string; primaryPath?: string };
 
 export class KanbanWorkflow {
   constructor(
@@ -96,6 +130,11 @@ export class KanbanWorkflow {
       now?: () => number;
       leaseMs?: number;
       profileExists: (profile: string) => boolean | Promise<boolean>;
+      defaultProject?: string;
+      resolveProject?: (
+        project: string,
+        scope: KanbanScope,
+      ) => KanbanProject | null | Promise<KanbanProject | null>;
       /** Preserve actual artifacts and enforce goal/delivery evidence BEFORE
        * terminating the run. An unavailable gate must never imply success. */
       beforeHandoff?: (
@@ -426,7 +465,7 @@ export class KanbanWorkflow {
   }
   private async replay(scope: KanbanScope, event: string, requestId: string, input: unknown) {
     if (!requestId.trim()) this.fail("A stable operation request ID is required");
-    const receipt = await this.db.get<{ bindingHash: string; result: { values: KanbanCard[] } }>(
+    const receipt = await this.db.get<{ bindingHash: string; result: { values: unknown[] } }>(
       this.owner,
       "mutation-receipts",
       `kanban:${this.board}:${requestId}`,
@@ -436,7 +475,46 @@ export class KanbanWorkflow {
       this.fail("Operation ID belongs to another board action");
     // Return the recorded outcome, even after its run ended. This confirms an
     // ACK-loss retry; it does not reclaim the card or grant fresh authority.
-    return receipt.result.values[1];
+    return this.recordedCard(receipt.result.values);
+  }
+  private recordedCard(values: unknown[]): KanbanCard {
+    const first = values[0];
+    const card =
+      first && typeof first === "object" && "creationReplay" in first
+        ? first.creationReplay
+        : values[1];
+    if (!card || typeof card !== "object" || !("id" in card) || typeof card.id !== "string")
+      this.fail("The recorded board outcome is missing; do not repeat the mutation");
+    return card as KanbanCard;
+  }
+  private async acknowledgeCreation(
+    scope: KanbanScope,
+    input: KanbanCreate,
+    requestId: string,
+    card: KanbanCard,
+  ) {
+    if (scope.role === "worker") this.owned(scope, await this.get(scope.taskId));
+    const id = createHash("sha256").update(requestId).digest("hex");
+    // A new request sharing an automation key still needs its own immutable
+    // acknowledgment and binding. It must not increment the existing card.
+    const result = await this.db.durableMutation<unknown>(
+      this.owner,
+      `kanban:${this.board}:${requestId}`,
+      bindingHash({ board: this.board, scope, event: "created", input }),
+      [
+        {
+          kind: `kanban-create-acknowledgments:${this.board}`,
+          id,
+          mode: "insert",
+          value: { id, creationReplay: card },
+        },
+      ],
+    );
+    if (result.status === "binding_conflict")
+      this.fail("Operation ID belongs to another board action");
+    if (!["applied", "duplicate"].includes(result.status))
+      this.fail("The creation acknowledgment could not be recorded; read the card before retrying");
+    return this.recordedCard(result.values);
   }
   private async commit(
     scope: KanbanScope,
@@ -502,7 +580,11 @@ export class KanbanWorkflow {
     if (result.status === "binding_conflict")
       this.fail("Operation ID belongs to another board action");
     if (!["applied", "duplicate"].includes(result.status))
-      this.fail("Concurrent board change; read the current card and retry");
+      throw new AppError(
+        "Concurrent board change; read the current card and retry",
+        409,
+        "KANBAN_CONCURRENT_CHANGE",
+      );
     return result.values[1];
   }
   private async update(
@@ -522,32 +604,49 @@ export class KanbanWorkflow {
     const card = { ...old, ...change.patch, revision: old.revision + 1, updatedAt: this.time() };
     return this.commit(scope, revision, card, old, event, requestId, input, change);
   }
-  async create(
-    scope: KanbanScope,
-    input: {
-      title: string;
-      body?: string;
-      assignee: string;
-      tenant?: string;
-      priority?: number;
-      parents?: string[];
-      goalMode?: boolean;
-    },
-    requestId: string,
-  ) {
+  async create(scope: KanbanScope, input: KanbanCreate, requestId: string) {
     this.scope(scope);
     const previous = await this.replay(scope, "created", requestId, input);
     if (previous) return previous;
     if (!input.title.trim()) this.fail("A concrete task title is required");
     if (input.priority !== undefined && !Number.isSafeInteger(input.priority))
       throw new AppError("Task priority must be a safe integer", 400);
+    if (input.initialStatus !== undefined && !["running", "blocked"].includes(input.initialStatus))
+      throw new AppError("Initial status must be running or blocked", 400);
+    if (input.provider && !input.model?.trim())
+      throw new AppError("Provider override requires a model", 400);
+    for (const [name, value] of [
+      ["maxRuntimeSeconds", input.maxRuntimeSeconds],
+      ["goalMaxTurns", input.goalMaxTurns],
+    ] as const)
+      if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0))
+        throw new AppError(`${name} must be a positive integer`, 400);
+    const workspaceKind = input.workspaceKind ?? "scratch";
+    if (!["scratch", "dir", "worktree"].includes(workspaceKind))
+      throw new AppError("Unknown workspace kind", 400);
+    if (input.workspacePath !== undefined && !input.workspacePath.startsWith("/"))
+      throw new AppError("An absolute workspace path is required", 400);
+    const completionContract = this.completionContract(input.completionContract);
     const revision = await this.clock();
-    if (scope.role === "worker") this.owned(scope, await this.get(scope.taskId));
+    const creator = scope.role === "worker" ? await this.get(scope.taskId) : undefined;
+    if (creator) this.owned(scope, creator);
     await this.profile(input.assignee);
+    const creationKey = input.idempotencyKey?.trim();
+    const keyId = creationKey ? createHash("sha256").update(creationKey).digest("hex") : undefined;
+    const keyKind = `kanban-create-keys:${this.board}`;
+    const key = keyId
+      ? await this.db.get<{ id: string; taskId: string }>(this.owner, keyKind, keyId)
+      : undefined;
+    if (key) {
+      const existing = await this.get(key.taskId);
+      if (existing.status !== "archived")
+        return this.acknowledgeCreation(scope, input, requestId, existing);
+    }
     const id = createHash("sha256")
       .update(`${this.board}:${scope.profile}:${requestId}`)
       .digest("hex")
       .slice(0, 24);
+    const workspace = await this.creationWorkspace(scope, input, id, creator);
     const parents = [...new Set(input.parents ?? [])];
     const card: KanbanCard = {
       id,
@@ -558,7 +657,11 @@ export class KanbanWorkflow {
       ...(input.tenant !== undefined && { tenant: input.tenant }),
       ...(input.priority !== undefined && { priority: input.priority }),
       parents,
-      status: await this.landing({ parents }),
+      status: input.triage
+        ? "triage"
+        : input.initialStatus === "blocked"
+          ? "blocked"
+          : await this.landing({ parents }),
       goalMode: input.goalMode ?? false,
       createdBy: scope.profile,
       creatorTaskId: scope.role === "worker" ? scope.taskId : null,
@@ -571,8 +674,141 @@ export class KanbanWorkflow {
       blockKind: null,
       blockCount: 0,
       reason: null,
+      ...workspace,
+      ...(creationKey && { idempotencyKey: creationKey }),
+      ...(input.maxRuntimeSeconds !== undefined && { maxRuntimeSeconds: input.maxRuntimeSeconds }),
+      ...(input.skills !== undefined && {
+        skills: [...new Set(input.skills.map((name) => name.trim()).filter(Boolean))],
+      }),
+      completionContract,
+      ...(input.goalMaxTurns !== undefined && { goalMaxTurns: input.goalMaxTurns }),
+      ...(input.model !== undefined && { model: input.model }),
+      ...(input.provider !== undefined && { provider: input.provider }),
     };
-    return this.commit(scope, revision, card, null, "created", requestId, input);
+    if (scope.role === "worker") this.owned(scope, await this.get(scope.taskId));
+    try {
+      return await this.commit(scope, revision, card, null, "created", requestId, input, {
+        patch: {},
+        extra: keyId
+          ? [
+              {
+                kind: keyKind,
+                id: keyId,
+                mode: key ? "replace" : "insert",
+                ...(key ? { expected: { taskId: key.taskId } } : {}),
+                value: { id: keyId, taskId: id },
+              },
+            ]
+          : [],
+      });
+    } catch (error) {
+      if (!keyId || !(error instanceof AppError) || error.code !== "KANBAN_CONCURRENT_CHANGE")
+        throw error;
+      // Only a canonically committed key can reconcile the losing request.
+      // Binding conflicts and unrelated concurrent changes remain errors.
+      const winner = await this.db.get<{ id: string; taskId: string }>(this.owner, keyKind, keyId);
+      if (!winner) throw error;
+      const existing = await this.get(winner.taskId);
+      if (existing.status === "archived") throw error;
+      return this.acknowledgeCreation(scope, input, requestId, existing);
+    }
+  }
+  private async creationWorkspace(
+    scope: KanbanScope,
+    input: KanbanCreate,
+    id: string,
+    creator?: KanbanCard,
+  ): Promise<Pick<KanbanCard, "workspaceKind" | "workspacePath" | "project" | "branchName">> {
+    let name = input.project;
+    if (
+      name === undefined &&
+      input.workspaceKind === undefined &&
+      input.workspacePath === undefined
+    )
+      name = creator?.project;
+    if (name === undefined && input.workspaceKind !== "scratch") name = this.options.defaultProject;
+    const requested = name?.trim();
+    let project = requested ? await this.options.resolveProject?.(requested, scope) : undefined;
+    // A worker's profile may not have the creator's project registry. Recover
+    // only from the canonical parent's own project worktree, never its arbitrary
+    // directory or a model-supplied root path.
+    if (
+      !project &&
+      requested &&
+      creator?.project === requested &&
+      creator.workspaceKind === "worktree" &&
+      creator.workspacePath
+    ) {
+      const path = posix.normalize(creator.workspacePath).replace(/\/$/, "");
+      const [prefix, leaf] = creator.branchName?.split("/") ?? [];
+      const slug =
+        prefix && (leaf === creator.id || leaf?.startsWith(`${creator.id}-`))
+          ? prefix
+          : requested.toLowerCase();
+      if (
+        posix.isAbsolute(path) &&
+        posix.basename(path) === creator.id &&
+        posix.basename(posix.dirname(path)) === ".worktrees" &&
+        /^[a-z0-9][a-z0-9_-]{0,63}$/.test(slug)
+      )
+        project = { id: requested, slug, primaryPath: posix.dirname(posix.dirname(path)) };
+    }
+    if (project && (!project.id.trim() || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(project.slug)))
+      throw new AppError("Configured project identity is invalid", 400);
+    if (
+      project?.primaryPath &&
+      (!posix.isAbsolute(project.primaryPath) || project.primaryPath.includes("\0"))
+    )
+      throw new AppError("Configured project requires an absolute workspace path", 400);
+    let kind = input.workspaceKind ?? "scratch";
+    if (project?.primaryPath && kind === "scratch") kind = "worktree";
+    const path =
+      input.workspacePath ??
+      (kind === "worktree" && project?.primaryPath
+        ? posix.join(project.primaryPath, ".worktrees", id)
+        : undefined);
+    if (kind !== "scratch" && !path)
+      throw new AppError("An absolute workspace path or configured project is required", 400);
+    const titleSlug = input.title
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40)
+      .replace(/^-+|-+$/g, "");
+    return {
+      workspaceKind: kind,
+      ...(path !== undefined && { workspacePath: path }),
+      ...(project && { project: project.id }),
+      ...(project &&
+        kind === "worktree" && {
+          branchName: `${project.slug}/${id}${titleSlug ? `-${titleSlug}` : ""}`,
+        }),
+    };
+  }
+  private completionContract(raw?: string) {
+    const value = raw?.trim() || "local-only";
+    if (value === "local-only" || /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value)) return value;
+    try {
+      const url = new URL(value);
+      if (
+        url.protocol === "https:" &&
+        url.hostname === "github.com" &&
+        !url.username &&
+        !url.password &&
+        !url.port &&
+        !url.search &&
+        !url.hash &&
+        /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*\/?$/.test(url.pathname)
+      )
+        return url.href.replace(/\/$/, "");
+    } catch {
+      /* Invalid declarations cannot turn into local-only completion. */
+    }
+    throw new AppError(
+      "Completion contract requires local-only, OWNER/REPO, or an exact GitHub PR URL",
+      400,
+    );
   }
   /** Dispatcher operation; never accept a model-provided run token. */
   async claim(
@@ -626,7 +862,12 @@ export class KanbanWorkflow {
       if (child.creatorTaskId !== card.id || child.createdBy !== card.currentRun?.profile)
         this.fail("Declared card was not created by this worker");
     }
-    if ((card.goalMode || input.artifacts?.length) && !this.options.beforeHandoff)
+    if (
+      (card.goalMode ||
+        input.artifacts?.length ||
+        (card.completionContract && card.completionContract !== "local-only")) &&
+      !this.options.beforeHandoff
+    )
       this.fail("Actual goal/artifact evidence must be verified before this handoff");
     const preserved = await this.options.beforeHandoff?.(card, input, requestId);
     return {
