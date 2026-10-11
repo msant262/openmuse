@@ -381,6 +381,63 @@ export function htmlText(node: Node, excludedTags: readonly string[] = []): stri
   }
   return text.join(" ").replace(/\s+/g, " ").trim();
 }
+
+function visibleLandmark(node: Node) {
+  let current: Node | null = node;
+  while (current) {
+    if (
+      htmlAttribute(current, "hidden") !== undefined ||
+      htmlAttribute(current, "aria-hidden")?.toLowerCase() === "true" ||
+      /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i.test(
+        htmlAttribute(current, "style") ?? "",
+      ) ||
+      /(?:^|\s)(?:hidden|invisible|d-none|sr-only|visually-hidden|screen-reader-only|offscreen)(?:\s|$)/i.test(
+        htmlAttribute(current, "class") ?? "",
+      )
+    )
+      return false;
+    current = "parentNode" in current ? current.parentNode : null;
+  }
+  return true;
+}
+
+/** Put a single article before page navigation without losing facts in its main
+ * landmark. Catalogue pages keep all articles; the original tree still supplies
+ * published structured data. The excerpt and saved source share this ordering. */
+function publicContent(root: Node) {
+  const main = htmlNodes(
+    root,
+    (node) => node.nodeName === "main" || htmlAttribute(node, "role") === "main",
+  ).find(visibleLandmark);
+  const region = main ?? htmlNodes(root, (node) => node.nodeName === "body")[0] ?? root;
+  const content = region;
+  const articles = htmlNodes(content, (node) => node.nodeName === "article").filter(
+    visibleLandmark,
+  );
+  if (articles.length === 1) {
+    const article = articles[0];
+    if (!("tagName" in article)) return content;
+    const articleNodes = new Set(htmlNodes(article, () => true));
+    for (const node of htmlNodes(
+      content,
+      (node) => node.nodeName === "nav" || htmlAttribute(node, "role") === "navigation",
+    )) {
+      if (articleNodes.has(node)) continue;
+      if ("parentNode" in node && node.parentNode)
+        node.parentNode.childNodes = node.parentNode.childNodes.filter((child) => child !== node);
+    }
+    if (article.parentNode)
+      article.parentNode.childNodes = article.parentNode.childNodes.filter(
+        (child) => child !== article,
+      );
+    if ("childNodes" in content) {
+      content.childNodes.unshift(article);
+      article.parentNode = content;
+    }
+  }
+  return content;
+}
+
 function productData(root: Node) {
   const result: Record<string, unknown>[] = [];
   const keys = [
@@ -897,27 +954,25 @@ export class PublicWeb {
     const title = html
       ? htmlText(htmlNodes(root, (node) => node.nodeName === "title")[0] ?? root).slice(0, 300)
       : new URL(document.url).hostname;
-    const main = htmlNodes(root, (node) => ["main", "article"].includes(node.nodeName))[0];
-    const visibleText = html
-      ? htmlText(main ?? htmlNodes(root, (node) => node.nodeName === "body")[0] ?? root)
-      : document.body.trim();
     const products = html ? productData(root) : [];
     const data = html
       ? pageData(root, document.url)
       : { dataSources: [], embedded: "", truncated: false };
+    const main = html ? publicContent(root) : undefined;
+    const visibleText = html ? htmlText(main ?? root) : document.body.trim();
     const structured = products.length
       ? "\nStructured product data from this page (untrusted): " + JSON.stringify(products)
       : "";
     let readableText = visibleText;
     if (html && this.dependencies.renderHtml) {
       // Preserve accessible image labels before the native text renderer drops images.
-      for (const node of htmlNodes(root, (node) => node.nodeName === "img")) {
+      for (const node of htmlNodes(main ?? root, (node) => node.nodeName === "img")) {
         if (!("tagName" in node)) continue;
         const label = htmlAttribute(node, "alt") ?? "";
         node.nodeName = node.tagName = "span";
         node.childNodes = [{ nodeName: "#text", value: label, parentNode: node }];
       }
-      for (const node of htmlNodes(root, (node) => node.nodeName === "a")) {
+      for (const node of htmlNodes(main ?? root, (node) => node.nodeName === "a")) {
         if (!("attrs" in node)) continue;
         const href = node.attrs.find((attr) => attr.name === "href");
         if (!href) continue;
