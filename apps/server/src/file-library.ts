@@ -76,7 +76,13 @@ export class FileLibrary {
         origins.set(id, existing);
       }
     const matches = (await this.files.list(owner))
-      .filter((file) => !args.mimeType || file.mimeType === args.mimeType)
+      .filter(
+        (file) =>
+          !args.mimeType ||
+          file.mimeType === args.mimeType ||
+          (/^[a-z]+\/(?:\*)?$/i.test(args.mimeType) &&
+            file.mimeType.startsWith(args.mimeType.replace(/\*$/, ""))),
+      )
       .flatMap((file) => {
         const sourceOrigins = origins.get(file.id) ?? [];
         const found = match(
@@ -100,7 +106,7 @@ export class FileLibrary {
       .sort(
         (a, b) =>
           a.rank - b.rank ||
-          Number(b.previouslyDelivered) - Number(a.previouslyDelivered) ||
+          (args.query.trim() ? Number(b.previouslyDelivered) - Number(a.previouslyDelivered) : 0) ||
           b.file.createdAt.localeCompare(a.file.createdAt) ||
           a.file.id.localeCompare(b.file.id),
       );

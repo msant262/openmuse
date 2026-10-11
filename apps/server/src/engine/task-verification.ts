@@ -460,7 +460,9 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     task.kind === "finance" ||
     ((!browserRename || requestedFileOutput(prompt, mailRequest)) &&
       /\b(report|relat[oó]rio|comparison|compara[çc][aã]o|plan|plano)\b/i.test(
-        prompt.replace(/“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'|`[^`]*`/g, " "),
+        prompt
+          .replace(/“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'|`[^`]*`/g, " ")
+          .replace(/\bem\s+segundo\s+plano\b/gi, " "),
       )) ||
     (!nativeGmailDraft &&
       /\b(write|draft|redija|escreva|prepare)\b/i.test(prompt) &&

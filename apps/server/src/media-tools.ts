@@ -982,7 +982,11 @@ export function mediaTools(
           query: z.string().trim().max(500).default(""),
           offset: z.number().int().min(0).default(0),
           limit: z.number().int().min(1).max(100).default(20),
-          mimeType: z.string().max(200).optional(),
+          mimeType: z
+            .string()
+            .max(200)
+            .optional()
+            .describe("Exact MIME type or media family, such as audio/mpeg, audio/ or audio/*."),
         })
         .strict(),
       (args) => library.search(owner, args),

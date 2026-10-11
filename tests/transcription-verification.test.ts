@@ -2,7 +2,92 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import type { JournalOperation } from "../apps/server/src/engine/task-journal.ts";
+import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
+import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
+
+test("background execution is not a request to author a plan", () => {
+  const prompt = "Transcreva o áudio anexado em segundo plano e me entregue o texto.";
+  assert.ok(
+    !taskCriteria({ kind: "agent", prompt }).some(
+      (criterion) => criterion.id === "requested-artifact",
+    ),
+  );
+  assert.ok(
+    taskCriteria({
+      kind: "agent",
+      prompt: "Crie em segundo plano um plano de estudo de quatro semanas.",
+    }).some((criterion) => criterion.id === "requested-artifact"),
+  );
+});
+
+test("a resumed background transcription collects its complete TXT once before model delivery", async (t) => {
+  const text = "Um modelo de linguagem reconhece padrões e pode cometer erros.";
+  const fixture = await modelFixture(t, () => ({
+    name: "finish_task",
+    arguments: { summary: text },
+  }));
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const receipt = {
+    id: "owned-background-job",
+    kind: "transcribe" as const,
+    command: "transcribe",
+    cwd: "/workspace",
+    status: "succeeded" as const,
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+    truncated: false,
+    background: true,
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    cleanupConfirmed: true,
+    result: {
+      text,
+      language: "pt",
+      duration: 5,
+      truncated: false,
+      textPath: "/workspace/complete-transcript.txt",
+    },
+  };
+  let reads = 0;
+  f.agent.computer.command = async (_owner: string, id: string) => {
+    assert.equal(id, receipt.id);
+    return receipt;
+  };
+  t.mock.method(f.agent.computer, "fileBytes", async (_owner: string, path: string) => {
+    assert.equal(path, receipt.result.textPath);
+    reads++;
+    return { name: "complete-transcript.txt", bytes: Buffer.from(text) };
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Transcreva em segundo plano e me entregue o arquivo TXT.",
+  });
+  await f.db.put("owner", "tasks", {
+    ...task,
+    state: {
+      ...task.state,
+      waitingComputerCommandId: receipt.id,
+      computerCleanupPendingId: receipt.id,
+    },
+  });
+  await f.agent.worker.tick();
+  const completed = await f.agent.getTask("owner", task.id);
+  assert.equal(completed.status, "succeeded", completed.error ?? completed.question);
+  assert.equal(completed.artifactIds.length, 1);
+  assert.equal(
+    Buffer.from(await f.files.bytes("owner", completed.artifactIds[0])).toString(),
+    text,
+  );
+  assert.equal(reads, 1);
+  assert.equal(
+    fixture.requests.length,
+    1,
+    "the model need not rediscover or poll an already completed job",
+  );
+  await f.agent.media.completed("owner", f.agent.computer, receipt);
+  assert.equal(reads, 1, "later status inspection reuses the owned published file");
+});
 
 test("a completed native transcription certifies its observed text without inventing a report", async (t) => {
   const server = await taskRuntime(t);

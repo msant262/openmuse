@@ -7,6 +7,53 @@ import { mediaTools } from "../apps/server/src/media-tools.ts";
 import { createDocumentPdf } from "../packages/integrations/src/document.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("saved-file media filters accept MIME families and an empty query lists the newest upload first", async (t) => {
+  const f = await taskRuntime(t);
+  const old = await f.files.importAttachment(
+    "owner",
+    "older.mp3",
+    Buffer.from("old"),
+    "Audio",
+    "audio/mpeg",
+  );
+  await f.db.put("owner", "files", { ...old, createdAt: "2026-10-01T00:00:00Z" });
+  const task = await f.agent.createTask("owner", { prompt: "Deliver older.mp3" });
+  await f.db.put("owner", "tasks", { ...task, status: "succeeded", artifactIds: [old.id] });
+  const current = await f.files.importAttachment(
+    "owner",
+    "new-upload.m4a",
+    Buffer.from("new"),
+    "Uploaded by you",
+    "audio/mp4",
+  );
+  await f.files.importAttachment(
+    "owner",
+    "notes.txt",
+    Buffer.from("notes"),
+    "Uploaded by you",
+    "text/plain",
+  );
+  const search = mediaTools(f.agent.media, f.agent.computer, "owner", "media-filter", {
+    model: () => undefined,
+  }).find((tool) => tool.name === "search_saved_files");
+  assert.ok(search?.execute);
+  for (const mimeType of ["audio/", "audio/*"]) {
+    const result = (await search.execute({ query: "", mimeType } as never)) as {
+      files: { fileId: string }[];
+      total: number;
+    };
+    assert.equal(result.total, 2);
+    assert.equal(result.files[0].fileId, current.id);
+  }
+  const exact = (await search.execute({ query: "", mimeType: "audio/mpeg" } as never)) as {
+    files: { fileId: string }[];
+  };
+  assert.deepEqual(
+    exact.files.map((file) => file.fileId),
+    [old.id],
+  );
+});
+
 test("the harness finds, reads and redelivers a saved PDF without the computer", async (t) => {
   const server = await taskRuntime(t);
   const bytes = await createDocumentPdf(

@@ -72,6 +72,7 @@ import {
 } from "../public-source-cache.ts";
 import { runtimeInstructions, runtimeTool } from "../runtime-tools.ts";
 import { SkillCatalog, skillInstructions, skillTools } from "../skill-catalog.ts";
+import { readComputerCommand } from "./computer-jobs.ts";
 import { openclawAgent } from "./openclaw-agent.ts";
 import { buildPromisedWorkPromptSection } from "./promised-work-prompt.ts";
 import {
@@ -2650,6 +2651,37 @@ export async function executeModelTask(
     .object({ args: imageArgs, revision: z.number(), sourceOperationId: z.string() })
     .safeParse(task.state.pendingImageGeneration);
   const revision = Number(task.state.appliedRevision ?? 0);
+  const completedJob = task.state.completedComputerJob as
+    | { id?: string; status?: string }
+    | undefined;
+  if (completedJob?.id && completedJob.status === "succeeded") {
+    const receipt = await readComputerCommand(service.computer, owner, completedJob.id);
+    if (
+      receipt?.kind === "transcribe" &&
+      receipt.status === "succeeded" &&
+      !receipt.outcomeUnknown
+    ) {
+      // Late files belong to the completed owned job. Collect through the same
+      // audited status tool before inference; never submit transcription again.
+      const statusTool = tools.find((entry) => entry.name === "computer_command_status");
+      if (!statusTool?.execute) throw new Error("Completed media status tool is unavailable");
+      const executeStatus = statusTool.execute;
+      const args = { id: receipt.id };
+      const result = await service.journal.run(
+        owner,
+        task,
+        {
+          id: `completed-media:${receipt.id}`,
+          name: "computer_command_status",
+          args,
+        },
+        () => executeStatus(args as never),
+        false,
+      );
+      if (result && typeof result === "object" && "error" in result)
+        throw new Error(`Completed transcript could not be collected: ${String(result.error)}`);
+    }
+  }
   const operations = await service.journal.operations(owner, task.id);
   const pendingDocument = z
     .object({ args: documentArgs, revision: z.number(), sourceOperationId: z.string() })
