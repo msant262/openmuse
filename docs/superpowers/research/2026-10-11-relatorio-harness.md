@@ -1,6 +1,13 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Estado atual — conferência 21:09 UTC
+[Relatório consolidado de correções, limpeza, testes e pendências](2026-10-11-resumo-entrega-harness.md).
+Nova conferência de disponibilidade às **21:21 UTC**: página/API HTTP 200,
+três containers saudáveis e API ainda em `b5043529`. A base nova do executor
+Python passou localmente em 69 testes Python e 33 de protocolo/integração,
+com TypeScript e lint sem erros; segue sem commit de implementação ou
+publicação e não implementa sozinha `browser_exec`. **Aceite integral pendente.**
+
+## Última publicação — conferência 21:09 UTC
 
 **Ainda não terminou o harness completo.** A última correção remove repetição
 comprovada dos resultados de busca no contexto do modelo. A pesquisa comum
