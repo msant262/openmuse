@@ -23,7 +23,21 @@ for (const enabled of [false, true])
             },
           },
           { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
-          { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+          {
+            name: "confirm_document_review",
+            arguments: {
+              receiptId,
+              passed: true,
+              issues: [],
+              requestAudit: [
+                {
+                  requirement: "Open course — content, language, duration and certificate cost",
+                  satisfied: true,
+                  evidence: `The document and the source read at ${url} agree: free introductory generative AI lessons, English, two hours, paid optional certificate.`,
+                },
+              ],
+            },
+          },
           {
             name: "finish_task",
             arguments: { summary: "The course comparison is attached.", artifactIds: [fileId] },

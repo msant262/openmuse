@@ -19,6 +19,174 @@ const png = Buffer.from(
   "base64",
 );
 
+test("a bound review cannot approve its own unsatisfied requested fields", async (t) => {
+  const f = await taskRuntime(t);
+  const review = new DocumentReview(f.db, f.files);
+  const bytes = Buffer.from("Duration: not confirmed");
+  const file = await f.files.importAttachment("owner", "comparison.txt", bytes, "Test");
+  const preview = await f.files.importAttachment("owner", "comparison.png", png, "Test");
+  const scope = { scope: "task:comparison", revision: 0 };
+  const inspection = await review.recordInspection("owner", {
+    ...scope,
+    fileId: file.id,
+    sha256: digest(bytes),
+    pageCount: 1,
+    pages: [1],
+    previewFileId: preview.id,
+    rendererVersion: "test-1",
+  });
+  await review.recordObserved("owner", scope, preview.id);
+  const requestAudit = [
+    {
+      requirement: "Course duration",
+      satisfied: false,
+      evidence: "The overview does not give duration; its linked syllabus remains unread.",
+    },
+  ];
+  const confirmation = await review.confirm("owner", scope, {
+    receiptId: inspection.receiptId,
+    passed: true,
+    issues: [],
+    requestAudit,
+  });
+  assert.equal(confirmation.passed, false);
+  assert.deepEqual(confirmation.requestAudit, requestAudit);
+  assert.ok(confirmation.issues.some((issue) => /Course duration.*linked syllabus/.test(issue)));
+  const current = await review.check("owner", scope, file.id, digest(bytes));
+  assert.equal(current.passed, false);
+  assert.deepEqual(current.missingPages, [1]);
+  assert.deepEqual(current.issues, confirmation.issues);
+  const saved = await f.db.get("owner", "document-reviews", inspection.receiptId);
+  assert.deepEqual(saved?.requestAudit, requestAudit);
+});
+
+test("native research assessment requires a field audit and repairs a factual gap without a second reviewer", async (t) => {
+  let f: Awaited<ReturnType<typeof taskRuntime>>;
+  let taskId = "",
+    fileId = "",
+    receiptId = "";
+  const url = "https://courses.example/open";
+  const detailUrl = "https://courses.example/open/syllabus";
+  const draft = {
+    name: "Course comparison",
+    format: "pdf",
+    operationId: "draft",
+    content: `# Open course\n\nEnglish. Duration not confirmed.\n\nSource: ${url}`,
+    design: { cover: false },
+  };
+  const requestAudit = [
+    {
+      requirement: "Open course — duration",
+      satisfied: false,
+      evidence: `The overview links to ${detailUrl}, which has not been read.`,
+    },
+  ];
+  const fixture = await modelFixture(t, async (index) => {
+    if (index === 3) {
+      const request = JSON.parse(fixture.requests[index].body);
+      const args = request.tools[0].parameters.properties.args;
+      assert.ok(args.required.includes("requestAudit"));
+    }
+    if (index === 4) {
+      assert.equal(await f.db.get("owner", "document-reviews", receiptId), null);
+    }
+    if (index === 6) {
+      assert.equal((await f.agent.getTask("owner", taskId)).status, "running");
+      assert.equal((await f.agent.verification.assess("owner", taskId, 0)).status, "partial");
+      assert.equal((await f.db.get("owner", "document-reviews", receiptId))?.passed, false);
+    }
+    return [
+      { name: "web_fetch", arguments: { url } },
+      { name: "create_document", arguments: draft },
+      { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+      { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+      {
+        name: "confirm_document_review",
+        arguments: { receiptId, passed: true, issues: [], requestAudit },
+      },
+      { name: "finish_task", arguments: { summary: "Course comparison attached." } },
+      { name: "web_fetch", arguments: { url: detailUrl } },
+      {
+        name: "create_document",
+        arguments: {
+          ...draft,
+          operationId: "corrected",
+          replaceFileId: fileId,
+          content: `# Open course\n\nEnglish. Duration: two hours.\n\nSource: ${detailUrl}`,
+        },
+      },
+      { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+      {
+        name: "confirm_document_review",
+        arguments: {
+          receiptId,
+          passed: true,
+          issues: [],
+          requestAudit: [
+            {
+              requirement: "Open course — duration",
+              satisfied: true,
+              evidence: `The displayed table states two hours, matching the syllabus read at ${detailUrl}.`,
+            },
+          ],
+        },
+      },
+      {
+        name: "finish_task",
+        arguments: { summary: "The corrected comparison is attached.", artifactIds: [fileId] },
+      },
+    ][index];
+  });
+  f = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: false,
+  });
+  f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
+  t.mock.method(f.agent.web, "document", async (requested: string) => ({
+    url: requested,
+    contentType: "text/html",
+    body:
+      requested === detailUrl
+        ? "<main>Open course. English. Duration: two hours.</main>"
+        : `<main>Open course. English. <a href="${detailUrl}">Syllabus</a></main>`,
+  }));
+  const create = f.agent.media.createDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "createDocument", async (...args: Parameters<typeof create>) => {
+    const result = await create(...args);
+    fileId = result.fileId;
+    return result;
+  });
+  const inspect = f.agent.media.inspectDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "inspectDocument", async (...args: Parameters<typeof inspect>) => {
+    const result = await inspect(...args);
+    receiptId = result.receiptId;
+    return result;
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Research Open course and deliver a PDF with its language and duration.",
+  });
+  taskId = task.id;
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", taskId);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.question);
+  assert.equal(saved.completion?.status, "verified");
+  const operations = await f.agent.journal.operations("owner", taskId);
+  const reviews = operations.filter((op) => op.toolName === "confirm_document_review");
+  assert.equal(
+    reviews[0].status,
+    "rejected_not_dispatched",
+    "the required argument is enforced, not only advertised",
+  );
+  assert.equal((reviews[1].receipt as { passed: boolean }).passed, false);
+  assert.equal((reviews[2].receipt as { passed: boolean }).passed, true);
+  const firstFinish = operations.find((op) => op.toolName === "finish_task");
+  assert.ok(firstFinish);
+  assert.equal((firstFinish.receipt as { complete: boolean }).complete, false);
+  assert.equal(fixture.reviewRequests.length, 0);
+  assert.equal(fixture.requests.length, 11);
+});
+
 test("actual worker rejects approval of a replaced draft without changing its failed review", async (t) => {
   let firstFileId = "",
     finalFileId = "",

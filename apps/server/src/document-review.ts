@@ -23,6 +23,20 @@ const inspectionSchema = z
     (v) => new Set(v.pages).size === v.pages.length && v.pages.every((page) => page <= v.pageCount),
     "Invalid page coverage",
   );
+export const documentRequestAuditSchema = z
+  .array(
+    z
+      .object({
+        requirement: z.string().trim().min(1),
+        satisfied: z.boolean(),
+        evidence: z.string().trim().min(1),
+      })
+      .strict(),
+  )
+  .min(1)
+  .describe(
+    "Check each requested factual field for each selected item visible on these pages. Name the item and field in requirement; in evidence compare the document's actual claim with the observed source, or identify the specific missing fact and useful recovery. An unknown field with relevant unread sources is unsatisfied. This is your assessment, not externally verified truth.",
+  );
 export const documentReviewArgs = z
   .object({
     receiptId: z
@@ -33,6 +47,7 @@ export const documentReviewArgs = z
       ),
     passed: z.boolean(),
     issues: z.array(z.string().trim().min(1).max(500)).max(20),
+    requestAudit: documentRequestAuditSchema.optional(),
     privateInput: z
       .string()
       .trim()
@@ -61,6 +76,7 @@ type Confirmation = DocumentReviewScope & {
   id: string;
   passed: boolean;
   issues: string[];
+  requestAudit?: z.infer<typeof documentRequestAuditSchema>;
   privateInput?: string;
   previewSha256: string;
   sha256: string;
@@ -213,11 +229,24 @@ export class DocumentReview {
       hash(await this.files.bytes(owner, receipt.previewFileId)) !== receipt.previewSha256
     )
       throw new AppError("Document or preview changed since inspection", 409);
+    // A summary verdict cannot override the same assessment's concrete gaps.
+    // Keep the exact audit bound to these bytes, scope and revision. This checks
+    // consistency of the model's assessment; it is not independent fact proof.
+    const issues = [
+      ...new Set([
+        ...args.issues,
+        ...(args.requestAudit ?? [])
+          .filter((item) => !item.satisfied)
+          .map((item) => `${item.requirement}: ${item.evidence}`),
+      ]),
+    ];
+    const passed = args.passed && issues.length === 0;
     await this.db.put<Confirmation>(owner, "document-reviews", {
       id: receipt.id,
       ...scope,
-      passed: args.passed,
-      issues: args.issues,
+      passed,
+      issues,
+      ...(args.requestAudit && { requestAudit: args.requestAudit }),
       ...(args.privateInput && { privateInput: args.privateInput }),
       sha256: receipt.sha256,
       previewSha256: receipt.previewSha256,
@@ -226,8 +255,9 @@ export class DocumentReview {
       receiptId: receipt.id,
       fileId: receipt.fileId,
       pages: receipt.pages,
-      passed: args.passed,
-      issues: args.issues,
+      passed,
+      issues,
+      ...(args.requestAudit && { requestAudit: args.requestAudit }),
       ...(args.privateInput && { privateInput: args.privateInput }),
     };
   }

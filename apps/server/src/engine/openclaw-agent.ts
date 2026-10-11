@@ -76,7 +76,7 @@ type Options = {
   /** A pending host assessment owns one inference; its result restores ordinary tools. */
   requiredToolTurn?: (
     messages: readonly ModelMessage[],
-  ) => Promise<{ name: string; parameters: SchemaInput; instructions: string } | undefined>;
+  ) => Promise<{ name: string; parameters: z.ZodType; instructions: string } | undefined>;
   onText?: (delta: string) => void;
   shouldContinue?: () => boolean;
   finalResponseWhen?: () => boolean;
@@ -941,6 +941,11 @@ export function openclawAgent(options: Options) {
                     throw new Error(
                       `Record the pending assessment with ${requiredTurn.name} before continuing. ${requiredTurn.instructions}`,
                     );
+                  // Enforce the exact schema advertised for this owned turn,
+                  // including its receipt binding and factual field audit.
+                  // Advertising stricter parameters without validating them
+                  // lets a provider omit the very assessment being requested.
+                  requiredTurn?.parameters.parse(resolved);
                   return (tool.execute as (args: unknown) => Promise<unknown>)(resolved);
                 };
                 const dispatch = async () => {
