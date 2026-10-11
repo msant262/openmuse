@@ -354,7 +354,7 @@ test("incomplete access normalization preserves exhausted paths and existing-evi
     },
   ];
   const fixture = await modelFixture(t, () => undefined, {
-    researchReview: (_body, i) => decisions[i],
+    researchReview: (_body, i) => decisions[Math.min(i, decisions.length - 1)],
   });
   const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
   const task = await f.agent.createTask("owner", { prompt: "Compare free generative AI courses." });
@@ -395,8 +395,8 @@ test("incomplete access normalization preserves exhausted paths and existing-evi
   assert.equal(fabricated.accessGaps.length, 1);
   assert.equal(
     fixture.reviewRequests.length,
-    3,
-    "an already incomplete review does not add an expensive proof-only retry",
+    4,
+    "only the free-proof mismatch gets one correction; exhaustion and paid/trial repairs do not",
   );
 });
 
@@ -3589,4 +3589,98 @@ test("an empty optional proof list is missing evidence, not a provider outage, a
   assert.equal(missing.complete, false);
   assert.equal(missing.needsMoreResearch, true);
   assert.match(missing.missing.join(" "), /Course A/);
+});
+
+test("an incomplete comparison repairs its own misquotation while retaining the other course's unresolved access", async (t) => {
+  const url = "https://courses.example/open";
+  const exact = "90 days of access to your Free Course. All listed lessons are included.";
+  const fixture = await modelFixture(t, () => undefined, {
+    researchReview: (body, i) => {
+      if (i === 1) {
+        assert.match(JSON.parse(body).instructions, /ACCESS_PROOF_PROTOCOL_REPAIR/);
+        assert.match(body, /Unknown course/);
+        assert.match(body, /All listed lessons are included/);
+      }
+      return {
+        // The second response accidentally approves unrelated facts. Only its
+        // requested quotation repair may replace the original partial decision.
+        complete: i === 1,
+        draftEligible: i === 1,
+        needsMoreResearch: i !== 1,
+        missing: i === 1 ? [] : ["Unknown course access is not confirmed."],
+        nextSteps:
+          i === 1
+            ? []
+            : ["Read the unknown course's access policy or select a verified alternative."],
+        requestAudit: [
+          {
+            requirement: "Both selected courses must offer free content.",
+            scope: "content",
+            satisfied: i === 1,
+            evidence: "The open course is free, but the other course's access remains unknown.",
+          },
+        ],
+        accessAudit: [
+          {
+            option: "Open course",
+            access: "free",
+            sourceUrl: url,
+            evidence: [
+              { sourceUrl: url, quote: i === 0 ? "All lessons can be studied for free." : exact },
+            ],
+          },
+          {
+            option: "Unknown course",
+            access: i === 1 ? "free" : "unknown",
+            sourceUrl: "https://courses.example/unknown",
+            evidence: [{ sourceUrl: "https://courses.example/unknown", quote: "Sign in" }],
+          },
+        ],
+      };
+    },
+  });
+  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Compare two free introductory AI courses and give me a PDF.",
+  });
+  const decision = await reviewResearchDelivery({
+    task,
+    summary: "Open course and Unknown course comparison.",
+    model: "openai/fixture",
+    providers: f.agent.config.modelProviders!,
+    structured: false,
+    stage: "access_selection",
+    proposedDocument: true,
+    signal: new AbortController().signal,
+    operations: [
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url },
+        receipt: { url, text: exact },
+      },
+      {
+        toolName: "web_fetch",
+        status: "succeeded",
+        args: { url: "https://courses.example/unknown" },
+        receipt: { url: "https://courses.example/unknown", text: "Sign in" },
+      },
+    ] as never,
+  });
+  assert.equal(
+    fixture.reviewRequests.length,
+    2,
+    "repair the reviewer instead of refetching its source",
+  );
+  assert.equal(decision.complete, false);
+  assert.equal(decision.draftEligible, false);
+  assert.equal(decision.needsMoreResearch, true);
+  assert.deepEqual(
+    decision.accessGaps.map((entry) => entry.option),
+    ["Unknown course"],
+  );
+  assert.equal(decision.accessAudit?.[0].evidence?.[0].quote, exact);
+  assert.ok(decision.missing.includes("Unknown course access is not confirmed."));
+  assert.equal(decision.requestAudit[0].satisfied, false);
+  assert.ok(decision.nextSteps.some((step) => step.includes("unknown course's access policy")));
 });

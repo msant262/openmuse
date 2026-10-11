@@ -124,3 +124,77 @@ test("the real worker reads a preserved source beyond the requested excerpt and 
   assert.ok(saved.evidence.some((evidence) => evidence.excerpt.includes("All lessons are free")));
   assert.equal(saved.question, "");
 });
+
+test("the native source tool accepts its offered reference and journals its canonical read", async (t) => {
+  let reference = "";
+  let advertisedAcceptsReference = false;
+  const patterns = (value: unknown): string[] => {
+    if (typeof value === "string") {
+      try {
+        return patterns(JSON.parse(value));
+      } catch {
+        return [];
+      }
+    }
+    if (Array.isArray(value)) return value.flatMap(patterns);
+    if (!value || typeof value !== "object") return [];
+    const record = value as { properties?: { fileId?: { pattern?: string } } };
+    const pattern = record.properties?.fileId?.pattern;
+    return [
+      ...(typeof pattern === "string" ? [pattern] : []),
+      ...Object.values(value).flatMap(patterns),
+    ];
+  };
+  const fixture = await modelFixture(t, (i) => {
+    if (i === 0)
+      return {
+        name: "web_fetch",
+        arguments: { url: "https://courses.example/lesson", maxChars: 300 },
+      };
+    if (i === 1) {
+      reference = /app_file_[a-f0-9]{12}/.exec(fixture.requests[i].body)?.[0] ?? "";
+      advertisedAcceptsReference = patterns(JSON.parse(fixture.requests[i].body)).some((pattern) =>
+        new RegExp(pattern).test(reference),
+      );
+      return {
+        name: "read_web_source",
+        arguments: { fileId: reference, query: "Original full lesson", limit: 300 },
+      };
+    }
+    return { name: "finish_task", arguments: { summary: "Original full lesson is available." } };
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  let networkReads = 0;
+  t.mock.method(f.agent.web, "document", async (url: string) => {
+    networkReads++;
+    return {
+      url,
+      contentType: "text/html",
+      body: `<article>${"Introduction. ".repeat(2000)}Original full lesson is available.</article>`,
+    };
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt:
+      "Find the original full lesson on https://courses.example/lesson and tell me what it says.",
+  });
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.result);
+  assert.match(reference, /^app_file_[a-f0-9]{12}$/);
+  assert.equal(
+    advertisedAcceptsReference,
+    true,
+    "the advertised schema must accept its own offered ID",
+  );
+  assert.equal(networkReads, 1);
+  const operation = (await f.agent.journal.operations("owner", task.id)).find(
+    (entry) => entry.toolName === "read_web_source",
+  );
+  assert.ok(operation, "the worker must journal the actual source read");
+  assert.equal(operation.status, "succeeded");
+  assert.match((operation.args as { fileId: string }).fileId, /^[a-f0-9]{64}$/);
+  assert.equal(
+    (operation.receipt as { fileId: string }).fileId,
+    (operation.args as { fileId: string }).fileId,
+  );
+});

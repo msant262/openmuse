@@ -4,7 +4,12 @@ import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
 
 export const publicSourceReadSchema = z.object({
-  fileId: z.string().regex(/^[a-f0-9]{64}$/),
+  fileId: z
+    .string()
+    .regex(/^(?:[a-f0-9]{64}|app_file_[a-f0-9]{12})$/)
+    .describe(
+      "Copy the exact spill.fileId from the source result. Its short app_file reference is accepted and resolved through the current owner/task binding before reading; do not expand or invent an ID.",
+    ),
   query: z
     .string()
     .trim()
