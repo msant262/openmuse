@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isCredentialIdentifier } from "./runtime.ts";
+import { isCredentialIdentifier, isCredentialPrompt } from "./runtime.ts";
 
 const text = z.string().trim().min(1);
 export const procedureInputSchema = z
@@ -23,7 +23,7 @@ export const procedureInputSchema = z
             label: text
               .max(100)
               .refine(
-                (value) => !isCredentialIdentifier(value),
+                (value) => !isCredentialPrompt(value),
                 "Credentials require a private connection card",
               ),
             required: z.boolean().default(true),

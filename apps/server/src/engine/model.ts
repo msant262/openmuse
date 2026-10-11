@@ -48,7 +48,7 @@ import { z } from "zod";
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
 import type { ComputerCommand } from "../../../../packages/domain/src/computer.ts";
 import { emailDraftSchema, eventDraftSchema } from "../../../../packages/domain/src/index.ts";
-import { isCredentialIdentifier, questionSchema } from "../../../../packages/domain/src/runtime.ts";
+import { isCredentialPrompt, questionSchema } from "../../../../packages/domain/src/runtime.ts";
 import { type appConnectSchema, composioInstructions, composioTools } from "../composio-tools.ts";
 import { computerInstructions, computerTools } from "../computer-tools.ts";
 import { runtimeCredentialAdapterSchema } from "../credentials/contracts.ts";
@@ -2374,10 +2374,7 @@ export async function executeModelTask(
             .string()
             .min(1)
             .max(2000)
-            .refine(
-              (value) => !isCredentialIdentifier(value),
-              "Use the trusted credential channel",
-            ),
+            .refine((value) => !isCredentialPrompt(value), "Use the trusted credential channel"),
           schema: questionSchema.optional(),
         })
         .strict(),

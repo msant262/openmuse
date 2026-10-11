@@ -3,6 +3,7 @@ import type { AgentTask } from "../../../packages/domain/src/agent.ts";
 import {
   type InteractionRequest,
   isCredentialIdentifier,
+  isCredentialPrompt,
   type QuestionAnswer,
   type QuestionInteractionRequest,
   type QuestionSchema,
@@ -65,7 +66,7 @@ export class InteractionRequests {
     if (!task) throw new AppError("Task not found", 404);
     if (
       fieldBindings &&
-      Object.values(fieldBindings).some((binding) => isCredentialIdentifier(binding.name))
+      Object.values(fieldBindings).some((binding) => isCredentialPrompt(binding.name))
     )
       throw new AppError("Credentials require a trusted connection form", 422);
     const id = bindingHash({
@@ -284,9 +285,7 @@ export class InteractionRequests {
     if (!task) throw new AppError("Task not found", 404);
     if (
       Object.keys(options.fields ?? {}).some(isCredentialIdentifier) ||
-      Object.values(request.fieldBindings ?? {}).some((binding) =>
-        isCredentialIdentifier(binding.name),
-      )
+      Object.values(request.fieldBindings ?? {}).some((binding) => isCredentialPrompt(binding.name))
     )
       throw new AppError("Credentials cannot be submitted through task questions", 422);
     const fields = request.fieldBindings

@@ -109,9 +109,26 @@ export type TaskMailbox = {
   annotations: AcceptedMessageInput["annotations"];
 };
 /** Literal credential identifiers only; this is not semantic classification of arbitrary prose. */
+const secretIdentifier =
+  /password|senha|secret|segredo|token|api[ ._-]?key|otp|passcode|passkey|verification[ _-]?code|c[oó]digo[ _-]de[ _-]verifica/i;
+const credentialIdentifier = /credential|credencial|credenciais/i;
 export function isCredentialIdentifier(value: string): boolean {
-  return /password|senha|secret|segredo|token|credential|credencial|credenciais|api[ ._-]?key|otp|passcode|passkey|verification[ _-]?code|c[oó]digo[ _-]de[ _-]verifica/i.test(
-    value,
+  return secretIdentifier.test(value) || credentialIdentifier.test(value);
+}
+/** A display label or question can discuss a course credential without collecting a login secret. */
+export function isCredentialPrompt(value: string): boolean {
+  const text = value.normalize("NFKC").replace(/[_-]+/g, " ");
+  if (secretIdentifier.test(text)) return true;
+  if (!credentialIdentifier.test(text)) return false;
+  return (
+    /^\s*(?:credentials?|credencial|credenciais)\s*$/i.test(text) ||
+    /\blog\s?in\b|\blogin\b|\bauth(?:entication|orization)?\b|autentica[çc]/i.test(text) ||
+    /\b(?:enter|paste|provide|send|digite|insira|cole|forne[çc]a|informe|envie)\s+(?:\p{L}+\s+){0,3}(?:credentials?|credencial|credenciais)\b/iu.test(
+      text,
+    ) ||
+    /\b(?:your|my|sua?s?|seu?s?|minhas?|meu?s?)\s+(?:\p{L}+\s+){0,2}(?:credentials?|credencial|credenciais)\b/iu.test(
+      text,
+    )
   );
 }
 const safeFieldName = z
@@ -178,7 +195,7 @@ export const questionSchema = z
           : field.options.flatMap((option) => [option.id, option.label])),
       ]),
     ];
-    if (metadata.some(isCredentialIdentifier))
+    if (metadata.some(isCredentialPrompt))
       context.addIssue({
         code: "custom",
         message: "Credentials require a trusted connection form, never a generic question",
