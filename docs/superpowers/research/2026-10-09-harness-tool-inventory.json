@@ -458,7 +458,7 @@
     },
     {
       "surface": "research.local-draft-with-final-review",
-      "caseAcceptance": "published-ordinary-validation-running",
+      "caseAcceptance": "published-ordinary-repetition-failed",
       "verified": [
         "no pre-render model calls for local draft creation; the actual selected files retain a final evidence-bound factual check",
         "old runtime fails the rendered-before-review regression and the changed runtime passes",
@@ -466,9 +466,13 @@
         "runtime ec3dff39 is included in source e2610f4c, published through a 21.2-second drained API-only handoff; unchanged ordinary composer request resubmitted at 04:05:11.715 UTC without tool hints"
       ],
       "pending": [
-        "independently verify the unchanged ordinary Luna research result, file delivery and elapsed time"
+        "Publish the explicit optional-review configuration correction and independently verify the ordinary request, actual file, facts and latency."
       ],
-      "acceptanceApproved": false
+      "acceptanceApproved": false,
+      "failed": [
+        "Unchanged ordinary composer request remains running after 918.484 seconds, 91 Luna responses and six reviews with no final delivery; only this owned QA task is cancelled normally.",
+        "Production disabled semantic-review configuration was overridden by free-access wording."
+      ]
     },
     {
       "surface": "Hermes.kanban-lifecycle-foundation",
@@ -480,7 +484,27 @@
       "pending": [
         "trusted dispatcher and scoped tool integration",
         "attachment preservation and full completion-contract validation",
-        "all fifteen upstream kanban tools and actual ordinary harness use"
+        "all fifteen upstream kanban tools and actual ordinary harness use",
+        "Large child collections and continuation APIs before full tool exposure."
+      ],
+      "acceptanceApproved": false,
+      "localVerified": [
+        "Ten real-PGlite lifecycle/context checks pass, including bounded SQL discovery, parent handoffs and incremental authored comments ordered by committed revision."
+      ]
+    },
+    {
+      "surface": "research.optional-review-setting",
+      "caseAcceptance": "committed-locally-verified-not-published",
+      "apiSource": "f2e239ae",
+      "verified": [
+        "Disabled/enabled actual-worker PDF regressions reproduce the ignored flag and pass after honoring it.",
+        "114 distinct focused checks pass: 61 research/review, 43 document/effect and ten local kanban checks; root TypeScript and server/copied-harness build pass.",
+        "Native file, visual, approval and effect verification remain mandatory.",
+        "Own failed QA cleanup retires twelve presentation rows, preserving 1739 other scoped records, three simultaneous Google accounts, companions and real user data."
+      ],
+      "pending": [
+        "Publication and uninduced ordinary Luna research/PDF acceptance.",
+        "Independent fact and elapsed-time checks; no whole-harness parity claim."
       ],
       "acceptanceApproved": false
     }
