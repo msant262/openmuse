@@ -1,6 +1,34 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Estado atual — conferência das 19:47 UTC
+## Estado atual — conferência das 20:13 UTC
+
+**O harness completo ainda não está entregue.** A pesquisa ganhou busca
+de vários campos na mesma fonte e compatibilidade com termos redundantes.
+O novo pedido comum concluiu sozinho e criou apenas um PDF, mas deixou
+campos sem confirmação e ainda levou mais de quatro minutos desde o envio.
+
+| Frente | Feito e comprovado | Pendência / limite |
+| --- | --- | --- |
+| Código e publicação | Implementações `f4a6a7b1` e `5206bbec` na main local/remota. API publicada em **`5206bbec`**, imagem **`82543a0a`**; sete hashes compilados conferidos. Publicações de 24,15s e 25,27s, cada uma com 13 comparações de preservação aprovadas. | Web permanece em `harness80-20261011-e1fd91f9`. Navegador e executor físico mantidos. Nenhum APK novo. |
+| Pesquisa em partes da fonte | `read_web_source` consulta vários campos/termos e ocorrências em uma leitura dos bytes preservados, com origem, SHA-256 e continuação por termo. O pedido comum usou essa capacidade e encontrou o curso IBM pelo nome, com idiomas e três horas. | Uma consulta em lote passou; a tentativa anterior foi recusada por enviar também `query`. O agente reparou sozinho. A versão `5206bbec` combina os termos em vez de recusar; seu protocolo foi verificado com executor nativo controlado, sem outro pedido normal depois da publicação. |
+| Verificação local | **44/44 testes relacionados** passaram na versão mais recente, com zero falhas, cancelamentos ou ignorados. Duas reproduções da recusa falharam antes da correção. TypeScript, build e lint passaram. | As duas rodadas usam grupos sobrepostos e não são somadas em 88 testes. Não aprovam todas as ferramentas ou o produto. |
+| Pedido comum pelo chat | Mensagem enviada uma vez, conversa nova, sem nomes de ferramentas, perguntas ou direções do operador. **15 respostas apenas de Luna, um PDF de 48.821 bytes e duas páginas.** Resultado em **239,159s** da criação da tarefa; **245,274s** desde o envio no navegador. | Entrega física e autonomia aprovadas neste caso. Rapidez e completude factual continuam reprovadas. A rodada anterior levou 605,348s e criou três PDFs, mas escolheu outros cursos: a diferença observada não isola o efeito desta mudança. |
+| Conteúdo e leitor PDF | Bytes/SHA-256, texto e pixels das duas páginas no leitor público conferidos, com cinco links de fontes. A tabela inteira está na primeira página; recomendações e fontes, na segunda. | Idioma e preço do badge Google, além da duração total Microsoft, continuam sem confirmação. O repositório Microsoft ligado pela fonte não foi lido. A revisão nativa aprovou o arquivo; esse status não comprova os fatos. Celular físico não testado. |
+| Limpeza do app | Recolhidos **seis registros próprios do QA**: dois arquivos/previews, tarefa, conversa, notificação e inbox. **1.923 registros fora da seleção permaneceram iguais.** Nenhum procedimento novo precisou ser arquivado. Inspector fechado, hooks removidos, navegador encerrado e seu dispositivo revogado. | Limpeza da apresentação, mantendo recibos canônicos e evidências físicas. O seletor genérico de canvas e as capturas cortadas pelo contêiner foram corrigidos no observador; não são prova de defeito no PDF. |
+| Dados reais / memória | Treze comparações após limpeza/publicação passaram. Preservados companions/perfil, **58 arquivos**, **duas conversas**, **três contas Google simultâneas**, **três memórias** e **35 procedimentos**. | Memória/proatividade completas continuam sem aprovação. O primeiro contador do observador contou o envelope da resposta; foi corrigido para contar suas três `entries`, mantendo a comparação integral aprovada. As 44 operações históricas incertas não foram apagadas. |
+| Imagens e releases antigos | Removidas **duas imagens antigas da API**, dois contextos e dois archives, após conferência de conteúdo de 23.854 arquivos. Essa etapa liberou **870.883.328 bytes (~830,5 MiB)** na VPS. Retirados localmente os dois mesmos archives, **106.963.026 bytes**, com hashes remotos conferidos. | Mantidas API atual e recuperação imediata, as duas versões do navegador, OpenBao, web, APK publicado, volumes, perfis e dados reais. Nenhuma nova exclusão de APK nesta rodada. |
+| Cache de build / espaço livre | Encontrados **34,67 GB** de cache de build. Limpeza apenas do cache sem uso há mais de duas horas: restaram **7,27 GB**. Containers, cinco imagens retidas, mounts e hashes dos ambientes permaneceram iguais. Do início da limpeza de imagens ao fim do cache, espaço livre passou de **22.080.331.776 para 49.394.556.928 bytes**, aumento de **27.314.225.152 bytes (~25,44 GiB)**. | Cache de build não é dado do usuário. A CLI instalada usa `--reserved-space`; a tentativa inicial com checagem de `--keep-storage` parou antes de qualquer remoção e foi corrigida pela ajuda local. Contagens e tamanhos arredondados do Docker não substituem a medida de espaço livre. |
+| Disponibilidade / consumo | Às **20:13 UTC**, página e API públicas HTTP 200 a partir da VPS; amostra da estação também HTTP 200. Três containers saudáveis, sem manutenção e seis contadores de execução em zero. Amostra: API **869,1 MiB / 6,22% CPU**; navegador **137,4 MiB / 0,00% CPU**. | São amostras pontuais, sem aprovação de pico, GPU, celular, carga ou estabilidade sustentada. Espaço livre final variou levemente após a medida da limpeza. |
+| Workspace / ferramentas / UX | Casos anteriores de Drive, Gmail, Docs/Sheets/Slides, agenda e aprovação de exclusão permanecem registrados. Principal Luna e alternativa MiMo mantidos. | **Workspace completo, equivalência integral Hermes/OpenClaw, memória/proatividade, desempenho sustentado e revisão ampla de UX continuam sem aprovação.** Não foram retestados integralmente nesta rodada. |
+
+[Implementação, teste comum e limites desta rodada](2026-10-11-source-batch-search.md).
+As evidências privadas foram copiadas da VPS com SHA-256 remoto/local
+conferido; ficam fora do Git, em diretório 0700 e arquivos 0600.
+A meta continua ativa. O próximo trabalho precisa resolver o aceite de
+campos não comprovados e completar os contratos restantes, sem tratar
+uma entrega de arquivo ou um teste controlado como aprovação de todo o harness.
+
+## Histórico — conferência das 19:47 UTC
 
 **O harness completo ainda não está entregue.** Nesta conferência, a API
 pública respondeu HTTP 200 e os três containers estavam saudáveis. Main

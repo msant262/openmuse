@@ -1301,9 +1301,64 @@
       "naturalAcceptance": false,
       "wholeHarnessApproved": false,
       "note": "Actual final PDF bytes/hash/text/raster checked. Some requested course language/credential cost/duration fields remain unestablished. Nearly empty third page passed native assessment. Headless public iframe shows no PDF pixels; not evidence that all browsers fail. Own QA presentation records hidden; thirteen preservation checks passed."
+    },
+    {
+      "surface": "research.ordinary-pdf-round83",
+      "source": "f4a6a7b1dd838dc699abf1961fee18a5a27f8c5a",
+      "published": true,
+      "serverImage": "26046b392e9a13d6a7b226f856dccc610f86930f5565d864dd746b86bd3f6f6a",
+      "normalPublicChatRequest": true,
+      "operatorDirectionsOrAnswers": false,
+      "models": [
+        "chatgpt/gpt-6-luna"
+      ],
+      "completedResponses": 15,
+      "elapsedFromTaskCreationSeconds": 239.159,
+      "elapsedFromClientDispatchSeconds": 245.274,
+      "createdPdfCount": 1,
+      "deliveredFileCount": 1,
+      "fileBytes": 48821,
+      "fileSha256": "d402560a8ff202b235041c966ee55e43e3b6a7a085c626df8e536d6073185391",
+      "pageCount": 2,
+      "publicPixelViewerApproved": true,
+      "sourceLinks": 5,
+      "nativeReviewPassed": true,
+      "physicalDeliveryApproved": true,
+      "factualCompletenessApproved": false,
+      "latencyApproved": false,
+      "naturalAcceptance": false,
+      "wholeHarnessApproved": false,
+      "pending": [
+        "Google selected course language and badge fee",
+        "Microsoft series total duration and unread linked repository",
+        "Remaining tool/Workspace/memory/performance contracts"
+      ],
+      "note": "One successful batch recovered the exact IBM course section with languages and three-hour duration. A redundant query/queries refusal was repaired autonomously; the following release removes that unnecessary refusal. Five PDF links and both full PDF.js canvases were inspected. Six own QA presentation records hidden; 13 preservation checks passed. Times are observed, not a causal attribution of improvement."
+    },
+    {
+      "surface": "research.source-query-compatibility-round84",
+      "source": "5206bbecedf2b927f2d243a152bc957c2e4b063d",
+      "published": true,
+      "serverImage": "82543a0afd7147cfbd1c37f382d2c115c39e7d78a1c5ed286ce0355cfd3a95d1",
+      "tests": {
+        "total": 44,
+        "passed": 44,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "typescriptPassed": true,
+      "buildPassed": true,
+      "reproductionsFailedBeforeFix": 2,
+      "nativeControlledProtocolPassed": true,
+      "additionalNaturalTestAfterPublication": false,
+      "publicationSeconds": 25.27,
+      "preservationChecks": 13,
+      "wholeHarnessApproved": false,
+      "note": "Combines optional query with queries without dropping distinct terms or repeating identical terms. Shared output budget, exact offsets, source hash and owner scope preserved. These tests overlap the previous 44-test group and must not be summed."
     }
   ],
-  "updatedAt": "2026-10-11T17:48:48.806888+00:00",
+  "updatedAt": "2026-10-11T20:18:36.143080+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

@@ -111,7 +111,10 @@ do proprietário continuam valendo. A consulta única mantém seu resultado.
 Duas reproduções falharam antes da correção, inclusive com o executor nativo.
 **44/44 testes relacionados passaram** depois, sem falhas, cancelamentos ou
 ignorados, em 34.754,715ms. TypeScript, build e lint passaram. Esse ajuste
-seguinte ainda aguarda publicação; não foi exercitado no pedido real acima.
+seguinte foi publicado em `5206bbec`, imagem `82543a0a`, em 25,27s,
+com sete hashes compilados e 13 comparações de preservação conferidos.
+Não foi exercitado em outro pedido normal após essa publicação; o protocolo
+nativo com ambos os parâmetros foi verificado nos testes controlados.
 
 Logs privados em `artifacts/harness-parity-20261009/`:
 `round83-source-batch-red.log`, `round83-match-boundary-red.log`,
