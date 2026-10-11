@@ -41,7 +41,10 @@ de curso codificado na implementação, nem nova chamada de avaliação ao model
   passaram. Lint sem erros, com cinco avisos existentes e duas informações.
 - O leitor completo corrigido recuperou os **37 minutos na fonte pública real em
   2.495 ms**, com procedência de navegador e o endpoint de dados observado.
-- A suíte completa está em execução. A correção ainda não foi publicada e o
+- A primeira suíte completa terminou: **2.112 testes, 2.108 passaram e quatro
+  falharam**. São os quatro controles descritos abaixo e corrigidos nas
+  repetições específicas. Uma passagem final está em execução. A correção ainda
+  não foi publicada e o
   pedido natural completo ainda não foi repetido nesta rodada.
 
 ## Falhas adicionais reveladas pela suíte completa
@@ -78,3 +81,22 @@ da tarefa antiga para fazê-la passar.
 Evidência privada local: `artifacts/harness-parity-20261009/round76-duration-red.log`,
 `round76-reader-green.log`, `round76-live-duration-proof.json`,
 `round76-typecheck.log`, `round76-worker-typecheck.log` e `round76-full-suite.log`.
+
+## Reprodutibilidade do build
+
+A conferência da imagem final foi interrompida pelo hash diferente do entry do
+harness. A inspeção das dependências isolou uma diferença de emissão de campos
+de classe: o `RetrySupervisor` foi compilado com semântica de definição de
+campos, embora o tsconfig original fixado declare
+`useDefineForClassFields: false`. Uma nova compilação local, sem mudança de
+fontes, voltou ao hash da imagem Docker. Isso comprova a instabilidade da
+configuração inferida; a origem interna da ordem de resolução do esbuild não
+foi demonstrada.
+
+O build agora fornece explicitamente o tsconfig original copiado. Duas
+compilações consecutivas produziram o mesmo entry
+`8ebff11d8aed76102cb81caa722f2036152ba5f59ce8550f84dac14c2906ba46`.
+O código e os hashes de origem fixados do OpenClaw permanecem intactos.
+Os controles do harness/orçamento passaram; a comparação exata com uma nova
+imagem Docker e a aprovação natural ainda faltam. O build rejeitado não foi
+publicado nem teve seu manifesto alterado para forçar a aprovação.

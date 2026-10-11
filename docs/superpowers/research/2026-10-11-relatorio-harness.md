@@ -15,9 +15,12 @@ A suíte ampla também reproduziu duas falhas de execução: sem prazo configura
 o adaptador alterava indevidamente o timeout de comandos simples. Corrigido esse
 caminho, **16/16 controles de computador/prazo passaram**. Dois controles de idioma
 falhavam antes de executar o componente por uma dependência ausente na fixture;
-**2/2 passaram** com o módulo real. A primeira passagem ampla permanece registrada
-com quatro falhas, e o resultado integral ainda está pendente. As imagens da
-primeira correção foram construídas e conferidas, mas não substituíram a produção.
+**2/2 passaram** com o módulo real. A primeira passagem ampla terminou com **2.108/2.112 testes passando**; as
+quatro falhas são as já reproduzidas e corrigidas nos grupos específicos. Uma
+passagem final está em execução. A publicação também encontrou um build
+inconsistente do harness: o compilador agora recebe explicitamente o tsconfig
+original. Duas compilações consecutivas concordaram; a nova imagem ainda precisa
+conferência. Nenhuma dessas imagens substituiu a produção.
 
 ## Estado atual — publicação e novo teste de 11/10
 

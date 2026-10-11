@@ -24,6 +24,9 @@ for (const match of launchers.matchAll(/runtimeProcessEntrypoint\(\s*"([^"]+)"/g
 }
 const result = await build({
   absWorkingDir: root,
+  // Plugin-resolved workspace files must keep the copied compiler semantics,
+  // including useDefineForClassFields, regardless of their resolution order.
+  tsconfig: join(root, "tsconfig.json"),
   entryPoints: entries,
   chunkNames: "openclaw-harness/chunks/[name]-[hash]",
   outdir: resolve("dist"),
