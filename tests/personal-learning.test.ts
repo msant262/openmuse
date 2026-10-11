@@ -26,6 +26,47 @@ async function source(server: Awaited<ReturnType<typeof taskRuntime>>, id: strin
   });
 }
 
+test("learning Code Mode can await its own catalog call without blocking the dispatch queue", async (t) => {
+  const fixture = await modelFixture(t, (i) =>
+    i === 0
+      ? {
+          name: "execute_code",
+          arguments: {
+            code: "const catalog = await list_procedures({}); return { catalogRead: true, catalog };",
+            wallClockMs: 5000,
+          },
+        }
+      : { name: "finish_learning", arguments: { summary: "No durable learning." } },
+  );
+  const server = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    memoryLearningEnabled: true,
+  });
+  await source(server, "code-mode-thanks", "Obrigado, está tudo certo.");
+  const id = await server.agent.learning.scheduleDue("owner");
+  assert.ok(id);
+  await server.agent.worker.tick();
+  const outputs = fixture.requests.flatMap(({ body }) => {
+    const request = JSON.parse(body);
+    return (request.input ?? request.messages ?? []).flatMap(
+      (item: { type?: string; role?: string; output?: string; content?: string }) =>
+        item.type === "function_call_output" || item.role === "tool"
+          ? [item.output ?? item.content]
+          : [],
+    );
+  });
+  assert.ok(
+    outputs.some(
+      (output: string) =>
+        output.includes('"catalogRead": true') || output.includes('"catalogRead":true'),
+    ),
+    `Code Mode must return the catalog read, rather than timing out behind its parent: ${JSON.stringify(outputs)}`,
+  );
+  assert.equal((await server.agent.getTask("owner", id)).status, "succeeded");
+  await server.agent.toolOperations.close();
+});
+
 test("learning retains authenticated evidence beyond the former fixed 32k character cap", async (t) => {
   const quote = "Prefiro hotéis tranquilos";
   const fixture = await modelFixture(t, (i) =>

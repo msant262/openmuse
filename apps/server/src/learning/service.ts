@@ -379,6 +379,7 @@ export class PersonalLearning {
     };
     const viewedProcedures = new Set<string>();
     let toolQueue: Promise<unknown> = Promise.resolve();
+    const codeCalls = new Set<Promise<unknown>>();
     const written = new Set(
       (await this.service.journal.operations(owner, task.id))
         .filter(
@@ -550,7 +551,16 @@ export class PersonalLearning {
       },
       shouldContinue: () => !finished,
       trackTool: (execute) => this.service.toolOperations.run(execute),
-      executeTool: (_call, execute) => {
+      executeTool: (call, execute) => {
+        // Code Mode awaits ordinary host calls. Queueing its container behind
+        // those same calls deadlocks the parent and child until the code timeout.
+        // Children still enter the ordinary queue; the container owns no writes.
+        if (call.name === "execute_code") {
+          const result = Promise.resolve().then(execute);
+          codeCalls.add(result);
+          void result.finally(() => codeCalls.delete(result)).catch(() => {});
+          return result;
+        }
         const result = toolQueue.then(execute);
         toolQueue = result.then(
           () => undefined,
@@ -686,6 +696,7 @@ export class PersonalLearning {
     } finally {
       // The copied runner's cancellation can finish its event stream before
       // an admitted tool settles. Join writes before releasing the task lease.
+      await Promise.allSettled([...codeCalls]);
       await toolQueue;
       if (this.active.get(owner) === interrupt) this.active.delete(owner);
       ctx.signal.removeEventListener("abort", abort);

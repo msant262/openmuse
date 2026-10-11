@@ -289,7 +289,7 @@
   "implementationChecks": [
     {
       "surface": "execute_code.python",
-      "status": "published-natural-persistence-verified-review-resumption-pending",
+      "status": "published-natural-persistence-callback-reviews-and-cancellation-verified",
       "productionEnabled": true,
       "upstream": "e0550c97bbd916cd5ff8fa0450e6291c31921b94",
       "unmodifiedSourceSha256": "ab88721b4a82c6b32d4160b441daccbb0e84e44c100d7bb29bcb6491a882ca5f",
@@ -316,16 +316,22 @@
         "published Luna conversation: real persistent namespace reused across tasks (execution counts 1 and 2)",
         "optional Code Mode parameters normalize before dispatch and native completion matches actual cell lineage and full result",
         "natural published Luna handoff and two successful Python tasks, with actual reused namespace and omitted optional parameters",
-        "frozen registered QA unit stops through its exact cgroup without thawing the parent or affecting sibling processes"
+        "frozen registered QA unit stops through its exact cgroup without thawing the parent or affecting sibling processes",
+        "published ordinary Luna request: two Calendar effects through actual Python host callbacks with independent provider readback",
+        "published ordinary follow-up: retained results reused across tasks with matching provider IDs",
+        "actual UI approval of a Python callback deletion stops the kernel before review and resumes the host task without repeating the effect",
+        "actual UI denial of a Python callback deletion preserves its target and cancels the task",
+        "actual UI cancellation interrupts the persistent Python cell with confirmed physical cleanup",
+        "actual UI cancellation of a background Python command interrupts its owned process; original PIDs disappear and no late final file appears",
+        "cancelled host primitive autonomously reconciles from the verified physical receipt without changing original native operation records"
       ],
       "pending": [
-        "actual UI approval/denial and resumption through Python host callbacks",
         "broader Hermes/OpenClaw tool parity and performance acceptance"
       ],
       "acceptanceApproved": false,
-      "apiSource": "e6b2d839ae45c8d4e969de11f47b5e8a9cbab7f1",
+      "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
     }
   ],
-  "updatedAt": "2026-10-10"
+  "updatedAt": "2026-10-11"
 }
