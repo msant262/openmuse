@@ -1164,9 +1164,44 @@
         "ownDeviceRevoked": true
       },
       "wholeHarnessApproved": false
+    },
+    {
+      "surface": "document.completion-repair-round77",
+      "published": true,
+      "source": "790114cd992db9af84bdf0737a8af09a1bf4bbab",
+      "apiImage": "sha256:6fc61b47895ef52e5309ef92d199ec920d96fcbfe39ee501c748b72afd6956c8",
+      "compiledHashesVerified": 5,
+      "relatedTests": {
+        "passed": 192,
+        "failed": 0,
+        "skipped": 0
+      },
+      "publicationSeconds": 78.52,
+      "protectedDataUnchanged": true,
+      "wholeHarnessApproved": false
+    },
+    {
+      "surface": "research.ordinary-pdf-round77",
+      "normalPublicChatRequest": true,
+      "operatorDirectionsOrAnswers": false,
+      "taskStatus": "succeeded",
+      "models": [
+        "chatgpt/gpt-6-luna"
+      ],
+      "completedResponses": 25,
+      "elapsedSeconds": 475.604,
+      "createdPdfCount": 3,
+      "deliveredFileCount": 1,
+      "fileBytes": 54278,
+      "pageCount": 2,
+      "sha256": "95dd89045fd84488985f6582cff1d24779cb18e7ea97f778668c8baffc4fde16",
+      "physicalDeliveryAccepted": true,
+      "factsAttributionApproved": false,
+      "publicPixelViewerApproved": false,
+      "note": "Two drafts rejected only for a sparse final page. GitHub preserved 54057 bytes but returned 10000 selected by the executor; no read_tool_output recovery recorded. PDF iframe blank in headless; controls changed 1/2 to 2/2 but do not establish visible pixels. Own QA cleaned with protected data unchanged. Full parity remains unapproved."
     }
   ],
-  "updatedAt": "2026-10-11T15:18:15Z",
+  "updatedAt": "2026-10-11T16:14:50.270514+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

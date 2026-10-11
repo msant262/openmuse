@@ -1,6 +1,33 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Estado atual — 15:18 UTC
+## Estado atual — 16:14 UTC
+
+**Ainda não entregue como um todo. A API foi corrigida e publicada; o novo
+pedido normal terminou com um PDF real. A latência, a atribuição de parte dos
+fatos, o visualizador web e a cobertura integral permanecem sem aprovação.**
+
+| Frente | Resultado comprovado | Limite / próximo trabalho |
+| --- | --- | --- |
+| Implementação | `790114cd` na main local/remota e na API; imagem `6fc61b47`. Cinco hashes compilados conferidos. | Navegador `ab3d9265`, web `d8882335`, executor físico `8aa6d479` mantidos. Sem APK novo. |
+| Conclusão de documentos | Revisão ausente/reprovada retorna reparo específico; resultado parcial não contorna trabalho executável. Página inválida é corrigível; falha real do Office tem código próprio. | 192/192 testes relacionados passaram, TypeScript/build passaram, lint sem erros. Não é aprovação integral do harness. |
+| Pedido normal pelo chat | Uma mensagem, conversa nova, zero respostas/direções do operador; **25 respostas somente de Luna**. Concluiu em **475,604s (7min55,604s)**, com um PDF entregue de **54.278 bytes e duas páginas**, revisado pelo agente. | Criou três versões; as duas primeiras foram rejeitadas por uma última página quase vazia. Tempo e repetição continuam excessivos. Não atribuo a diferença de tempo somente à correção. |
+| Conteúdo e fontes | PDF contém os três cursos e campos solicitados, com qualificações para informações não publicadas. Fonte completa foi preservada. | GitHub retornou só 10.000 bytes visíveis de 54.057 bytes preservados, conforme `maxChars:10000` escolhido pelo agente. Não há recuperação registrada desse trecho antes das declarações sobre traduções. A atribuição integral não está comprovada; isso não afirma que os valores sejam falsos. |
+| Visualizador | Arquivo disponível na conversa, controles navegaram de 1/2 para 2/2; bytes/texto e rasterização local conferidos. | O iframe PDF ficou vazio no navegador headless. Os controles não provam pixels visíveis no app. Compatibilidade e visualização pública ainda precisam verificação/correção. |
+| Limpeza do QA | Dez registros próprios retirados da apresentação: conversa, tarefa, seis arquivos/previews, notificação e inbox. Procedimento aprendido automaticamente nesse QA foi arquivado. | 1.871 registros não selecionados iguais; 34 procedimentos anteriores mantêm suas versões. Recibos canônicos preservados. |
+| Dados reais | Treze conferências de preservação passaram: companions/perfil, conversas, tarefas, ações, atividades, 58 arquivos, três memórias e três contas Google simultâneas. | Navegador de QA fechado e dispositivo temporário revogado; aprendizado permanece habilitado. Cobertura proativa continua parcial em algumas fontes. |
+| Armazenamento | Removida a imagem antiga de API `26ee81b1`, sem uso por contêineres, e dois arquivos antigos de release. Diferença medida na VPS: **331.718.656 bytes (~316,4 MiB)**. Removidos também **106.690.620 bytes** de releases locais. | Imagem atual `6fc61b47` e recuperação imediata `8f4526d7` preservadas; nenhum volume tocado. A limpeza anterior de 12 APKs permanece registrada no histórico. |
+| Performance/disponibilidade | API e página pública responderam HTTP 200 após a limpeza; publicação só da API levou **78,52s**. Compositor disponível em recarga de QA em 1.401ms. | Amostra de pesquisa: **972,4 MiB e 122,43% de CPU na API**. Amostra não é pico. Dados pequenos/desktop não aprovam celular, carga sustentada ou inicialização. |
+
+**Próximos passos:** priorizar o conteúdo útil das fontes e recuperar trechos
+necessários automaticamente; evitar regenerar documentos por exigências de
+paginação que não impedem a leitura; medir as etapas da inicialização e as
+chamadas de modelo/ferramenta; verificar o leitor PDF em navegador e celular;
+completar os contratos de ferramentas e Google Workspace. A meta permanece ativa.
+
+[Implementação e evidências desta etapa](2026-10-11-document-completion-repair.md).
+Dezessete evidências privadas foram copiadas da VPS e conferidas por SHA-256.
+
+## Histórico — publicação e teste natural das 15:18 UTC
 
 **Não terminou. As correções foram publicadas e os testes locais passaram, mas o
 pedido natural pelo chat falhou novamente. O harness completo não está aprovado.**
