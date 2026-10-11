@@ -1124,9 +1124,49 @@
         "canonicalReceiptsPreserved": true,
         "protectedDataUnchanged": true
       }
+    },
+    {
+      "surface": "research.readers-command-defaults-and-build-round76",
+      "published": true,
+      "acceptanceApproved": false,
+      "source": "46c4597990239ae4ab901fc3e3bb8d21dcfa7828",
+      "apiImage": "sha256:8f4526d730765b81b55dbc8d91a2ce634e87c4d788520f016f22990052686010",
+      "browserSource": "ab3d9265aec3feb877b9d45312298aafec50ddf7",
+      "verified": [
+        "Visible unfilled duration slots recover through HTTP/extraction/DOM; actual public module returned 37 minutes in 2495ms.",
+        "An absent runtime deadline leaves backend command defaults unchanged.",
+        "Pinned copied compiler config yields stable entry; all four Docker compiled hashes match.",
+        "Final server/mobile suite: 2112 passed, no failures/cancellations/skips."
+      ],
+      "pending": [
+        "Natural completion, all tool contracts, Workspace breadth and sustained performance/UX."
+      ]
+    },
+    {
+      "surface": "research.ordinary-pdf-round76",
+      "acceptanceApproved": false,
+      "taskStatus": "failed",
+      "models": [
+        "chatgpt/gpt-6-luna"
+      ],
+      "completedResponses": 32,
+      "elapsedSeconds": 580.744,
+      "createdPdfCount": 3,
+      "deliveredFileCount": 0,
+      "lastPdfPages": 2,
+      "lastPdfSha256": "aa7bb2e5850cd09d4d9914cb3f2dc3fa48507e2e9bc45ef87bfd9fd36c19a2d9",
+      "observedFailure": "The third revision was created but never inspected/confirmed; partial finish ended the task without a file. Failed-review finish replies also offered generic research leads rather than the specific review repair.",
+      "operatorSteering": false,
+      "qaCleanup": {
+        "presentationRecordsHidden": 10,
+        "nonselectedRecordsUnchanged": 1858,
+        "canonicalReceiptsPreserved": true,
+        "ownDeviceRevoked": true
+      },
+      "wholeHarnessApproved": false
     }
   ],
-  "updatedAt": "2026-10-11T14:10:57Z",
+  "updatedAt": "2026-10-11T15:18:15Z",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

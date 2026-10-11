@@ -43,9 +43,9 @@ de curso codificado na implementação, nem nova chamada de avaliação ao model
   2.495 ms**, com procedência de navegador e o endpoint de dados observado.
 - A primeira suíte completa terminou: **2.112 testes, 2.108 passaram e quatro
   falharam**. São os quatro controles descritos abaixo e corrigidos nas
-  repetições específicas. Uma passagem final está em execução. A correção ainda
-  não foi publicada e o
-  pedido natural completo ainda não foi repetido nesta rodada.
+  repetições específicas. A passagem final teve **2.112/2.112 passando**. As correções foram
+  publicadas no commit `46c45979`, mas a repetição natural falhou na entrega;
+  os detalhes estão no relatório atual.
 
 ## Falhas adicionais reveladas pela suíte completa
 
@@ -67,7 +67,7 @@ Dois controles do seletor de idioma não chegavam ao componente: a fixture
 ignorava o novo import `thread-selection`. Ela agora fornece o módulo real.
 **2/2 passaram**; isso não é apresentado como uma correção de produto nem como
 um bug de idioma comprovado. A primeira passagem da suíte ampla conserva essas
-quatro falhas no log; ainda não há aprovação integral da suíte.
+quatro falhas no log; a passagem final da suíte teve 2.112/2.112 passando. Isso não aprova o pedido natural.
 
 Evidências adicionais: `round76-computer-reproduction.log`,
 `round76-computer-diagnostic.log`, `round76-computer-green.log`,
@@ -97,6 +97,9 @@ O build agora fornece explicitamente o tsconfig original copiado. Duas
 compilações consecutivas produziram o mesmo entry
 `8ebff11d8aed76102cb81caa722f2036152ba5f59ce8550f84dac14c2906ba46`.
 O código e os hashes de origem fixados do OpenClaw permanecem intactos.
-Os controles do harness/orçamento passaram; a comparação exata com uma nova
-imagem Docker e a aprovação natural ainda faltam. O build rejeitado não foi
+Os controles do harness/orçamento passaram; a comparação exata com a nova
+imagem Docker passou. A aprovação natural falhou: 32 respostas de Luna, três
+PDFs criados e nenhum entregue, em 580,744s. O agente encerrou sem revisar
+o terceiro rascunho. Isso exige correção no fluxo de conclusão, não é
+apresentado como aprovação da tarefa nem do harness. O build rejeitado não foi
 publicado nem teve seu manifesto alterado para forçar a aprovação.

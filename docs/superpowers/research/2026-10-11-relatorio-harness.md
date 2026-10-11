@@ -1,28 +1,85 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Atualização local — causa da duração ausente comprovada
+## Estado atual — 15:18 UTC
 
-**Ainda não publicado nem aprovado pelo chat.** O módulo Microsoft do PDF anterior
-publica 37 minutos, mas os campos chegam vazios no HTML e são preenchidos por
-JavaScript. Três testes reproduziram a certificação indevida e a falta de
-recuperação. O leitor HTTP, a extração em lote e o leitor DOM foram corrigidos;
-**53/53 controles passaram**, assim como TypeScript e build. O leitor corrigido
-recuperou a duração na fonte pública real em **2,495 segundos**. A suíte completa
-está em execução; a publicação e a repetição natural ainda faltam.
-[Causa, verificação e limites](2026-10-11-research-duration-recovery.md).
+**Não terminou. As correções foram publicadas e os testes locais passaram, mas o
+pedido natural pelo chat falhou novamente. O harness completo não está aprovado.**
 
-A suíte ampla também reproduziu duas falhas de execução: sem prazo configurado,
-o adaptador alterava indevidamente o timeout de comandos simples. Corrigido esse
-caminho, **16/16 controles de computador/prazo passaram**. Dois controles de idioma
-falhavam antes de executar o componente por uma dependência ausente na fixture;
-**2/2 passaram** com o módulo real. A primeira passagem ampla terminou com **2.108/2.112 testes passando**; as
-quatro falhas são as já reproduzidas e corrigidas nos grupos específicos. Uma
-passagem final está em execução. A publicação também encontrou um build
-inconsistente do harness: o compilador agora recebe explicitamente o tsconfig
-original. Duas compilações consecutivas concordaram; a nova imagem ainda precisa
-conferência. Nenhuma dessas imagens substituiu a produção.
+| Frente | Feito e verificado | Resultado / limite |
+| --- | --- | --- |
+| Código e publicação | Main contém `ab3d9265`, `cb510e09` e `46c45979`. A API está no commit `46c45979`, imagem `8f4526d7`; o navegador está em `ab3d9265`, imagem `7887204d`. Quatro artefatos compilados conferiram exatamente. | Web permanece `d8882335`; executor físico permanece `8aa6d479`. Nenhum APK novo foi criado. |
+| Pesquisa | Corrigidos HTML com duração vazia, recuperação da extração e espera pela hidratação no DOM. | A fonte Microsoft real publicou 37 minutos e foi recuperada pelo leitor em 2,495s. Isso não aprova a pesquisa inteira. |
+| Comandos | Sem prazo configurado, o adaptador preserva os argumentos e o padrão do backend, em vez de inserir indevidamente 30 minutos. | 16 controles específicos passaram, incluindo as duas falhas reproduzidas. |
+| Build | O compilador recebe explicitamente o tsconfig original copiado. Duas compilações consecutivas concordaram, assim como a nova imagem Docker. | Fontes fixadas do OpenClaw intactas; não houve alteração do manifesto rejeitado para forçar aprovação. |
+| Testes | **2.112/2.112 testes do conjunto servidor/mobile passaram**, zero falhas, cancelamentos ou testes ignorados, em 1.496,023s. TypeScript e builds específicos também passaram. | Testes locais não substituem o aceite natural; a primeira passagem teve quatro falhas, já reproduzidas e corrigidas. |
+| Pedido pelo chat | Enviado uma vez em conversa nova, sem orientar ferramentas, pedir cards, responder ao agente ou reparar a tarefa. Somente Luna, sem fallback. | **Falhou em 580,744s (9min40,744s)**, com 32 respostas e três PDFs criados. **Nenhum arquivo foi entregue.** |
+| Limpeza desta rodada | Retirados dez registros de apresentação do próprio QA: uma conversa, uma tarefa, cinco arquivos/previews, duas notificações e um item de inbox. Removidas duas imagens candidatas descartadas e seus arquivos/contextos de publicação. | 1.858 registros não selecionados permaneceram iguais. Cerca de **835 MiB** liberados na VPS; **106.871.703 bytes** de arquivos de release locais removidos. Imagens atuais/de recuperação, volumes e dados reais preservados. |
+| Dados reais | Conferidos sem mudança companions/perfil, duas conversas, três tarefas, 58 arquivos, duas ações, cinco atividades, três memórias, três contas Google simultâneas e a lista de 34 procedimentos, incluindo um QA já arquivado anteriormente. | As 44 operações históricas incertas continuam preservadas. O navegador de teste foi fechado e seu dispositivo temporário revogado. |
+| Disponibilidade | Publicação concluída com API e navegador nas imagens conferidas; manutenção encerrada e seis contadores de trabalho ativos em zero. Recarga pontual do compositor em 953ms. | A publicação levou **94,8s**. Inicialização lenta, consumo sustentado e desempenho geral continuam sem aprovação. |
 
-## Estado atual — publicação e novo teste de 11/10
+## Por que o pedido real falhou
+
+Pedido idêntico ao anterior:
+
+> Pesquise três cursos gratuitos para começar em IA generativa e me entregue um PDF comparando conteúdo, idioma, duração e se o certificado é pago. Coloque os links das fontes.
+
+O agente pesquisou, criou e revisou os dois primeiros PDFs. Reprovou conteúdo e
+paginação, depois fez a terceira versão: PDF de duas páginas e 51.121 bytes,
+SHA-256 `aa7bb2e5850cd09d4d9914cb3f2dc3fa48507e2e9bc45ef87bfd9fd36c19a2d9`.
+Os bytes, texto e links desse rascunho foram recuperados; a página 2 foi
+renderizada e inspecionada independentemente. Isso não foi enviado ao agente
+nem convertido em aprovação de entrega.
+
+**Não houve inspeção nem confirmação da terceira versão pelo harness.** O agente
+encerrou com resultado parcial porque ainda não a havia inspecionado. O host
+aceitou esse encerramento e marcou a tarefa como falha, sem anexar o PDF. Não
+houve falta de modelo ou de ferramenta observada que justificasse abandonar essa
+etapa. A diferença entre existir um arquivo e entregá-lo está registrada.
+
+Outro problema observado: após revisões reprovadas, `finish_task` devolveu a
+mensagem genérica de pesquisa com links de outros cursos e “arquivo existe e
+abre” como requisito faltante. Ela não apresentou os problemas específicos da
+revisão como o próximo reparo. O trace mostra novas buscas e novas tentativas de
+conclusão antes da correção efetiva. A causalidade completa dessa escolha do
+modelo ainda precisa reprodução controlada; a permissão de encerrar sem revisar
+o rascunho atual e a mensagem inadequada estão comprovadas no trace/código.
+
+As rodadas escolheram cursos diferentes. Não atribuo o aumento de tempo apenas
+à última mudança nem considero essa execução um teste aprovado da recuperação
+de duração Microsoft, pois ela selecionou outro curso Microsoft.
+
+**Próximo trabalho:** tratar o encerramento parcial quando ainda há uma revisão
+executável pendente; devolver os reparos concretos do documento, sem desviar
+para pesquisa genérica. Continuam pendentes os demais contratos de ferramentas,
+Workspace completo, desempenho sustentado e UX. Não se deve trocar o principal
+por um modelo de fronteira para encobrir esses problemas.
+
+## Incidente na conferência da publicação
+
+A primeira troca das imagens foi revertida por um erro na verificação manual da
+publicação: o hash incluía a ordem de `Config.Env`. O Docker Compose pode mudar
+a ordem sem mudar os valores. O retorno às imagens anteriores terminou, e os
+dados foram conferidos iguais. A nova tentativa comparou todos os nomes e valores,
+incluindo conferência do ambiente esperado **antes** da parada; todas as variáveis
+permaneceram iguais. A publicação terminou em 94,8s. Houve intervalos de
+indisponibilidade da API durante as trocas; isso não é aprovação de estabilidade.
+
+A medição do cgroup da API observou cerca de 1,05 GB durante a inicialização.
+Uma medição anterior do PID de init não representa o consumo do aplicativo e
+não é usada como prova. O preflight local isolado do harness levou 6,785s,
+com aproximadamente 777 MB de RSS; é outra máquina e não identifica a causa do
+startup lento da VPS. A próxima investigação precisa separar os tempos de
+abertura do banco, recuperação, criação do app e preflight, sem atribuição por
+suposição.
+
+[Causas e verificações específicas](2026-10-11-research-duration-recovery.md).
+Treze evidências privadas locais foram copiadas da VPS e conferidas por SHA-256;
+os arquivos estão em `artifacts/harness-parity-20261009/private-round76-vps`,
+com permissão 0600. Logs principais: `round76-final-full-suite.log`,
+`round76-normal-start.json`, `round76-post-cleanup-browser.json` e o conjunto
+privado de recibos/diagnóstico. Credenciais não foram incluídas no relatório.
+
+## Histórico — publicação e teste anterior de 11/10
 
 **O trabalho completo ainda não terminou. API e executor foram atualizados; isso não aprova todo o harness.**
 
