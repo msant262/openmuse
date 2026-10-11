@@ -219,6 +219,29 @@ function requestedFileOutput(prompt: string, mailRequest = false) {
   });
 }
 
+/** A named output format takes precedence over visual words in its source.
+ * An infographic made from a PDF still requires an image; a PDF summary of an
+ * infographic requires a PDF. Do not let a later source format replace it. */
+function requestedOutputFormat(prompt: string) {
+  const targets = prompt.matchAll(
+    /\b(?:create|generate|produce|make|write|export|deliver|crie|cria|criar|gere|gera|gerar|faça|faz|monte|escreva|exporte|entregue|quero|want|need|preciso)(?:\s+(?:um|uma|o|a|an|the|new|novo|nova|short|breve|one-page|arquivo|file|documento|document|resumo|summary|resultado|result|em|in|as|de)){0,8}\s+(pdf|docx|xlsx|pptx|txt|csv)\b/gi,
+  );
+  for (const target of targets) {
+    const prefix =
+      prompt
+        .slice(0, target.index)
+        .split(/[.!?;\n]/)
+        .at(-1) ?? "";
+    if (
+      !/(?:n[aã]o|not|don't|do not|without|sem|nunca|never)(?:\s+\S+){0,3}\s*$|\b(?:como|how\s+to)\s*$/i.test(
+        prefix,
+      )
+    )
+      return target[1];
+  }
+  return undefined;
+}
+
 /** Quoted subject/body fields are literal mail content, not task instructions.
  * Keep other quoted values (filenames, event titles) available for matching. */
 function mailInstructionText(prompt: string) {
@@ -365,15 +388,17 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     /\b(?:draft|rascunho|write|compose|escreve|escreva|escrever|redija|prepare|responde|responda|responder|reply)\b/i.test(
       prompt,
     );
-  const format = /\bpdf\b/i.test(prompt)
+  const namedOutput = requestedOutputFormat(prompt);
+  const formatPrompt = namedOutput ?? prompt;
+  const format = /\bpdf\b/i.test(formatPrompt)
     ? "application/pdf"
-    : /\bdocx\b/i.test(prompt)
+    : /\bdocx\b/i.test(formatPrompt)
       ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-      : /\bxlsx\b/i.test(prompt)
+      : /\bxlsx\b/i.test(formatPrompt)
         ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        : /\bpptx\b/i.test(prompt)
+        : /\bpptx\b/i.test(formatPrompt)
           ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-          : /\btxt\b/i.test(prompt)
+          : /\btxt\b/i.test(formatPrompt)
             ? "text/plain"
             : undefined;
   if (task.kind === "document")
@@ -388,11 +413,12 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       requiredItems: content,
     });
   else if (
-    /\b(infogr[aá]fico|infographic|poster|p[oô]ster|ilustra[çc][aã]o|illustration)\b/i.test(
+    !namedOutput &&
+    (/\b(infogr[aá]fico|infographic|poster|p[oô]ster|ilustra[çc][aã]o|illustration)\b/i.test(
       prompt,
     ) ||
-    (/\b(crie|criar|gere|gerar|create|generate|draw|desenhe|produza)\b/i.test(prompt) &&
-      /\b(imagem|image|picture)\b/i.test(prompt))
+      (/\b(crie|criar|gere|gerar|create|generate|draw|desenhe|produza)\b/i.test(prompt) &&
+        /\b(imagem|image|picture)\b/i.test(prompt)))
   )
     criteria.push({
       id: "requested-image",

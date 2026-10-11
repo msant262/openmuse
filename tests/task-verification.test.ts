@@ -326,6 +326,40 @@ test("reading or locating files does not invent a file-delivery obligation", () 
     );
 });
 
+test("an explicit document output keeps its format when the source is an infographic", () => {
+  for (const [prompt, format] of [
+    [
+      "Agora crie um PDF de uma página com a explicação e os três exemplos desse infográfico, incluindo a fonte.",
+      "application/pdf",
+    ],
+    ["Create a PDF summary of this infographic.", "application/pdf"],
+    [
+      "Crie um DOCX com a explicação desse infográfico que estava no PDF.",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
+  ]) {
+    const files = taskCriteria({ kind: "agent", prompt }).filter(
+      (criterion) => criterion.kind === "file",
+    );
+    assert.deepEqual(
+      files.map((criterion) => criterion.format),
+      [format],
+      prompt,
+    );
+  }
+  for (const prompt of [
+    "Crie um infográfico usando esse PDF como fonte.",
+    "Generate an image from this PDF.",
+  ])
+    assert.deepEqual(
+      taskCriteria({ kind: "agent", prompt })
+        .filter((criterion) => criterion.kind === "file")
+        .map((criterion) => criterion.format),
+      ["image/*"],
+      prompt,
+    );
+});
+
 test("actual page-image observations verify a read while partial, malformed or stale receipts do not", async (t) => {
   const runtime = await taskRuntime(t);
   const task = await runtime.agent.createTask("owner", {
