@@ -647,7 +647,9 @@
         "Board transition and native completion proof share the same durable transaction with exact task state and lease checks; a direction accepted after assessment leaves the card running.",
         "Whole suite started in separate fixed tree 03c32e21527a5232597c083133d7e596cb2e17cb; terminal result pending, not approved."
       ],
-      "failed": [],
+      "failed": [
+        "Three added controlled pending-delivery recovery cases fail: ordinary resume leaves the assigned card running, and goal/PR resumes bypass required completion gates. Root cause: pendingResearchDelivery executes before native kanban initialization. Not fixed; added after the running fixed-tree suite snapshot."
+      ],
       "pending": [
         "No autonomous Luna acceptance or complete fifteen-tool behavior proof; native integration is uncommitted and unpublished.",
         "Validate recovery after interruption, lost acknowledgments and pending delivery; complete original offline lifecycle and full opt-in fidelity.",
@@ -656,7 +658,7 @@
       ]
     }
   ],
-  "updatedAt": "2026-10-11T07:01:25.902371Z",
+  "updatedAt": "2026-10-11T07:10:33.627718+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
