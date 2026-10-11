@@ -3,6 +3,7 @@
 Base copiada na main: **`a404b96d905309676e69074c84da5dab98c06e66`**.
 Transporte interno adicional: **`fa3ef6cffa0921a9c23b41bab4aff8b273d07376`**.
 Composição com autoridade do desktop e broker: **`189dce56a60d7d6e11ab121b5972088057d821dd`**.
+Driver CDP/meta com helpers reais: **`1fc7cb6b`**.
 Não publicada na API ou no executor físico. **`browser_exec` continua sem
 registro no catálogo; seu contrato completo permanece pendente.**
 
@@ -159,8 +160,33 @@ com Chromium real da rodada 88 permanece identificada separadamente.
 
 ## Restante necessário para `browser_exec`
 
-1. Implementar o protocolo CDP/meta do SDK no worker, recebendo o envelope
-   canônico pela composição privada já criada. Autoridade Python, desktop,
+Na rodada 90 foi implementado `apps/worker/src/browser-harness-driver.ts`,
+ainda sem conexão a `createBrowserManager` ou ao handler do worker nativo.
+Ele usa o **pipe CDP existente**, com sessões opacas e alvos separados por
+proprietário, conversa e nome. Implementa navegação, execução CDP na página,
+meta de sessão, criação/seleção/fechamento de abas, eventos limitados e captura
+através de um hook obrigatório para imagem protegida. Hooks do host para
+controle, autorização e redaction também são obrigatórios.
+
+**8/8 novos testes passaram**, incluindo uma execução Python real com os
+helpers copiados: digitação de 120 caracteres, segunda aba, retorno à primeira
+e PNG com assinatura/bytes conferidos. Esse programa levou **1,350s** no
+conjunto final; é uma medida de QA local sem modelo, não de produção.
+Verificados isolamento de alvos/sessões/eventos, retomada dos eventos de rede
+ao voltar para a aba, criação depois de fechar a aba atual e timeout sem replay.
+TypeScript, build e Biome passaram. Os testes do host usam funções controladas
+de autorização; isso **não comprova as aprovações e a proteção publicadas**.
+
+O driver atual **não cobre iframes nem uploads**, e seus hooks precisam ser
+integrados às políticas existentes. `browserScriptVersion: 1` continua ausente,
+`browser_exec` continua sem registro e não houve publicação ou chat natural
+por esse caminho. Evidências: `round90-driver-final-tests.log`,
+`round90-typecheck-final2.log`, `round90-biome-final2.log` e os testes com
+proveniência explícita no repositório. A falha inicial de importação de tipos
+foi corrigida antes da verificação final.
+
+1. Integrar o driver CDP/meta ao worker e concluir seu protocolo, recebendo o
+   envelope canônico pela composição privada já criada. Autoridade Python, desktop,
    geração, perfil, controle e fences devem continuar válidos por comando.
 2. Sessões e abas persistentes, isoladas pela tarefa/proprietário, incluindo
    iframes, eventos, espera, upload e captura de imagem.

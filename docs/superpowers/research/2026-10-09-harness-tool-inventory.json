@@ -1552,9 +1552,47 @@
         "Keep task/control/profile authority, persistent owned tabs, protected image output, uploads and approvals",
         "Publish and verify ordinary model tasks plus the remaining full harness acceptance"
       ]
+    },
+    {
+      "surface": "browser.owned-cdp-meta-driver",
+      "source": "1fc7cb6be03c5d14725ef64b47efbf1d927bdc7d",
+      "published": false,
+      "browserManagerIntegrated": false,
+      "nativeWorkerHandlerIntegrated": false,
+      "opaqueOwnedCdpSessionsOverExistingPipe": true,
+      "namedConversationIsolation": true,
+      "externalAuthorizationAndProtectedScreenshotHooksRequired": true,
+      "iframeProtocolImplemented": false,
+      "uploadProtocolImplemented": false,
+      "newDriverTests": {
+        "total": 8,
+        "passed": 8,
+        "failed": 0,
+        "skipped": 0
+      },
+      "realPythonAndCopiedHelpers": true,
+      "realChromiumPipe": true,
+      "typingAndTabSwitchAndPngBytesVerified": true,
+      "realQaProgramSeconds": 1.35,
+      "productionLatencyMeasured": false,
+      "naturalModelSelectionVerified": false,
+      "nativePolicyProof": false,
+      "typescriptPassed": true,
+      "buildPassed": true,
+      "lintErrors": 0,
+      "lintWarnings": 0,
+      "wholeBrowserExecApproved": false,
+      "wholeHarnessApproved": false,
+      "acceptanceApproved": false,
+      "pending": [
+        "Integrate manager and native handler with canonical authority and existing policies",
+        "Complete iframe/upload/dialog and all SDK helper semantics",
+        "Prove protected screenshots, redaction, destructive approvals and cancellation in actual backend",
+        "Only then declare backend availability, register, publish and test ordinary model chat"
+      ]
     }
   ],
-  "updatedAt": "2026-10-11T22:25:15.306692+00:00",
+  "updatedAt": "2026-10-11T22:45:21.932724+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
@@ -1614,7 +1652,7 @@
         "screenshots": "A newly captured screenshot path is resolved to actual native image output",
         "desktopControl": "Bot Desktop routes use the same human-control lease fence as built-in browser tools"
       },
-      "note": "browser_exec is not registered. Copied helpers, fresh Python processes, a bounded local command receiver and canonical desktop/profile authority are implemented. Supervisor now forwards original program envelopes to the private native broker. The worker does not implement the full script protocol or advertise browserScriptVersion 1; it is rejected before commands. Persistent owned tabs, events, iframes, protected image output, uploads, redaction, effect review, backend availability, publication and ordinary model-chat acceptance remain required. Isolated Chromium typing from round 88 does not prove the published broker or full parity.",
+      "note": "browser_exec is not registered. The owned CDP/meta driver now runs unchanged Python helpers against isolated real Chromium over the existing pipe. Named-session target isolation, tab switching, typing, PNG bytes, bounded events and timeout without replay are tested. The driver is not integrated with BrowserManager/native worker; iframe and upload protocols and real authorization/redaction/protected-image/effect-approval policies remain incomplete. No availability declaration, publication or natural model task proves full parity.",
       "registeredInApp": false,
       "revalidatedAt": "2026-10-11T21:40:19.501087+00:00",
       "implementationEvidence": {
@@ -1714,6 +1752,37 @@
           "lintWarnings": 0,
           "nativeBrokerBackendEffectsAreFixtures": true,
           "naturalBrowserExecTest": false,
+          "wholeBrowserExecApproved": false,
+          "wholeHarnessApproved": false,
+          "acceptanceApproved": false
+        },
+        "ownedCdpDriver": {
+          "source": "1fc7cb6be03c5d14725ef64b47efbf1d927bdc7d",
+          "published": false,
+          "browserManagerIntegrated": false,
+          "nativeWorkerHandlerIntegrated": false,
+          "opaqueOwnedCdpSessionsOverExistingPipe": true,
+          "namedConversationIsolation": true,
+          "externalAuthorizationAndProtectedScreenshotHooksRequired": true,
+          "iframeProtocolImplemented": false,
+          "uploadProtocolImplemented": false,
+          "newDriverTests": {
+            "total": 8,
+            "passed": 8,
+            "failed": 0,
+            "skipped": 0
+          },
+          "realPythonAndCopiedHelpers": true,
+          "realChromiumPipe": true,
+          "typingAndTabSwitchAndPngBytesVerified": true,
+          "realQaProgramSeconds": 1.35,
+          "productionLatencyMeasured": false,
+          "naturalModelSelectionVerified": false,
+          "nativePolicyProof": false,
+          "typescriptPassed": true,
+          "buildPassed": true,
+          "lintErrors": 0,
+          "lintWarnings": 0,
           "wholeBrowserExecApproved": false,
           "wholeHarnessApproved": false,
           "acceptanceApproved": false
