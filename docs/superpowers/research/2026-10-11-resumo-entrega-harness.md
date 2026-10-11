@@ -7,18 +7,18 @@ de aceite exigido pelo usuário permanece aberto.
 
 ## Publicação conferida
 
-Em **11/10 às 21:46 UTC**, página e API públicas responderam HTTP 200.
+Em **11/10 às 21:57 UTC**, página e API públicas responderam HTTP 200.
 API, navegador e OpenBao estavam saudáveis. Isso comprova disponibilidade
 nesse instante; estabilidade sob carga e desempenho no celular continuam
 pendentes.
 
 - API publicada: implementação `b5043529`, imagem `780569c1`.
 - Web: release `harness80-20261011-e1fd91f9`.
-- Main local e remota conferidas iguais em `2be27b35`, antes desta atualização
-  do relatório. A implementação mais recente é `a404b96d`; os commits
-  posteriores registram testes, limites encontrados e limpeza.
+- Main local e remota conferidas iguais em `fa3ef6cf`, antes desta atualização
+  do relatório. Esse commit acrescenta o receptor local de comandos à base
+  copiada `a404b96d`.
 - Não foi publicado APK novo nesta etapa.
-- A nova base de execução Python está na **main em `a404b96d`, sem publicação**.
+- A nova base de execução Python e seu receptor local estão na **main, sem publicação**.
   Não representa uma ferramenta de navegador já disponível.
 
 ## Correções publicadas e efeitos observados
@@ -74,7 +74,7 @@ revisão inconsistente permanecem problemas a corrigir.
 - Mantidos imagens atual/de recuperação, volumes, perfis, OpenBao e backups.
   As 44 operações históricas sem resultado confirmado permanecem para
   reconciliação; não foram marcadas como sucesso nem apagadas.
-- Espaço livre observado às 21:46 UTC: **45.470.896.128 bytes**, cerca de
+- Espaço livre observado às 21:57 UTC: **45.470.314.496 bytes**, cerca de
   **42,35 GiB**. Esse é o espaço disponível, não o total liberado.
 - Conferência posterior recolheu sete processos de um navegador de QA local
   aberto desde 09:30. Corrigido o encerramento do helper de testes e confirmado
@@ -89,18 +89,25 @@ descendentes e carrega os helpers originais copiados, com sessão vinculada.
 Esse trabalho **não implementa sozinho `browser_exec`**: falta o transporte
 local e a ligação completa ao navegador, incluindo abas e controles de acesso.
 
-Verificação final desta base: **152/152 testes do executor e 36/36 testes de
+Verificação final desta base: **159/159 testes do executor e 37/37 testes de
 protocolo/integração passaram**, além de TypeScript, build e lint/formatação sem
 erros. Inclui processo filho real, chamada ao host, pausa, cancelamento,
 compatibilidade com executor antigo e bloqueio de repetição de efeitos.
 São testes controlados; não substituem um pedido comum com o modelo nem
 o teste de todas as ferramentas no app publicado.
 
-Antes da publicação foi reproduzido um limite indevido: `fill_input` com
-120 caracteres atingiu a quota de 200 chamadas da adaptação atual. Os
-comandos internos precisam executar no broker local, sem virar uma viagem
-e uma chamada de ferramenta pela API a cada tecla. A ferramenta continua
-indisponível no catálogo; [implementação, evidência e pendências](2026-10-11-browser-script-bootstrap.md).
+Foi reproduzido um limite indevido: `fill_input` com 120 caracteres atingiu
+a quota de 200 chamadas. O novo receptor local separa comandos internos de
+ferramentas externas, sem uma viagem pela API a cada tecla. No Chromium real
+de QA, o texto foi digitado e relido corretamente: **120 caracteres em 0,409s**
+e **1.200 em 2,565s**, com zero chamadas à API para os comandos. Cancelamento,
+sessão estrangeira e resposta perdida foram verificados; perda após possível
+efeito não é marcada como sucesso, mesmo se o script captura o erro.
+
+**Falta ligar esse receptor ao broker publicado**, com autorização dos
+recursos do desktop, abas, redaction e aprovações. A ferramenta continua
+indisponível no catálogo. Esses tempos são do teste de digitação, sem modelo,
+e não de tarefas no app; [implementação, evidência e pendências](2026-10-11-browser-script-bootstrap.md).
 
 Os seguintes pontos impedem declarar a entrega:
 

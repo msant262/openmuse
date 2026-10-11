@@ -1464,9 +1464,61 @@
         "Complete redaction, effect approvals, backend availability and ordinary chat acceptance"
       ],
       "note": "Actual interpreter/task/private-RPC closure tests; browser replies are fixtures. Final suites are not summed with overlapping focused runs. No API/web/native executor publication or user-data mutation."
+    },
+    {
+      "surface": "native.browser-internal-local-command-transport",
+      "source": "fa3ef6cffa0921a9c23b41bab4aff8b273d07376",
+      "published": false,
+      "supervisorBrokerWired": false,
+      "nativeExecutorTests": 159,
+      "apiProtocolIntegrationTests": 37,
+      "browserCommandsUseOrdinaryToolQuota": false,
+      "internalCommandTranscriptRetained": false,
+      "localTransportUsesPerCommandApiReplies": false,
+      "ordinaryToolBudgetsUnchanged": true,
+      "cancellationAndForeignSessionTestsPassed": true,
+      "lostReplyCannotBecomeSuccessByCatchingException": true,
+      "knownPreDispatchRejectionDoesNotBecomeUncertain": true,
+      "realBrowserQa": {
+        "realChromiumDomVerified": true,
+        "viaCdpPipe": true,
+        "testOnlySandboxDisabled": true,
+        "nativeBrokerAuthorizationVerified": false,
+        "productionLatencyMeasured": false,
+        "modelNaturalSelectionVerified": false,
+        "cases": [
+          {
+            "characters": 120,
+            "internalCommands": 370,
+            "durationSeconds": 0.409
+          },
+          {
+            "characters": 1200,
+            "internalCommands": 3610,
+            "durationSeconds": 2.565
+          }
+        ],
+        "apiRoundTripsForCommands": 0,
+        "ordinaryToolQuota": 1,
+        "ordinaryToolCalls": 0,
+        "allProcessesStopped": true
+      },
+      "wholeBrowserExecApproved": false,
+      "typescriptPassed": true,
+      "buildPassed": true,
+      "lintErrors": 0,
+      "wholeHarnessApproved": false,
+      "acceptanceApproved": false,
+      "pending": [
+        "Wire trusted receiver into Supervisor and the full native broker protocol",
+        "Authorize desktop/profile resource leases and control generation in the canonical parent",
+        "Implement persistent owned tabs, events, iframes, upload, masked screenshots and effect approval",
+        "Publish, register only with real backend availability, and verify ordinary model chat tasks"
+      ],
+      "note": "Real Chromium DOM typing is an isolated local QA probe, not a natural model task or proof of published native authorization. No API/web/APK/native executor publication and no app user-data mutation."
     }
   ],
-  "updatedAt": "2026-10-11T21:40:19.501087+00:00",
+  "updatedAt": "2026-10-11T21:57:54.549650+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
@@ -1526,7 +1578,7 @@
         "screenshots": "A newly captured screenshot path is resolved to actual native image output",
         "desktopControl": "Bot Desktop routes use the same human-control lease fence as built-in browser tools"
       },
-      "note": "No registered browser_exec or complete backend exists yet. Native Python v3 now supports fresh source lifecycles and unchanged Browser Harness helpers under a bound named session. The current host-RPC transport is a prototype: fill_input with 120 characters reaches the 200-call ordinary tool budget. Native-local CDP/meta transport, persistent owned tabs, redaction, effect review and ordinary chat acceptance are still required. General execute_code and this bootstrap are not full parity.",
+      "note": "No registered browser_exec or complete backend exists yet. Copied helpers and fresh Python lifecycle are implemented. A new trusted local receiver keeps internal commands off the API and ordinary tool quota, with bounded totals and uncertain-effect handling. Real isolated Chromium typing is verified, but Supervisor-to-broker composition, desktop/profile leases, persistent owned tabs, redaction, effect review, backend availability and ordinary chat acceptance remain required. General execute_code and this foundation are not full parity.",
       "registeredInApp": false,
       "revalidatedAt": "2026-10-11T21:40:19.501087+00:00",
       "implementationEvidence": {
@@ -1560,6 +1612,45 @@
             "status": "error",
             "backendFixture": true
           }
+        },
+        "nativeLocalTransport": {
+          "source": "fa3ef6cffa0921a9c23b41bab4aff8b273d07376",
+          "published": false,
+          "supervisorBrokerWired": false,
+          "nativeExecutorTests": 159,
+          "apiProtocolIntegrationTests": 37,
+          "browserCommandsUseOrdinaryToolQuota": false,
+          "internalCommandTranscriptRetained": false,
+          "localTransportUsesPerCommandApiReplies": false,
+          "ordinaryToolBudgetsUnchanged": true,
+          "cancellationAndForeignSessionTestsPassed": true,
+          "lostReplyCannotBecomeSuccessByCatchingException": true,
+          "knownPreDispatchRejectionDoesNotBecomeUncertain": true,
+          "realBrowserQa": {
+            "realChromiumDomVerified": true,
+            "viaCdpPipe": true,
+            "testOnlySandboxDisabled": true,
+            "nativeBrokerAuthorizationVerified": false,
+            "productionLatencyMeasured": false,
+            "modelNaturalSelectionVerified": false,
+            "cases": [
+              {
+                "characters": 120,
+                "internalCommands": 370,
+                "durationSeconds": 0.409
+              },
+              {
+                "characters": 1200,
+                "internalCommands": 3610,
+                "durationSeconds": 2.565
+              }
+            ],
+            "apiRoundTripsForCommands": 0,
+            "ordinaryToolQuota": 1,
+            "ordinaryToolCalls": 0,
+            "allProcessesStopped": true
+          },
+          "wholeBrowserExecApproved": false
         }
       }
     }

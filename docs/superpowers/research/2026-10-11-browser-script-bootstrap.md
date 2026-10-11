@@ -1,6 +1,7 @@
-# Base de scripts do navegador e transporte pendente — 11/10/2026
+# Base de scripts, comandos locais e integração pendente — 11/10/2026
 
-Implementação na main: **`a404b96d905309676e69074c84da5dab98c06e66`**.
+Base copiada na main: **`a404b96d905309676e69074c84da5dab98c06e66`**.
+Transporte interno adicional: **`fa3ef6cffa0921a9c23b41bab4aff8b273d07376`**.
 Não publicada na API ou no executor físico. **`browser_exec` continua sem
 registro no catálogo; seu contrato completo permanece pendente.**
 
@@ -36,7 +37,7 @@ A execução Python anterior retinha o processo.
 
 ## Verificação e limites
 
-**152/152 testes do executor e 36/36 testes de protocolo/integração passaram**,
+Na base `a404b96d`, **152/152 testes do executor e 36/36 testes de protocolo/integração passaram**,
 com zero falhas, cancelamentos ou casos ignorados nos conjuntos finais.
 TypeScript, build do servidor/harness, lint e `git diff --check` passaram.
 Os grupos focados anteriores estão contidos nesses conjuntos e não são
@@ -53,13 +54,13 @@ Há subprocessos e transporte reais nesses testes: arquivo gravado no
 workspace, chamada ao host sob o TaskJournal, resposta privada e confirmação
 de zero processos vivos antes de encerrar o peer de teste. **As respostas do
 backend do navegador nesses casos são fixtures.** Não há prova de efeitos
-reais no navegador, Google, disponibilidade da ferramenta para Luna ou
+reais no navegador na rodada 87, Google, disponibilidade da ferramenta para Luna ou
 conclusão de uma tarefa comum por `browser_exec`.
 
 ## Limite indevido reproduzido antes da publicação
 
 O helper original `fill_input` envia eventos de tecla para cada caractere.
-Na adaptação atual, cada evento vira uma chamada ao host e consome a quota
+Na adaptação `a404b96d`, cada evento vira uma chamada ao host e consome a quota
 geral de ferramentas Python. Preencher **120 caracteres**, com um receptor
 controlado, atingiu **200 chamadas** e falhou com:
 
@@ -70,21 +71,65 @@ medida latência de produção e não houve preenchimento de página real.
 O recibo está em `round87-browser-granularity-proof.json`.
 
 Além da quota, a leitura de `NativePythonJobs._rpc` mostra que a versão
-atual publica e aguarda uma resposta via API para cada comando. Isso não
+usada naquela rodada publica e aguarda uma resposta via API para cada comando. Isso não
 é o transporte local do daemon original. Projetar a latência desse caminho
 sem medição seria incorreto, mas a quantidade de viagens e recibos é real.
 
-**Essa adaptação não deve ser anunciada como o contrato completo.** A próxima
-implementação precisa executar comandos CDP dentro do broker local do
+**Essa adaptação não deve ser anunciada como o contrato completo.** A
+integração precisa executar comandos CDP dentro do broker local do
 computador, com sessão, prazo e controle vinculados ao programa. A API deve
 continuar responsável pelas ferramentas externas e aprovações, sem tratar
 cada tecla como uma nova ferramenta do modelo. O orçamento de ferramentas
 externas não pode limitar comandos internos de um helper.
 
+## Comandos locais implementados e digitando no Chromium — rodada 88
+
+`PythonKernels` e `NativePythonJobs` agora aceitam um receptor local fornecido
+pelo host. Quando esse receptor está configurado, `browser_harness_rpc` executa
+nele, sem publicar `pythonRpc`, aguardar resposta da API ou consumir a quota
+de ferramentas externas. O programa conserva apenas totais dos comandos,
+sem guardar um histórico crescente de texto digitado, argumentos ou imagens.
+O teste de transporte confirmou somente dois recibos: início e resultado.
+
+Sessão vinculada, validação do comando, prazo e encerramento continuam no
+host. Uma sessão estrangeira é recusada antes do receptor. Um comando pendente
+após cancelamento impede substituir a execução. Exceção de transporte após
+possível efeito mantém `outcome_unknown`, inclusive se o script captura o erro
+e termina normalmente. Rejeição conhecida antes do receptor não cria falsa
+incerteza. Limites e recibos das ferramentas externas permanecem separados.
+
+No teste adicional, o receptor falou com **Chromium real via CDP pipe**, em
+contexto isolado de QA. O helper original preencheu uma textarea e o valor foi
+relido do DOM, comparado byte a byte e por SHA-256. Foram observados eventos
+`input`/`change`, sem simular o valor final:
+
+| Texto | Comandos internos | Tempo final medido | Chamadas à API para comandos |
+| --- | --- | --- | --- |
+| 120 caracteres | 370 | 0,409s | 0 |
+| 1.200 caracteres | 3.610 | 2,565s | 0 |
+
+O teste usou quota de **uma** ferramenta externa e consumiu zero. As duas
+unidades Python e o navegador de QA foram encerrados. A configuração desse
+Chromium é exclusiva do teste; **não comprova sandbox, autorização ou controle
+do broker nativo publicado**. Não houve login nem trabalho no app de usuários.
+Os tempos não são medições de uma tarefa com Luna ou de latência de produção.
+
+Verificação final de `fa3ef6cf`: **159/159 testes do executor e 37/37 testes
+de protocolo/integração**, TypeScript, build do servidor/harness, Biome e
+`git diff --check` passaram. Os novos testes foram reproduzidos falhando antes
+das correções; esses conjuntos substituem, sem somar, os conjuntos sobrepostos.
+
+**O Supervisor ainda não fornece esse receptor ao broker de produção.** O
+transporte local é uma peça funcional verificada; a ligação, recursos e
+controle do navegador completo precisam ser implementados antes de anunciar
+`browser_exec` no catálogo. O caminho antigo via API permanece onde nenhum
+receptor local foi configurado e não deve servir à nova ferramenta.
+
 ## Restante necessário para `browser_exec`
 
-1. Transporte local com os comandos/meta do SDK, sem o teto indevido de
-   comandos internos, mantendo memória e saída limitadas pelo programa.
+1. Ligar o receptor local ao broker, com os comandos/meta do SDK e autorização
+   da sessão, geração, perfil, lease e fence do desktop além da sessão Python.
+   A autoridade Python isoladamente não autoriza usar o navegador.
 2. Sessões e abas persistentes, isoladas pela tarefa/proprietário, incluindo
    iframes, eventos, espera, upload e captura de imagem.
 3. Controle humano, navegação/egress, redaction e efeitos com aprovação no
@@ -97,7 +142,7 @@ Produção permaneceu em `b5043529`. A prévia T3 informou bloqueio de AppArmor;
 o fluxo Playwright existente abriu a mesma URL publicada, conferiu pixels
 da tela pública de entrada e encerrou seu contexto. Não houve login,
 mensagem de usuário, nova tarefa/arquivo no app ou alteração nos dados reais.
-Às **21:40:55 UTC**, página/API responderam HTTP 200 e os três containers
+Às **21:57:06 UTC**, página/API responderam HTTP 200 e os três containers
 continuavam saudáveis, nas mesmas imagens.
 
 ## Resíduo local de QA recolhido
@@ -120,3 +165,9 @@ Evidências fora do Git: `artifacts/harness-parity-20261009/round87-*.log`,
 `round87-browser-granularity-proof.json` e `round87-public-entry.png`.
 Recibos de limpeza: `round87-old-local-browser-cleanup.json` e
 `round87-browser-helper-shutdown.json`.
+Rodada 88: `round88-browser-local-proof-final.json` registra hashes do código
+medido, dos valores e encerramento; `round88-executor-suite-final.log`,
+`round88-python-api-suite.log`, `round88-typecheck.log`, `round88-biome.log`
+e `round88-source.patch` preservam a verificação. O erro inicial da prévia e o
+preflight de QA sem `--enable-automation` foram identificados; a flag foi
+corrigida no teste antes da medição final, sem mudar configuração de produção.
