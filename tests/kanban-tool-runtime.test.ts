@@ -5,6 +5,7 @@ import { bindingHash } from "../apps/server/src/conversation-inbox.ts";
 import { kanbanTaskTools } from "../apps/server/src/engine/kanban-tools.ts";
 import { KanbanWorkflow } from "../apps/server/src/engine/kanban-workflow.ts";
 import { ToolDiscovery } from "../apps/server/src/engine/tool-discovery.ts";
+import { LostLeaseError } from "../apps/server/src/engine/worker.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
@@ -376,6 +377,317 @@ for (const contract of ["goal", "pr"] as const) {
     assert.equal((await board.get(card.id)).currentRun?.id, claim.runId);
   });
 }
+
+for (const contract of ["local", "goal", "pr"] as const) {
+  test(`a resumed ${contract} delivery uses the actual assigned handoff gate and saved source`, async (t) => {
+    const url = "https://sources.example/finding";
+    let reads = 0;
+    const fixture = await modelFixture(
+      t,
+      (index) =>
+        [
+          { name: "web_fetch", arguments: { url } },
+          { name: "ask_user", arguments: { question: "Continue the saved finding?" } },
+        ][index],
+    );
+    const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+    t.mock.method(f.agent.web, "document", async () => {
+      reads++;
+      return {
+        url,
+        contentType: "text/html",
+        body: "<main>The observed source supports the finding.</main>",
+      };
+    });
+    const board = new KanbanWorkflow(f.db, "owner", "pipeline", { profileExists: () => true });
+    const card = await board.create(
+      { role: "orchestrator", profile: "default" },
+      {
+        title: "Read findings",
+        assignee: "default",
+        ...(contract === "goal"
+          ? { goalMode: true }
+          : contract === "pr"
+            ? { completionContract: "https://github.com/okami/research/pull/7" }
+            : {}),
+      },
+      "card",
+    );
+    const claim = await board.claim(card.id, "default", "claim");
+    const task = await f.agent.createTask("owner", {
+      prompt: `Read ${url} and record the observed finding.`,
+    });
+    await f.db.put("owner", "kanban-executions", {
+      id: task.id,
+      board: "pipeline",
+      cardId: card.id,
+      profile: "default",
+      runId: claim.runId,
+    });
+    await f.agent.worker.tick();
+    assert.equal((await f.agent.getTask("owner", task.id)).status, "waiting_input");
+    await f.agent.answer("owner", task.id, "Continue");
+    const queued = await f.agent.getTask("owner", task.id);
+    // Represents a recorded delivery awaiting recovery. The source and its
+    // canonical receipt were acquired by the actual first worker above.
+    const revision = Number(queued.state.appliedRevision ?? 0);
+    await f.db.compareAndSwapTask(
+      "owner",
+      task.id,
+      { status: "queued" },
+      {
+        state: {
+          ...queued.state,
+          pendingResearchDelivery: {
+            summary: "The observed finding is recorded.",
+            outcome: "completed",
+            artifactIds: [],
+            revision,
+          },
+        },
+      },
+    );
+    const requestsBeforeResume = fixture.requests.length;
+    await f.agent.worker.tick();
+    const resumed = await f.agent.getTask("owner", task.id);
+    if (contract === "local") {
+      assert.equal(resumed.status, "succeeded");
+      assert.equal(resumed.completion?.status, "verified");
+      assert.equal(
+        (await board.get(card.id)).status,
+        "done",
+        "resumed delivery cannot leave its assigned card running",
+      );
+      assert.ok(
+        (await f.agent.journal.operations("owner", task.id)).some(
+          (operation) => operation.toolName === "finish_task" && operation.status === "succeeded",
+        ),
+      );
+    } else {
+      assert.notEqual(
+        resumed.status,
+        "succeeded",
+        "cached delivery cannot bypass goal or PR verification",
+      );
+      assert.equal((await board.get(card.id)).status, "running");
+      assert.equal((await board.get(card.id)).currentRun?.id, claim.runId);
+    }
+    assert.equal(reads, 1, "recovery must reuse the actually acquired source");
+    assert.equal(
+      fixture.requests.length,
+      requestsBeforeResume,
+      "the saved delivery does not require a new inference",
+    );
+  });
+}
+
+for (const loseRecovery of [false, true]) {
+  test(`a lost ${loseRecovery ? "recovery" : "worker"} acknowledgment recovers the committed handoff without another model turn or board mutation`, async (t) => {
+    const url = "https://sources.example/finding";
+    const fixture = await modelFixture(
+      t,
+      (index) =>
+        [
+          { name: "web_fetch", arguments: { url } },
+          { name: "finish_task", arguments: { summary: "The observed finding is recorded." } },
+        ][index],
+    );
+    const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+    const read = t.mock.method(f.agent.web, "document", async () => ({
+      url,
+      contentType: "text/html",
+      body: "<main>The observed source supports the finding.</main>",
+    }));
+    const board = new KanbanWorkflow(f.db, "owner", "pipeline", { profileExists: () => true });
+    const card = await board.create(
+      { role: "orchestrator", profile: "default" },
+      { title: "Read findings", assignee: "default" },
+      "card",
+    );
+    const claim = await board.claim(card.id, "default", "claim");
+    const task = await f.agent.createTask("owner", {
+      prompt: `Read ${url} and record the observed finding.`,
+    });
+    await f.db.put("owner", "kanban-executions", {
+      id: task.id,
+      board: "pipeline",
+      cardId: card.id,
+      profile: "default",
+      runId: claim.runId,
+    });
+    const mutate = f.db.durableMutation.bind(f.db);
+    let interrupted = false;
+    t.mock.method(f.db, "durableMutation", async (...args: Parameters<typeof mutate>) => {
+      const result = await mutate(...args);
+      if (
+        !interrupted &&
+        result.status === "applied" &&
+        args[3].some(
+          (mutation) =>
+            mutation.kind === "kanban-cards:pipeline" &&
+            (mutation.value as { status?: string }).status === "done",
+        )
+      ) {
+        interrupted = true;
+        f.agent.worker.abort(task.id, "shutdown");
+        throw new LostLeaseError();
+      }
+      return result;
+    });
+    if (loseRecovery) {
+      const record = f.agent.journal.recordReceipt.bind(f.agent.journal);
+      let lost = false;
+      t.mock.method(
+        f.agent.journal,
+        "recordReceipt",
+        async (...args: Parameters<typeof record>) => {
+          const saved = await record(...args);
+          if (!lost && args[1].includes(":recover-handoff:") && saved.status === "succeeded") {
+            lost = true;
+            f.agent.worker.abort(task.id, "shutdown");
+            throw new LostLeaseError();
+          }
+          return saved;
+        },
+      );
+    }
+    await f.agent.worker.tick();
+    assert.equal(interrupted, true);
+    assert.equal((await f.agent.getTask("owner", task.id)).status, "queued");
+    const committed = await board.get(card.id);
+    assert.equal(committed.status, "done");
+    const requests = fixture.requests.length;
+    await f.agent.worker.tick();
+    if (loseRecovery) {
+      assert.equal((await f.agent.getTask("owner", task.id)).status, "queued");
+      await f.agent.worker.tick();
+    }
+    const recovered = await f.agent.getTask("owner", task.id);
+    assert.equal(recovered.status, "succeeded", recovered.error ?? recovered.question);
+    assert.equal(recovered.completion?.status, "verified");
+    assert.equal(recovered.result, "The observed finding is recorded.");
+    assert.deepEqual(
+      await board.get(card.id),
+      committed,
+      "a committed handoff is observed, never executed again",
+    );
+    assert.equal(read.mock.callCount(), 1);
+    assert.equal(fixture.requests.length, requests);
+    assert.ok(
+      (await f.agent.journal.operations("owner", task.id)).some(
+        (operation) => operation.toolName === "finish_task" && operation.status === "succeeded",
+      ),
+    );
+  });
+}
+
+test("an ended board card without its atomic native proof cannot manufacture a task completion", async (t) => {
+  const fixture = await modelFixture(t, () => undefined);
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const board = new KanbanWorkflow(f.db, "owner", "pipeline", { profileExists: () => true });
+  const card = await board.create(
+    { role: "orchestrator", profile: "default" },
+    { title: "Read findings", assignee: "default" },
+    "card",
+  );
+  const claim = await board.claim(card.id, "default", "claim");
+  const task = await f.agent.createTask("owner", {
+    prompt: "Read the finding and record the actual result.",
+  });
+  await f.db.put("owner", "kanban-executions", {
+    id: task.id,
+    board: "pipeline",
+    cardId: card.id,
+    profile: "default",
+    runId: claim.runId,
+  });
+  const operation = await f.agent.journal.prepare("owner", {
+    id: "legacy-finish",
+    taskId: task.id,
+    revision: 0,
+    bindingHash: bindingHash({ name: "finish_task", args: { summary: "Unverified finding" } }),
+    executorId: "task",
+    executorEpoch: 1,
+    resourceFence: 0,
+    status: "queued",
+    toolName: "finish_task",
+    args: { summary: "Unverified finding" },
+    effect: false,
+    runToken: "previous-run",
+    resourceLeaseIds: [],
+    createdAt: new Date().toISOString(),
+  });
+  const ended = await board.complete(
+    claim,
+    { summary: "Unverified finding" },
+    `${task.id}:${operation.id}`,
+  );
+  await f.agent.worker.tick();
+  const observed = await f.agent.getTask("owner", task.id);
+  assert.notEqual(observed.status, "succeeded");
+  assert.match(observed.error ?? "", /saved handoff does not verify/i);
+  assert.deepEqual(await board.get(card.id), ended);
+  assert.equal(fixture.requests.length, 0);
+});
+
+test("disabling kanban after dispatch cannot turn an assigned handoff into ordinary task completion", async (t) => {
+  const url = "https://sources.example/finding";
+  const fixture = await modelFixture(
+    t,
+    (index) =>
+      [
+        { name: "web_fetch", arguments: { url } },
+        { name: "ask_user", arguments: { question: "Continue the saved finding?" } },
+        { name: "finish_task", arguments: { summary: "The recorded finding is delivered." } },
+      ][index],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async () => ({
+    url,
+    contentType: "text/html",
+    body: "<main>The observed source supports the finding.</main>",
+  }));
+  const board = new KanbanWorkflow(f.db, "owner", "pipeline", { profileExists: () => true });
+  const card = await board.create(
+    { role: "orchestrator", profile: "default" },
+    { title: "Record findings", assignee: "default" },
+    "card",
+  );
+  const claim = await board.claim(card.id, "default", "claim");
+  const task = await f.agent.createTask("owner", {
+    prompt: `Read ${url} and record the actual finding.`,
+  });
+  await f.db.put("owner", "kanban-executions", {
+    id: task.id,
+    board: "pipeline",
+    cardId: card.id,
+    profile: "default",
+    runId: claim.runId,
+  });
+  await f.agent.worker.tick();
+  assert.equal((await f.agent.getTask("owner", task.id)).status, "waiting_input");
+  await f.agent.answer("owner", task.id, "Continue");
+  await f.db.put("owner", "execution-profiles", {
+    id: "default",
+    revision: 1,
+    disabledToolsets: ["kanban"],
+  });
+  const requestsBeforeResume = fixture.requests.length;
+  await f.agent.worker.tick();
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.notEqual(
+    saved.status,
+    "succeeded",
+    "removing a tool opt-in must not remove its assigned completion gate",
+  );
+  assert.equal((await board.get(card.id)).status, "running");
+  assert.equal((await board.get(card.id)).currentRun?.id, claim.runId);
+  assert.equal(
+    fixture.requests.length,
+    requestsBeforeResume,
+    "the disabled assigned surface is checked before another inference",
+  );
+});
 
 test("a direction accepted during handoff verification cannot complete the old card or task", async (t) => {
   const url = "https://sources.example/finding";

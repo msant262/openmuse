@@ -25,7 +25,7 @@ import {
   taskAttachedFileIds,
 } from "./file-references.ts";
 import { activeTodoContext, type Todo, writeTodos } from "./hermes/todo-store.ts";
-import { kanbanTaskTools } from "./kanban-tools.ts";
+import { type KanbanExecution, kanbanTaskTools } from "./kanban-tools.ts";
 import {
   consumePlanCompletionCheck,
   PLAN_COMPLETION_FOLLOWUP,
@@ -415,6 +415,7 @@ export async function executeModelTask(
     return { ...review, factsKey, sourceFactsKey, attempts, repairAttempts, stalledAttempts };
   };
   let outcome: Partial<AgentTask> | undefined;
+  const currentOutcome = () => outcome;
   let kanbanDelivery: Awaited<ReturnType<typeof kanbanTaskTools>>["deliver"];
   let providerCheckpoint: ProviderContinuationCheckpoint | undefined;
   const waitForReview = async (
@@ -922,9 +923,18 @@ export async function executeModelTask(
       revision: z.number(),
     })
     .safeParse(task.state.pendingResearchDelivery);
+  // Assigned deliveries must resume through their native board gate, which is
+  // initialized with the tool surface below. Preserve the early ordinary-task
+  // recovery path, including its image-generation ordering.
+  const pendingKanbanExecution =
+    pending.success && pending.data.revision === Number(task.state.appliedRevision ?? 0)
+      ? await service.db.get<KanbanExecution>(owner, "kanban-executions", task.id)
+      : undefined;
   if (pending.success && pending.data.revision === Number(task.state.appliedRevision ?? 0)) {
-    await deliver(pending.data.summary, pending.data.outcome, pending.data.artifactIds);
-    if (outcome) return outcome;
+    if (!pendingKanbanExecution) {
+      await deliver(pending.data.summary, pending.data.outcome, pending.data.artifactIds);
+      if (outcome) return outcome;
+    }
   } else if (task.state.pendingResearchDelivery) {
     task = await ctx.checkpoint({
       state: {
@@ -2501,6 +2511,8 @@ export async function executeModelTask(
   });
   tools.push(...kanban.tools);
   kanbanDelivery = kanban.deliver;
+  const recoveredOutcome = currentOutcome();
+  if (recoveredOutcome) return recoveredOutcome;
   tools.push(
     ...withInstructions(
       designReferenceTools(undefined, {
@@ -2616,6 +2628,38 @@ export async function executeModelTask(
       reason: error instanceof Error ? error.message : "Blocked",
     };
   };
+  if (pending.success && pendingKanbanExecution) {
+    const args = {
+      summary: pending.data.summary,
+      outcome: pending.data.outcome,
+      artifactIds: pending.data.artifactIds,
+    };
+    const finish = tools.find((entry) => entry.name === "finish_task");
+    try {
+      const resumed = await service.journal.run(
+        owner,
+        task,
+        {
+          id: `resume-delivery:${pending.data.revision}:${createHash("sha256")
+            .update(JSON.stringify({ args, execution: pendingKanbanExecution }))
+            .digest("hex")}`,
+          name: "finish_task",
+          args,
+        },
+        async () => {
+          if (!kanbanDelivery || !finish?.execute)
+            throw new AppError("The assigned delivery has no native handoff gate", 409);
+          return finish.execute(args as never);
+        },
+        false,
+      );
+      if (resumed && typeof resumed === "object" && "error" in resumed)
+        throw new AppError(`Saved delivery could not complete: ${String(resumed.error)}`, 409);
+    } catch (error) {
+      await recordBlocked(error);
+    }
+    if (outcome) return outcome;
+  }
   const missingProcedureTools = await service.playbooks.missingTools(
     owner,
     task.input,

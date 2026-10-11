@@ -1,7 +1,10 @@
 import type { ToolDefinition } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
-import type { CompletionAssessment } from "../../../../packages/domain/src/runtime.ts";
+import {
+  type CompletionAssessment,
+  completionAssessmentSchema,
+} from "../../../../packages/domain/src/runtime.ts";
 import { AppError } from "../errors.ts";
 import { kanbanToolSchemas } from "./hermes/kanban-tool-schemas.ts";
 import { KanbanArtifacts } from "./kanban-artifacts.ts";
@@ -12,7 +15,7 @@ import {
   KanbanWorkflow,
 } from "./kanban-workflow.ts";
 import type { AgentService } from "./service.ts";
-import { taskOperationId } from "./task-journal.ts";
+import { authorizeTaskEffect, taskOperationId } from "./task-journal.ts";
 
 /** Written by the host dispatcher, never accepted from task input or tool args. */
 export type KanbanExecution = {
@@ -51,8 +54,15 @@ export async function kanbanTaskTools(
   if (typeof task.state.parentTaskId === "string") return { tools: [] };
   const execution = await service.db.get<KanbanExecution>(owner, "kanban-executions", task.id);
   const profile = await service.executionProfiles.get(owner, execution?.profile ?? "default");
-  if (!service.executionProfiles.kanbanEnabled(profile, "task", Boolean(execution)))
+  if (!service.executionProfiles.kanbanEnabled(profile, "task", Boolean(execution))) {
+    if (execution)
+      throw new AppError(
+        `Kanban is disabled in execution profile ${profile.id}; assigned card ${execution.cardId} still requires its handoff gate`,
+        409,
+        "KANBAN_ASSIGNED_TOOLSET_DISABLED",
+      );
     return { tools: [] };
+  }
   const scope: KanbanScope = execution
     ? {
         role: "worker",
@@ -136,6 +146,62 @@ export async function kanbanTaskTools(
   if (execution) {
     if (execution.id !== task.id)
       throw new AppError("Dispatcher execution binding is invalid", 409);
+    const card = await workflow().get(execution.cardId);
+    if (!card.currentRun || card.currentRun.id !== execution.runId) {
+      const revision = Number(task.state.appliedRevision ?? 0);
+      for (const operation of (await service.journal.operations(owner, task.id)).toReversed()) {
+        if (
+          operation.revision !== revision ||
+          !["finish_task", "kanban_complete", "kanban_request_review"].includes(operation.toolName)
+        )
+          continue;
+        const saved = await workflow().handoffAcknowledgment(scope, `${task.id}:${operation.id}`);
+        if (!saved) continue;
+        // The actual native task proof was committed with this exact board
+        // handoff. Current card prose or an assistant claim cannot substitute.
+        const native = saved.values.find(
+          (value): value is AgentTask =>
+            !!value &&
+            typeof value === "object" &&
+            "id" in value &&
+            value.id === task.id &&
+            "state" in value &&
+            "completion" in value,
+        );
+        const proof = completionAssessmentSchema.safeParse(native?.completion);
+        if (
+          !proof.success ||
+          proof.data.status !== "verified" ||
+          native?.state.verificationRevision !== revision ||
+          Number(task.state.desiredRevision ?? 0) !== revision
+        )
+          throw new AppError("The saved handoff does not verify the current task direction", 409);
+        await service.journal.run(
+          owner,
+          task,
+          {
+            id: `recover-handoff:${operation.id}`,
+            name: "finish_task",
+            args: { acknowledgedOperationId: operation.id },
+          },
+          async () => {
+            await options.guard?.();
+            await authorizeTaskEffect();
+            return {
+              complete: true,
+              completion: proof.data,
+              acknowledgedOperationId: operation.id,
+            };
+          },
+          false,
+        );
+        // run() may replay the already committed recovery receipt after another
+        // lost ACK. Restore the native outcome on both execution and replay.
+        await options.guard?.();
+        await options.transition?.(saved.card, { completion: proof.data, revision });
+        return { tools: [] };
+      }
+    }
     await workflow().authorizeAttachment(scope, execution.cardId);
   }
   const requestId = () => {

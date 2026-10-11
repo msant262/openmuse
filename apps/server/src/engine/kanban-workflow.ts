@@ -483,6 +483,34 @@ export class KanbanWorkflow {
     // ACK-loss retry; it does not reclaim the card or grant fresh authority.
     return this.recordedCard(receipt.result.values);
   }
+  /** Observe an ended handoff after an interrupted host acknowledgment. The
+   * immutable receipt proves its original run; this grants no new card claim. */
+  async handoffAcknowledgment(scope: KanbanScope, requestId: string) {
+    this.scope(scope);
+    if (scope.role !== "worker") this.fail("A handoff acknowledgment requires its original run");
+    const receipt = await this.db.get<{ bindingHash: string; result: { values: unknown[] } }>(
+      this.owner,
+      "mutation-receipts",
+      `kanban:${this.board}:${requestId}`,
+    );
+    if (!receipt) return undefined;
+    const card = this.recordedCard(receipt.result.values);
+    const event = receipt.result.values[2] as
+      | { kind?: string; actor?: string; runId?: string; input?: unknown }
+      | undefined;
+    if (
+      card.id !== scope.taskId ||
+      !event ||
+      !["completed", "review_requested"].includes(event.kind ?? "") ||
+      event.actor !== scope.profile ||
+      event.runId !== scope.runId ||
+      card.status !== (event.kind === "completed" ? "done" : "review") ||
+      receipt.bindingHash !==
+        bindingHash({ board: this.board, scope, event: event.kind, input: event.input })
+    )
+      this.fail("The recorded handoff does not belong to this worker's original run");
+    return { card, values: receipt.result.values };
+  }
   private recordedCard(values: unknown[]): KanbanCard {
     const first = values[0];
     const card =
