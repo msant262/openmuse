@@ -304,10 +304,12 @@ export class ExecutorRegistry {
     );
   }
   private supports(node: ExecutorNode, request: ExecutorRequest) {
-    const capability = node.hello.capabilities.find((value) => value.name === request.capability);
-    if (!capability)
+    const capabilities = node.hello.capabilities.filter(
+      (value) => value.name === request.capability,
+    );
+    if (!capabilities.length)
       throw new AppError(`Native executor capability ${request.capability} is absent`, 409);
-    if (capability.version !== request.capabilityVersion)
+    if (!capabilities.some((value) => value.version === request.capabilityVersion))
       throw new AppError(
         `Native executor capability ${request.capability} semantic version is incompatible; update before dispatch`,
         409,

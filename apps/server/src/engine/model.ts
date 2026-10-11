@@ -74,6 +74,7 @@ import {
 import { runtimeInstructions, runtimeTool } from "../runtime-tools.ts";
 import { SkillCatalog, skillInstructions, skillTools } from "../skill-catalog.ts";
 import { readComputerCommand } from "./computer-jobs.ts";
+import { prepareKanbanWorkspace } from "./kanban-workspace.ts";
 import { openclawAgent } from "./openclaw-agent.ts";
 import { buildPromisedWorkPromptSection } from "./promised-work-prompt.ts";
 import {
@@ -154,6 +155,7 @@ export async function executeModelTask(
   const activeTools = new Set<Promise<unknown>>();
   let task = await service.actor.apply(owner, initial, ctx);
   task = await ctx.checkpoint({ state: { ...task.state, artifactDeliveryPending: true } });
+  const taskWorkspace = await prepareKanbanWorkspace(service, owner, task, ctx);
   let selectedModel = config.model;
   // Semantic review is an explicitly configured extra model pass. Ordinary
   // research keeps source grounding and native delivery/effect checks, without
@@ -1672,6 +1674,7 @@ export async function executeModelTask(
     ),
     ...withInstructions(
       computerTools(service.computer, service.files, owner, `task:${task.id}`, {
+        cwd: taskWorkspace?.cwd,
         queue: serial,
         onComputerDispatch: recordComputerDispatch,
         onComputerReceipt: recordComputerReceipt,
@@ -2886,19 +2889,22 @@ export async function executeModelTask(
       ? {
           pythonRuntime: {
             execute: async (input) => {
-              const sessionId = `conversation:${createHash("sha256")
-                .update(
-                  JSON.stringify(
-                    typeof task.input.routineId === "string"
-                      ? ["routine", task.input.routineId]
-                      : ["thread", task.originThreadId ?? task.id],
-                  ),
-                )
-                .digest("hex")}`;
+              const sessionId =
+                taskWorkspace?.sessionId ??
+                `conversation:${createHash("sha256")
+                  .update(
+                    JSON.stringify(
+                      typeof task.input.routineId === "string"
+                        ? ["routine", task.input.routineId]
+                        : ["thread", task.originThreadId ?? task.id],
+                    ),
+                  )
+                  .digest("hex")}`;
               return pythonExecutor(
                 owner,
                 {
                   sessionId,
+                  cwd: taskWorkspace?.cwd,
                   code: input.code,
                   reset: input.reset,
                   wallClockMs: input.wallClockMs,

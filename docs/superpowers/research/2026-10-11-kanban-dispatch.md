@@ -24,7 +24,7 @@ Logs e fontes de referência preservados em `artifacts/harness-parity-20261009`,
 | --- | --- |
 | Despacho automático | Seleção limitada em SQL, perfil autenticado, prioridade/dependências e capacidade real do worker existente. Não carregar todo o histórico nem criar um segundo executor. |
 | Posse e retomada | Corrigida localmente: o run acompanha a autoridade da tarefa nativa, incluindo esperas, ator substituído, confirmação perdida e efeitos incertos. Barreiras transacionais e 91 controles focados passaram. Ainda requer publicação e aceitação normal do fluxo integrado; ver [registro de posse](2026-10-11-kanban-native-ownership.md). |
-| Workspace | Provisão física de scratch, diretório e worktree, binding no terminal/arquivos, preservação de artefatos antes da limpeza e ausência de interferência entre cards. |
+| Workspace | Preparação física de scratch/diretório/worktree e vínculo ao terminal, arquivos e Python implementados localmente; 110 controles de integração e 61 de Python passaram. Configuração de projetos/default workdir e publicação/aceitação do protocolo v2 ainda pendentes; ver [registro de workspace](2026-10-11-kanban-workspace.md). |
 | Configuração | Usar efetivamente modelo/provedor, skills e orçamento declarado; armazenar e conferir o perfil responsável, sem conceder acesso por texto do modelo. |
 | Objetivo e CI | Juiz/gate real do objetivo e CI do commit exato; contrato de PR não pode virar local-only. |
 | Entrega | Roteamento durável para a conversa/subscrição correta; arquivo real, autor, conta e recibos. A biblioteca ou um card concluído isolado não comprovam entrega ao usuário. |

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { KanbanWorkflow } from "../apps/server/src/engine/kanban-workflow.ts";
 import { modelFixture } from "./helpers/model.ts";
@@ -14,7 +16,19 @@ test("host dispatch creates the native binding and ordinary worker delivery with
         { name: "finish_task", arguments: { summary: "The observed finding is recorded." } },
       ][index],
   );
-  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const f = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    computerEnabled: true,
+  });
+  // The host now provisions before the scripted model runs. This fixture owns
+  // actual temporary directories; it does not claim native/public acceptance.
+  t.mock.method(f.agent.computer, "mkdir", async (_owner: string, path: string) => {
+    await mkdir(join(f.directory, "computer", path.slice("/workspace/".length)), {
+      recursive: true,
+    });
+    return { path };
+  });
   t.mock.method(f.agent.web, "document", async () => ({
     url,
     contentType: "text/html",

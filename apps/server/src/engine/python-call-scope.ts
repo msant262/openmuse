@@ -29,7 +29,8 @@ async function validate(frame: Frame) {
     stored.resourceFence !== parent.resourceFence ||
     stored.nativeEnvelope?.kind !== "command" ||
     stored.nativeEnvelope.capability !== "python" ||
-    stored.nativeEnvelope.capabilityVersion !== 1 ||
+    ![1, 2].includes(Number(stored.nativeEnvelope.capabilityVersion)) ||
+    stored.nativeEnvelope.capabilityVersion !== parent.capabilityVersion ||
     stored.nativeEnvelope.resourceKey !== parent.resourceKey
   )
     throw new AppError("Python host call has no current canonical parent scope", 409);

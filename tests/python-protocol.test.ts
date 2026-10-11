@@ -67,9 +67,15 @@ test("native Python requests cannot select a shell, account, background launch o
     },
   };
   assert.deepEqual(nativePythonArgsSchema.parse(args), args);
+  assert.equal(
+    nativePythonArgsSchema.parse({ ...args, cwd: "/workspace/cards/one" }).cwd,
+    "/workspace/cards/one",
+  );
   for (const invalid of [
     { ...args, command: "bash unsafe.sh" },
     { ...args, cwd: "/home/personal" },
+    { ...args, cwd: "relative" },
+    { ...args, cwd: "/workspace/../foreign" },
     { ...args, background: true },
     { ...args, user: "root" },
     { ...args, pythonCell: { ...args.pythonCell, tools: ["execute_code"] } },

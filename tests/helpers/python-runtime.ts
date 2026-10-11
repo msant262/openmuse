@@ -34,7 +34,15 @@ export async function pythonRuntime(
     ) => Promise<{ sequence: number; json: string; sha256: string }>;
   }) => Promise<void>,
   tools = ["write_sample"],
-  cell: { code?: string; timeoutMs?: number; logicalArgs?: unknown; prompt?: string } = {},
+  cell: {
+    code?: string;
+    timeoutMs?: number;
+    logicalArgs?: unknown;
+    prompt?: string;
+    cwd?: string;
+    capabilityVersion?: number;
+    advertisedPythonVersions?: number[];
+  } = {},
 ) {
   const server = await taskRuntime(t);
   const authority = new TaskExecutorAuthority(server.agent.journal, {
@@ -43,7 +51,13 @@ export async function pythonRuntime(
   const registry = new ExecutorRegistry(server.db, { registrations: [registration], authority });
   const { epoch } = await registry.register({
     ...hello,
-    capabilities: [...hello.capabilities, { name: "python", version: 1 }],
+    capabilities: [
+      ...hello.capabilities,
+      ...(cell.advertisedPythonVersions ?? [1, 2]).map((version) => ({
+        name: "python" as const,
+        version,
+      })),
+    ],
   });
   await registry.reconcile(registration.executorId, {
     epoch,
@@ -61,7 +75,7 @@ export async function pythonRuntime(
       const id = `python-${randomUUID()}`;
       const args = {
         command: "Python cell",
-        cwd: "/workspace",
+        cwd: cell.cwd ?? "/workspace",
         background: false,
         timeoutMs: cell.timeoutMs ?? 3000,
         pythonCell: {
@@ -117,7 +131,7 @@ export async function pythonRuntime(
           executorId: registration.executorId,
           kind: "command",
           capability: "python",
-          capabilityVersion: 1,
+          capabilityVersion: cell.capabilityVersion ?? 1,
           inspection: false,
           args,
         },

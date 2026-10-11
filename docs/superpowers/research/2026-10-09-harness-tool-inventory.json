@@ -914,9 +914,31 @@
         "Durable conversation/subscriber delivery, publication and natural public-chat acceptance.",
         "Full Workspace, factual research, sustained mobile performance and whole-harness acceptance."
       ]
+    },
+    {
+      "surface": "kanban.workspace-and-python-cwd-round70",
+      "caseAcceptance": "local-physical-workspace-and-versioned-native-python",
+      "acceptanceApproved": false,
+      "productionEnabled": false,
+      "published": false,
+      "verified": [
+        "Canonical claim stages workspace intent; admitted existing native worker provisions stable scratch/directories or actual Git worktrees through existing journal/resources.",
+        "Final task-actor/expiry/state/profile/card/pause barriers preserve physical receipts when authority changes; unrelated linked branch and files stay intact.",
+        "Confirmed task CWD feeds terminal, relative file/search tools and persistent Python; v2 native CWD reaches registered systemd launcher code, v1 root remains compatible.",
+        "Actual child interpreters and host RPC export real file bytes from their fixture task directory; incompatible session CWD preserves original globals.",
+        "Two canonical lost-ACK regressions reproduced and corrected; host-created native binding recovers without another mkdir, source read, model turn or board mutation.",
+        "110/110 focused integration controls and 61/61 Python controls pass; root TypeScript/server/assets/copied-harness builds pass; lint has six prior warnings.",
+        "Pinned Hermes workspace source 019a14f01be5030e893fd89c4799b55aa89896ad31208b3558b7f0dd340626ce read; source/log/compiled hashes fixed in round70 manifest."
+      ],
+      "pending": [
+        "Authenticated projects/default-directory and effective model/provider/skills/budgets.",
+        "Goal/PR/exact-commit CI completion gates and automatic worker dispatch.",
+        "Registered native OS rollout, durable conversation delivery and normal public-chat acceptance.",
+        "Full Google Workspace, factual research, sustained mobile performance and whole-harness acceptance."
+      ]
     }
   ],
-  "updatedAt": "2026-10-11T11:22:59.486131+00:00",
+  "updatedAt": "2026-10-11T11:53:02.676629+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

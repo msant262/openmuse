@@ -298,6 +298,14 @@ export class TaskExecutorAuthority {
     if (request.capability === "python") {
       if (request.kind === "command") {
         const args = nativePythonArgsSchema.parse(request.args);
+        if (
+          ![1, 2].includes(request.capabilityVersion ?? 1) ||
+          (args.cwd !== "/workspace" && (request.capabilityVersion ?? 1) !== 2)
+        )
+          throw new AppError(
+            "Python workspace requires the compatible native capability version",
+            409,
+          );
         if (args.pythonCell.owner !== owner)
           throw new AppError("Python namespace belongs to another owner", 403);
         z.object({
@@ -319,6 +327,8 @@ export class TaskExecutorAuthority {
           throw new TaskOutcomeUnknownError(pending.map((operation) => operation.id));
       } else if (pythonReply) {
         const target = await this.pythonReplyTarget(owner, request, executorEpoch);
+        if ((request.capabilityVersion ?? 1) !== target.nativeEnvelope?.capabilityVersion)
+          throw new AppError("Python reply capability version differs from its native cell", 409);
         if (
           target.taskId !== task.id ||
           target.revision !== trusted.desiredRevision ||

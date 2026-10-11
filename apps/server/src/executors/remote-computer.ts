@@ -102,17 +102,20 @@ export class RemoteComputerBackend implements ComputerBackend {
         !node.hello.readiness.quarantined &&
         node.hello.readiness.account.state === "ready" &&
         node.hello.readiness.runtime.state === "ready" &&
-        node.hello.capabilities.some((cap) => cap.name === "python" && cap.version === 1),
+        node.hello.capabilities.some(
+          (cap) => cap.name === "python" && [1, 2].includes(cap.version),
+        ),
     );
   }
   async python(owner: string, input: ComputerPythonInput, options: ComputerPythonOptions) {
     const available = await this.pythonAvailable(owner);
+    const node = await this.registry.node(this.options.executorId);
     const args = nativePreflight(owner, () => {
       if (!available)
         throw new AppError("Native Python is not available on the connected executor", 409);
       return nativePythonArgsSchema.parse({
         command: "Python cell",
-        cwd: "/workspace",
+        cwd: input.cwd ?? "/workspace",
         background: false,
         timeoutMs: input.wallClockMs,
         pythonCell: {
@@ -126,9 +129,25 @@ export class RemoteComputerBackend implements ComputerBackend {
         },
       });
     });
+    const capabilityVersion =
+      args.cwd === "/workspace" &&
+      node?.hello.capabilities.some((cap) => cap.name === "python" && cap.version === 1)
+        ? 1
+        : 2;
+    nativePreflight(owner, () => {
+      if (
+        !node?.hello.capabilities.some(
+          (cap) => cap.name === "python" && cap.version === capabilityVersion,
+        )
+      )
+        throw new AppError(
+          "Native Python workspace capability is incompatible; update the executor before dispatch",
+          409,
+        );
+    });
     const operation = await this.submit(
       owner,
-      { kind: "command", capability: "python", capabilityVersion: 1, args },
+      { kind: "command", capability: "python", capabilityVersion, args },
       options,
     );
     // Save physical occupancy before waiting, even if transport later fails.

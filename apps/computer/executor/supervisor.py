@@ -537,7 +537,7 @@ class Supervisor:
                  "minProtocolVersion":1, "maxProtocolVersion":1,
                  "capabilities":[{"name":"command", "version":1}, {"name":"files", "version":1},
                                  {"name":"transcribe", "version":1}]+(
-                    [{"name":"python", "version":1}] if self.python_jobs else [])+(
+                    [{"name":"python", "version":1}, {"name":"python", "version":2}] if self.python_jobs else [])+(
                     [{"name":name,"version":1} for name in ("desktop","browser.dom","browser.screenshot","browser.pointer","browser.drag")] if self.desktop else []),
                  "readiness":self.readiness()}
         response = self.transport.request("register", hello)

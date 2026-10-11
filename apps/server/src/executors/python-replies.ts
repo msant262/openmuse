@@ -54,7 +54,8 @@ export async function currentPythonRequest(
     delivery.operation.executorEpoch !== parent.executorEpoch ||
     delivery.operation.kind !== "command" ||
     delivery.operation.capability !== "python" ||
-    delivery.operation.capabilityVersion !== 1 ||
+    ![1, 2].includes(delivery.operation.capabilityVersion) ||
+    delivery.operation.capabilityVersion !== parent.capabilityVersion ||
     delivery.receipt?.status !== "running"
   )
     throw new AppError("Python cell has no current claimed request", 409);
@@ -134,7 +135,7 @@ export async function consumePythonReply(
     delivery?.state !== "claimed" ||
     delivery.operation.kind !== "session" ||
     delivery.operation.capability !== "python" ||
-    delivery.operation.capabilityVersion !== 1 ||
+    ![1, 2].includes(delivery.operation.capabilityVersion) ||
     !delivery.operation.inspection ||
     delivery.operation.executorId !== executorId ||
     delivery.operation.executorEpoch !== input.epoch

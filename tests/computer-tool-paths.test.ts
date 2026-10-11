@@ -3,6 +3,54 @@ import { test } from "node:test";
 import type { ComputerBackend } from "../apps/server/src/computer-contract.ts";
 import { computerTools } from "../apps/server/src/computer-tools.ts";
 
+test("a host-bound task workspace governs commands, file paths and search defaults", async () => {
+  const calls: unknown[] = [];
+  const cwd = "/workspace/.okami/kanban/board/card";
+  const backend = {
+    execute: async (_owner: string, args: unknown) => {
+      calls.push(args);
+      return { accepted: true };
+    },
+    write: async (_owner: string, path: string, text: string) => {
+      calls.push({ path, text });
+      return { written: true };
+    },
+    search: async (_owner: string, path: string) => {
+      calls.push({ path });
+      return { results: [] };
+    },
+  } as unknown as ComputerBackend;
+  const tools = computerTools(backend, {} as never, "owner", "scope", { cwd });
+  const execute = (name: string, args: unknown) => {
+    const tool = tools.find((t) => t.name === name);
+    assert.ok(tool?.execute);
+    return (tool.execute as (args: unknown) => Promise<unknown>)(args);
+  };
+  for (const name of ["run_command", "run_computer_command"])
+    await execute(name, { command: "pwd", operationId: name });
+  await execute("write_file", { path: "results/report.txt", text: "proof" });
+  await execute("search_files", { pattern: "report" });
+  assert.equal(calls.length, 4);
+  assert.equal((calls[0] as { cwd: string }).cwd, cwd);
+  assert.equal((calls[1] as { cwd: string }).cwd, cwd);
+  assert.deepEqual(calls[2], { path: `${cwd}/results/report.txt`, text: "proof" });
+  assert.deepEqual(calls[3], { path: cwd });
+  for (const path of ["../outside.txt", "a/../outside.txt", cwd, "/workspace/../outside.txt"])
+    assert.equal(
+      ((await execute("write_file", { path, text: "no" })) as { status: string }).status,
+      "rejected_not_dispatched",
+      path,
+    );
+  assert.equal(calls.length, 4, "invalid paths never reach the backend");
+});
+
+test("an invalid host workspace fails before constructing tools", () => {
+  for (const cwd of ["relative", "/tmp/foreign", "/workspace/../foreign", "/workspace-other"])
+    assert.throws(() =>
+      computerTools({} as ComputerBackend, {} as never, "owner", "scope", { cwd }),
+    );
+});
+
 test("workspace file tools resolve a relative filename without changing its contents", async () => {
   const calls: unknown[] = [];
   const backend = {

@@ -24,6 +24,139 @@ import { executorRoutes } from "../apps/server/src/executors/routes.ts";
 import { nodeToken } from "./helpers/executors.ts";
 import { pythonRuntime } from "./helpers/python-runtime.ts";
 
+test("Python v2 delivers a file from its actual task directory through the original host RPC", {
+  timeout: 45_000,
+}, async (t) => {
+  await pythonRuntime(
+    t,
+    async ({ server, registry, task, operation }) => {
+      assert.equal(operation.capabilityVersion, 2);
+      const native = await peer(registry, operation);
+      try {
+        const backend = new RemoteComputerBackend(registry, {
+          executorId: operation.executorId,
+          pythonEnabled: true,
+          pollMs: 5,
+          context: (owner, id) =>
+            currentExecutorContext(owner, id, undefined, currentComputerResourceScope(owner)),
+        });
+        const computer = auditedComputer(
+          backend,
+          new ActionLog(server.db),
+          "native",
+          server.agent.resourceLeases,
+          "lenovo",
+        );
+        const attachments: string[] = [];
+        const exportTool = computerTools(computer, server.files, "owner", "workspace-rpc", {
+          cwd: "/workspace/workspace-fixture",
+          artifact: async (id) => {
+            attachments.push(id);
+          },
+        }).find((tool) => tool.name === "export_computer_file");
+        assert.ok(exportTool?.execute);
+        const driven = dispatchPythonRequests(
+          registry,
+          "owner",
+          operation,
+          {
+            shouldContinue: () => true,
+            call: (parent, request) =>
+              withNativePythonHostCall(
+                server.agent.journal,
+                "owner",
+                parent,
+                pythonRpcWire(request),
+                () =>
+                  server.agent.journal.run(
+                    "owner",
+                    task,
+                    {
+                      id: `workspace-native:${pythonHostCallId(parent.id, request)}`,
+                      toolCallId: pythonHostCallId(parent.id, request),
+                      name: request.name,
+                      args: request.args,
+                    },
+                    () => (exportTool.execute as (args: unknown) => Promise<unknown>)(request.args),
+                    true,
+                  ),
+              ),
+          },
+          5,
+        );
+        await native.start();
+        const observed = await driven;
+        assert.equal(observed.status, "succeeded", JSON.stringify(observed));
+        assert.equal(attachments.length, 1);
+        assert.equal(
+          Buffer.from(await server.files.bytes("owner", attachments[0])).toString(),
+          "written in the task workspace",
+        );
+        assert.deepEqual(
+          await native.command({ kind: "inspect", path: "workspace-fixture/report.txt" }),
+          { exists: true, children: 1 },
+        );
+        assert.deepEqual(await native.command({ kind: "inspect", path: "report.txt" }), {
+          exists: false,
+          children: 1,
+        });
+        assert.deepEqual(await native.command({ kind: "operation", operation }), {
+          replayed: true,
+        });
+        assert.equal(attachments.length, 1);
+        if (process.env.OKAMI_PYTHON_NATIVE_QA_SOURCE_PATH) {
+          const units = (await native.command({ kind: "units" })) as Array<{
+            properties: Record<string, string>;
+          }>;
+          assert.equal(units[0].properties.WorkingDirectory, "/workspace/workspace-fixture");
+        }
+        await assert.rejects(() => server.files.bytes("other-owner", attachments[0]));
+      } finally {
+        await native.close();
+      }
+    },
+    ["export_computer_file"],
+    {
+      capabilityVersion: 2,
+      cwd: "/workspace/workspace-fixture",
+      code: "from pathlib import Path\nfrom hermes_tools import export_computer_file\nPath('report.txt').write_text('written in the task workspace')\nprint(export_computer_file({'path': 'report.txt'})['fileId'])",
+    },
+  );
+});
+
+test("an old native peer rejects a bound Python workspace before creating another operation", async (t) => {
+  await pythonRuntime(
+    t,
+    async ({ server, registry, task, operation }) => {
+      const backend = new RemoteComputerBackend(registry, {
+        executorId: operation.executorId,
+        pythonEnabled: true,
+      });
+      const before = await server.agent.journal.operations("owner", task.id);
+      await assert.rejects(
+        () =>
+          backend.python(
+            "owner",
+            {
+              sessionId: "task-workspace",
+              cwd: "/workspace/workspace-fixture",
+              code: "print('wrong directory')",
+              tools: [],
+              reset: false,
+              wallClockMs: 1000,
+              maxToolCalls: 1,
+            },
+            { call: async () => ({}), shouldContinue: () => true },
+          ),
+        /workspace capability.*incompatible/,
+      );
+      assert.deepEqual(await server.agent.journal.operations("owner", task.id), before);
+    },
+    [],
+    { advertisedPythonVersions: [1] },
+  );
+});
+
 /** Actual API/native protocol and interpreter integration. OS launch is local
  * by default; opt-in staged QA uses the registered native user/systemd units.
  * Provider/review values remain fixtures. Natural model selection and actual

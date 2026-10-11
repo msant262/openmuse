@@ -22,12 +22,12 @@ class PythonKernelTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.children = []
 
-        def launch(scope, sentinel):
+        def launch(scope, sentinel, cwd="/workspace"):
             # Test-only launch: the production adapter must select a registered
             # bot account, cgroup and workspace, never the API process account.
             process = subprocess.Popen(
                 [sys.executable, "-I", "-u", str(RUNNER_PATH), sentinel],
-                cwd=self.directory.name, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+                cwd=Path(self.directory.name) / cwd.removeprefix("/workspace").lstrip("/"), env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 start_new_session=True,
             )
@@ -53,6 +53,40 @@ class PythonKernelTests(unittest.TestCase):
     def run_cell(self, code, **options):
         return self.kernels.execute(self.scope, code, tools={}, should_continue=lambda: True,
                                     timeout_seconds=5, **options)
+
+    def test_host_workspace_is_used_by_real_interpreter_and_reused_on_resume(self):
+        directory = Path(self.directory.name) / "cards" / "first"
+        directory.mkdir(parents=True)
+        first = self.run_cell("from pathlib import Path\nmarker = 41\nPath('proof.txt').write_text('owned')\nprint(Path.cwd())", cwd="/workspace/cards/first")
+        self.assertEqual(first["status"], "ok")
+        self.assertEqual(first["stdout"].strip(), str(directory))
+        self.assertEqual((directory / "proof.txt").read_text(), "owned")
+        self.assertFalse((Path(self.directory.name) / "proof.txt").exists())
+        resumed = self.run_cell("print(marker + 1)", cwd="/workspace/cards/first")
+        self.assertEqual(resumed["stdout"], "42\n")
+        self.assertTrue(resumed["reused"])
+        with self.assertRaisesRegex(ValueError, "workspace.*changed"):
+            self.run_cell("print('wrong directory')", cwd="/workspace", reset=True)
+        still_owned = self.run_cell("print(marker)", cwd="/workspace/cards/first")
+        self.assertEqual(still_owned["stdout"], "41\n")
+        self.assertEqual(len(self.children), 1)
+
+    def test_distinct_task_sessions_keep_their_workspaces_and_globals_separate(self):
+        for name in ["a", "b"]:
+            (Path(self.directory.name) / name).mkdir()
+            scope = (self.scope[0], self.scope[1], name)
+            result = self.kernels.execute(scope, f"from pathlib import Path\nvalue = '{name}'\nPath('proof.txt').write_text(value)",
+                tools={}, should_continue=lambda: True, cwd=f"/workspace/{name}")
+            self.assertEqual(result["status"], "ok")
+        self.assertEqual((Path(self.directory.name) / "a" / "proof.txt").read_text(), "a")
+        self.assertEqual((Path(self.directory.name) / "b" / "proof.txt").read_text(), "b")
+        self.assertEqual(len(self.children), 2)
+
+    def test_invalid_workspace_is_rejected_before_any_child_is_launched(self):
+        for cwd in ["relative", "/etc", "/workspace/../outside", "/workspace-other", "/workspace/a\x00b"]:
+            with self.assertRaises(ValueError):
+                self.run_cell("print('must not run')", cwd=cwd)
+        self.assertEqual(len(self.children), 0)
 
     def test_variables_functions_and_imports_survive_errors_and_turns(self):
         first = self.run_cell("import math\nnumbers = [2, 3, 5]\ndef total(): return sum(numbers)\nprint(total())")

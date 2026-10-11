@@ -28,6 +28,8 @@ export function computerTools(
   owner: string,
   scope: string,
   options: {
+    /** Host-authenticated task workspace; never a model-selected identity. */
+    cwd?: string;
     before?: () => Promise<void>;
     effectBefore?: () => Promise<void>;
     signal?: AbortSignal;
@@ -39,6 +41,11 @@ export function computerTools(
     dispatchContext?: () => Promise<ExecutorDispatchContext>;
   } = {},
 ) {
+  const cwd = workspacePath(options.cwd ?? "/workspace");
+  const commandSchema = computerCommandSchema.extend({
+    cwd: computerCommandSchema.shape.cwd.default(cwd),
+    operationId: z.string().min(1).max(120),
+  });
   // Model file tools work relative to the private workspace. The backend/API
   // boundary remains absolute, and traversal is checked before normalization.
   const computerPathSchema = absoluteComputerPathSchema.extend({
@@ -48,7 +55,7 @@ export function computerTools(
       .max(2048)
       .transform((path, ctx) => {
         try {
-          return workspacePath(posix.isAbsolute(path) ? path : `/workspace/${path}`);
+          return workspacePath(posix.isAbsolute(path) ? path : `${cwd}/${path}`);
         } catch (error) {
           ctx.addIssue({
             code: "custom",
@@ -62,7 +69,7 @@ export function computerTools(
     text: absoluteComputerWriteSchema.shape.text,
   });
   const filePathSchema = computerPathSchema.refine(
-    ({ path }) => !["", "/workspace", "."].includes(posix.normalize(path).replace(/\/+$/, "")),
+    ({ path }) => !["", "/workspace", cwd, "."].includes(posix.normalize(path).replace(/\/+$/, "")),
     "File operation requires a file path; /workspace is a directory. Use list_files to find a file or search_saved_files for existing app attachments.",
   );
   const recovery = computer.recovery,
@@ -194,7 +201,7 @@ export function computerTools(
     tool(
       "run_computer_command",
       "Run bash only inside the private computer and return its persisted output and exit receipt",
-      computerCommandSchema.extend({ operationId: z.string().min(1).max(120) }),
+      commandSchema,
       async ({ operationId, ...args }) =>
         computer.execute(owner, args, {
           idempotencyKey: taskOperationId() ?? `${scope}:${operationId}`,
@@ -264,7 +271,7 @@ export function computerTools(
       tool(
         name,
         "Run a command in the isolated computer, optionally as a durable background job",
-        computerCommandSchema.extend({ operationId: z.string().min(1).max(120) }),
+        commandSchema,
         async ({ operationId, ...args }) =>
           computer.execute(owner, args, {
             idempotencyKey: taskOperationId() ?? `${scope}:${operationId}`,
@@ -283,9 +290,9 @@ export function computerTools(
       ? [
           tool(
             "search_files",
-            "Search actual owned workspace files without a shell. target=files matches plain partial names case-insensitively (budget finds annual-budget.txt) or explicit filename globs (*.pdf, report-*.txt); target=content uses line-oriented Rust/ripgrep regex, with file_glob, numbered matches, context, files_only or count. Paths may be relative to /workspace. Page at nextOffset using identical parameters; complete=false never proves absence or a full count. Does not search Drive/app attachments or export a file.",
+            `Search actual owned workspace files without a shell. target=files matches plain partial names case-insensitively (budget finds annual-budget.txt) or explicit filename globs (*.pdf, report-*.txt); target=content uses line-oriented Rust/ripgrep regex, with file_glob, numbered matches, context, files_only or count. Paths may be relative to ${cwd}. Page at nextOffset using identical parameters; complete=false never proves absence or a full count. Does not search Drive/app attachments or export a file.`,
             computerPathSchema.extend({
-              path: computerPathSchema.shape.path.default("/workspace"),
+              path: computerPathSchema.shape.path.default(cwd),
               ...computerSearchParameters.shape,
             }),
             ({ path, ...parameters }) =>
@@ -300,7 +307,7 @@ export function computerTools(
       "write_file",
       "Write a workspace UTF-8 file up to 256KB",
       computerWriteSchema.refine(
-        ({ path }) => path !== "/workspace",
+        ({ path }) => path !== "/workspace" && path !== cwd,
         "Choose a file inside /workspace",
       ),
       ({ path, text }) => computer.write(owner, path, text),

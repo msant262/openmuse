@@ -87,6 +87,7 @@ import { ExecutionProfiles } from "./execution-profiles.ts";
 import { analyzeSpending } from "./finance.ts";
 import type { KanbanExecution } from "./kanban-tools.ts";
 import { KanbanWorkflow } from "./kanban-workflow.ts";
+import { kanbanWorkspaceIntent } from "./kanban-workspace.ts";
 import { executeModelTask } from "./model.ts";
 import { MonitorObservations, type MonitorPage } from "./monitor-observations.ts";
 import { nativeWebMarkdown, stopOpenclawHarness } from "./openclaw-agent.ts";
@@ -861,8 +862,7 @@ export class AgentService {
         // These declared contracts still need their actual provisioner/judge.
         // Never dispatch them as an ordinary local task and report completion.
         const pending = [
-          card.workspaceKind && card.workspaceKind !== "scratch" && "workspace",
-          (card.workspacePath || card.project) && "workspace binding",
+          card.project && "project registry",
           card.goalMode && "goal",
           card.completionContract && card.completionContract !== "local-only" && "PR/CI",
           (card.model || card.provider) && "model override",
@@ -886,6 +886,7 @@ export class AgentService {
           cardId,
           profile: profileName,
           runId: run.id,
+          workspace: kanbanWorkspaceIntent(board, card),
         };
         return {
           nativeTaskId: id,

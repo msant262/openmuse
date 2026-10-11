@@ -14,6 +14,7 @@ import {
   type KanbanScope,
   KanbanWorkflow,
 } from "./kanban-workflow.ts";
+import type { KanbanWorkspace } from "./kanban-workspace.ts";
 import type { AgentService } from "./service.ts";
 import { authorizeTaskEffect, taskOperationId } from "./task-journal.ts";
 
@@ -24,6 +25,7 @@ export type KanbanExecution = {
   cardId: string;
   profile: string;
   runId: string;
+  workspace?: KanbanWorkspace;
 };
 export type KanbanHandoffVerification = { completion: CompletionAssessment; revision: number };
 export type KanbanTaskSurface = {

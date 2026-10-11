@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { bindingHash } from "../apps/server/src/conversation-inbox.ts";
@@ -492,7 +494,26 @@ for (const loseRecovery of [false, true]) {
           { name: "finish_task", arguments: { summary: "The observed finding is recorded." } },
         ][index],
     );
-    const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+    const f = await taskRuntime(t, {
+      agentBackend: "model",
+      model: "openai/fixture",
+      computerEnabled: true,
+    });
+    const prepare = t.mock.method(
+      f.agent.computer,
+      "mkdir",
+      async (_owner: string, path: string) => {
+        await mkdir(join(f.directory, "computer", path.slice("/workspace/".length)), {
+          recursive: true,
+        });
+        return { path };
+      },
+    );
+    await f.agent.executionProfiles.set("owner", "default", {
+      expectedRevision: 0,
+      requestId: "enable",
+      profile: { toolsets: ["kanban"], board: "pipeline" },
+    });
     const read = t.mock.method(f.agent.web, "document", async () => ({
       url,
       contentType: "text/html",
@@ -501,20 +522,20 @@ for (const loseRecovery of [false, true]) {
     const board = new KanbanWorkflow(f.db, "owner", "pipeline", { profileExists: () => true });
     const card = await board.create(
       { role: "orchestrator", profile: "default" },
-      { title: "Read findings", assignee: "default" },
+      {
+        title: "Read findings",
+        body: `Read ${url} and record the observed finding.`,
+        assignee: "default",
+      },
       "card",
     );
-    const claim = await board.claim(card.id, "default", "claim");
-    const task = await f.agent.createTask("owner", {
-      prompt: `Read ${url} and record the observed finding.`,
-    });
-    await f.db.put("owner", "kanban-executions", {
-      id: task.id,
-      board: "pipeline",
-      cardId: card.id,
-      profile: "default",
-      runId: claim.runId,
-    });
+    const task = await f.agent.dispatchKanbanCard(
+      "owner",
+      "pipeline",
+      card.id,
+      "default",
+      "dispatch",
+    );
     const mutate = f.db.durableMutation.bind(f.db);
     let interrupted = false;
     t.mock.method(f.db, "durableMutation", async (...args: Parameters<typeof mutate>) => {
@@ -572,6 +593,11 @@ for (const loseRecovery of [false, true]) {
       "a committed handoff is observed, never executed again",
     );
     assert.equal(read.mock.callCount(), 1);
+    assert.equal(
+      prepare.mock.callCount(),
+      1,
+      "handoff recovery never provisions another workspace",
+    );
     assert.equal(fixture.requests.length, requests);
     assert.ok(
       (await f.agent.journal.operations("owner", task.id)).some(

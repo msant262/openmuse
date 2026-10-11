@@ -35,6 +35,19 @@ class NativePythonLauncherTests(unittest.TestCase):
         os.close(self.workspace_fd)
         self.directory.cleanup()
 
+    def test_child_workspace_is_bound_to_registered_account_and_systemd_cwd(self):
+        (self.workspace / "cards" / "one").mkdir(parents=True)
+        argv, _ = self.launcher.command(self.scope, "@@sentinel@@", cwd="/workspace/cards/one")
+        self.assertIn("--property=WorkingDirectory=/workspace/cards/one", argv)
+        self.assertIn("--property=User=okami-bot", argv)
+        self.assertIn("--property=MemoryMax=536870912", argv)
+
+    def test_child_workspace_rejects_traversal_missing_directory_and_symlink(self):
+        (self.workspace / "linked").symlink_to(self.home, target_is_directory=True)
+        for cwd in ["relative", "/workspace/../home", "/workspace/missing", "/workspace/linked", "/workspace-other"]:
+            with self.assertRaises((ValueError, OSError)):
+                self.launcher.command(self.scope, "@@sentinel@@", cwd=cwd)
+
     def test_unit_has_fixed_account_private_pipes_slice_and_explicit_ram(self):
         argv, unit = self.launcher.command(self.scope, "@@fixed-sentinel@@")
         self.assertRegex(unit, r"^okami-python-[a-f0-9]{64}\.service$")

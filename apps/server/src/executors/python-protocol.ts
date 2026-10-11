@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { workspacePath } from "../computer.ts";
 import { AppError } from "../errors.ts";
 
 export const PYTHON_WIRE_BYTES = 8 * 1024 ** 2 - 1024;
@@ -34,7 +35,17 @@ export const pythonCellSchema = z
 export const nativePythonArgsSchema = z
   .object({
     command: z.literal("Python cell"),
-    cwd: z.literal("/workspace"),
+    cwd: z.string().transform((value, ctx) => {
+      try {
+        return workspacePath(value);
+      } catch (error) {
+        ctx.addIssue({
+          code: "custom",
+          message: error instanceof Error ? error.message : "Invalid Python workspace",
+        });
+        return z.NEVER;
+      }
+    }),
     timeoutMs: z.number().int().min(1).max(900_000),
     background: z.literal(false),
     pythonCell: pythonCellSchema,

@@ -83,7 +83,7 @@ export async function dispatchPythonRequests(
               executorId: parent.executorId,
               kind: "session",
               capability: "python",
-              capabilityVersion: 1,
+              capabilityVersion: parent.capabilityVersion,
               inspection: true,
               args: replyArgs,
             },

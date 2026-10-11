@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import unittest
 
 from .python_kernel import KernelProcess, RUNNER_PATH
-from .python_transport import NativePythonJobs, python_resource_key
+from .python_transport import NativePythonJobs, python_resource_key, validate_cell
 from .supervisor import Journal, Supervisor
 
 
@@ -38,9 +38,9 @@ class PythonTransportTests(unittest.TestCase):
             self.consumed.append((route, body))
             return {"json": self.payloads[route.split("/")[1]]}
 
-        def launch(scope, sentinel):
+        def launch(scope, sentinel, cwd="/workspace"):
             process = subprocess.Popen([sys.executable, "-I", "-u", str(RUNNER_PATH), sentinel],
-                cwd=self.directory.name, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+                cwd=Path(self.directory.name) / cwd.removeprefix("/workspace").lstrip("/"), env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
             self.children.append(process)
             def stop():
@@ -60,14 +60,14 @@ class PythonTransportTests(unittest.TestCase):
         self.assertTrue(all(child.poll() is not None for child in self.children))
         self.directory.cleanup()
 
-    def operation(self, identity, code, tools=(), session="conversation", received=True):
+    def operation(self, identity, code, tools=(), session="conversation", received=True, cwd="/workspace", version=1):
         operation = dict(id=identity, executorId="node", taskId="task", revision=3,
             executorEpoch=2, resourceFence=4, bindingHash="a" * 64,
             resourceKey=python_resource_key("node", "owner", session),
             createdAt="2026-10-10T12:00:00Z", expiresAt="2099-10-10T12:00:00Z",
-            kind="command", capability="python", inspection=False,
+            kind="command", capability="python", capabilityVersion=version, inspection=False,
             resourceBudget={"memoryBytes": 512 * 1024**2, "heavy": False},
-            args={"command": "Python cell", "cwd": "/workspace", "background": False,
+            args={"command": "Python cell", "cwd": cwd, "background": False,
                 "timeoutMs": 2000, "pythonCell": {"owner": "owner", "sessionId": session,
                     "code": code, "tools": list(tools), "reset": False,
                     "maxToolCalls": 100, "outputBytes": 131072}})
@@ -120,6 +120,29 @@ class PythonTransportTests(unittest.TestCase):
         self.assertEqual(observed["data"]["result"]["stdout"], "10\n")
         self.assertEqual(len(self.children), 1)
 
+    def test_v2_cell_runs_in_host_bound_workspace_and_resumes_same_interpreter(self):
+        directory = Path(self.directory.name) / "cards" / "one"
+        directory.mkdir(parents=True)
+        first = self.operation("workspace-first", "from pathlib import Path\nvalue = 42\nPath('proof.txt').write_text('correct')\nprint(Path.cwd())",
+            cwd="/workspace/cards/one", version=2)
+        self.jobs.start(first)
+        observed = self.final(first)
+        self.assertEqual(observed["status"], "succeeded", observed)
+        self.assertEqual(observed["data"]["result"]["stdout"].strip(), str(directory))
+        self.assertEqual((directory / "proof.txt").read_text(), "correct")
+        second = self.operation("workspace-second", "print(value)", cwd="/workspace/cards/one", version=2)
+        self.jobs.start(second)
+        observed = self.final(second)
+        self.assertEqual(observed["data"]["result"]["stdout"], "42\n")
+        self.assertTrue(observed["data"]["result"]["reused"])
+        self.assertEqual(len(self.children), 1)
+
+    def test_old_python_protocol_cannot_silently_ignore_a_custom_workspace(self):
+        for version, cwd in [(1, "/workspace/cards/one"), (3, "/workspace"), (2, "/workspace/../outside"), (2, "relative")]:
+            operation = self.operation(f"bad-cwd-{len(self.operations)}", "print('never')", received=False, cwd=cwd, version=version)
+            with self.assertRaises(ValueError): validate_cell(operation)
+        self.assertEqual(len(self.children), 0)
+
     def test_root_sequence_and_private_reply_deliver_the_full_result_once(self):
         parent = self.operation("rpc", "from hermes_tools import read_drive\nprint(len(read_drive({'query': 'MovingDE'})['files']))", ["read_drive"])
         self.jobs.start(parent)
@@ -136,6 +159,20 @@ class PythonTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pending|retired"):
             self.jobs.reply(reply)
         self.assertEqual(len(self.consumed), 1)
+
+    def test_changed_workspace_rejection_preserves_the_correct_session_and_variables(self):
+        directory = Path(self.directory.name) / "card"
+        directory.mkdir()
+        first = self.operation("cwd-original", "saved = 42", cwd="/workspace/card", version=2)
+        self.jobs.start(first)
+        self.assertEqual(self.final(first)["status"], "succeeded")
+        changed = self.operation("cwd-changed", "print('must not run')", cwd="/workspace", version=2)
+        with self.assertRaisesRegex(ValueError, "workspace.*changed"):
+            self.jobs.start(changed)
+        resumed = self.operation("cwd-resume", "print(saved)", cwd="/workspace/card", version=2)
+        self.jobs.start(resumed)
+        self.assertEqual(self.final(resumed)["data"]["result"]["stdout"], "42\n")
+        self.assertEqual(len(self.children), 1)
 
     def test_other_task_epoch_revision_fence_resource_or_request_cannot_answer(self):
         parent = self.operation("bound", "from hermes_tools import read_drive\nread_drive({})", ["read_drive"])

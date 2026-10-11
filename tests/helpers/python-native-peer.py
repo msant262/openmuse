@@ -52,6 +52,10 @@ else:
     workspace = directory / "workspace"
     workspace.mkdir()
 workspace_identity = (workspace.stat().st_dev, workspace.stat().st_ino)
+# An existing task directory is a fixture precondition, not proof of provisioning.
+fixture_workspace = workspace / "workspace-fixture"
+fixture_workspace.mkdir(mode=0o700)
+if registered: os.chown(fixture_workspace, account["uid"], account["gid"])
 journal = Journal(directory / "journal.sqlite")
 gate = Gate(journal, lambda reason: jobs.contain(), trust_mode=account["trustMode"] if registered else "restricted")
 files = Workspace(workspace, directory / "file-state")
@@ -101,9 +105,9 @@ def publish():
         send({"kind": "receipt", **receipt})
 
 
-def launch(scope, sentinel):
+def launch(scope, sentinel, cwd="/workspace"):
     process = subprocess.Popen([sys.executable, "-I", "-u", str(RUNNER_PATH), sentinel],
-        cwd=workspace, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+        cwd=workspace / cwd.removeprefix("/workspace").lstrip("/"), env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         start_new_session=True)
     children.append(process)
@@ -125,8 +129,8 @@ if registered:
                       and gate.clock() < gate.deadline, snapshot=snapshot)
     def launch_factory(owner, memory):
         launcher = managed.factory(owner, memory)
-        def tracked(scope, sentinel):
-            handle = launcher(scope, sentinel)
+        def tracked(scope, sentinel, cwd="/workspace"):
+            handle = launcher(scope, sentinel, cwd=cwd)
             children.append(handle.process)
             return handle
         return tracked
@@ -160,7 +164,7 @@ try:
             elif command["kind"] == "units":
                 value = [{**record, "properties": dict(line.split("=", 1) for line in
                          subprocess.check_output(["systemctl", "show", record["unit"],
-                             "--property=User,Group,MemoryMax,ControlGroup,BindsTo,KillMode,ActiveState"],
+                             "--property=User,Group,MemoryMax,ControlGroup,BindsTo,KillMode,ActiveState,WorkingDirectory"],
                              text=True).splitlines() if "=" in line),
                          "reservation": budget.jobs[record["unit"]]}
                          for record in managed.records()] if registered else []

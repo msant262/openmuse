@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 
-from .python_kernel import PythonKernels, MAX_WIRE_BYTES
+from .python_kernel import PythonKernels, MAX_WIRE_BYTES, python_workspace
 
 
 def python_resource_key(executor_id, owner, session_id):
@@ -25,13 +25,19 @@ def _integer(value, low, high):
 
 
 def validate_cell(operation):
+    version = operation.get("capabilityVersion", 1)
+    if not _integer(version, 1, 2):
+        raise ValueError("Incompatible private Python capability version")
     if operation.get("kind") != "command" or operation.get("capability") != "python" or operation.get("inspection") is not False:
         raise ValueError("Python requires its own mutating native capability")
     args = operation.get("args", {})
     if (set(args) != {"command", "cwd", "timeoutMs", "background", "pythonCell"}
-            or args.get("command") != "Python cell" or args.get("cwd") != "/workspace"
+            or args.get("command") != "Python cell"
             or args.get("background") is not False or not _integer(args.get("timeoutMs"), 1, 900000)):
         raise ValueError("Invalid private Python command envelope")
+    cwd = python_workspace(args.get("cwd"))
+    if version == 1 and cwd != "/workspace":
+        raise ValueError("Python workspace requires native capability version 2")
     cell = args.get("pythonCell")
     if not isinstance(cell, dict) or set(cell) != {"owner", "sessionId", "code", "tools", "reset", "maxToolCalls", "outputBytes"}:
         raise ValueError("Invalid private Python cell")
@@ -53,6 +59,8 @@ def validate_cell(operation):
 
 
 def validate_reply(operation):
+    if not _integer(operation.get("capabilityVersion", 1), 1, 2):
+        raise ValueError("Incompatible private Python reply capability version")
     args = operation.get("args", {})
     if (operation.get("kind") != "session" or operation.get("capability") != "python"
             or operation.get("inspection") is not True or set(args) != {
@@ -134,6 +142,9 @@ class NativePythonJobs:
                     idle_seconds=self.idle_seconds, max_sessions=self.max_sessions)
                 self.controllers[cell["owner"]] = (controller, memory)
             else: controller = existing[0]
+            # Reject before creating a job, so a mismatched host binding cannot
+            # tear down the correct persistent session in error containment.
+            controller.check_workspace(scope, operation["args"]["cwd"])
             job = _Cell(operation, scope, controller)
             self.active[operation["id"]] = job
             self.last_scope_job[scope] = operation["id"]
@@ -154,7 +165,8 @@ class NativePythonJobs:
             tools = {name: lambda args, name=name: self._rpc(job, name, args) for name in cell["tools"]}
             result = job.controller.execute(job.scope, cell["code"], tools=tools,
                 should_continue=lambda: self._continue(job), timeout_seconds=job.operation["args"]["timeoutMs"] / 1000,
-                reset=cell["reset"], max_tool_calls=cell["maxToolCalls"], output_bytes=cell["outputBytes"])
+                reset=cell["reset"], max_tool_calls=cell["maxToolCalls"], output_bytes=cell["outputBytes"],
+                cwd=job.operation["args"]["cwd"])
             # An accepted host review/input reply intentionally stops the cell.
             # Known containment is a failed/stopped program, not an ambiguous
             # source effect. Any separate uncertain host tool stays uncertain in
@@ -211,6 +223,8 @@ class NativePythonJobs:
         if any(operation.get(key) != job.operation.get(key) for key in
                ("executorId", "taskId", "revision", "executorEpoch", "resourceFence", "resourceKey")):
             raise ValueError("Python reply does not own the current cell envelope")
+        if operation.get("capabilityVersion", 1) != job.operation.get("capabilityVersion", 1):
+            raise ValueError("Python reply capability version differs from the current cell")
         request = job.pending["request"]
         if args["requestSequence"] != request["sequence"] or args["requestHash"] != request["sha256"]:
             raise ValueError("Python reply does not own the current request identity")

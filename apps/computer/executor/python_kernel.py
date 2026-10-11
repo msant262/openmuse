@@ -25,6 +25,15 @@ RUNNER_PATH = Path(__file__).with_name("python_kernel_runner.py")
 MAX_WIRE_BYTES = 8 * 1024**2
 
 
+def python_workspace(cwd):
+    """Validate the host's virtual workspace before acquiring or launching a cell."""
+    if (not isinstance(cwd, str) or not 1 <= len(cwd) <= 2048 or "\x00" in cwd
+            or not (cwd == "/workspace" or cwd.startswith("/workspace/"))
+            or ".." in cwd.split("/")):
+        raise ValueError("Python requires an absolute owned workspace without traversal")
+    return Path(cwd).as_posix()
+
+
 @dataclass
 class KernelProcess:
     process: subprocess.Popen
@@ -32,8 +41,8 @@ class KernelProcess:
 
 
 class _Kernel:
-    def __init__(self, scope, launch):
-        self.scope, self.launch = scope, launch
+    def __init__(self, scope, launch, cwd):
+        self.scope, self.launch, self.cwd = scope, launch, cwd
         self.lock, self.write_lock, self.stop_lock = threading.Lock(), threading.Lock(), threading.Lock()
         self.handle = None
         self.sentinel = "@@OKAMI-PYTHON-" + secrets.token_hex(24) + "@@"
@@ -54,7 +63,8 @@ class _Kernel:
                 raise RuntimeError("Python session has been closed")
             if self.handle is not None:
                 return
-            self.handle = self.launch(self.scope, self.sentinel)
+            self.handle = (self.launch(self.scope, self.sentinel) if self.cwd == "/workspace"
+                           else self.launch(self.scope, self.sentinel, cwd=self.cwd))
             threading.Thread(target=self._read, daemon=True, name="python-private-output").start()
             threading.Thread(target=self._read_stderr, daemon=True, name="python-private-stderr").start()
 
@@ -163,7 +173,15 @@ class PythonKernels:
         self.reaper = threading.Thread(target=self._reap, daemon=True, name="python-idle-reaper")
         self.reaper.start()
 
-    def _acquire(self, scope, reset):
+    def check_workspace(self, scope, cwd):
+        cwd = python_workspace(cwd)
+        with self.registry.lock:
+            existing = self.registry.kernels.get(scope)
+            if existing is not None and existing.cwd != cwd:
+                raise ValueError("Python session workspace changed; use the host's original task session")
+        return cwd
+
+    def _acquire(self, scope, reset, cwd):
         if not isinstance(scope, tuple) or len(scope) != 3 or any(not isinstance(v, str) or not 1 <= len(v) <= 1024 for v in scope):
             raise ValueError("Python requires a trusted executor, owner and conversation scope")
         expired = []
@@ -174,6 +192,9 @@ class PythonKernels:
                 raise RuntimeError("Prior Python host call is still pending; reconcile its receipt before another cell")
             if scope in self.uncertain_kernels:
                 raise RuntimeError("Prior Python process cleanup is unconfirmed; reconcile the exact native unit before another cell")
+            existing = self.registry.kernels.get(scope)
+            if existing is not None and existing.cwd != cwd:
+                raise ValueError("Python session workspace changed; use the host's original task session")
             now = time.monotonic()
             for key, item in list(self.registry.kernels.items()):
                 if item.attached == 0 and now - item.last_used >= self.idle_seconds:
@@ -192,7 +213,7 @@ class PythonKernels:
                         raise RuntimeError("Native Python session capacity is busy; wait for an existing cell")
                     oldest = min(candidates, key=lambda item: item.last_used)
                     expired.append(self.registry.kernels.pop(oldest.scope))
-                kernel = self.registry.kernels[scope] = _Kernel(scope, self.launch)
+                kernel = self.registry.kernels[scope] = _Kernel(scope, self.launch, cwd)
             kernel.attached += 1
             kernel.last_used = now
         for item in expired:
@@ -275,7 +296,7 @@ class PythonKernels:
             self.reaper.join(timeout=1)
 
     def execute(self, scope, code, *, tools, should_continue, timeout_seconds=300,
-                max_tool_calls=100, reset=False, output_bytes=131072):
+                max_tool_calls=100, reset=False, output_bytes=131072, cwd="/workspace"):
         if not isinstance(code, str) or not 1 <= len(code) <= 200000:
             raise ValueError("Python cell code must contain 1–200000 characters")
         if (not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool)
@@ -285,7 +306,7 @@ class PythonKernels:
                 or not isinstance(tools, dict) or any(not isinstance(name, str) or not callable(tool) for name, tool in tools.items())
                 or not callable(should_continue) or not isinstance(reset, bool)):
             raise ValueError("Invalid Python cell time, call or output budget")
-        kernel, state_reset = self._acquire(scope, reset)
+        kernel, state_reset = self._acquire(scope, reset, python_workspace(cwd))
         authority = _Authority(tools, should_continue, max_tool_calls)
         identity = secrets.token_hex(24)
         start = time.monotonic()

@@ -75,6 +75,8 @@ export type ComputerDispatchOptions = {
 export type ComputerPythonInput = {
   /** Owner and conversation are composed by the task driver, never the model. */
   sessionId: string;
+  /** Bound by the host workspace provisioner, not by execute_code arguments. */
+  cwd?: string;
   code: string;
   tools: string[];
   reset: boolean;

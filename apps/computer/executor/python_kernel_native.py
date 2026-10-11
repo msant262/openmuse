@@ -15,7 +15,7 @@ import threading
 import time
 
 from .filesystem import open_directory
-from .python_kernel import KernelProcess, RUNNER_PATH
+from .python_kernel import KernelProcess, RUNNER_PATH, python_workspace
 from .trust_policy import service_privileges
 
 
@@ -84,7 +84,8 @@ class NativePythonLauncher:
         self.before_launch, self.after_stop = before_launch, after_stop
         self.units, self.lock = {}, threading.Lock()
 
-    def command(self, scope, sentinel):
+    def command(self, scope, sentinel, *, cwd="/workspace"):
+        cwd = python_workspace(cwd)
         if (not isinstance(scope, tuple) or len(scope) != 3 or scope[:2] != (self.executor_id, self.owner)
                 or not isinstance(scope[2], str) or not 1 <= len(scope[2]) <= 1024):
             raise ValueError("Python scope does not match the registered native executor and owner")
@@ -104,10 +105,13 @@ class NativePythonLauncher:
                     raise ValueError("Native Python directory anchor changed")
             finally:
                 os.close(current)
+        if cwd != "/workspace":
+            directory = open_directory(Path(account["workspace"]) / cwd.removeprefix("/workspace/"))
+            os.close(directory)
         unit = "okami-python-" + hashlib.sha256(json.dumps([scope, sentinel]).encode()).hexdigest() + ".service"
         properties = {
             "Type": "exec", "User": account["user"], "Group": str(account["gid"]),
-            "WorkingDirectory": "/workspace", "KillMode": "control-group", "OOMPolicy": "kill",
+            "WorkingDirectory": cwd, "KillMode": "control-group", "OOMPolicy": "kill",
             "BindsTo": "okami-executor@" + self.executor_id + ".service",
             "After": "okami-executor@" + self.executor_id + ".service",
             "CPUWeight": "100", "IOWeight": "100", "TasksMax": "512",
@@ -137,11 +141,11 @@ class NativePythonLauncher:
                         (entry != path and not stat.S_ISDIR(info.st_mode))):
                     raise ValueError("Native Python source must be root-owned and not writable by bots")
 
-    def __call__(self, scope, sentinel):
+    def __call__(self, scope, sentinel, *, cwd="/workspace"):
         if os.geteuid() != 0:
             raise ValueError("Only the registered native supervisor may launch Python units")
         self._source_is_trusted()
-        argv, unit = self.command(scope, sentinel)
+        argv, unit = self.command(scope, sentinel, cwd=cwd)
         # Root journal identity and physical admission precede systemd dispatch.
         self.before_launch(scope, unit)
         # systemd-run carries only the private streams; systemd changes User
