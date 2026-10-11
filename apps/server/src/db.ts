@@ -32,6 +32,92 @@ interface Database {
 }
 
 export class Store {
+  /** Board discovery projects compact rows in SQL; task bodies and prior runs
+   * stay out of the list, including when the board has a long history. */
+  async kanbanCards<T>(
+    owner: string,
+    kind: string,
+    filters: {
+      assignee?: string;
+      status?: string;
+      tenant?: string;
+      includeArchived?: boolean;
+      after?: string;
+      limit: number;
+    },
+  ): Promise<T[]> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('id',card.id,'title',card.data->'title',
+         'status',card.data->'status','assignee',card.data->'assignee',
+         'priority',COALESCE(card.data->'priority','0'::jsonb),'tenant',card.data->'tenant',
+         'parents',card.data->'parents','createdAt',card.data->'createdAt','updatedAt',card.data->'updatedAt',
+         'children',COALESCE((SELECT jsonb_agg(child.id ORDER BY child.id) FROM
+           (SELECT id FROM records WHERE owner=card.owner AND kind=card.kind
+             AND data->'parents' ? card.id ORDER BY id LIMIT 200) child),'[]'::jsonb),
+         'childCount',(SELECT count(*) FROM records child WHERE child.owner=card.owner
+           AND child.kind=card.kind AND child.data->'parents' ? card.id),
+         'commentCount',(SELECT count(*) FROM records comment WHERE comment.owner=card.owner
+           AND comment.kind=replace(card.kind,'kanban-cards:','kanban-comments:')||':'||card.id),
+         'attachmentCount',(SELECT count(*) FROM records attachment WHERE attachment.owner=card.owner
+           AND attachment.kind=replace(card.kind,'kanban-cards:','kanban-attachments:')||':'||card.id)) AS data
+       FROM records card WHERE owner=$1 AND kind=$2
+         AND ($3::text IS NULL OR data->>'assignee'=$3)
+         AND ($4::text IS NULL OR data->>'status'=$4)
+         AND ($5::text IS NULL OR data->>'tenant'=$5)
+         AND ($6::boolean OR data->>'status'<>'archived')
+         AND ($8::text IS NULL OR
+           (-COALESCE((card.data->>'priority')::bigint,0),card.data->>'createdAt',card.id) >
+           (SELECT -COALESCE((marker.data->>'priority')::bigint,0),marker.data->>'createdAt',marker.id
+             FROM records marker WHERE marker.owner=$1 AND marker.kind=$2 AND marker.id=$8))
+       ORDER BY -COALESCE((data->>'priority')::bigint,0),data->>'createdAt',id LIMIT $7`,
+      [
+        owner,
+        kind,
+        filters.assignee ?? null,
+        filters.status ?? null,
+        filters.tenant ?? null,
+        filters.includeArchived ?? false,
+        Math.min(201, Math.max(1, filters.limit)),
+        filters.after ?? null,
+      ],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
+  async kanbanReadyCandidates(owner: string, kind: string, limit = 200): Promise<string[]> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('id',card.id) AS data FROM records card
+       WHERE card.owner=$1 AND card.kind=$2 AND card.data->>'status'='todo'
+         AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(card.data->'parents') dependency
+           LEFT JOIN records parent ON parent.owner=card.owner AND parent.kind=card.kind AND parent.id=dependency.value
+           WHERE COALESCE(parent.data->>'status','missing') NOT IN ('done','archived'))
+       ORDER BY card.id LIMIT $3`,
+      [owner, kind, Math.min(200, Math.max(1, limit))],
+    );
+    return result.rows.map((row) => String(row.data.id));
+  }
+  async kanbanChildren(
+    owner: string,
+    kind: string,
+    id: string,
+    after?: string,
+  ): Promise<{ id: string; title: string; status: string; assignee: string }[]> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('id',id,'title',data->'title','status',data->'status','assignee',data->'assignee') AS data
+       FROM records WHERE owner=$1 AND kind=$2 AND data->'parents' ? $3
+         AND ($4::text IS NULL OR id>$4) ORDER BY id LIMIT 201`,
+      [owner, kind, id, after ?? null],
+    );
+    return result.rows.map(
+      (row) => row.data as { id: string; title: string; status: string; assignee: string },
+    );
+  }
+  async kanbanRecentEvents<T>(owner: string, kind: string): Promise<T[]> {
+    const result = await this.db.query(
+      "SELECT data FROM (SELECT id,data FROM records WHERE owner=$1 AND kind=$2 ORDER BY id DESC LIMIT 50) recent ORDER BY id",
+      [owner, kind],
+    );
+    return result.rows.map((row) => row.data as T);
+  }
   async workspaceVersion(owner: string, resource = "agent"): Promise<string> {
     const threadId = resource.startsWith("interactions:") ? resource.slice(13) : null;
     const result = await this.db.query(
