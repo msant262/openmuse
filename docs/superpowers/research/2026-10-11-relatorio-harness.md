@@ -1,6 +1,29 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Estado atual — conferência das 20:50 UTC
+## Estado atual — conferência 21:09 UTC
+
+**Ainda não terminou o harness completo.** A última correção remove repetição
+comprovada dos resultados de busca no contexto do modelo. A pesquisa comum
+anterior entregou um PDF, mas demorou 9min35s e não confirmou todos os campos.
+
+| Frente | Resultado comprovado | Limite / pendência |
+| --- | --- | --- |
+| Código e publicação | Implementação **`b5043529`** na main local/remota e API, imagem **`780569c1`**. Onze hashes compilados conferidos; publicação em 24,34 s; **13 comparações de preservação passaram**. | Web, APK e executor físico permanecem nas versões registradas no histórico. O próximo commit deste relatório é somente documentação. |
+| Contexto de pesquisa | Resultados de busca repetiam fontes no agregado e em cada consulta. Agora a representação enviada ao modelo usa uma tabela e índices por consulta. Nos quatro recibos reais: **164.343 → 86.199 bytes, redução de 47,6%**, preservando cada lista, variante e proveniência. | É redução de bytes nesses resultados, não de toda a requisição ou do tempo total. Recibos canônicos e capacidade de contexto mantidos. Nenhuma chamada de modelo adicionada. |
+| Verificação da correção | **42/42 testes relacionados passaram**, incluindo executor copiado e transporte ao provedor. Duas reproduções falharam antes da correção. TypeScript/build passaram; lint sem erros e um aviso preexistente. | Não houve novo pedido comum depois desta publicação. Testes controlados e reprodução de recibos não aprovam a qualidade factual ou a rapidez da tarefa completa. |
+| Último pedido comum | Luna entregou um PDF de duas páginas sem orientação do operador. **26 respostas, quatro versões, aproximadamente 9min35s e 2.711.885 tokens reportados**. | **Rapidez e completude factual reprovadas.** Ainda há campos qualificados como não determinados. O retrabalho de composição também precisa ser corrigido. |
+| Inicialização, correção anterior | Recuperação do desktop **60,580s → 1,300s**; início do HTTP **79,188s → 18,784s**, medidos na VPS. Leitor PDF publicado e pixels de duas páginas do último arquivo conferidos. | Não aprova desempenho de celular, carregamento incremental de todas as conversas ou estabilidade sob carga. |
+| Limpeza do app | Última rodada recolheu **12 registros próprios do QA**. **1.929 registros fora da seleção permaneceram iguais**. Preservados companions/perfil, 58 arquivos reais, duas conversas, três memórias, 35 procedimentos e **três contas Google simultâneas**. | Recibos canônicos e 44 operações históricas incertas permanecem para reconciliação. Aprendizado habilitado e sem erro na conferência atual; o ciclo anterior teve gravações pendentes. Memória/proatividade completas seguem sem aprovação. |
+| Armazenamento | Nesta etapa, retirada uma imagem antiga da API, seu contexto e archive: **1.621.135.360 bytes (~1,51 GiB)** livres adicionais na VPS. O archive local correspondente de **53.493.193 bytes** foi retirado com hash conferido. A limpeza anterior de imagens/cache liberou **~25,44 GiB**; **12 APKs antigos** foram retirados em etapas anteriores. | Não foi gerado APK novo. Atual e recuperação imediata, volumes, perfis, OpenBao e dados reais mantidos. Medidas históricas não são somadas novamente. |
+| Disponibilidade | Na conferência 21:09 UTC: página/API públicas HTTP 200, três containers saudáveis, sem manutenção. | É conferência pontual, não aprovação de pico, GPU, celular ou estabilidade sustentada. |
+| Contratos e aceite completo | A ausência de **`browser_exec` do Hermes** está explícita no inventário; Python genérico não foi apresentado como implementação equivalente. | Faltam esse contrato e os restantes de ferramentas/Kanban, Workspace completo, memória/proatividade, desempenho e UX. **Paridade integral Hermes/OpenClaw continua falsa.** |
+
+[Causa, reprodução e alcance da correção de contexto](2026-10-11-search-context-projection.md).
+[Inventário de ferramentas e contratos pendentes](2026-10-09-harness-tool-inventory.json).
+As evidências privadas ficam fora do Git em `artifacts/harness-parity-20261009/`.
+A meta permanece ativa e o aceite completo não foi declarado.
+
+## Histórico — conferência das 20:50 UTC
 
 **Não terminou o harness completo.** Há correções publicadas, limpeza aplicada
 e entrega real de PDF por Luna, mas o último teste continua caro e lento.
