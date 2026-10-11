@@ -16,6 +16,7 @@ import {
 import { ResourceBusyError } from "./engine/resource-leases.ts";
 import { RuntimePausedError } from "./engine/runtime-pause.ts";
 import { taskOperationId } from "./engine/task-journal.ts";
+import { physicalRuntimeMs } from "./engine/task-runtime-deadline.ts";
 import type { ExecutorDispatchContext } from "./executors/protocol.ts";
 import type { Files } from "./files.ts";
 
@@ -30,6 +31,7 @@ export function computerTools(
   options: {
     /** Host-authenticated task workspace; never a model-selected identity. */
     cwd?: string;
+    remainingRuntimeMs?: () => number | undefined;
     before?: () => Promise<void>;
     effectBefore?: () => Promise<void>;
     signal?: AbortSignal;
@@ -150,6 +152,7 @@ export function computerTools(
                   "TaskSupersededError",
                   "TaskValidityExpiredError",
                   "TaskOutcomeUnknownError",
+                  "TaskRuntimeExpiredError",
                 ].includes(error.name))
             )
               throw error;
@@ -203,13 +206,26 @@ export function computerTools(
       "Run bash only inside the private computer and return its persisted output and exit receipt",
       commandSchema,
       async ({ operationId, ...args }) =>
-        computer.execute(owner, args, {
-          idempotencyKey: taskOperationId() ?? `${scope}:${operationId}`,
-          signal: options.signal,
-          dispatchGuard: options.effectBefore ?? options.before,
-          onDispatch: options.onComputerDispatch,
-          dispatchContext: await options.dispatchContext?.(),
-        }),
+        computer.execute(
+          owner,
+          {
+            ...args,
+            ...(options.remainingRuntimeMs && {
+              timeoutMs: physicalRuntimeMs(
+                args.timeoutMs ?? 1800000,
+                options.remainingRuntimeMs(),
+                1000,
+              ),
+            }),
+          },
+          {
+            idempotencyKey: taskOperationId() ?? `${scope}:${operationId}`,
+            signal: options.signal,
+            dispatchGuard: options.effectBefore ?? options.before,
+            onDispatch: options.onComputerDispatch,
+            dispatchContext: await options.dispatchContext?.(),
+          },
+        ),
       true,
     ),
     tool(

@@ -98,6 +98,7 @@ import {
   TaskSupersededError,
   taskOperationId,
 } from "./task-journal.ts";
+import { physicalRuntimeMs } from "./task-runtime-deadline.ts";
 import { TaskValidityExpiredError } from "./task-timing.ts";
 import { taskCriteria, textPlanDelivery } from "./task-verification.ts";
 import type { TaskContext } from "./worker.ts";
@@ -1686,6 +1687,7 @@ export async function executeModelTask(
     ...withInstructions(
       computerTools(service.computer, service.files, owner, `task:${task.id}`, {
         cwd: taskWorkspace?.cwd,
+        remainingRuntimeMs: ctx.remainingRuntimeMs,
         queue: serial,
         onComputerDispatch: recordComputerDispatch,
         onComputerReceipt: recordComputerReceipt,
@@ -2931,7 +2933,7 @@ export async function executeModelTask(
                   cwd: taskWorkspace?.cwd,
                   code: input.code,
                   reset: input.reset,
-                  wallClockMs: input.wallClockMs,
+                  wallClockMs: physicalRuntimeMs(input.wallClockMs, ctx.remainingRuntimeMs?.()),
                   maxToolCalls: input.maxToolCalls,
                   tools: input.tools.map((tool) => tool.name),
                 },

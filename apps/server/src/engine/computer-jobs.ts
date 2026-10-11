@@ -24,7 +24,10 @@ export async function cancelTaskComputerJob(
 ): Promise<ComputerCommand | undefined> {
   const id = task.state.computerCancellationRequestedId;
   if (
-    task.status !== "cancelled" ||
+    !(
+      task.status === "cancelled" ||
+      (task.status === "failed" && task.state.runtimeExpired === true)
+    ) ||
     typeof id !== "string" ||
     (id !== task.state.computerCleanupPendingId && id !== task.state.waitingComputerCommandId)
   )

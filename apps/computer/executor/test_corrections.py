@@ -1,5 +1,6 @@
 """Review regressions use real files/SQLite and complete service replies."""
 import contextlib
+import datetime
 import hashlib
 import json
 import os
@@ -16,6 +17,39 @@ from .job_runtime import HostBudget, JobRuntime
 
 
 class CorrectionContracts(unittest.TestCase):
+    def test_queue_time_shortens_physical_runtime_without_rewriting_received_args(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);workspace=Workspace(root/"workspace",root/"state")
+            self.addCleanup(workspace.close)
+            supervisor,_=self.supervisor(root,workspace)
+            launches=[]
+            supervisor.runtime=SimpleNamespace(launch=lambda operation:launches.append(operation))
+            operation=self.operation("runtime-command","command",{"command":"sleep 30","cwd":"/workspace","timeoutMs":30000})
+            operation["resourceBudget"]={"memoryBytes":64*1024**2,"heavy":False}
+            operation["expiresAt"]=datetime.datetime.fromtimestamp(1002,datetime.timezone.utc).isoformat()
+            with patch("executor.supervisor.time.time",return_value=1000):
+                supervisor.perform(operation)
+            self.assertEqual(len(launches),1)
+            self.assertEqual(launches[0]["args"]["timeoutMs"],2000)
+            self.assertEqual(supervisor.journal.get(operation["id"])["operation"],operation)
+            self.assertEqual(operation["args"]["timeoutMs"],30000)
+
+    def test_runtime_uses_server_clock_anchor_and_rejects_expired_launch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);workspace=Workspace(root/"workspace",root/"state")
+            self.addCleanup(workspace.close)
+            supervisor,now=self.supervisor(root,workspace)
+            launches=[]
+            supervisor.runtime=SimpleNamespace(launch=lambda operation:launches.append(operation))
+            operation=self.operation("expired-command","command",{"command":"true","cwd":"/workspace","timeoutMs":30000})
+            operation["resourceBudget"]={"memoryBytes":64*1024**2,"heavy":False}
+            operation["expiresAt"]=datetime.datetime.fromtimestamp(1020,datetime.timezone.utc).isoformat()
+            supervisor.gate.server_anchor=(1030,now[0])
+            with patch("executor.supervisor.time.time",return_value=1000):
+                supervisor.perform(operation)
+            self.assertEqual(launches,[])
+            self.assertEqual(supervisor.journal.get(operation["id"])["receipt"]["status"],"rejected_not_dispatched")
+
     def test_invalid_file_inspection_is_a_definite_failure_and_does_not_block_recovery(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);workspace=Workspace(root/"workspace",root/"state")

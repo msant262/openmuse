@@ -9,6 +9,7 @@ import type { KanbanCard, KanbanProject } from "./kanban-workflow.ts";
 import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
 import type { AgentService } from "./service.ts";
 import { TaskOutcomeUnknownError, taskOperationId } from "./task-journal.ts";
+import { physicalRuntimeMs } from "./task-runtime-deadline.ts";
 import type { TaskContext } from "./worker.ts";
 
 export type KanbanWorkspace = {
@@ -112,7 +113,7 @@ export async function prepareKanbanWorkspace(
   service: Pick<AgentService, "db" | "config" | "computer" | "journal" | "executionProfiles">,
   owner: string,
   task: AgentTask,
-  ctx: Pick<TaskContext, "guard" | "signal" | "event">,
+  ctx: Pick<TaskContext, "guard" | "signal" | "event" | "remainingRuntimeMs">,
 ): Promise<{ cwd: string; sessionId: string } | undefined> {
   const execution = await service.db.get<KanbanExecution>(owner, "kanban-executions", task.id);
   if (!execution) return undefined;
@@ -178,7 +179,7 @@ export async function prepareKanbanWorkspace(
         {
           command: `python3 -c ${quote(worktreeScript)} ${quote(JSON.stringify({ ...intent, cardId: card.id }))}`,
           cwd: "/workspace",
-          timeoutMs: 120_000,
+          timeoutMs: physicalRuntimeMs(120_000, ctx.remainingRuntimeMs?.(), 1000),
           background: false,
         },
         { idempotencyKey: taskOperationId(), signal: ctx.signal, dispatchGuard: ctx.guard },

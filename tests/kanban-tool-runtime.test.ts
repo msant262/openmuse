@@ -4,8 +4,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { bindingHash } from "../apps/server/src/conversation-inbox.ts";
-import { kanbanTaskTools } from "../apps/server/src/engine/kanban-tools.ts";
+import { type KanbanExecution, kanbanTaskTools } from "../apps/server/src/engine/kanban-tools.ts";
 import { KanbanWorkflow } from "../apps/server/src/engine/kanban-workflow.ts";
+import { TaskRuntimeExpiredError } from "../apps/server/src/engine/task-runtime-deadline.ts";
 import { ToolDiscovery } from "../apps/server/src/engine/tool-discovery.ts";
 import { LostLeaseError } from "../apps/server/src/engine/worker.ts";
 import { modelFixture } from "./helpers/model.ts";
@@ -483,8 +484,9 @@ for (const contract of ["local", "goal", "pr"] as const) {
   });
 }
 
-for (const loseRecovery of [false, true]) {
-  test(`a lost ${loseRecovery ? "recovery" : "worker"} acknowledgment recovers the committed handoff without another model turn or board mutation`, async (t) => {
+for (const interruption of ["worker", "recovery", "runtime"] as const) {
+  test(`a lost ${interruption} acknowledgment recovers the committed handoff without another model turn or board mutation`, async (t) => {
+    const loseRecovery = interruption === "recovery";
     const url = "https://sources.example/finding";
     const fixture = await modelFixture(
       t,
@@ -517,6 +519,7 @@ for (const loseRecovery of [false, true]) {
         board: "pipeline",
         model: "openai/fixture",
         skills: ["research"],
+        maxRuntimeSeconds: 3600,
       },
     });
     const read = t.mock.method(f.agent.web, "document", async () => ({
@@ -555,6 +558,17 @@ for (const loseRecovery of [false, true]) {
         )
       ) {
         interrupted = true;
+        if (interruption === "runtime") {
+          const binding = await f.db.get<KanbanExecution>("owner", "kanban-executions", task.id);
+          assert.ok(binding?.configuration?.runtime);
+          const runtime = binding.configuration.runtime;
+          t.mock.method(
+            f.agent.worker as unknown as { now(): number },
+            "now",
+            () => runtime.deadlineAt + 1,
+          );
+          throw new TaskRuntimeExpiredError(runtime);
+        }
         f.agent.worker.abort(task.id, "shutdown");
         throw new LostLeaseError();
       }
@@ -582,6 +596,15 @@ for (const loseRecovery of [false, true]) {
     assert.equal((await f.agent.getTask("owner", task.id)).status, "queued");
     const committed = await board.get(card.id);
     assert.equal(committed.status, "done");
+    const runtimeBinding = await f.db.get<KanbanExecution>("owner", "kanban-executions", task.id);
+    assert.ok(runtimeBinding?.configuration?.runtime);
+    await f.db.put("owner", "kanban-executions", {
+      ...runtimeBinding,
+      configuration: {
+        ...runtimeBinding.configuration,
+        runtime: { ...runtimeBinding.configuration.runtime, deadlineAt: Date.now() - 1 },
+      },
+    });
     const requests = fixture.requests.length;
     // Reconciliation of already committed work needs its native receipts,
     // not a live inference provider. Changing availability must not re-run it.

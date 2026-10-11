@@ -34,6 +34,7 @@ import {
   type TaskJournal,
   TaskOutcomeUnknownError,
 } from "./task-journal.ts";
+import { kanbanRuntimeLimit, TaskRuntimeExpiredError } from "./task-runtime-deadline.ts";
 
 // Structural M6 seam: the standalone M4 base does not import an absent registry.
 export type NativeDispatchContext =
@@ -413,10 +414,13 @@ export class TaskExecutorAuthority {
       }
     }
     const createdAt = new Date().toISOString();
+    const runtime = await kanbanRuntimeLimit(this.journal.db, owner, task, this.journal);
+    if (runtime && runtime.deadlineAt <= Date.now()) throw new TaskRuntimeExpiredError(runtime);
     const expiresAt = new Date(
       Math.min(
         Date.now() + 30 * 60_000,
         graphicalExpiry,
+        runtime?.deadlineAt ?? Number.POSITIVE_INFINITY,
         Date.parse(task.timing?.validUntil ?? "") || Number.POSITIVE_INFINITY,
       ),
     ).toISOString();

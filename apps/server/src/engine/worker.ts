@@ -8,6 +8,7 @@ import type { NativeActionExecution } from "../executors/reviewed-actions.ts";
 import { backgroundFailure } from "../log.ts";
 import { ResourceBusyError, ResourceLeases } from "./resource-leases.ts";
 import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
+import { TaskRuntimeExpiredError, type TaskRuntimeLimit } from "./task-runtime-deadline.ts";
 import { WorkAdmission } from "./work-admission.ts";
 
 export type TaskAbortCause =
@@ -43,6 +44,7 @@ export interface TaskContext {
   acquireResources(requests: ResourceRequest[]): Promise<ResourceLease[]>;
   trackResourceLeases(leases: ResourceLease[]): void;
   holdAdmission(): Promise<void>;
+  remainingRuntimeMs?(): number | undefined;
 }
 export type TaskHandler = (
   owner: string,
@@ -75,6 +77,8 @@ export class TaskWorker {
       resourceLeases?: ResourceLeases;
       runtimePause?: RuntimePause;
       retainAdmission?: (owner: string, taskId: string) => Promise<boolean>;
+      runtimeLimit?: (owner: string, task: AgentTask) => Promise<TaskRuntimeLimit | undefined>;
+      runtimeExpired?: (owner: string, task: AgentTask) => Promise<void>;
     } = {},
   ) {
     this.admission = options.workAdmission ?? new WorkAdmission(db);
@@ -315,6 +319,24 @@ export class TaskWorker {
     this.active.set(task.id, controller);
     const taskId = task.id;
     const ownedResources = new Map<string, ResourceLease>();
+    let runtime: TaskRuntimeLimit | undefined;
+    let runtimeTimer: ReturnType<typeof setTimeout> | undefined;
+    const remainingRuntimeMs = () =>
+      runtime ? Math.max(0, runtime.deadlineAt - this.now()) : undefined;
+    const assertRuntime = () => {
+      if (runtime && runtime.deadlineAt <= this.now()) throw new TaskRuntimeExpiredError(runtime);
+    };
+    const armRuntime = () => {
+      if (!runtime) return;
+      const remaining = runtime.deadlineAt - this.now();
+      if (remaining <= 0) {
+        controller.abort(new TaskRuntimeExpiredError(runtime));
+        return;
+      }
+      // Node timers overflow beyond ~24 days. A long configured run must not
+      // expire immediately; the next timer continues against the same deadline.
+      runtimeTimer = setTimeout(armRuntime, Math.min(remaining, 2_147_483_647));
+    };
     const trackResourceLeases = (leases: ResourceLease[]) => {
       for (const lease of leases) ownedResources.set(`${lease.id}:${lease.fence}`, lease);
     };
@@ -322,6 +344,7 @@ export class TaskWorker {
       const latest = await this.db.get<AgentTask>(owner, "tasks", taskId);
       if (controller.signal.aborted) throw controller.signal.reason;
       if (latest?.leaseId !== leaseId || latest.status !== "running") throw new LostLeaseError();
+      assertRuntime();
       if (!inspectionLifecycle) await this.pause.assertResumed(owner);
     };
     const acquireResources = async (requests: ResourceRequest[]) => {
@@ -336,6 +359,7 @@ export class TaskWorker {
     };
     const checkpoint = async (patch: Partial<AgentTask>) => {
       if (controller.signal.aborted) throw controller.signal.reason;
+      assertRuntime();
       const completionRevision =
         patch.status === "succeeded" ? patch.state?.verificationRevision : undefined;
       const next = await this.db.compareAndSwapTask<AgentTask>(
@@ -448,6 +472,9 @@ export class TaskWorker {
         startedAt,
         status: "running",
       });
+      runtime = inspectionLifecycle ? undefined : await this.options.runtimeLimit?.(owner, task);
+      armRuntime();
+      await guard();
       const result = await execute(owner, task, {
         signal: controller.signal,
         guard,
@@ -456,6 +483,7 @@ export class TaskWorker {
         acquireResources,
         trackResourceLeases,
         holdAdmission,
+        remainingRuntimeMs,
       });
       const checkpointResult =
         result.status === "waiting_job"
@@ -479,7 +507,69 @@ export class TaskWorker {
         status: task.status,
       });
     } catch (error) {
-      if (error instanceof RuntimePausedError) {
+      const expired =
+        controller.signal.reason instanceof TaskRuntimeExpiredError
+          ? controller.signal.reason
+          : error instanceof TaskRuntimeExpiredError
+            ? error
+            : runtime && runtime.deadlineAt <= this.now()
+              ? new TaskRuntimeExpiredError(runtime)
+              : undefined;
+      let committedDelivery = false;
+      if (expired) {
+        const latest = await this.db.get<AgentTask>(owner, "tasks", taskId);
+        committedDelivery = Boolean(
+          runtime &&
+            latest?.completion?.status === "verified" &&
+            this.options.runtimeLimit &&
+            !(await this.options.runtimeLimit(owner, latest)),
+        );
+        if (committedDelivery) {
+          // A native handoff can commit just before the deadline aborts its
+          // acknowledgment. Recover the existing receipt on the next lease;
+          // never turn that race into a new inference or a failed delivery.
+          await this.db.compareAndSwapTask(
+            owner,
+            taskId,
+            { leaseId, status: "running" },
+            { status: "queued", leaseId: null, leaseUntil: null, error: null },
+          );
+        } else {
+          const jobId =
+            latest?.state.computerCleanupPendingId ?? latest?.state.waitingComputerCommandId;
+          const failed = await this.db.compareAndSwapTask<AgentTask>(
+            owner,
+            taskId,
+            { leaseId, status: "running" },
+            {
+              status: "failed",
+              error: expired.message,
+              leaseId: null,
+              leaseUntil: null,
+              updatedAt: new Date(this.now()).toISOString(),
+              state: {
+                runtimeExpired: true,
+                runtimeDeadlineAt: expired.limit.deadlineAt,
+                ...(typeof jobId === "string" && { computerCancellationRequestedId: jobId }),
+              },
+            },
+          );
+          if (failed) {
+            task = failed;
+            await this.db.put(owner, "run-events", {
+              id: randomUUID(),
+              taskId,
+              date: new Date(this.now()).toISOString(),
+              kind: "error",
+              title: "Tempo de execução atingido",
+              detail: expired.message,
+            });
+            await this.options
+              .runtimeExpired?.(owner, failed)
+              .catch((error) => backgroundFailure("cancel expired native task", error));
+          }
+        }
+      } else if (error instanceof RuntimePausedError) {
         await this.db.compareAndSwapTask(
           owner,
           taskId,
@@ -530,12 +620,18 @@ export class TaskWorker {
         leaseId,
         { status: "running" },
         {
-          status: controller.signal.aborted ? "interrupted" : "failed",
+          status:
+            expired && !committedDelivery
+              ? "timed_out"
+              : controller.signal.aborted || committedDelivery
+                ? "interrupted"
+                : "failed",
           finishedAt: new Date(this.now()).toISOString(),
         },
       );
     } finally {
       clearInterval(heartbeat);
+      if (runtimeTimer) clearTimeout(runtimeTimer);
       await Promise.allSettled([...renewals]);
       try {
         // A native effect can outlive a pause/cancellation and this JS run. The

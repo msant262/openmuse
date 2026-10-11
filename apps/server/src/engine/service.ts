@@ -102,6 +102,7 @@ import { TaskJournal, validateTaskEffect } from "./task-journal.ts";
 import { TaskMailbox } from "./task-mailbox.ts";
 import { executionSteps, liveTaskPlan } from "./task-progress.ts";
 import { taskInput } from "./task-routing.ts";
+import { kanbanRuntimeLimit, taskRuntimeLimit } from "./task-runtime-deadline.ts";
 import { TaskTiming as TaskTimingService } from "./task-timing.ts";
 import { mandatoryTaskCriteria, TaskVerification, textPlanDelivery } from "./task-verification.ts";
 import { WorkAdmission } from "./work-admission.ts";
@@ -358,6 +359,10 @@ export class AgentService {
       browserReleased: async (owner, id) =>
         (await this.browser.control(owner, id)).control === "agent",
       workAdmission: this.workAdmission,
+      runtimeLimit: (owner, task) => kanbanRuntimeLimit(db, owner, task, this.journal),
+      runtimeExpired: async (owner, task) => {
+        await cancelTaskComputerJob(this.computer, owner, task);
+      },
       retainAdmission: async (owner, taskId) => {
         const pending = (await this.journal.operations(owner, taskId)).some(
           (op) =>
@@ -865,7 +870,6 @@ export class AgentService {
         const pending = [
           card.goalMode && "goal",
           card.completionContract && card.completionContract !== "local-only" && "PR/CI",
-          card.maxRuntimeSeconds && "physical runtime budget",
           card.goalMaxTurns && "goal turn budget",
         ].filter(Boolean);
         if (pending.length)
@@ -890,6 +894,7 @@ export class AgentService {
         if ((await this.db.unfinishedTaskCount(owner)) >= 100)
           throw new AppError("Finish or cancel some tasks before adding more", 409);
         const id = nativeId(run.id);
+        const runtime = taskRuntimeLimit(card.maxRuntimeSeconds ?? profile.maxRuntimeSeconds);
         const task = await this.taskRecord(
           owner,
           { title: card.title, prompt: [card.title, card.body].filter(Boolean).join("\n\n") },
@@ -906,6 +911,7 @@ export class AgentService {
             profileRevision: profile.revision,
             ...(selected?.model && { model: selected.model }),
             skills: [...new Set([...(profile.skills ?? []), ...(card.skills ?? [])])],
+            ...(runtime && { runtime }),
           },
         };
         return {

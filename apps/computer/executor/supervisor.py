@@ -282,9 +282,7 @@ class Gate:
                 raise ValueError("Native effect gate is closed; reconciliation or quarantine resolution required")
             if operation["executorEpoch"] != self.epoch:
                 raise ValueError("Native executor epoch is stale")
-            now = time.time()
-            if self.server_anchor is not None:
-                now = max(now, self.server_anchor[0] + self.clock() - self.server_anchor[1])
+            now = self.wall_time()
             if datetime.datetime.fromisoformat(operation["expiresAt"].replace("Z", "+00:00")).timestamp() <= now:
                 raise ValueError("Native command expired before dispatch")
             resource_key = operation.get("resourceKey")
@@ -298,6 +296,21 @@ class Gate:
             # fence twenty times per second. Only a new fence mutates the WAL.
             if operation["resourceFence"] > previous:
                 self.journal.state(fence_key, operation["resourceFence"])
+
+    def wall_time(self):
+        now = time.time()
+        if self.server_anchor is not None:
+            now = max(now, self.server_anchor[0] + self.clock() - self.server_anchor[1])
+        return now
+
+    def command_timeout_ms(self, operation):
+        # Queue and transport time consume the same canonical deadline. The
+        # received/journaled args stay intact; only the unit's physical timeout
+        # is shortened before launch. Python checks this gate during its cell.
+        remaining = int((datetime.datetime.fromisoformat(operation["expiresAt"].replace("Z", "+00:00")).timestamp() - self.wall_time()) * 1000)
+        if remaining < 1:
+            raise ValueError("Native command expired before physical launch")
+        return min(operation["args"].get("timeoutMs", 1800000), remaining)
 
 
 class NodeTransport:
@@ -655,7 +668,7 @@ class Supervisor:
                 snapshot = self.resource_snapshot(self.config["hostId"])
                 self.budget.admit(operation["id"], resource_budget["memoryBytes"], resource_budget["heavy"], snapshot["memoryAvailableBytes"], snapshot.get("unmanagedAccountBytes",0),snapshot.get("managedSessionBytes",0),self.config["executorId"])
                 reserved = True
-                launch = {**operation, "args":{**operation["args"], "memoryMaxBytes":resource_budget["memoryBytes"]}}
+                launch = {**operation, "args":{**operation["args"], "memoryMaxBytes":resource_budget["memoryBytes"], "timeoutMs":self.gate.command_timeout_ms(operation)}}
                 self.gate.check(operation)
                 started = True
                 self.runtime.launch(launch)

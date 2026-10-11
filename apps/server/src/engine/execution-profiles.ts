@@ -18,6 +18,7 @@ export const executionProfileSettings = z
       .regex(/^[^/:\s]+[/:].+$/)
       .optional(),
     skills: selection.optional(),
+    maxRuntimeSeconds: z.number().int().positive().optional(),
     projects: z
       .array(
         z

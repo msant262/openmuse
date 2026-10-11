@@ -182,6 +182,19 @@ test("a parent releases its slot to children and resumes using their shared fini
 test("native authority requires provenance and binds real physical leases to a waiting job", async (t) => {
   const server = await taskRuntime(t);
   const task = await server.agent.createTask("owner", { prompt: "Run an authorized command" });
+  const deadlineAt = Date.now() + 60_000;
+  await server.db.put("owner", "kanban-executions", {
+    id: task.id,
+    board: "default",
+    cardId: "runtime-card",
+    profile: "default",
+    runId: "canonical-run",
+    configuration: {
+      profileRevision: 0,
+      skills: [],
+      runtime: { maxMilliseconds: 60_000, deadlineAt },
+    },
+  });
   const authority = new TaskExecutorAuthority(server.agent.journal, {
     executor: () => ({ hostId: "lenovo" }),
   });
@@ -245,6 +258,11 @@ test("native authority requires provenance and binds real physical leases to a w
       leases: await server.db.list("__runtime__", "resource-leases"),
       operations: await server.agent.journal.operations("owner", task.id),
     }),
+  );
+  assert.equal(
+    Date.parse(operation.expiresAt),
+    deadlineAt,
+    "the physical envelope retains the canonical attempt deadline",
   );
   await authority.beforeDispatch("owner", operation);
   await server.db.compareAndSwapTask(

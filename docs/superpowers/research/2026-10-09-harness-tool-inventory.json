@@ -958,6 +958,25 @@
         "Native OS rollout and normal public-chat acceptance.",
         "Complete factual research, all Workspace operations and sustained performance."
       ]
+    },
+    {
+      "surface": "kanban.declared-physical-runtime-round72",
+      "caseAcceptance": "local-worker-deadline-and-physical-timeout",
+      "acceptanceApproved": false,
+      "productionEnabled": false,
+      "published": false,
+      "verified": [
+        "Explicit card/profile runtime binds one deadline per canonical run; no declaration adds no automatic duration cap.",
+        "Worker abort and physical command/worktree/Python timeouts preserve restart/poll budget and resource occupancy until same-job cancellation is confirmed.",
+        "Native authority binds expiry; supervisor subtracts queue time with server clock anchor without rewriting received args.",
+        "Handoff commit/expiry race reproduced and recovered with provider unavailable, no repeated inference or physical effect.",
+        "77 integration controls and 85 native Python controls; TypeScript/server/assets/copied-harness builds and zero lint errors."
+      ],
+      "pending": [
+        "Expired-card phase/retry handling, automatic dispatch, original conversation delivery, goal/PR/CI and complete project inheritance.",
+        "Registered executor rollout and normal public-chat acceptance.",
+        "Full Google Workspace, factual research and sustained mobile performance."
+      ]
     }
   ],
   "updatedAt": "2026-10-11T12:21:04.298735+00:00",

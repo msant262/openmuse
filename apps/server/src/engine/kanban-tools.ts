@@ -18,6 +18,7 @@ import {
 import type { KanbanWorkspace } from "./kanban-workspace.ts";
 import type { AgentService } from "./service.ts";
 import { authorizeTaskEffect, taskOperationId } from "./task-journal.ts";
+import type { TaskRuntimeLimit } from "./task-runtime-deadline.ts";
 
 /** Written by the host dispatcher, never accepted from task input or tool args. */
 export type KanbanExecution = {
@@ -27,7 +28,12 @@ export type KanbanExecution = {
   profile: string;
   runId: string;
   workspace?: KanbanWorkspace;
-  configuration?: { profileRevision: number; model?: string; skills: string[] };
+  configuration?: {
+    profileRevision: number;
+    model?: string;
+    skills: string[];
+    runtime?: TaskRuntimeLimit;
+  };
 };
 export type KanbanHandoffVerification = { completion: CompletionAssessment; revision: number };
 export type KanbanTaskSurface = {
