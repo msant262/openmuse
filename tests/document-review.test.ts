@@ -269,6 +269,78 @@ test("document review rejects changed pixels/bytes and model-supplied false cove
   assert.equal((await review.check("owner", scope, file.id, args.sha256)).passed, false);
 });
 
+test("private input and repair issues come only from the current bound native assessment", async (t) => {
+  const server = await taskRuntime(t);
+  const review = new DocumentReview(server.db, server.files);
+  const originalBytes = Buffer.from("The requested personal study plan.");
+  const file = await server.files.importAttachment("owner", "plan.txt", originalBytes, "Test");
+  const preview = await server.files.importAttachment("owner", "plan.png", png, "Test");
+  const scope = { scope: "task:study-plan", revision: 2 };
+  const sha256 = digest(originalBytes);
+  const receipt = await review.recordInspection("owner", {
+    ...scope,
+    fileId: file.id,
+    sha256,
+    pageCount: 1,
+    pages: [1],
+    previewFileId: preview.id,
+    rendererVersion: "test-1",
+  });
+  await review.recordObserved("owner", scope, preview.id);
+  const privateInput =
+    "What are your fixed work hours? The requested study schedule must avoid them.";
+  await assert.rejects(
+    review.confirm("owner", scope, {
+      receiptId: receipt.receiptId,
+      passed: true,
+      issues: [],
+      privateInput,
+    }),
+    /incomplete|private input/i,
+  );
+  await review.confirm("owner", scope, {
+    receiptId: receipt.receiptId,
+    passed: false,
+    issues: ["The personal timetable is missing the user's fixed work hours."],
+    privateInput,
+  });
+  const current = await review.check("owner", scope, file.id, sha256);
+  assert.equal(current.passed, false);
+  assert.deepEqual("privateInputRequirements" in current && current.privateInputRequirements, [
+    privateInput,
+  ]);
+  const saved = await server.db.get<Record<string, unknown> & { id: string }>(
+    "owner",
+    "document-reviews",
+    receipt.receiptId,
+  );
+  assert.ok(saved);
+  for (const mutation of [
+    { scope: "task:another" },
+    { revision: 1 },
+    { sha256: "a".repeat(64) },
+    { previewSha256: "b".repeat(64) },
+  ]) {
+    await server.db.put("owner", "document-reviews", { ...saved, ...mutation });
+    const stale = await review.check("owner", scope, file.id, sha256);
+    assert.deepEqual(stale.issues, []);
+    assert.equal(
+      "privateInputRequirements" in stale ? stale.privateInputRequirements : undefined,
+      undefined,
+    );
+    assert.deepEqual(stale.pendingAssessments, [{ receiptId: receipt.receiptId, pages: [1] }]);
+  }
+  await server.db.put("owner", "document-reviews", saved);
+  await writeFile(join(server.directory, "files", `${file.id}.bin`), Buffer.from("Changed plan"));
+  const changed = await review.check("owner", scope, file.id, sha256);
+  assert.equal(changed.passed, false);
+  assert.deepEqual(changed.issues, []);
+  assert.equal(
+    "privateInputRequirements" in changed ? changed.privateInputRequirements : undefined,
+    undefined,
+  );
+});
+
 test("new designed files require complete review while legacy PDFs retain their original completion contract", async (t) => {
   const server = await taskRuntime(t);
   const task = await server.agent.createTask("owner", { prompt: "Create a PDF" });

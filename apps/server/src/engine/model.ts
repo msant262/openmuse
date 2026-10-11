@@ -541,6 +541,68 @@ export async function executeModelTask(
         : "No image was generated. The observed facts suffice; correct only these gaps in the visual brief while preserving the requested form, all entities and all categories.",
     };
   };
+  const pendingDocumentReviews = async (
+    fileIds: string[],
+    operations: Awaited<ReturnType<typeof service.journal.operations>>,
+  ) => {
+    const revision = Number(task.state.appliedRevision ?? 0);
+    const documentReviews = [];
+    for (const fileId of fileIds) {
+      const authored = operations.some(
+        (operation) =>
+          operation.toolName === "create_document" &&
+          operation.status === "succeeded" &&
+          (operation.receipt as { fileId?: string; designReview?: { required?: boolean } })
+            ?.fileId === fileId &&
+          (operation.receipt as { designReview?: { required?: boolean } })?.designReview
+            ?.required === true,
+      );
+      if (!authored) continue;
+      const file = await service.files.get(owner, fileId);
+      const bytes = await service.files.bytes(owner, fileId);
+      const review = await documentReview.check(
+        owner,
+        { scope: `task:${task.id}`, revision },
+        fileId,
+        createHash("sha256").update(bytes).digest("hex"),
+      );
+      if (review.passed) continue;
+      const lastInspection = operations.findLast(
+        (operation) =>
+          /^(primitive\.)?inspect_document$/.test(operation.toolName) &&
+          operation.revision === revision &&
+          ((operation.args as { fileId?: string } | undefined)?.fileId === fileId ||
+            (operation.receipt as { documentFileId?: string })?.documentFileId === fileId),
+      );
+      // A known runtime failure can justify a partial result; invalid page
+      // arguments or an unattempted review still have an available repair.
+      if (
+        lastInspection?.status === "failed" &&
+        ["DOCUMENT_RENDER_UNAVAILABLE", "DOCUMENT_RENDER_TIMEOUT"].includes(
+          (lastInspection.receipt as { errorCode?: string })?.errorCode ?? "",
+        )
+      )
+        continue;
+      documentReviews.push({
+        fileId,
+        name: file.name,
+        status: review.issues.length
+          ? "correction_required"
+          : review.pendingAssessments.length
+            ? "assessment_required"
+            : "inspection_required",
+        issues: review.issues,
+        missingPages: review.missingPages,
+        pendingAssessments: review.pendingAssessments,
+        ...("privateInputRequirements" in review && {
+          privateInputRequirements: review.privateInputRequirements,
+        }),
+      });
+    }
+    return documentReviews;
+  };
+  const documentRepairInstruction =
+    "The requested documents already exist. Complete the specific step in documentReviews before finishing, including when reporting a partial outcome. For inspection_required, call inspect_document with the existing fileId and review the returned pixels. For assessment_required, assess the observed pages and call confirm_document_review with the exact pending receiptId. For correction_required, reassess the recorded issues against the original request and current evidence, repair only material defects with replaceFileId and a fresh operationId, then inspect the new bytes. These are prior model assessments, not additional user requirements. Do not regenerate an unchanged file or restart public research for an inspection or layout gap. Research only concrete unsupported facts identified in the issues; reuse saved source observations. Finish with the actual final file IDs after their pages pass. An unattempted inspection is remaining work, not a source or runtime blocker.";
   const deliver = async (
     summary: string,
     deliveryOutcome: "completed" | "partial",
@@ -699,57 +761,9 @@ export async function executeModelTask(
             (criterion) => criterion.id === check.criterionId && criterion.kind === "file",
           ),
       );
-      const documentReviews = [];
-      if (!externalGap)
-        for (const fileId of selected.length ? selected : task.artifactIds) {
-          const authored = operations.some(
-            (operation) =>
-              operation.toolName === "create_document" &&
-              operation.status === "succeeded" &&
-              (operation.receipt as { fileId?: string; designReview?: { required?: boolean } })
-                ?.fileId === fileId &&
-              (operation.receipt as { designReview?: { required?: boolean } })?.designReview
-                ?.required === true,
-          );
-          if (!authored) continue;
-          const file = await service.files.get(owner, fileId);
-          const bytes = await service.files.bytes(owner, fileId);
-          const review = await documentReview.check(
-            owner,
-            { scope: `task:${task.id}`, revision },
-            fileId,
-            createHash("sha256").update(bytes).digest("hex"),
-          );
-          if (review.passed) continue;
-          const lastInspection = operations.findLast(
-            (operation) =>
-              /^(primitive\.)?inspect_document$/.test(operation.toolName) &&
-              operation.revision === revision &&
-              ((operation.args as { fileId?: string } | undefined)?.fileId === fileId ||
-                (operation.receipt as { documentFileId?: string })?.documentFileId === fileId),
-          );
-          // A known runtime failure can justify a partial result; invalid page
-          // arguments or an unattempted review still have an available repair.
-          if (
-            lastInspection?.status === "failed" &&
-            ["DOCUMENT_RENDER_UNAVAILABLE", "DOCUMENT_RENDER_TIMEOUT"].includes(
-              (lastInspection.receipt as { errorCode?: string })?.errorCode ?? "",
-            )
-          )
-            continue;
-          documentReviews.push({
-            fileId,
-            name: file.name,
-            status: review.issues.length
-              ? "correction_required"
-              : review.pendingAssessments.length
-                ? "assessment_required"
-                : "inspection_required",
-            issues: review.issues,
-            missingPages: review.missingPages,
-            pendingAssessments: review.pendingAssessments,
-          });
-        }
+      const documentReviews = externalGap
+        ? []
+        : await pendingDocumentReviews(selected.length ? selected : task.artifactIds, operations);
       if (documentReviews.length) {
         task = await ctx.checkpoint({
           completion,
@@ -766,8 +780,7 @@ export async function executeModelTask(
           repairable: true,
           continuation: "document_review",
           documentReviews,
-          instruction:
-            "The requested documents already exist. Complete the specific step in documentReviews before finishing, including when reporting a partial outcome. For inspection_required, call inspect_document with the existing fileId and review the returned pixels. For assessment_required, assess the observed pages and call confirm_document_review with the exact pending receiptId. For correction_required, reassess the recorded issues against the original request and current evidence, repair only material defects with replaceFileId and a fresh operationId, then inspect the new bytes. These are prior model assessments, not additional user requirements. Do not regenerate an unchanged file or restart public research for an inspection or layout gap. Research only concrete unsupported facts identified in the issues; reuse saved source observations. Finish with the actual final file IDs after their pages pass. An unattempted inspection is remaining work, not a source or runtime blocker.",
+          instruction: documentRepairInstruction,
         };
       }
       const observations = researchObservations(operations);
@@ -2560,6 +2573,38 @@ export async function executeModelTask(
                 : "The existing factual check identifies public research gaps, not missing private user input. Continue researching or replacing your own unqualified choices within the original request. The person already authorized selection of qualifying options; do not ask permission to replace your own selection or offer fewer items, paid/unknown options, or relaxed criteria. Preserve specifically named requirements. Recover full source text, read relevant alternatives and verify facts before rendering. If observed access/provider blockers exhaust the relevant alternatives, finish with outcome=partial and describe those concrete limitations; do not turn an incomplete selection into an approval question.",
           };
         }
+        // A native page assessment is already part of the executor turn.
+        // Reuse its current owned bytes/revision instead of requiring the
+        // separately configured factual-review model to prevent this pause.
+        if (task.artifactIds.length && !publicRecovery?.userInputRequired) {
+          const operations = await service.journal.operations(owner, task.id);
+          if (needsResearchReview(task, operations)) {
+            const reviews = await pendingDocumentReviews(task.artifactIds, operations);
+            const privateInput = reviews.some((review) => review.privateInputRequirements?.length);
+            const documentReviews = reviews.filter((review) => review.issues.length > 0);
+            if (documentReviews.length && !privateInput) {
+              task = await ctx.checkpoint({
+                state: {
+                  ...task.state,
+                  completionFollowup: documentReviews.map(
+                    (review) =>
+                      `Complete ${review.status} for the existing document ${review.fileId}.`,
+                  ),
+                },
+              });
+              return {
+                paused: false,
+                repairable: true,
+                status: "continue_document_repair",
+                continuation: "document_review",
+                documentReviews,
+                instruction:
+                  "The current native document assessment identifies unfinished authorized research or document repair, not missing private input. Continue this work instead of asking the person to replace your own recommendations, accept unknown public fields or approve continuing. If the original request actually requires indispensable private information, identify exactly that requirement in the native assessment's privateInput field; public research gaps and optional preferences do not qualify. " +
+                  documentRepairInstruction,
+              };
+            }
+          }
+        }
         const request = await service.interactions.create(owner, {
           taskId: task.id,
           revision: task.attempts,
@@ -2579,7 +2624,7 @@ export async function executeModelTask(
     ),
     tool(
       "confirm_document_review",
-      "Assess the exact rendered document pages for readability and fulfillment of the original request. For researched content, check each requested field and each selected option against the actual source facts; readable pages alone do not establish correct or complete work. Unsupported claims, requested facts left unknown while useful recovery remains, missing cells, lost associations, clipping, unreadable type or violation of an explicit page limit fail review. Report concrete issues so the same executor can research or edit before delivery. Ordinary whitespace, continuous page breaks and repeated headers on legible tables do not fail. Use inspect_document.hyperlinks for clickability evidence, not the raster image. Assess all pages in this receipt; this records model assessment, not external approval.",
+      "Assess the exact rendered document pages for readability and fulfillment of the original request. For researched content, check each requested field and each selected option against the actual source facts; readable pages alone do not establish correct or complete work. Unsupported claims, requested facts left unknown while useful recovery remains, missing cells, lost associations, clipping, unreadable type or violation of an explicit page limit fail review. Report concrete issues so the same executor can research or edit before delivery. Ordinary whitespace, continuous page breaks and repeated headers on legible tables do not fail. Use inspect_document.hyperlinks for clickability evidence, not the raster image. If indispensable private information required by the original request is missing, state precisely what and why in privateInput; omit that field for public facts, choosing another recommendation or optional preferences. Assess all pages in this receipt; this records model assessment, not external approval.",
       documentReviewArgs,
       async (args) =>
         documentReview.confirm(
@@ -3135,7 +3180,7 @@ export async function executeModelTask(
       return {
         name: "confirm_document_review",
         parameters: documentReviewArgs.safeExtend({ receiptId: z.literal(assessment.receiptId) }),
-        instructions: `Assess the actual document preview in this inference for readability AND fulfillment of the original request, then call confirm_document_review for ${JSON.stringify(assessment)}. Review against this actual request and its current user directions: ${JSON.stringify({ request: task.prompt, directions: task.state.directives ?? [] })}.${repairContext} Other requested sections may be on pages outside this preview; do not reject a page batch merely because those sections have not been displayed yet. Assess the claims on these pages using prior inspected content where needed, and inspect remaining pages before final delivery. For researched content, compare the requested fields for the selected options shown here with the actual source facts already observed. A readable document with unsupported claims or requested facts still unknown while useful detail reads, preserved-text recovery or qualifying alternatives remain does not fulfill the request: report passed:false with the specific gaps. Do not treat a catalogue language filter or the page interface language as proof of a selected item's language; scope evidence to the named item. Do not infer free content or free credentials from an absent price. If useful recovery remains, identify it in issues rather than tell the person to verify public facts. Genuine unpublished or inapplicable facts can be reported honestly after relevant recovery is exhausted; do not invent values or loop on unavailable facts. Report passed:true only when the displayed claims satisfy the original requirements and the pages have no concrete delivery defect. Approval of a page batch does not establish completeness of the whole document: check every original requirement across all pages before finishing. A legible table continuing onto another page with repeated column headers is ordinary pagination; assess missing cells, lost associations, clipping and readability rather than rejecting the page break itself. This is your assessment in the existing executor turn, never automatic or external approval. After this assessment the full authorized tool catalog is available again for research, content corrections, remaining pages or delivery.`,
+        instructions: `Assess the actual document preview in this inference for readability AND fulfillment of the original request, then call confirm_document_review for ${JSON.stringify(assessment)}. Review against this actual request and its current user directions: ${JSON.stringify({ request: task.prompt, directions: task.state.directives ?? [] })}.${repairContext} Other requested sections may be on pages outside this preview; do not reject a page batch merely because those sections have not been displayed yet. Assess the claims on these pages using prior inspected content where needed, and inspect remaining pages before final delivery. For researched content, compare the requested fields for the selected options shown here with the actual source facts already observed. A readable document with unsupported claims or requested facts still unknown while useful detail reads, preserved-text recovery or qualifying alternatives remain does not fulfill the request: report passed:false with the specific gaps. Do not treat a catalogue language filter or the page interface language as proof of a selected item's language; scope evidence to the named item. Do not infer free content or free credentials from an absent price. If useful recovery remains, identify it in issues rather than tell the person to verify public facts. Genuine unpublished or inapplicable facts can be reported honestly after relevant recovery is exhausted; do not invent values or loop on unavailable facts. Report passed:true only when the displayed claims satisfy the original requirements and the pages have no concrete delivery defect. Approval of a page batch does not establish completeness of the whole document: check every original requirement across all pages before finishing. A legible table continuing onto another page with repeated column headers is ordinary pagination; assess missing cells, lost associations, clipping and readability rather than rejecting the page break itself. If an indispensable private fact or decision required by the original request is missing, record exactly what and why in privateInput. Public facts, replacing your own recommendations, optional preferences and permission to continue are not private input. This is your assessment in the existing executor turn, never automatic or external approval. After this assessment the full authorized tool catalog is available again for research, content corrections, remaining pages or delivery.`,
       };
     },
     executeTool: async (call, execute) => {

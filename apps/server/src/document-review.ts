@@ -33,11 +33,24 @@ export const documentReviewArgs = z
       ),
     passed: z.boolean(),
     issues: z.array(z.string().trim().min(1).max(500)).max(20),
+    privateInput: z
+      .string()
+      .trim()
+      .min(1)
+      .max(500)
+      .optional()
+      .describe(
+        "Only indispensable private information or a decision required by the original request that only this person can provide. State exactly what is missing and why. Omit for public facts, replacing your own selected recommendations, optional preferences, or permission to continue authorized work.",
+      ),
   })
   .strict()
   .refine(
     (v) => !v.passed || v.issues.length === 0,
     "Resolve reported issues before passing review",
+  )
+  .refine(
+    (v) => !v.privateInput || (!v.passed && v.issues.length > 0),
+    "Missing private input belongs to an incomplete review with concrete issues",
   );
 type Inspection = z.infer<typeof inspectionSchema> & {
   id: string;
@@ -48,6 +61,7 @@ type Confirmation = DocumentReviewScope & {
   id: string;
   passed: boolean;
   issues: string[];
+  privateInput?: string;
   previewSha256: string;
   sha256: string;
 };
@@ -204,6 +218,7 @@ export class DocumentReview {
       ...scope,
       passed: args.passed,
       issues: args.issues,
+      ...(args.privateInput && { privateInput: args.privateInput }),
       sha256: receipt.sha256,
       previewSha256: receipt.previewSha256,
     });
@@ -213,6 +228,7 @@ export class DocumentReview {
       pages: receipt.pages,
       passed: args.passed,
       issues: args.issues,
+      ...(args.privateInput && { privateInput: args.privateInput }),
     };
   }
 
@@ -242,31 +258,32 @@ export class DocumentReview {
       for (const page of receipt.pages) latest.set(page, receipt);
     }
     const reviews = new Map(
-      (await this.db.list<Confirmation>(owner, "document-reviews")).map((entry) => [
-        entry.id,
-        entry,
-      ]),
+      (await this.db.list<Confirmation>(owner, "document-reviews"))
+        .filter(
+          (entry) =>
+            entry.scope === scope.scope &&
+            entry.revision === scope.revision &&
+            entry.sha256 === sha256,
+        )
+        .map((entry) => [entry.id, entry]),
     );
     const missingPages: number[] = [],
       receiptIds = new Set<string>();
     const unresolved = new Map<string, Inspection>();
     const issues = new Set<string>();
+    const privateInputRequirements = new Set<string>();
+    const validReviews = new Set<string>();
     for (let page = 1; page <= pageCount; page++) {
-      const receipt = latest.get(page),
-        review = receipt && reviews.get(receipt.id);
-      if (
-        !receipt ||
-        !review?.passed ||
-        review.issues.length ||
-        review.sha256 !== sha256 ||
-        review.previewSha256 !== receipt.previewSha256 ||
-        review.scope !== scope.scope ||
-        review.revision !== scope.revision
-      ) {
+      const receipt = latest.get(page);
+      const candidate = receipt && reviews.get(receipt.id);
+      const review = candidate?.previewSha256 === receipt?.previewSha256 ? candidate : undefined;
+      if (review && receipt) validReviews.add(receipt.id);
+      if (!receipt || !review?.passed || review.issues.length) {
         missingPages.push(page);
         if (receipt) {
           unresolved.set(receipt.id, receipt);
           for (const issue of review?.issues ?? []) issues.add(issue);
+          if (review?.privateInput) privateInputRequirements.add(review.privateInput);
         }
         continue;
       }
@@ -274,7 +291,7 @@ export class DocumentReview {
     }
     const pendingAssessments: Array<{ receiptId: string; pages: number[] }> = [];
     for (const receipt of unresolved.values()) {
-      if (reviews.has(receipt.id)) continue;
+      if (validReviews.has(receipt.id)) continue;
       const seen = await this.db.get<{
         scope: string;
         revision: number;
@@ -294,6 +311,9 @@ export class DocumentReview {
       receiptIds: [...receiptIds],
       issues: [...issues],
       pendingAssessments,
+      ...(privateInputRequirements.size && {
+        privateInputRequirements: [...privateInputRequirements],
+      }),
     };
   }
 }
