@@ -893,9 +893,30 @@
         "Conversation/subscriber delivery provenance and a natural public-chat acceptance run.",
         "Publication and whole-harness/Workspace/performance acceptance."
       ]
+    },
+    {
+      "surface": "kanban.native-run-ownership-round69",
+      "caseAcceptance": "local-native-authority-and-final-transaction-barriers",
+      "acceptanceApproved": false,
+      "productionEnabled": false,
+      "published": false,
+      "verified": [
+        "Card run uses native task/actor authority across queued/running/waiting states; legacy unbound cards preserve their TTL contract.",
+        "Final transaction checks actor, database-clock expiry, binding, originating card and global pause without rewriting checked rows.",
+        "Logical-run receipts survive actor replacement; uncertain effects and native cleanup retain claim protection.",
+        "Eight initial ownership failures and two later barrier failures reproduced; final 91/91 focused controls include 14 new cases and real worker with controlled clock.",
+        "Root TypeScript/server/assets/copied-harness builds pass; lint exits zero with three preexisting warnings; local source/log/compiled hashes preserved."
+      ],
+      "pending": [
+        "Worker-loop automatic selection and dispatch.",
+        "Physical scratch/dir/worktree provisioning and tool path binding.",
+        "Effective model/provider/skills/budgets and goal/PR/exact-commit CI gates.",
+        "Durable conversation/subscriber delivery, publication and natural public-chat acceptance.",
+        "Full Workspace, factual research, sustained mobile performance and whole-harness acceptance."
+      ]
     }
   ],
-  "updatedAt": "2026-10-11T11:04:00Z",
+  "updatedAt": "2026-10-11T11:22:59.486131+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

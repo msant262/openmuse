@@ -19,6 +19,22 @@ export async function initializeDurableConversations(query: (sql: string) => Pro
       INSERT INTO conversation_events(owner,thread_id,seq,id,data) VALUES(event_owner,event_thread,next_seq,event_id,saved);
       RETURN saved;
     END $$`);
+  // Shared by compact workflow reads and the final locked transaction. A
+  // terminal task with dispatched/uncertain effects is not safe to supersede.
+  await query(`CREATE OR REPLACE FUNCTION openmuse_kanban_task_unsettled(task_owner text, task_id text, task_value jsonb)
+    RETURNS boolean LANGUAGE sql STABLE AS $$
+      SELECT COALESCE(COALESCE(task_value->>'status','missing') NOT IN ('succeeded','failed','cancelled')
+        OR COALESCE(task_value->'state'->>'nativeAdmissionPending','false')='true'
+        OR COALESCE(task_value->'state'->>'nativeCleanupPending','false')='true'
+        OR jsonb_typeof(task_value->'state'->'computerCleanupPendingId')='string'
+        OR jsonb_typeof(task_value->'state'->'waitingComputerCommandId')='string'
+        OR (jsonb_typeof(task_value->'state'->'reconcilingOperationIds')='array'
+          AND task_value->'state'->'reconcilingOperationIds'<>'[]'::jsonb)
+        OR EXISTS(SELECT 1 FROM records op WHERE op.owner=task_owner AND op.kind='task-operations'
+          AND op.data->>'taskId'=task_id AND op.data->>'effect'='true'
+          AND op.data->>'status' NOT IN ('succeeded','failed','rejected_not_dispatched','superseded')
+          AND COALESCE(op.data->'receipt'->'data'->>'cleanupConfirmed','false')<>'true'),false)
+    $$`);
   await query(`CREATE OR REPLACE FUNCTION openmuse_durable_mutation(mutation_owner text, receipt_id text, binding_hash text, mutations jsonb, events jsonb)
     RETURNS jsonb LANGUAGE plpgsql AS $$
     DECLARE previous jsonb; change jsonb; saved jsonb; result jsonb := '[]'::jsonb; event jsonb; journal jsonb := '[]'::jsonb;
@@ -46,8 +62,18 @@ export async function initializeDurableConversations(query: (sql: string) => Pro
            ))) THEN
           RETURN jsonb_build_object('status','revision_conflict');
         END IF;
+        IF change->>'activeTaskLease'='true' AND
+          (change->>'kind'<>'tasks' OR saved->>'status' IS DISTINCT FROM 'running' OR
+            COALESCE((saved->>'leaseUntil')::timestamptz,'-infinity'::timestamptz)<=clock_timestamp()) THEN
+          RETURN jsonb_build_object('status','revision_conflict');
+        END IF;
+        IF change->>'requireSettledTask'='true' AND
+          (change->>'kind'<>'tasks' OR openmuse_kanban_task_unsettled(mutation_owner,change->>'id',saved)) THEN
+          RETURN jsonb_build_object('status','revision_conflict');
+        END IF;
       END LOOP;
       FOR change IN SELECT value FROM jsonb_array_elements(mutations) LOOP
+        IF change->>'mode'='check' THEN CONTINUE; END IF;
         IF change->>'mode'='insert' THEN
           INSERT INTO records(owner,kind,id,data) VALUES(mutation_owner,change->>'kind',change->>'id',change->'value') RETURNING data INTO saved;
         ELSE

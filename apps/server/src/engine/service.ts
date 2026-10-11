@@ -887,17 +887,20 @@ export class AgentService {
           profile: profileName,
           runId: run.id,
         };
-        return [
-          {
-            kind: "execution-profiles",
-            id: profileName,
-            mode: "merge",
-            expected: { revision: profile.revision },
-            value: {},
-          },
-          { kind: "tasks", id, mode: "insert", value: { ...task } },
-          { kind: "kanban-executions", id, mode: "insert", value: { ...execution } },
-        ];
+        return {
+          nativeTaskId: id,
+          mutations: [
+            {
+              kind: "execution-profiles",
+              id: profileName,
+              mode: "merge",
+              expected: { revision: profile.revision },
+              value: {},
+            },
+            { kind: "tasks", id, mode: "insert", value: { ...task } },
+            { kind: "kanban-executions", id, mode: "insert", value: { ...execution } },
+          ],
+        };
       },
     });
     const claimed = await workflow.claim(cardId, profileName, requestId);

@@ -594,13 +594,6 @@ test("an ended board card without its atomic native proof cannot manufacture a t
   const task = await f.agent.createTask("owner", {
     prompt: "Read the finding and record the actual result.",
   });
-  await f.db.put("owner", "kanban-executions", {
-    id: task.id,
-    board: "pipeline",
-    cardId: card.id,
-    profile: "default",
-    runId: claim.runId,
-  });
   const operation = await f.agent.journal.prepare("owner", {
     id: "legacy-finish",
     taskId: task.id,
@@ -622,6 +615,15 @@ test("an ended board card without its atomic native proof cannot manufacture a t
     { summary: "Unverified finding" },
     `${task.id}:${operation.id}`,
   );
+  // A historical standalone handoff imported without atomic native proof.
+  // Fresh bound handoffs now require an actual native actor lease.
+  await f.db.put("owner", "kanban-executions", {
+    id: task.id,
+    board: "pipeline",
+    cardId: card.id,
+    profile: "default",
+    runId: claim.runId,
+  });
   await f.agent.worker.tick();
   const observed = await f.agent.getTask("owner", task.id);
   assert.notEqual(observed.status, "succeeded");

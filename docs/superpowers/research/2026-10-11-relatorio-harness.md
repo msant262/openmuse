@@ -64,6 +64,8 @@ API, navegador e OpenBao estavam saudáveis na conferência. Sem tarefas, conver
 
 Identificada a ausência do despacho automático de cards. Os testes anteriores inseriam o vínculo de execução manualmente. O host agora tem um caminho que grava card, run, tarefa e vínculo juntos, com proteção contra concorrência, revogação do perfil, pausa e perda de confirmação. **56/56 controles focados**, TypeScript, builds e lint passaram. O provedor usado nesse grupo é de teste; não constitui aceitação normal com Luna. Despacho automático, renovação de posse, provisionamento físico e entrega à conversa correta ainda precisam integração. **Esse avanço não foi publicado.** Detalhes no [registro do dispatcher](2026-10-11-kanban-dispatch.md).
 
+Na continuação, a posse foi vinculada à autoridade da tarefa nativa: o prazo antigo de dois minutos não libera um card enquanto sua tarefa executa ou aguarda decisão. Um ator substituído perde o acesso; mudanças de vínculo, validade e pausa no instante da gravação são rejeitadas. Confirmações perdidas sobrevivem à troca de ator sem repetir a conclusão. **91/91 testes focados**, TypeScript, builds e lint passaram; os 14 novos casos são controles locais, incluindo o worker real com relógio controlado. **Não houve publicação nem novo pedido normal no app nessa continuação.** Despacho automático, workspace e os demais contratos seguem pendentes. Detalhes no [registro de posse](2026-10-11-kanban-native-ownership.md).
+
 ## Pendências que impedem declarar a entrega
 
 1. Garantir comprovação dos campos pedidos no item correto, sem aproveitar informação de outro curso/documento. O contrato atual de conclusão física ainda não garante isso.

@@ -70,6 +70,8 @@ export async function kanbanTaskTools(
         profile: execution.profile,
         taskId: execution.cardId,
         runId: execution.runId,
+        nativeTaskId: task.id,
+        nativeLeaseId: task.leaseId ?? undefined,
       }
     : { role: "orchestrator", profile: profile.id };
   const activeBoard = execution?.board ?? profile.board ?? "default";

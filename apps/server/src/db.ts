@@ -26,12 +26,44 @@ import { initializeThreadCompaction, type ThreadMessagePage } from "./thread-com
 import { initializeThreadLifecycle } from "./thread-lifecycle.ts";
 
 type Row = { data: Record<string, unknown> };
+export type KanbanRunAuthority = {
+  execution: { id: string; board: string; cardId: string; profile: string; runId: string };
+  task: Pick<AgentTask, "id" | "status" | "leaseId" | "leaseUntil"> | null;
+  unsettled: boolean;
+};
 interface Database {
   query: (sql: string, params?: unknown[]) => Promise<{ rows: Row[] }>;
   close: () => Promise<void>;
 }
 
 export class Store {
+  /** Resolve only this run's host binding and compact native lease. Never load
+   * task history, evidence or tool responses to establish workflow ownership. */
+  async kanbanRunAuthority(
+    owner: string,
+    board: string,
+    cardId: string,
+    runId: string,
+    nativeTaskId?: string,
+  ): Promise<KanbanRunAuthority | null> {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('execution',binding.data,'task',
+         CASE WHEN native.id IS NULL THEN NULL ELSE jsonb_build_object(
+           'id',native.id,'status',native.data->'status',
+           'leaseId',native.data->'leaseId','leaseUntil',native.data->'leaseUntil') END,
+         'unsettled',native.id IS NULL OR openmuse_kanban_task_unsettled($1,native.id,native.data)) AS data
+       FROM records binding LEFT JOIN records native
+         ON native.owner=binding.owner AND native.kind='tasks' AND native.id=binding.id
+       WHERE binding.owner=$1 AND binding.kind='kanban-executions' AND
+         (($5::text IS NOT NULL AND binding.id=$5) OR ($5::text IS NULL AND
+           binding.data->>'board'=$2 AND binding.data->>'cardId'=$3 AND binding.data->>'runId'=$4))
+       LIMIT 2`,
+      [owner, board, cardId, runId, nativeTaskId ?? null],
+    );
+    if (result.rows.length > 1)
+      throw new AppError("Ambiguous native kanban execution binding", 409);
+    return (result.rows[0]?.data as KanbanRunAuthority | undefined) ?? null;
+  }
   /** Board discovery projects compact rows in SQL; task bodies and prior runs
    * stay out of the list, including when the board has a long history. */
   async kanbanCards<T>(
@@ -539,7 +571,10 @@ export class Store {
       id: string;
       expected?: Record<string, unknown>;
       value: Record<string, unknown>;
-      mode: "insert" | "merge" | "replace";
+      mode: "insert" | "merge" | "replace" | "check";
+      /** Host-only transaction barriers. Checks produce no writes or values. */
+      activeTaskLease?: boolean;
+      requireSettledTask?: boolean;
     }[],
     events: Omit<ConversationEvent, "seq">[] = [],
     requireActive = false,
