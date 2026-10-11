@@ -1,5 +1,9 @@
 # Harness parity and ordinary-task acceptance — 2026-10-09
 
+## Authenticated execution configuration and explanation intent — local, not published
+
+Profiles now bind registered projects/default directories, available explicit model routes and selected full skill instructions to the existing worker. Card model takes precedence over profile/account selection; overrides cannot silently fall back. Unavailable/mismatched routes reject the atomic dispatch without orphans. Assigned guide bodies are loaded once before inference; the remaining catalog stays progressive. Canonical handoff recovery succeeds after provider disconnection without another model call or physical effect. A reproduced explanation of daily scheduling no longer requires an external-effect receipt, while independent execution and requested PDF output remain mandatory. **140/140 focused controls**, root TypeScript/server/assets/copied-harness builds and changed-file lint pass (seven warnings); temporary Git worktrees and protocol fixtures are used. Full suite, native OS rollout and natural public-chat acceptance were not performed. Physical declared budget, goal/PR/CI, cross-profile project inheritance, automatic dispatch/delivery, factual research, full Workspace and performance remain open. Production rechecked 12:19:44 UTC: root/API HTTP 200, three healthy containers, unchanged API image for **c0c2c9ec**. See [the execution configuration record](2026-10-11-kanban-execution-config.md).
+
 The user's acceptance requires complete research, real document delivery, robust name lookup and the tools used by Hermes/OpenClaw. **Whole-harness acceptance remains open.** Source presence, aliases, fixture-model tests and individual passing chats do not establish complete parity or perfect model behavior.
 
 ## Latest verified status — 2026-10-11, 10:49 UTC

@@ -512,7 +512,12 @@ for (const loseRecovery of [false, true]) {
     await f.agent.executionProfiles.set("owner", "default", {
       expectedRevision: 0,
       requestId: "enable",
-      profile: { toolsets: ["kanban"], board: "pipeline" },
+      profile: {
+        toolsets: ["kanban"],
+        board: "pipeline",
+        model: "openai/fixture",
+        skills: ["research"],
+      },
     });
     const read = t.mock.method(f.agent.web, "document", async () => ({
       url,
@@ -578,6 +583,11 @@ for (const loseRecovery of [false, true]) {
     const committed = await board.get(card.id);
     assert.equal(committed.status, "done");
     const requests = fixture.requests.length;
+    // Reconciliation of already committed work needs its native receipts,
+    // not a live inference provider. Changing availability must not re-run it.
+    const capability = f.agent.config.modelProviders?.routing?.capabilities["openai/fixture"];
+    assert.ok(capability);
+    capability.tools = false;
     await f.agent.worker.tick();
     if (loseRecovery) {
       assert.equal((await f.agent.getTask("owner", task.id)).status, "queued");

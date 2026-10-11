@@ -196,11 +196,7 @@ test("host dispatch cannot silently downgrade a declared goal or PR contract to 
     profile: { toolsets: ["kanban"] },
   });
   const kb = new KanbanWorkflow(f.db, "owner", "default", { profileExists: () => true });
-  for (const input of [
-    { goalMode: true },
-    { completionContract: "OWNER/REPO" },
-    { model: "mimo-v2.5-pro" },
-  ]) {
+  for (const input of [{ goalMode: true }, { completionContract: "OWNER/REPO" }]) {
     const card = await kb.create(
       { role: "orchestrator", profile: "default" },
       { title: "Work", assignee: "default", ...input },

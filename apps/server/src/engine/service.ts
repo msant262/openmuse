@@ -69,6 +69,7 @@ import {
 import { ProactivityService } from "../proactivity/service.ts";
 import { modelProviderConfig } from "../providers/config.ts";
 import { sharedModelRouter } from "../providers/model-router.ts";
+import { executionModelSelection } from "../providers/preferences.ts";
 import { PublicWeb } from "../public-web.ts";
 import { nativePushAdapters, PushService } from "../push.ts";
 import { RoutinesService } from "../routines.ts";
@@ -83,7 +84,7 @@ import {
 } from "./computer-jobs.ts";
 import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
 import { delegatedContext } from "./delegated-context.ts";
-import { ExecutionProfiles } from "./execution-profiles.ts";
+import { ExecutionProfiles, profileWorkspaceOptions } from "./execution-profiles.ts";
 import { analyzeSpending } from "./finance.ts";
 import type { KanbanExecution } from "./kanban-tools.ts";
 import { KanbanWorkflow } from "./kanban-workflow.ts";
@@ -862,16 +863,30 @@ export class AgentService {
         // These declared contracts still need their actual provisioner/judge.
         // Never dispatch them as an ordinary local task and report completion.
         const pending = [
-          card.project && "project registry",
           card.goalMode && "goal",
           card.completionContract && card.completionContract !== "local-only" && "PR/CI",
-          (card.model || card.provider) && "model override",
-          card.skills?.length && "skill binding",
           card.maxRuntimeSeconds && "physical runtime budget",
           card.goalMaxTurns && "goal turn budget",
         ].filter(Boolean);
         if (pending.length)
           throw new AppError(`This card requires ${pending.join(", ")} dispatcher support`, 409);
+        const project =
+          card.project && profileWorkspaceOptions(profile).resolveProject(card.project);
+        if (card.project && !project)
+          throw new AppError(
+            `Project ${card.project} is not registered in execution profile ${profile.id}`,
+            409,
+          );
+        const requestedModel = card.model ?? profile.model;
+        const selected = requestedModel
+          ? await executionModelSelection(
+              this.db,
+              this.config,
+              owner,
+              requestedModel,
+              card.provider,
+            )
+          : undefined;
         if ((await this.db.unfinishedTaskCount(owner)) >= 100)
           throw new AppError("Finish or cancel some tasks before adding more", 409);
         const id = nativeId(run.id);
@@ -886,7 +901,12 @@ export class AgentService {
           cardId,
           profile: profileName,
           runId: run.id,
-          workspace: kanbanWorkspaceIntent(board, card),
+          workspace: kanbanWorkspaceIntent(board, card, project || undefined),
+          configuration: {
+            profileRevision: profile.revision,
+            ...(selected?.model && { model: selected.model }),
+            skills: [...new Set([...(profile.skills ?? []), ...(card.skills ?? [])])],
+          },
         };
         return {
           nativeTaskId: id,

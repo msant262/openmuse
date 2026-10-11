@@ -71,6 +71,40 @@ export async function modelSelection(db: Store, config: Config, owner: string) {
   };
 }
 
+/** A declared execution model must resolve to an available connected route.
+ * Do not silently discard an override or substitute an unrelated fallback. */
+export async function executionModelSelection(
+  db: Store,
+  config: Config,
+  owner: string,
+  requested?: string,
+  provider?: string,
+) {
+  if (!requested) return modelSelection(db, config, owner);
+  let model: string;
+  if (/^[^/:\s]+[/:]/.test(requested)) {
+    const parsed = modelSpec(requested);
+    if (provider && parsed.provider !== provider.trim().toLowerCase())
+      throw new AppError("The requested model and provider do not match", 422);
+    model = canonicalModel(requested);
+  } else {
+    const selected = await modelSelection(db, config, owner);
+    const backend =
+      provider?.trim().toLowerCase() ??
+      (selected.model ? modelSpec(selected.model).provider : undefined);
+    if (!backend) throw new AppError("Choose a connected provider for the requested model", 422);
+    model = canonicalModel(`${backend}/${requested.trim()}`);
+  }
+  const preferences = await modelPreferences(db, config, owner);
+  if (!preferences.models.some((item) => item.id === model && item.available))
+    throw new AppError(
+      `Execution model ${model} is unavailable; choose an available model from your connected providers`,
+      422,
+      "MODEL_NOT_AVAILABLE",
+    );
+  return { model, fallbacks: [] as string[] };
+}
+
 export function modelPreferenceRoutes(db: Store, config: Config) {
   const app = new Hono<{ Variables: { owner: string } }>();
   app.get("/models/preferences", async (c) => {

@@ -8,6 +8,46 @@ import { taskCriteria } from "../apps/server/src/engine/task-verification.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
+test("explanations about actions require a response, while independent execution still requires receipts", () => {
+  for (const prompt of [
+    "Explain how to organize a daily schedule.",
+    "Me explica como organizar melhor o dia quando tenho trabalho, estudo e exercício.",
+    "Explique como criar um evento no calendário.",
+    "Explain how to edit a document in Google Docs.",
+    "Explique como excluir um email no Gmail.",
+  ]) {
+    const criteria = taskCriteria({ kind: "agent", prompt });
+    assert.ok(!criteria.some((entry) => entry.kind === "receipt"), prompt);
+    assert.ok(
+      criteria.some((entry) => entry.kind === "response"),
+      prompt,
+    );
+  }
+  for (const prompt of [
+    "Explain how to create an event. Then create an event on my calendar for tomorrow.",
+    "Explique como excluir um evento; depois exclua o compromisso de amanhã.",
+    "Explique como atualizar documentos e depois atualize o documento no Google Docs.",
+    "Explain how to book a hotel. Then book the hotel for tomorrow.",
+  ])
+    assert.ok(
+      taskCriteria({ kind: "agent", prompt }).some((entry) => entry.kind === "receipt"),
+      prompt,
+    );
+});
+
+test("an explanatory request still preserves its explicitly requested output file", () => {
+  for (const prompt of [
+    "Explain how to organize a daily schedule and deliver a PDF with the explanation.",
+    "Explique como organizar o dia e me entregue um PDF com os exemplos.",
+  ])
+    assert.ok(
+      taskCriteria({ kind: "agent", prompt }).some(
+        (entry) => entry.kind === "file" && entry.format === "application/pdf",
+      ),
+      prompt,
+    );
+});
+
 test("a successful-looking browser receipt with an unanswered dialog cannot complete the task", async (t) => {
   const server = await taskRuntime(t);
   const task = await server.agent.createTask("owner", {

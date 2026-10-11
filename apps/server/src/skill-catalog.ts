@@ -295,6 +295,36 @@ export class SkillCatalog {
     return this.readFromRoot(await this.root(source, owner), source, name, new Set(toolNames));
   }
 
+  /** Explicitly assigned guides are loaded once before inference; ordinary
+   * discovery continues to expose metadata without loading every guide. */
+  async preload(owner: string, requested: readonly string[], toolNames: readonly string[]) {
+    const guides: SkillRead[] = [];
+    const seen = new Set<string>();
+    let inventory: Awaited<ReturnType<SkillCatalog["inventory"]>> | undefined;
+    for (const name of requested) {
+      let id = name.trim();
+      if (!id.includes(":")) {
+        inventory ??= await this.inventory(owner, toolNames);
+        const matches = inventory.skills.filter((entry) => entry.name === id);
+        if (matches.length !== 1)
+          throw new Error(
+            `Assigned workflow ${name} is ${matches.length ? "ambiguous; use its complete skill ID" : "unavailable with the current tools"}`,
+          );
+        id = matches[0].id;
+      }
+      if (seen.has(id)) continue;
+      try {
+        guides.push(await this.read(owner, id, toolNames));
+      } catch (error) {
+        throw new Error(
+          `Assigned workflow ${name} could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      seen.add(id);
+    }
+    return guides;
+  }
+
   /** Bounded descriptions let the original OpenClaw selector choose a workflow.
    * Instruction bodies and filesystem paths are never included in this catalog. */
   async prompt(owner: string, toolNames: readonly string[]) {

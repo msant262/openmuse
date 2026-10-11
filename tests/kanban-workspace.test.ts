@@ -4,6 +4,7 @@ import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
+import { profileWorkspaceOptions } from "../apps/server/src/engine/execution-profiles.ts";
 import { KanbanWorkflow } from "../apps/server/src/engine/kanban-workflow.ts";
 import {
   kanbanWorkspaceIntent,
@@ -47,16 +48,23 @@ test("a global pause at the final commit preserves the receipt without publishin
   );
 });
 
-async function fixture(t: TestContext, workspace: Record<string, unknown> = {}) {
+async function fixture(
+  t: TestContext,
+  workspace: Record<string, unknown> = {},
+  profileConfig: Record<string, unknown> = {},
+) {
   const f = await taskRuntime(t, { computerEnabled: true });
   const root = join(f.directory, "physical-workspace");
   await mkdir(root);
   await f.agent.executionProfiles.set("owner", "default", {
     expectedRevision: 0,
     requestId: "enable",
-    profile: { toolsets: ["kanban"], board: "pipeline" },
+    profile: { toolsets: ["kanban"], board: "pipeline", ...profileConfig },
   });
-  const board = new KanbanWorkflow(f.db, "owner", "pipeline", { profileExists: () => true });
+  const board = new KanbanWorkflow(f.db, "owner", "pipeline", {
+    profileExists: () => true,
+    ...profileWorkspaceOptions(await f.agent.executionProfiles.get("owner")),
+  });
   const card = await board.create(
     { role: "orchestrator", profile: "default" },
     {
@@ -91,6 +99,58 @@ async function fixture(t: TestContext, workspace: Record<string, unknown> = {}) 
   );
   return { ...f, root, board, card, native, mkdirCalls: () => mkdirCalls };
 }
+
+test("a registered default project is dispatched into its physical worktree and project branch", async (t) => {
+  const f = await fixture(
+    t,
+    {},
+    {
+      projects: [{ id: "application", slug: "app", primaryPath: "/workspace/repository" }],
+      defaultProject: "application",
+    },
+  );
+  const repo = join(f.root, "repository");
+  await mkdir(repo);
+  await exec("git", ["init", "-b", "main"], { cwd: repo });
+  await exec(
+    "git",
+    [
+      "-c",
+      "user.name=QA",
+      "-c",
+      "user.email=qa@example.invalid",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "fixture",
+    ],
+    { cwd: repo },
+  );
+  const worker = new TaskWorker(f.db, async (owner, task, ctx) => {
+    const prepared = await prepareKanbanWorkspace(f.agent, owner, task, ctx);
+    assert.equal(prepared?.cwd, `/workspace/repository/.worktrees/${f.card.id}`);
+    const branch = (
+      await exec("git", ["branch", "--show-current"], { cwd: join(repo, ".worktrees", f.card.id) })
+    ).stdout.trim();
+    assert.equal(branch, f.card.branchName);
+    assert.match(branch, /^app\//);
+    await writeFile(join(repo, ".worktrees", f.card.id, "proof.txt"), "project execution");
+    return { status: "waiting_input" };
+  });
+  t.after(() => worker.stop());
+  await worker.tick();
+  const task = await f.agent.getTask("owner", f.native.id);
+  assert.equal(task.status, "waiting_input", task.error ?? task.question);
+  assert.equal(f.card.project, "application");
+  assert.equal(
+    (await exec("git", ["branch", "--show-current"], { cwd: repo })).stdout.trim(),
+    "main",
+  );
+  assert.equal(
+    await readFile(join(repo, ".worktrees", f.card.id, "proof.txt"), "utf8"),
+    "project execution",
+  );
+});
 
 test("native worker provisions a stable scratch workspace and recovers its committed binding", async (t) => {
   const f = await fixture(t);

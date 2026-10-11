@@ -5,7 +5,7 @@ import { computerCommandCleanupConfirmed } from "../computer-contract.ts";
 import { bindingHash } from "../conversation-inbox.ts";
 import { AppError } from "../errors.ts";
 import type { KanbanExecution } from "./kanban-tools.ts";
-import type { KanbanCard } from "./kanban-workflow.ts";
+import type { KanbanCard, KanbanProject } from "./kanban-workflow.ts";
 import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
 import type { AgentService } from "./service.ts";
 import { TaskOutcomeUnknownError, taskOperationId } from "./task-journal.ts";
@@ -20,13 +20,21 @@ export type KanbanWorkspace = {
 
 /** Intent is staged atomically with the native task; no physical effect occurs
  * while claiming a card. Only its admitted native worker may provision it. */
-export function kanbanWorkspaceIntent(board: string, card: KanbanCard): KanbanWorkspace {
+export function kanbanWorkspaceIntent(
+  board: string,
+  card: KanbanCard,
+  project?: KanbanProject,
+): KanbanWorkspace {
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(board) || !/^[A-Za-z0-9_-]+$/.test(card.id))
     throw new AppError("Invalid task workspace identity", 422);
   const kind = card.workspaceKind ?? "scratch";
   const requestedPath =
     card.workspacePath ??
-    (kind === "scratch" ? `/workspace/.okami/kanban/${board}/workspaces/${card.id}` : undefined);
+    (kind === "scratch"
+      ? `/workspace/.okami/kanban/${board}/workspaces/${card.id}`
+      : kind === "worktree" && project?.primaryPath
+        ? `${project.primaryPath}/.worktrees/${card.id}`
+        : undefined);
   if (!requestedPath)
     throw new AppError(
       "A directory or worktree requires an explicit workspace/repository path",
@@ -35,7 +43,9 @@ export function kanbanWorkspaceIntent(board: string, card: KanbanCard): KanbanWo
   return {
     kind,
     requestedPath: workspacePath(requestedPath),
-    ...(kind === "worktree" && { branchName: card.branchName ?? `wt/${card.id}` }),
+    ...(kind === "worktree" && {
+      branchName: card.branchName ?? `${project?.slug ?? "wt"}/${card.id}`,
+    }),
   };
 }
 

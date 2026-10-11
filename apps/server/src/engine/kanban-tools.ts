@@ -6,6 +6,7 @@ import {
   completionAssessmentSchema,
 } from "../../../../packages/domain/src/runtime.ts";
 import { AppError } from "../errors.ts";
+import { profileWorkspaceOptions } from "./execution-profiles.ts";
 import { kanbanToolSchemas } from "./hermes/kanban-tool-schemas.ts";
 import { KanbanArtifacts } from "./kanban-artifacts.ts";
 import {
@@ -26,6 +27,7 @@ export type KanbanExecution = {
   profile: string;
   runId: string;
   workspace?: KanbanWorkspace;
+  configuration?: { profileRevision: number; model?: string; skills: string[] };
 };
 export type KanbanHandoffVerification = { completion: CompletionAssessment; revision: number };
 export type KanbanTaskSurface = {
@@ -111,6 +113,7 @@ export async function kanbanTaskTools(
   );
   const workflow = (board = activeBoard) =>
     new KanbanWorkflow(service.db, owner, board, {
+      ...profileWorkspaceOptions(profile),
       profileExists: (name) => service.executionProfiles.exists(owner, name),
       storeAttachment: (...args) => artifacts.store(...args),
       beforeHandoff: async (...args) => {

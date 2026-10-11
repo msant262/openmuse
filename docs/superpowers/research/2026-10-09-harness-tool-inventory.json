@@ -936,9 +936,31 @@
         "Registered native OS rollout, durable conversation delivery and normal public-chat acceptance.",
         "Full Google Workspace, factual research, sustained mobile performance and whole-harness acceptance."
       ]
+    },
+    {
+      "surface": "kanban.authenticated-execution-config-and-explanation-round71",
+      "caseAcceptance": "local-worker-config-and-instruction-intent",
+      "acceptanceApproved": false,
+      "productionEnabled": false,
+      "published": false,
+      "verified": [
+        "Registered projects/default directories reach native creation and physical Git worktree provisioning.",
+        "Available card model overrides profile/account model; provider mismatches and unavailable routes cannot leave claims or queue orphans.",
+        "Assigned complete skill bodies load before first inference; ambiguous/missing/cross-owner guides retain their barriers.",
+        "Two lost-ACK recovery paths work after provider disconnection without another model turn, mkdir, source read or board mutation.",
+        "Explanation clauses do not require unwanted external actions; separate execution and explicit PDF outputs remain required.",
+        "140 focused controls in 15 files; TypeScript/server/assets/copied-harness builds and lint without errors.",
+        "Public root/API 200 and three healthy containers verified at 12:19:44 UTC; API image remains c0c2c9ec."
+      ],
+      "pending": [
+        "Declared physical runtime budget, goal/PR/CI and complete cross-profile project inheritance.",
+        "Automatic dispatch and original conversation delivery.",
+        "Native OS rollout and normal public-chat acceptance.",
+        "Complete factual research, all Workspace operations and sustained performance."
+      ]
     }
   ],
-  "updatedAt": "2026-10-11T11:53:02.676629+00:00",
+  "updatedAt": "2026-10-11T12:21:04.298735+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

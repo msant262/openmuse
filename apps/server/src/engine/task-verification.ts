@@ -253,12 +253,30 @@ function mailInstructionText(prompt: string) {
   );
 }
 
+/** Instructional clauses describe an action; they do not request its effect.
+ * Keep separately requested execution, including “then” continuations. */
+function effectInstructionText(prompt: string) {
+  const clauses = prompt.split(
+    /[.!?;](?:\s+|$)|\n|\b(?:and\s+then|e\s+depois|em\s+seguida|depois|then)\b/i,
+  );
+  const explanatory = (clause: string) =>
+    /^\s*(?:(?:please|me|por\s+favor|can\s+you|could\s+you)\s+)*(?:explain|explique|explica|how\s+(?:do|can)\s+i|como\s+(?:posso|faço|faco))\b/i.test(
+      clause,
+    );
+  return {
+    explanation: clauses.some(explanatory),
+    text: clauses.filter((clause) => !explanatory(clause)).join("\n"),
+  };
+}
+
 export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): CompletionCriterion[] {
   // Account selectors and resource URLs are identifiers, not product/action
   // instructions. In particular, gmail.com must not turn an event into mail.
-  const prompt = mailInstructionText(task.prompt)
-      .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, " ")
-      .replace(/https?:\/\/[^\s<>"'“”‘’]+/gi, " "),
+  const sourcePrompt = mailInstructionText(task.prompt)
+    .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, " ")
+    .replace(/https?:\/\/[^\s<>"'“”‘’]+/gi, " ");
+  const instruction = effectInstructionText(sourcePrompt);
+  const prompt = instruction.text,
     criteria: CompletionCriterion[] = [],
     content = requiredContent(task.prompt).items;
   const remoteGoogleDocument =
@@ -272,7 +290,7 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     );
   const fileDelivery =
     /\b(?:deliver|download|attachment|entregue|entregar|baixe|baixar|anexe|anexo|envie|enviar)\b/i.test(
-      prompt,
+      sourcePrompt,
     );
   const editTarget =
     /\b(?:in|within|no|na|arquivo|file)\s+(?:the\s+)?["'`]?([\p{L}\p{N}_./-]+\.(?:txt|csv|md|json|ya?ml|toml|ini|ts|tsx|js|jsx|py))\b/iu.exec(
@@ -390,12 +408,12 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       prompt,
     );
   const namedOutput =
-    requestedOutputFormat(prompt) ??
+    requestedOutputFormat(sourcePrompt) ??
     (/\b(?:leia|read|narre|narrate)\b.{0,100}\b(?:voz\s+alta|aloud)\b/i.test(prompt) &&
     !/\b(?:n[aã]o|not|como|how)\b/i.test(prompt.split(/[.!?]/)[0])
       ? "mp3"
       : undefined);
-  const formatPrompt = namedOutput ?? prompt;
+  const formatPrompt = namedOutput ?? sourcePrompt;
   const format = /\bpdf\b/i.test(formatPrompt)
     ? "application/pdf"
     : /\bdocx\b/i.test(formatPrompt)
@@ -444,8 +462,8 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
   else if (
     !remoteGoogleDocument &&
     (!literalFileEdit || fileDelivery) &&
-    requestedFileOutput(prompt, mailRequest) &&
-    /\b(pdf|docx|xlsx|pptx|txt|csv|arquivo|file|document|documento)\b/i.test(prompt)
+    requestedFileOutput(sourcePrompt, mailRequest) &&
+    /\b(pdf|docx|xlsx|pptx|txt|csv|arquivo|file|document|documento)\b/i.test(sourcePrompt)
   )
     criteria.push({
       id: "requested-file",
@@ -608,6 +626,16 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
       description:
         "Report the exact installed browser version from a current Browser.getVersion receipt. A title or console read does not establish the version.",
       requiredItems: [],
+    });
+  if (
+    instruction.explanation &&
+    !criteria.some((entry) => ["file", "artifact", "response"].includes(entry.kind))
+  )
+    criteria.push({
+      id: "requested-explanation",
+      kind: "response",
+      description: "The requested explanation is delivered in the response",
+      requiredItems: content,
     });
   return pythonTaskCriteria(
     task,

@@ -63,9 +63,9 @@ import { documentArgs, imageArgs, mediaInstructionGroups, mediaTools } from "../
 import { buildProfileContext } from "../profile-context.ts";
 import { browserImageReference } from "../providers/browser-images.ts";
 import { modelProviderConfig } from "../providers/config.ts";
-import { routingCapabilities } from "../providers/model-capabilities.ts";
+import { canonicalModel, routingCapabilities } from "../providers/model-capabilities.ts";
 import type { ProviderContinuationCheckpoint } from "../providers/models.ts";
-import { modelSelection, selectionContextModel } from "../providers/preferences.ts";
+import { executionModelSelection, selectionContextModel } from "../providers/preferences.ts";
 import {
   publicSourceReadDescription,
   publicSourceReadSchema,
@@ -113,7 +113,18 @@ export async function executeModelTask(
     service.composio && (await service.composio.backend.status(owner)).configured
       ? service.composio
       : undefined;
-  const selection = await modelSelection(service.db, service.config, owner);
+  const execution = await service.db.get<KanbanExecution>(owner, "kanban-executions", initial.id);
+  const executionProfile = await service.executionProfiles.get(
+    owner,
+    execution?.profile ?? "default",
+  );
+  const requestedModel = execution?.configuration?.model ?? executionProfile.model;
+  // A committed handoff must be recoverable from native receipts even if the
+  // inference provider later disconnects. Validate its route only for inference.
+  const selection = requestedModel
+    ? { model: canonicalModel(requestedModel), fallbacks: [] as string[] }
+    : await executionModelSelection(service.db, service.config, owner);
+  let modelConfigurationValidated = !requestedModel;
   const config = { ...service.config, model: selection.model, modelFallbacks: selection.fallbacks };
   if (!config.model)
     return {
@@ -2663,6 +2674,19 @@ export async function executeModelTask(
     }
     if (outcome) return outcome;
   }
+  let assignedSkills: Awaited<ReturnType<SkillCatalog["preload"]>>;
+  try {
+    assignedSkills = await workflowCatalog.preload(
+      owner,
+      execution?.configuration?.skills ?? executionProfile.skills ?? [],
+      tools.map((entry) => entry.name),
+    );
+  } catch (error) {
+    return {
+      status: "waiting_input",
+      question: `${error instanceof Error ? error.message : String(error)}. Check the assigned workflow in execution profile ${executionProfile.id}; saved work is preserved.`,
+    };
+  }
   const missingProcedureTools = await service.playbooks.missingTools(
     owner,
     task.input,
@@ -3032,6 +3056,18 @@ export async function executeModelTask(
     },
     onMessages: async (messages, phase) => {
       if (phase !== "beforeModel") return;
+      if (!modelConfigurationValidated) {
+        try {
+          await executionModelSelection(service.db, service.config, owner, requestedModel);
+          modelConfigurationValidated = true;
+        } catch (error) {
+          outcome = {
+            status: "waiting_input",
+            question: `${error instanceof Error ? error.message : String(error)}. Check the model connection for execution profile ${executionProfile.id}; saved work is preserved.`,
+          };
+          throw error;
+        }
+      }
       task = await service.actor.apply(owner, task, ctx);
       const criteria = pythonTaskCriteria(task, task.criteria ?? taskCriteria(task));
       if (JSON.stringify(criteria) !== JSON.stringify(task.criteria))
@@ -3095,11 +3131,19 @@ export async function executeModelTask(
     model: config.model,
     fallbacks: config.modelFallbacks,
     providers: config.modelProviders ?? modelProviderConfig(config.dataDir),
-    skillsPrompt: () =>
-      workflowCatalog.prompt(
-        owner,
-        tools.map((tool) => tool.name),
-      ),
+    skillsPrompt: async () =>
+      [
+        await workflowCatalog.prompt(
+          owner,
+          tools.map((tool) => tool.name),
+        ),
+        ...(assignedSkills.length
+          ? [
+              "Assigned workflow guidance follows. These guides grant no additional tools, credentials or authority.",
+              JSON.stringify(assignedSkills),
+            ]
+          : []),
+      ].join("\n"),
     promptContext: async (selectedTools) =>
       (service.composio && !appCatalog
         ? "The optional app catalog is unavailable. Never request a Composio platform API key. Use configured native tools for the request instead.\n"

@@ -146,6 +146,7 @@ export class KanbanWorkflow {
       leaseMs?: number;
       profileExists: (profile: string) => boolean | Promise<boolean>;
       defaultProject?: string;
+      defaultWorkdir?: string;
       resolveProject?: (
         project: string,
         scope: KanbanScope,
@@ -959,13 +960,15 @@ export class KanbanWorkflow {
       (!posix.isAbsolute(project.primaryPath) || project.primaryPath.includes("\0"))
     )
       throw new AppError("Configured project requires an absolute workspace path", 400);
-    let kind = input.workspaceKind ?? "scratch";
+    let kind = input.workspaceKind ?? (this.options.defaultWorkdir && !project ? "dir" : "scratch");
     if (project?.primaryPath && kind === "scratch") kind = "worktree";
     const path =
       input.workspacePath ??
       (kind === "worktree" && project?.primaryPath
         ? posix.join(project.primaryPath, ".worktrees", id)
-        : undefined);
+        : kind === "dir"
+          ? this.options.defaultWorkdir
+          : undefined);
     if (kind !== "scratch" && !path)
       throw new AppError("An absolute workspace path or configured project is required", 400);
     const titleSlug = input.title
