@@ -325,19 +325,13 @@
         "actual UI cancellation of a background Python command interrupts its owned process; original PIDs disappear and no late final file appears",
         "cancelled host primitive autonomously reconciles from the verified physical receipt without changing original native operation records"
       ],
-      "pending": [
-        "broader Hermes/OpenClaw tool parity and performance acceptance"
-      ],
+      "pending": ["broader Hermes/OpenClaw tool parity and performance acceptance"],
       "acceptanceApproved": false,
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
     },
     {
-      "tools": [
-        "image_generate",
-        "web_search",
-        "web_extract"
-      ],
+      "tools": ["image_generate", "web_search", "web_extract"],
       "caseAcceptance": "verified",
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "verified": [
@@ -347,19 +341,11 @@
         "original image delivered in 89.029 seconds and inspected in the published viewer",
         "independent pixels confirm legibility, three examples and the source footer"
       ],
-      "pending": [
-        "broader media/task coverage and sustained physical-device performance"
-      ],
+      "pending": ["broader media/task coverage and sustained physical-device performance"],
       "acceptanceApproved": false
     },
     {
-      "tools": [
-        "create_document",
-        "inspect_document",
-        "memory",
-        "skill_manage",
-        "execute_code"
-      ],
+      "tools": ["create_document", "inspect_document", "memory", "skill_manage", "execute_code"],
       "caseAcceptance": "verified",
       "apiSource": "6b5500353b731449cd53bbf59566f956a1463659",
       "verified": [
@@ -378,14 +364,8 @@
       "acceptanceApproved": false
     },
     {
-      "tools": [
-        "text_to_speech",
-        "transcribe"
-      ],
-      "upstreamCapability": [
-        "Hermes text_to_speech",
-        "OpenClaw Microsoft tts provider"
-      ],
+      "tools": ["text_to_speech", "transcribe"],
+      "upstreamCapability": ["Hermes text_to_speech", "OpenClaw Microsoft tts provider"],
       "caseAcceptance": "verified",
       "apiSource": "d733ef64b97b2cc3cabecedecdef93eb2715931b",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72",
@@ -705,49 +685,92 @@
         "Fourteen private remote evidence files hash-matched; original and later full task snapshot differ only in signed file URL, with operations and execution steps equal."
       ],
       "pending": [
-        "Publish workflow and frontend fixes; repeat unchanged normal Luna request after the justified repair and independently verify requested facts against actual source reads and PDF.",
-        "Native semantic completion remains incomplete; whole-harness, all Workspace operations and sustained physical-mobile acceptance remain false."
+        "Latest published repeat QA64 remains factually rejected; native semantic completion, whole-harness, all Workspace and sustained physical-mobile acceptance remain false."
       ],
       "localSource": "4f8163da5413f4b87a10a00a5af5ec137564fb93",
       "apiSource": "eab48171099b943f08e359c2c1fe86a4107db4d0",
       "failed": [
         "Google and IBM item language still inferred from page language. IBM language was rejected in the first assessment but remained unverified in the passing replacement.",
-        "Microsoft sources remained truncated and full preserved text was not recovered before absence claims. Original completion criteria still require only physical PDF with empty requiredItems.",
-        "An actual loaded research workflow still instructed accepting unknown fields after one read. Corrected in 59721605; new source is not yet published or naturally accepted."
+        "Microsoft saved sources remain marked upstream-truncated; absence of explicit read_web_source is not proof that automatic cached-text projection did not run. Actual provider input was not captured. No proof of relevant-path exhaustion before absence claims; original native criteria still require only a physical PDF with empty requiredItems.",
+        "Historical QA63 loaded workflow still accepted unknown facts after one read; corrected in 59721605 and published D888. QA64 factual acceptance still fails."
       ]
     },
     {
       "surface": "research.actual-loaded-workflow-round64",
       "implementationSource": "597216050a3a1612bffcef1899d38aa9166ed4c1",
-      "caseAcceptance": "local-validation-publication-and-normal-acceptance-pending",
+      "caseAcceptance": "published-normal-luna-factual-failure",
       "acceptanceApproved": false,
-      "productionEnabled": false,
+      "productionEnabled": true,
       "verified": [
         "Conflict reproduced in actual selected workflow output before fix; keep requested facts open while useful research/replacement exists.",
         "Workflow explicitly handles truncated preserved text with read_web_source and spill.fileId, without another network request.",
-        "17/17 focused controls, final first-context rerun, root TypeScript, asset copy and embedded harness build pass; exact source and log hashes retained."
+        "17/17 focused controls, final first-context rerun, root TypeScript, asset copy and embedded harness build pass; exact source and log hashes retained.",
+        "Published actual workflow in API D888; unchanged ordinary composer request ran exclusively on Luna, delivered a real PDF and resolved selected IBM languages/duration."
       ],
       "pending": [
-        "Publish and run unchanged ordinary Luna task; instruction controls do not prove autonomous factual behavior."
-      ]
+        "Normal research still fails selected Google item-language/free-credential support and latency; 333.319 seconds with forty Luna responses."
+      ],
+      "apiSource": "d888233511d49ea86fb47a0a7f93e5405a47c88e"
     },
     {
       "surface": "frontend.saved-thread-stale-draft-round64",
       "implementationSource": "6b295f5230918bdbef884901643fce239726381c",
-      "caseAcceptance": "local-validation-publication-and-ui-acceptance-pending",
-      "acceptanceApproved": false,
-      "productionEnabled": false,
+      "caseAcceptance": "published-narrow-sidebar-case-pass",
+      "acceptanceApproved": true,
+      "productionEnabled": true,
       "verified": [
         "Actual QA thread absent from server protected IDs still appeared by local visited/cached-title fallback.",
         "Reproduced old classification before fix. Existing saved threads outside a returned server page cannot become local drafts; actual unsent drafts are retained, without deleting caches or user data.",
-        "5/5 focused controls, root/mobile TypeScript and final changed-file lint pass, with two existing unused-import warnings."
+        "5/5 focused controls, root/mobile TypeScript and final changed-file lint pass, with two existing unused-import warnings.",
+        "Exact web export public/internal HTML and bundle hashes matched. Actual published sidebar after QA cleanup retains the real saved conversation without retired QA entries. Protected database records separately unchanged."
       ],
       "pending": [
-        "Publish actual frontend and verify saved-thread cleanup/sidebar in published UI."
+        "Whole frontend UX and sustained physical-mobile performance remain unapproved; this approval covers only the saved-thread/draft classification and observed sidebar cleanup."
+      ],
+      "webSource": "d888233511d49ea86fb47a0a7f93e5405a47c88e"
+    },
+    {
+      "surface": "research.ordinary-pdf-round64",
+      "caseAcceptance": "published-physical-delivery-factual-failure",
+      "acceptanceApproved": false,
+      "productionEnabled": true,
+      "apiSource": "d888233511d49ea86fb47a0a7f93e5405a47c88e",
+      "verified": [
+        "Unchanged actual normal composer request: 333.319 seconds, forty Luna responses, no independent reviewer, operator replies or manual task repair.",
+        "Actual 52399-byte PDF, three pages, downloaded content hash, extracted text and all raster pages inspected; no failed canonical operation.",
+        "Selected IBM credential source explicitly supplies languages and three-hour duration; Google durations and free limited Starter plan are observed.",
+        "Eight QA presentation records retired and one newly learned QA procedure archived; 1804 other scoped records identical and all protected data/accounts/memories/procedure versions preserved.",
+        "Eleven private remote execution/publication/cleanup evidence files hash-matched."
+      ],
+      "failed": [
+        "Google item language/full free access/badge cost still insufficiently supported; missing prices cannot prove zero fee.",
+        "First review rejected Google factual gaps; replacement passed despite remaining gaps.",
+        "Native criteria require physical PDF only, with empty requiredItems.",
+        "Latency worsened compared with QA63."
+      ],
+      "pending": [
+        "Correct actual factual completion and latency; repeat normal request after justified validated repair.",
+        "Public viewer navigation was not completed before QA cleanup; no navigation acceptance claim."
+      ]
+    },
+    {
+      "surface": "research.replacement-prior-rejection-context-round65",
+      "caseAcceptance": "local-validation-publication-and-normal-acceptance-pending",
+      "acceptanceApproved": false,
+      "productionEnabled": false,
+      "implementationSource": "0a9fd8e5d3efaeb325f8811b5ed7a4f00d4265d3",
+      "verified": [
+        "Red-before-fix mandatory replacement context lacks actual earlier rejected issue; final regression now retains exact model-visible file reference and actual prior issue.",
+        "Same-task successful operation receipts, current applied revision and real replaceFileId lineage determine historical rejection; obsolete selection gaps are not new requirements.",
+        "12/12 focused controls with zero failures/cancellations/skips, root TypeScript, server/assets/harness build and lint pass; two preexisting lint warnings.",
+        "No new model or independent review inference; immutable implementation/source/log hashes retained."
+      ],
+      "pending": [
+        "Publish and verify actual ordinary Luna behavior; context controls do not prove factual completeness or improved latency."
       ]
     }
   ],
-  "updatedAt": "2026-10-11T08:57:07.901028+00:00",
+  "updatedAt": "2026-10-11",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
@@ -777,9 +800,7 @@
         "kanban_unblock",
         "kanban_link"
       ],
-      "additionalRegisteredToolsOutsideCoreList": [
-        "kanban_schedule"
-      ],
+      "additionalRegisteredToolsOutsideCoreList": ["kanban_schedule"],
       "schedulingContract": "kanban_schedule parks the owned current run until an orchestrator unblocks it; it creates no timer and cannot bypass a goal-mode completion judge.",
       "note": "The pinned module registers fifteen kanban tools; kanban_schedule is outside the literal Hermes core list and remains in the required contract audit. Todo lists and child delegation do not implement dispatcher ownership, compare-and-swap run transitions, review/change states, structured handoffs, dependency routing, scheduling and attachments."
     },

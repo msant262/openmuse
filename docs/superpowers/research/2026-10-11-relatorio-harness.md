@@ -6,13 +6,13 @@
 
 | Estado | O que está nessa versão |
 | --- | --- |
-| App publicado: `eab48171` | Inclui a recuperação nativa `820c880b`, a política de campos comparativos `201b48df` e a revisão obrigatória de pedido/fontes `4f8163da`. Troca somente da API em 19,87 segundos, com parada limpa. |
-| Correção de pesquisa na main: `59721605` | Remove a instrução do workflow que aceitava campos sem confirmação após uma leitura. Explica a recuperação do texto completo preservado e a substituição de opções insuficientemente documentadas. **Ainda não publicada nem aprovada por novo pedido normal.** |
-| Correção da barra lateral na main: `6b295f52` | Conversa já salva que não aparece na página recebida do servidor deixa de ser recriada como rascunho local. **Ainda não publicada nem conferida na interface publicada.** |
+| API publicada: `d8882335` | Inclui as correções anteriores e o workflow de pesquisa `59721605`. Troca da API em **21,18 segundos**, com parada limpa. |
+| Frontend web publicado: `d8882335` | Inclui `6b295f52`: conversa salva ausente da página recebida deixa de ser recriada como rascunho. Os hashes do HTML e do JavaScript conferem no endereço público. A barra lateral publicada foi conferida após a limpeza: a conversa real permaneceu e as conversas de QA retiradas não reapareceram. |
+| Correção de revisão na main: `0a9fd8e5` | A revisão de um documento substituto recebe os problemas reais da revisão recusada anterior, ligados à mesma tarefa/revisão e à cadeia de substituição do arquivo. **Validada localmente; ainda não publicada nem aprovada por um pedido normal.** |
 
-A publicação preservou banco, configuração, identidade do navegador e contas. Imagem atual: `sha256:1bebf0f8385c620a7f4e77b456393d2585b79d0c57150b7b28b80b8ca08351f6`. A imagem anterior `201b48df` foi mantida para recuperação. O frontend não foi atualizado nessa troca da API.
+A publicação preservou banco, configuração, identidade do navegador e contas. Imagem atual da API: `sha256:ad4a211a98f420f005dfc06675d1ab0d1c7b5d595755f0afb876bc41e185d468`. A versão anterior `eab48171` foi mantida para recuperação. O APK não foi atualizado nesta rodada.
 
-Na última conferência registrada, API, navegador e OpenBao estavam saudáveis, sem tarefas, conversas, solicitações HTTP ou entregas nativas ativas. Permanecem **44 operações históricas incertas**, sem alteração artificial de resultado. Essa fotografia não comprova disponibilidade ou desempenho sustentados.
+Na conferência de **11/10/2026 às 09:15 UTC**, API, navegador e OpenBao estavam saudáveis, sem tarefas, conversas, solicitações HTTP ou entregas nativas ativas. Permanecem **44 operações históricas incertas**, sem alteração artificial de resultado. Essa fotografia não comprova disponibilidade ou desempenho sustentados.
 
 ## Último teste real: PDF entregue, pesquisa reprovada
 
@@ -22,19 +22,22 @@ Pedido enviado pelo compositor do app publicado, em conversa nova, sem citar fer
 
 | Medida | Resultado observado |
 | --- | --- |
-| Tempo desde o envio | **4min20,127s**; de 08:29:23,090 a 08:33:43,217 UTC. |
-| Modelo executor | **21 respostas de `chatgpt/gpt-6-luna`**, sem revisor independente ou modelo de fronteira. |
-| Documento | PDF real de **60.030 bytes e três páginas**; bytes, texto, imagens e navegação pelas três páginas conferidos. |
-| Entrega física | Aprovada. SHA-256 `67b68f11c0a4488f4f48fc576e2fb41626b326cb77717dfa3dd8e535bad1b459`. |
-| Pesquisa e conclusão | **Reprovadas**. A tarefa foi encerrada mesmo com campos pedidos sem comprovação suficiente. |
+| Tempo desde o envio | **5min33,319s**; de 09:03:59,047 a 09:09:32,366 UTC. |
+| Modelo executor | **40 respostas de `chatgpt/gpt-6-luna`**, sem revisor independente ou modelo de fronteira. |
+| Documento | PDF real de **52.399 bytes e três páginas**, `cursos-gratuitos-ia-generativa.pdf`; bytes, texto e imagens das três páginas conferidos. |
+| Entrega física | Aprovada. SHA-256 `35c7e39ed4005bf92eb7386d0d12dadb282990e13ff777d8c8a06d19092bc421`. Não foi completada a navegação pelo visualizador publicado antes da retirada dos dados de QA. |
+| Operações canônicas | Nenhuma operação falhou; houve dois documentos e duas revisões. |
+| Pesquisa e conclusão | **Reprovadas**. A tarefa foi encerrada com fatos pedidos sem comprovação suficiente. O tempo piorou em relação aos 4min20s da rodada anterior. |
 
-A primeira revisão do próprio executor detectou três problemas: confusão entre o curso Google e a trilha que concede o badge, idioma do item IBM sem confirmação e acesso/custo Google sem confirmação suficiente. O agente consultou outra página Google e criou um PDF substituto; a segunda revisão aprovou sem resolver a lacuna IBM. O PDF final ainda deriva idiomas do idioma da página. Também afirma ausência de detalhes na fonte Microsoft sem recuperar o texto completo, que estava truncado.
+A primeira revisão do próprio executor recusou o PDF porque os cursos Google não tinham idioma e gratuidade suficientemente confirmados. O agente consultou o plano Google e as páginas IBM, trocou uma opção e criou um PDF substituto. A segunda revisão aprovou, mas os campos Google ainda derivam idioma da página/material consultado, sem evidência do idioma do curso completo. A capa e a nota final afirmam acesso e credencial gratuitos enquanto remetem ao usuário a confirmação das condições dos labs. A ausência de preço anunciado não comprova credencial sem taxa.
 
-Os trechos reais sustentavam três currículos distintos, a duração Google de 45 minutos, a trilha de badge separada de cerca de duas horas, o intervalo IBM de três a dez horas, as 21 lições Microsoft e a tradução disponível para português brasileiro. Esses acertos não comprovam todos os campos solicitados.
+Houve progresso verificável: a página da **credencial IBM selecionada** informa expressamente os quatro idiomas e a duração de três horas. As fontes dos cursos Google informam 45 minutos e uma hora. O plano Starter Google existe sem custo e oferece créditos mensais limitados; essa política geral não prova as condições completas de cada curso/badge escolhido.
 
-O contrato canônico de conclusão exigia apenas um PDF válido, com `requiredItems` vazio. A revisão do executor passou a conferir conteúdo, mas ainda não estabelece uma verificação suficiente de completude factual. Houve três falhas de leitura pública e uma inspeção com identificador inválido; a tarefa seguiu sem perguntar ao usuário. A aprovação física não foi usada como aprovação do objetivo inteiro.
+O contrato canônico de conclusão ainda exige apenas um PDF válido, com `requiredItems` vazio. A revisão do executor não estabelece uma verificação suficiente de completude factual. A nova correção local preserva as falhas anteriores no contexto obrigatório da revisão; **isso não substitui uma verificação factual suficiente nem prova que o modelo corrigirá o resultado**.
 
-A evidência privada da rodada está em `artifacts/harness-parity-20261009/private-round63-vps`, fora do Git. Quatorze arquivos foram copiados com hashes iguais aos da VPS. O snapshot completo só diferia na URL temporária assinada do arquivo; as duas versões foram preservadas, com operações e etapas iguais. Manifesto: `round63-private-evidence-manifest.json`.
+A evidência está em `artifacts/harness-parity-20261009/research64-acceptance.json` e `private-round64-vps`, fora do Git. Onze arquivos privados de execução, publicação e limpeza foram copiados com hashes iguais aos da VPS, conforme `round64-private-evidence-manifest.json`.
+
+Corrigi também a interpretação de uma evidência anterior: não chamar `read_web_source` explicitamente não prova que o modelo recebeu só um trecho, porque a projeção do executor pode expandir automaticamente o cache elegível. A requisição real do provedor não foi capturada nessa rodada. A correção foi registrada separadamente, preservando os recibos originais; as lacunas factuais continuam reprovadas.
 
 ## Causas corrigidas e validação
 
@@ -43,8 +46,10 @@ A evidência privada da rodada está em `artifacts/harness-parity-20261009/priva
 | Leitura HTTP considerava FAQ sem respostas como completa | `841f4bf4`, já publicada: classifica a representação como parcial e permite recuperação. Quatro falhas reproduzidas antes; 70/70 controles depois. |
 | Política permitia encerrar campo pedido após uma leitura | `201b48df`, publicada: mantém o requisito enquanto houver detalhe, recuperação ou alternativa útil. Três falhas reproduzidas; 62/62 controles. Os pedidos normais posteriores continuaram reprovados factualmente. |
 | Revisão obrigatória conferia só aparência | `4f8163da`, publicada na imagem atual: inclui pedido real, orientações atuais, fontes observadas e total de páginas. 74 controles anteriores à paginação; nove controles finais de revisão/paginação, TypeScript e builds aprovados. Os grupos não são uma nova suíte completa da release. |
-| Workflow realmente carregado ainda contradizia a política geral | `59721605`, na main: orienta `read_web_source` com `spill.fileId` para recuperar trechos preservados, evita inferir idioma do item pela interface e mantém pesquisa/substituição úteis. A falha foi reproduzida no workflow entregue ao modelo; **17/17 controles** passaram, mais uma repetição final do caso de contexto. TypeScript, cópia dos assets e build do harness aprovados. Falta publicação e aceitação normal. |
-| Cache de conversa salva era classificado como rascunho | `6b295f52`, na main: só visitas ainda não salvas entram como rascunhos. Falha reproduzida antes; **5/5 controles**, TypeScript do projeto e mobile aprovados. Lint final sem erros, com dois avisos preexistentes. Não apaga cache nem dados do usuário. Falta publicação e aceitação visual. |
+| Workflow realmente carregado ainda contradizia a política geral | `59721605`, publicada: orienta `read_web_source` com `spill.fileId` para recuperar trechos preservados, evita inferir idioma do item pela interface e mantém pesquisa/substituição úteis. A falha foi reproduzida no workflow entregue ao modelo; **17/17 controles** passaram, mais uma repetição final do caso de contexto. TypeScript, cópia dos assets e build do harness aprovados. Publicação e novo pedido normal concluídos; a pesquisa continua reprovada factualmente. |
+| Cache de conversa salva era classificado como rascunho | `6b295f52`, publicada no web: só visitas ainda não salvas entram como rascunhos. Falha reproduzida antes; **5/5 controles**, TypeScript do projeto e mobile aprovados. Lint final sem erros, com dois avisos preexistentes. Não apaga cache nem dados do usuário. A interface publicada foi conferida após a limpeza, sem reconstruir as conversas de QA retiradas. Não aprova toda a UX. |
+
+A correção `0a9fd8e5` reproduziu a ausência dos problemas anteriores no contexto obrigatório da revisão substituta. **12/12 controles focados** passaram, com TypeScript, build do servidor, assets e harness aprovados. Lint sem erros, com dois avisos preexistentes. Não adiciona outro modelo ou uma revisão externa; publicação e resultado autônomo continuam pendentes.
 
 A integração nativa de kanban contém quinze schemas originais e contratos de journal/posse/retomada. A recuperação `820c880b` está publicada, com 78 controles focados. A suíte de **2.021 testes** pertence à árvore fixa C e exclui a última proteção de perfil e mudanças posteriores; não é uma aprovação completa da versão atual. Dispatcher real, execução física de worktrees/perfis, objetivos e CI do commit exato continuam pendentes.
 
@@ -67,16 +72,17 @@ Os casos têm resultados próprios; não representam aprovação integral do Wor
 
 ## Limpeza e preservação
 
-- Rodada mais recente: **oito registros de apresentação de QA** retirados — quatro arquivos, uma tarefa, uma conversa, uma notificação e uma entrada de inbox. **1.795 registros fora da seleção ficaram idênticos**. Os recibos canônicos foram preservados.
-- Companions, dados reais da Beatriz, **três contas Google simultâneas**, três memórias e 58 arquivos reais protegidos foram preservados. Os 32 registros de versões de procedimentos existentes ficaram iguais; nenhum procedimento novo de QA dessa rodada precisava ser arquivado.
-- VPS: removidas **três imagens API obsoletas** e seus três diretórios/arquivos de release, após conferir referências dos containers e **35.644 hashes de arquivos**. Liberação líquida observada de aproximadamente **1,31 GB**. Oito imagens atuais/de recuperação/serviços foram mantidas; volumes, backups, perfis nativos e recibos permaneceram intactos.
+- Rodada mais recente: **oito registros de apresentação de QA** retirados — quatro arquivos, uma tarefa, uma conversa, uma notificação e uma entrada de inbox. **1.804 registros fora da seleção ficaram idênticos**. Os recibos canônicos foram preservados.
+- Um procedimento aprendido exclusivamente nessa rodada de QA foi arquivado, de forma reversível. Os **32 registros de versões de procedimentos existentes** ficaram iguais.
+- Companions, dados reais da Beatriz, **três contas Google simultâneas**, três memórias e 58 arquivos protegidos foram preservados. A conferência também preservou duas conversas, três tarefas, duas ações e cinco atividades reais que já existiam antes do teste.
+- VPS, limpeza anterior: removidas **três imagens API obsoletas** e seus três diretórios/arquivos de release, após conferir referências dos containers e **35.644 hashes de arquivos**. Liberação líquida observada de aproximadamente **1,31 GB**. Volumes, backups, perfis nativos e recibos permaneceram intactos. A imagem atual e a recuperação continuam preservadas.
 - Local: três arquivos de release obsoletos removidos após conferência de hashes, liberando **159.584.256 bytes alocados**.
 - Rodadas anteriores: **12 APKs obsoletos** retirados, liberando **811.757.568 bytes alocados**, além de conversas, ações, revisões e documentos identificados como testes. Não houve nova retirada de APK nesta rodada.
-- Última conferência: **33.467.715.584 bytes livres na VPS**. A limpeza da base não removia a entrada reconstruída pelo cache local; a causa foi corrigida no código da barra lateral e ainda precisa ser publicada.
+- Após a nova publicação, **32.345.411.584 bytes livres na VPS**, aproximadamente 30,1 GiB. O número anterior de 33.467.715.584 bytes precedia os novos builds; a diferença não é uma nova liberação de espaço.
 
 ## Trabalho ainda necessário
 
-1. Publicar as duas novas correções da main e repetir o pedido normal com Luna, conferindo cada campo nas fontes reais e no documento entregue. Corrigir a conclusão que aceita somente a existência física do PDF.
+1. Corrigir a conclusão que aceita lacunas factuais e a demora da pesquisa. Publicar a correção local de contexto de revisão após a validação, repetir o pedido normal com Luna e conferir cada campo nas fontes e no documento. A publicação do workflow e da barra lateral já foi concluída.
 2. Completar os contratos restantes de Hermes/OpenClaw e validar seu uso autônomo, incluindo dispatcher, perfis/worktrees, objetivos, CI e execução programática do navegador. Nomes e schemas não bastam.
 3. Ampliar os testes pelo chat de todas as operações do Workspace, especialmente alterações/exclusões e os cards correspondentes. Os casos já aprovados não cobrem todas as ações possíveis.
 4. Medir performance sustentada no celular e sob uso repetido, incluindo consumo de RAM/GPU, carregamento incremental e crescimento das conversas.
