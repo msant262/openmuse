@@ -22,3 +22,6 @@ apps/mobile/google-services.json
 
 # Native worker JS compiled for distro Node builds without TS support.
 /native-dist/
+
+# Reproducible local PDF runtime/worker assets, generated before web export.
+apps/mobile/public/pdf-reader/

@@ -1,3 +1,8 @@
+The web PDF reader lazily loads locally bundled [PDF.js](https://github.com/mozilla/pdf.js),
+version 6.4.299, under the Apache License 2.0. Its worker, character maps, fonts,
+WebAssembly helpers and LICENSE are copied from the pinned `pdfjs-dist` package
+by `scripts/bundle-pdf-reader.mjs`. They are served by the app, without a CDN.
+
 The locally bundled 3D avatar renderer includes [Three.js](https://github.com/mrdoob/three.js),
 version 0.186.1, under the MIT license. Avatar models and animation code are authored in this
 repository. No external models, CDN scripts, remote services or paid asset licenses are used.

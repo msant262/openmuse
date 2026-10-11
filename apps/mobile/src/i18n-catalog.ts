@@ -9,6 +9,11 @@ import { museInterfacePTBR } from "./muse-interface-copy";
 
 /** Interface copy only. User messages, filenames and model output are never translated here. */
 export const ptBR: Record<string, string> = {
+  "Loading PDF…": "Carregando PDF…",
+  "PDF page {page} of {pages}": "Página {page} de {pages} do PDF",
+  "Open source: {url}": "Abrir fonte: {url}",
+  "Could not display this PDF. Try again or use Open / download.":
+    "Não foi possível exibir este PDF. Tente novamente ou use Abrir / baixar.",
   "Searching messages…": "Buscando mensagens…",
   "Loading the complete message…": "Carregando a mensagem completa…",
   "This is a preview. Try again to load the complete message.":

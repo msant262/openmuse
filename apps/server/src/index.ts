@@ -9,17 +9,39 @@ import { startModelTokenMaintenance } from "./providers/maintenance.ts";
 import { RequestDrain, shutdownServer } from "./shutdown.ts";
 import { LocalThreads } from "./threads.ts";
 
+let previousStartupMs = 0;
+const startupCheckpoint = (phase: string) => {
+  const elapsedMs = Math.round(process.uptime() * 1000);
+  console.info(
+    "[startup]",
+    JSON.stringify({
+      phase,
+      elapsedMs,
+      phaseMs: elapsedMs - previousStartupMs,
+      rssBytes: process.memoryUsage().rss,
+    }),
+  );
+  previousStartupMs = elapsedMs;
+};
+startupCheckpoint("modules-loaded");
 const config = readConfig();
+startupCheckpoint("configuration-read");
 const db = await createStore({
   dataDir: `${config.dataDir}/postgres`,
   databaseUrl: config.databaseUrl,
 });
+startupCheckpoint("store-ready");
 await db.recoverInterruptedActions();
+startupCheckpoint("interrupted-actions-recovered");
 await new ActionLog(db).reconcile(true);
+startupCheckpoint("actions-reconciled");
 const { app, agent, actions, threads, executors, codexConnection } = await createApp(db, config);
+startupCheckpoint("application-created");
 if (config.agentBackend === "model") await warmOpenclawHarness(config.dataDir);
+startupCheckpoint("harness-ready");
 const stopTokenMaintenance = startModelTokenMaintenance(config);
 if (config.taskWorkerEnabled) agent.start();
+startupCheckpoint("background-services-started");
 const requests = new RequestDrain();
 const server = serve(
   {
@@ -27,7 +49,10 @@ const server = serve(
     port: config.port,
     hostname: config.host,
   },
-  () => console.log(`OpenMuse ${config.mode} API ready at ${config.publicUrl}`),
+  () => {
+    startupCheckpoint("http-listening");
+    console.log(`OpenMuse ${config.mode} API ready at ${config.publicUrl}`);
+  },
 ) as Server;
 let stopping = false;
 const shutdown = async () => {

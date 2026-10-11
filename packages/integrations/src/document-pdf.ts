@@ -6,6 +6,7 @@ import {
   type DocumentBlock,
   type DocumentModel,
   type DocumentRun,
+  runsText,
 } from "./document-model.ts";
 import { PdfError } from "./pdf.ts";
 
@@ -238,7 +239,8 @@ export async function createDesignedPdf(
     coverMuted = contrastCover ? paper : muted;
   if (family === "briefing" && model.title) {
     const titleSize = model.design.cover ? 34 : 27;
-    const titleWidth = AREA * 0.6 - 28,
+    const hasMetadata = Boolean(model.design.eyebrow || model.design.subtitle);
+    const titleWidth = (hasMetadata ? AREA * 0.6 : AREA) - 28,
       metadataWidth = AREA * 0.4 - 28;
     const titles = plain(model.title, titleSize, titleWidth, display);
     const eyebrow = model.design.eyebrow
@@ -250,7 +252,8 @@ export async function createDesignedPdf(
       32;
     ensure(height);
     page.drawRectangle({ x: M, y: y - height, width: AREA, height, color: surface });
-    page.drawRectangle({ x: M + AREA * 0.6, y: y - height, width: 1, height, color: paper });
+    if (hasMetadata)
+      page.drawRectangle({ x: M + AREA * 0.6, y: y - height, width: 1, height, color: paper });
     const top = y - 16;
     titles.forEach((line, index) => {
       draw(line, M + 14, top - index * titleSize * 1.18, titleSize);
@@ -313,13 +316,66 @@ export async function createDesignedPdf(
     }
     if (model.blocks.length) newPage();
   }
+  const tableWidthCache = new WeakMap<DocumentBlock, number[]>();
+  const tableWidths = (table: Extract<DocumentBlock, { type: "table" }>) => {
+    const cached = tableWidthCache.get(table);
+    if (cached) return cached;
+    const count = table.headers.length;
+    const minimum = table.headers.map((header) =>
+      Math.min(
+        AREA / count,
+        Math.max(
+          18 + 8.7,
+          18 +
+            Math.max(
+              0,
+              ...lines(header, 8.7, AREA, bold)
+                .flat()
+                .map((part) => part.width),
+            ),
+        ),
+      ),
+    );
+    const weights = table.headers.map((header, index) =>
+      Math.sqrt(
+        Math.max(
+          1,
+          runsText(header).length +
+            table.rows.reduce((sum, row) => sum + runsText(row[index] ?? []).length, 0) /
+              Math.max(1, table.rows.length),
+        ),
+      ),
+    );
+    const widths = Array<number>(count).fill(0);
+    const remaining = new Set(weights.map((_, index) => index));
+    let available = AREA;
+    while (remaining.size) {
+      const sum = [...remaining].reduce((total, index) => total + weights[index], 0);
+      const constrained = [...remaining].filter(
+        (index) => (available * weights[index]) / sum < minimum[index],
+      );
+      if (!constrained.length) {
+        for (const index of remaining) widths[index] = (available * weights[index]) / sum;
+        break;
+      }
+      for (const index of constrained) {
+        widths[index] = minimum[index];
+        available -= widths[index];
+        remaining.delete(index);
+      }
+    }
+    tableWidthCache.set(table, widths);
+    return widths;
+  };
   const followingHeight = (next: DocumentBlock | undefined) => {
     if (!next) return 0;
     if (next.type === "table") {
-      const cw = AREA / next.headers.length;
+      const widths = tableWidths(next);
       const rowHeight = (cells: DocumentRun[][], head = false) =>
         Math.max(
-          ...cells.map((cell) => lines(cell, 8.7, cw - 18, head ? bold : undefined).length),
+          ...cells.map(
+            (cell, index) => lines(cell, 8.7, widths[index] - 18, head ? bold : undefined).length,
+          ),
           1,
         ) *
           13 +
@@ -484,9 +540,12 @@ export async function createDesignedPdf(
       });
       y -= 22;
     } else if (block.type === "table") {
-      const colWidth = AREA / block.headers.length;
+      const widths = tableWidths(block);
+      const offsets = widths.map((_, index) =>
+        widths.slice(0, index).reduce((sum, width) => sum + width, 0),
+      );
       const rowLines = (cells: DocumentRun[][], head = false) =>
-        cells.map((cell) => lines(cell, 8.7, colWidth - 18, head ? bold : undefined));
+        cells.map((cell, index) => lines(cell, 8.7, widths[index] - 18, head ? bold : undefined));
       const rowHeight = (cells: Line[][]) =>
         Math.max(...cells.map((cell) => cell.length), 1) * 13 + 18;
       const head = rowLines(block.headers, true),
@@ -503,7 +562,7 @@ export async function createDesignedPdf(
         });
         cells.forEach((cell, c) => {
           cell.forEach((line, i) => {
-            draw(line, M + c * colWidth + 9, y - 9 - i * 13, 8.7);
+            draw(line, M + offsets[c] + 9, y - 9 - i * 13, 8.7);
           });
         });
         y -= h;

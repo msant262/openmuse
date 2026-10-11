@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { DOMParser } from "@xmldom/xmldom";
 import JSZip from "jszip";
@@ -8,6 +9,57 @@ import { createDesignedPdf } from "../packages/integrations/src/document-pdf.ts"
 import { createDocumentPptx } from "../packages/integrations/src/document-pptx.ts";
 
 const layouts = ["editorial", "briefing", "signal"] as const;
+
+test("briefing without side metadata uses the title width instead of orphaning a short final note", async () => {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL("./fixtures/research-comparison-briefing.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const model = composeDocument(fixture.content, fixture.title, fixture.design);
+  const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const task = getDocument({
+    data: await createDesignedPdf(model),
+    useSystemFonts: false,
+    verbosity: 0,
+  });
+  try {
+    const pdf = await task.promise;
+    assert.equal(
+      pdf.numPages,
+      2,
+      "the short comparison must not use a third page for one final note",
+    );
+    let text = "";
+    const links: string[] = [];
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const page = await pdf.getPage(n);
+      text += (await page.getTextContent()).items
+        .filter((item) => "str" in item)
+        .map((item) => item.str)
+        .join(" ");
+      for (const annotation of await page.getAnnotations())
+        if (annotation.url) links.push(annotation.url);
+    }
+    for (const word of [
+      "Google",
+      "IBM",
+      "Microsoft",
+      "A IBM declara",
+      "sua página de credenciais descreve",
+    ])
+      assert.ok(text.includes(word), `the layout must preserve ${word}`);
+    for (const url of [
+      "https://www.skills.google/course_templates/536",
+      "https://skillsbuild.org/digital-credentials",
+      "https://microsoft.github.io/generative-ai-for-beginners",
+    ])
+      assert.ok(links.includes(url), `the source link must remain clickable: ${url}`);
+  } finally {
+    await task.destroy();
+  }
+});
 const content = `## Direction\n\nThe team can edit every sentence.\n\n\`\`\`metrics\n{"items":[{"label":"First measure","value":"12"},{"label":"Second measure","value":"24"},{"label":"Third measure","value":"36"}]}\n\`\`\``;
 const model = (layout: (typeof layouts)[number], cover = false) => ({
   ...composeDocument(content, "A clearer direction", { cover }),
