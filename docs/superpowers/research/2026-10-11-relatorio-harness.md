@@ -1,6 +1,25 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Estado atual — conferência das 19:30 UTC
+## Estado atual — conferência das 19:47 UTC
+
+**O harness completo ainda não está entregue.** Nesta conferência, a API
+pública respondeu HTTP 200 e os três containers estavam saudáveis. Main
+local e remota estão em `6a52bb50`; a API publicada permanece em `73a633cf`.
+
+| Situação | Resultado |
+| --- | --- |
+| Publicado e medido | Recuperação do desktop caiu de 60,580s para 1,300s; início do HTTP caiu de 79,188s para 18,784s. Ordem das imagens no histórico corrigida; leitor PDF publicado e duas páginas do último arquivo conferidas. |
+| Limpeza aplicada | Dez registros próprios do último QA recolhidos. Espaço livre na VPS aumentou cerca de 1,51 GiB com retirada de duas imagens antigas e seus contextos/releases. Dados reais, companions e três contas Google simultâneas preservados pelas comparações da rodada anterior. |
+| Teste normal pelo chat | Luna entregou um PDF sozinho em 10min05,348s, com 38 respostas e três versões. A entrega física passou; rapidez e comprovação factual integral falharam. |
+| Ajuste local ainda não publicado | Busca de vários campos e ocorrências na mesma fonte preservada, com orçamento compartilhado e continuação. **44/44 testes relacionados passaram**, sem falhas, cancelamentos ou ignorados; TypeScript, build e lint passaram. Código e testes ainda têm alterações locais, sem commit ou publicação deste ajuste. |
+| Ainda falta | Publicar e testar o novo ajuste por um pedido comum; resolver a revisão factual inconsistente e as chamadas/regenerações excessivas; validar desempenho no celular e carga sustentada; completar o aceite das ferramentas Hermes/OpenClaw, Google Workspace, memória, proatividade e UX. |
+
+[Evidência e alcance do ajuste local de pesquisa](2026-10-11-source-batch-search.md).
+As evidências detalhadas de publicação, teste normal, preservação e limpeza
+estão abaixo. A conferência de saúde atual é pontual, não um teste de
+estabilidade sustentada.
+
+## Histórico — conferência das 19:30 UTC
 
 **Ainda não terminou. A inicialização foi corrigida e medida na VPS. O último
 pedido normal concluiu sozinho e entregou um PDF com Luna, mas levou mais de
