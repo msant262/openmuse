@@ -6,8 +6,8 @@ import { validatePublicUrl } from "./network.ts";
 /** Fixed extraction of index entries. Page text and snippets remain untrusted;
  * extraction neither visits sources nor accepts executable page instructions. */
 export async function extractSearch(page: Page, input: SearchInput): Promise<SearchResult> {
-  const extracted = await page.evaluate(() => {
-    const containers = Array.from(document.querySelectorAll(".result")).slice(0, 51);
+  const extracted = await page.evaluate((limit) => {
+    const containers = Array.from(document.querySelectorAll(".result")).slice(0, limit + 1);
     return {
       recognized: containers.length > 0 || Boolean(document.querySelector(".no-results")),
       entries: containers.map((item) => {
@@ -21,7 +21,7 @@ export async function extractSearch(page: Page, input: SearchInput): Promise<Sea
         };
       }),
     };
-  });
+  }, input.limit);
   if (!extracted.recognized)
     throw new WorkerError(
       "SEARCH_UNAVAILABLE",

@@ -23,6 +23,8 @@ export interface SearchContext {
   trackResourceLeases?: (leases: ResourceLease[]) => void;
 }
 export interface SearchBackend {
+  /** HTTP reads are independent; profile-backed reads retain their lease order. */
+  readonly parallelSearches?: boolean;
   search(input: SearchInput, context: SearchContext): Promise<SearchResult>;
 }
 
@@ -91,6 +93,7 @@ export class BrowserSearchBackend implements SearchBackend {
 
 /** Public discovery does not acquire a graphical desktop or browser profile. */
 export class HttpSearchBackend implements SearchBackend {
+  readonly parallelSearches = true;
   private preferredProvider?: SearchResult["provenance"]["provider"];
   constructor(private readonly web: PublicWeb) {}
   async search(input: SearchInput, context: SearchContext): Promise<SearchResult> {
@@ -149,7 +152,7 @@ export class HttpSearchBackend implements SearchBackend {
           );
           recognized = Boolean(document.getElementsByTagName("channel").length);
           entries = Array.from(document.getElementsByTagName("item"))
-            .slice(0, 51)
+            .slice(0, input.limit + 1)
             .map((item) => ({
               title: item.getElementsByTagName("title")[0]?.textContent ?? "",
               url: item.getElementsByTagName("link")[0]?.textContent ?? "",
@@ -162,7 +165,7 @@ export class HttpSearchBackend implements SearchBackend {
           const anchors = htmlNodes(
             root,
             (node) => hasClass(node, "result-link") || hasClass(node, "result__a"),
-          ).slice(0, 51);
+          ).slice(0, input.limit + 1);
           recognized =
             anchors.length > 0 ||
             htmlNodes(root, (node) => hasClass(node, "no-results")).length > 0;

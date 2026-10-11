@@ -38,7 +38,27 @@ test("real browser index extraction bounds snippets, drops private links and lab
     await assert.rejects(browser.search(id, { query: "unavailable", limit: 3 }), {
       code: "SEARCH_UNAVAILABLE",
     });
-    await assert.rejects(browser.search(id, { query: "x", limit: 11 }));
+    await assert.rejects(browser.search(id, { query: "x", limit: 101 }));
+    const { chromium } = await import("playwright");
+    const extractionBrowser = await chromium.launch({ headless: true });
+    try {
+      const page = await extractionBrowser.newPage();
+      await page.setContent(
+        Array.from(
+          { length: 75 },
+          (_, i) =>
+            `<div class="result"><a class="result__a" href="https://browser.fixture.test/course/${i}">Course ${i}</a><span class="result__snippet">Course lead ${i}</span></div>`,
+        ).join(""),
+      );
+      const { extractSearch } = await import("../src/search.ts");
+      const many = await extractSearch(page, { query: "course", limit: 70 });
+      assert.equal(many.sources.length, 70);
+      assert.equal(many.truncated, true);
+      assert.equal(many.sources.at(-1)?.url, "https://browser.fixture.test/course/69");
+      assert.equal(many.provenance.fullPagesRead, false);
+    } finally {
+      await extractionBrowser.close();
+    }
     await browser.setControl(id, "human");
     await assert.rejects(browser.search(id, { query: "blocked", limit: 1 }), {
       code: "BROWSER_CONTROLLED",

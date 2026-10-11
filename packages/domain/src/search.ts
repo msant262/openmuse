@@ -3,7 +3,7 @@ import { z } from "zod";
 export const searchInputSchema = z
   .object({
     query: z.string().trim().min(1).max(512),
-    limit: z.number().int().min(1).max(10).default(5),
+    limit: z.number().int().min(1).max(100).default(5),
   })
   .strict();
 export type SearchInput = z.infer<typeof searchInputSchema>;
@@ -22,7 +22,7 @@ export const searchResultSchema = z
           })
           .strict(),
       )
-      .max(10),
+      .max(100),
     observedAt: z.iso.datetime(),
     truncated: z.boolean(),
     provenance: z
