@@ -427,6 +427,51 @@ async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promis
   }
 }
 
+/** Detect FAQ questions whose answer bodies were lost during extraction.
+ * This marks incomplete evidence, never a claim that an answer does not exist. */
+export function missingPublicQuestionAnswers(text: string): string[] {
+  const lines = text.split("\n");
+  const headings = lines.flatMap((line, index) => {
+    const match = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    return match ? [{ index, level: match[1].length, title: match[2] }] : [];
+  });
+  const missing: string[] = [];
+  let faqLevel: number | undefined;
+  for (let i = 0; i < headings.length; i++) {
+    const heading = headings[i];
+    if (/^(?:frequently asked questions|faq|perguntas frequentes)\b/i.test(heading.title)) {
+      faqLevel = heading.level;
+      continue;
+    }
+    if (faqLevel === undefined) continue;
+    if (heading.level <= faqLevel) {
+      faqLevel = undefined;
+      continue;
+    }
+    if (!/[?？]\s*$/.test(heading.title)) continue;
+    let end = lines.length;
+    for (let j = i + 1; j < headings.length; j++) {
+      if (headings[j].level <= heading.level) {
+        end = headings[j].index;
+        break;
+      }
+    }
+    const hasAnswer = lines.slice(heading.index + 1, end).some((line) => {
+      const body = line.trim();
+      return (
+        Boolean(body) &&
+        !/^#{1,6}\s/.test(body) &&
+        !/^(?:show all(?: \d+)?(?: frequently asked questions)?|mostrar todas(?: as perguntas)?|[.·…]+)$/i.test(
+          body,
+        )
+      );
+    });
+    if (!hasAnswer) missing.push(heading.title.slice(0, 300));
+    if (missing.length === 20) break;
+  }
+  return missing;
+}
+
 export function readablePage(
   value: unknown,
 ): value is { url: string; title: string; text: string; sessionId?: string; observedAt?: string } {
@@ -663,7 +708,8 @@ export class PublicWeb {
     signal?.throwIfAborted();
     // A provider may omit a URL or return entries out of order. Never file an
     // unrelated page under the requested source or treat a challenge as content.
-    if (!page || page.url !== target.url.href || !readablePage(page)) return null;
+    if (!page || page.url !== target.url.href || !readablePage({ ...page, extraction: undefined }))
+      return null;
     const limit = options.maxChars ?? maxText;
     const spill =
       page.text.length > limit && options.spill

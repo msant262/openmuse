@@ -9,7 +9,11 @@ import type { SecretStore } from "./credentials/contracts.ts";
 import type { GenericCredentials } from "./credentials/generic.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
-import { type RenderedPublicPage, readablePage } from "./public-web.ts";
+import {
+  missingPublicQuestionAnswers,
+  type RenderedPublicPage,
+  readablePage,
+} from "./public-web.ts";
 import type { SearchBackend, SearchContext } from "./search.ts";
 
 const provider = {
@@ -518,59 +522,86 @@ export class IntegrationService {
     context.signal?.throwIfAborted();
     let apiKey = "";
     try {
-      const body = {
-        urls: [target.url.href],
-        extract_depth: "basic",
-        format: "markdown",
-        include_images: false,
-        timeout: 10,
-      };
-      let raw: unknown;
-      if (generic && this.genericCredentials) {
-        const result = await this.genericCredentials.httpForOrigin(
-          context.owner,
-          provider.origin,
-          {
-            path: "/extract",
-            method: "POST",
-            body,
-            intent: "read",
-            summary: "Read public source content",
-          },
-          { signal: context.signal, beforeDispatch: context.before },
-        );
-        if (!result?.ok) return null;
-        raw = JSON.parse(result.body);
-      } else {
+      if (!generic) {
         const secret =
           connection && (await this.vault.read(context.owner, connection.credentialRef));
         if (!secret?.data.apiKey) return null;
         apiKey = secret.data.apiKey;
-        await context.before?.();
-        raw = await this.call("/extract", apiKey, body, context.signal);
       }
-      const response = z
-        .object({
-          results: z
-            .array(
-              z.object({ url: z.string(), raw_content: z.string(), title: z.string().optional() }),
-            )
-            .max(20),
-        })
-        .parse(raw);
-      const item = response.results.find((item) => item.url === target.url.href);
-      if (!item) return null;
-      const scrub = configuredSecretScrubber([apiKey]);
-      const text = scrub(item.raw_content);
-      const page: RenderedPublicPage = {
-        url: target.url.href,
-        title: scrub(item.title ?? /^#\s+(.+)$/m.exec(text)?.[1] ?? target.url.hostname),
-        text,
-        truncated: false,
-        observedAt: new Date(this.now()).toISOString(),
-        provenance: { backend: "http", provider: "tavily", authenticated: false },
+      const read = async (depth: "basic" | "advanced") => {
+        context.signal?.throwIfAborted();
+        const body = {
+          urls: [target.url.href],
+          extract_depth: depth,
+          format: "markdown",
+          include_images: false,
+          timeout: depth === "basic" ? 10 : 15,
+        };
+        let raw: unknown;
+        if (generic && this.genericCredentials) {
+          const result = await this.genericCredentials.httpForOrigin(
+            context.owner,
+            provider.origin,
+            {
+              path: "/extract",
+              method: "POST",
+              body,
+              intent: "read",
+              summary: "Read public source content",
+            },
+            { signal: context.signal, beforeDispatch: context.before },
+          );
+          if (!result?.ok) return null;
+          raw = JSON.parse(result.body);
+        } else {
+          await context.before?.();
+          raw = await this.call("/extract", apiKey, body, context.signal);
+        }
+        const response = z
+          .object({
+            results: z
+              .array(
+                z.object({
+                  url: z.string(),
+                  raw_content: z.string(),
+                  title: z.string().optional(),
+                }),
+              )
+              .max(20),
+          })
+          .parse(raw);
+        const item = response.results.find((item) => item.url === target.url.href);
+        if (!item) return null;
+        const scrub = configuredSecretScrubber([apiKey]);
+        const text = scrub(item.raw_content);
+        const page: RenderedPublicPage = {
+          url: target.url.href,
+          title: scrub(item.title ?? /^#\s+(.+)$/m.exec(text)?.[1] ?? target.url.hostname),
+          text,
+          truncated: false,
+          observedAt: new Date(this.now()).toISOString(),
+          provenance: { backend: "http", provider: "tavily", authenticated: false },
+        };
+        if (!readablePage(page)) return null;
+        const missing = missingPublicQuestionAnswers(text);
+        page.extraction = missing.length
+          ? {
+              status: "partial",
+              reason: `Extraction omitted the answer bodies for these questions: ${missing.join("; ")}. Read another representation before drawing conclusions.`,
+            }
+          : { status: "readable" };
+        return page;
       };
-      return readablePage(page) ? page : null;
+      const page = await read("basic");
+      if (page?.extraction?.status !== "partial") return page;
+      // Retry only a structurally incomplete source. Keep its observed text if
+      // recovery fails so the caller can use its existing renderer fallback.
+      try {
+        return (await read("advanced")) ?? page;
+      } catch {
+        context.signal?.throwIfAborted();
+        return page;
+      }
     } catch (error) {
       context.signal?.throwIfAborted();
       if (connection && error instanceof AppError && error.code === "INTEGRATION_INVALID_KEY")
