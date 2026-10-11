@@ -325,13 +325,19 @@
         "actual UI cancellation of a background Python command interrupts its owned process; original PIDs disappear and no late final file appears",
         "cancelled host primitive autonomously reconciles from the verified physical receipt without changing original native operation records"
       ],
-      "pending": ["broader Hermes/OpenClaw tool parity and performance acceptance"],
+      "pending": [
+        "broader Hermes/OpenClaw tool parity and performance acceptance"
+      ],
       "acceptanceApproved": false,
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
     },
     {
-      "tools": ["image_generate", "web_search", "web_extract"],
+      "tools": [
+        "image_generate",
+        "web_search",
+        "web_extract"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "verified": [
@@ -341,11 +347,19 @@
         "original image delivered in 89.029 seconds and inspected in the published viewer",
         "independent pixels confirm legibility, three examples and the source footer"
       ],
-      "pending": ["broader media/task coverage and sustained physical-device performance"],
+      "pending": [
+        "broader media/task coverage and sustained physical-device performance"
+      ],
       "acceptanceApproved": false
     },
     {
-      "tools": ["create_document", "inspect_document", "memory", "skill_manage", "execute_code"],
+      "tools": [
+        "create_document",
+        "inspect_document",
+        "memory",
+        "skill_manage",
+        "execute_code"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "6b5500353b731449cd53bbf59566f956a1463659",
       "verified": [
@@ -364,10 +378,16 @@
       "acceptanceApproved": false
     },
     {
-      "tools": ["text_to_speech", "transcribe"],
-      "upstreamCapability": ["Hermes text_to_speech", "OpenClaw Microsoft tts provider"],
+      "tools": [
+        "text_to_speech",
+        "transcribe"
+      ],
+      "upstreamCapability": [
+        "Hermes text_to_speech",
+        "OpenClaw Microsoft tts provider"
+      ],
       "caseAcceptance": "verified",
-      "apiSource": "d058c85dac96d791ac2a5f22c83e90b5a30952c0",
+      "apiSource": "d733ef64b97b2cc3cabecedecdef93eb2715931b",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72",
       "verified": [
         "actual free Microsoft Edge synthesis with bounded worker cancellation and one rejected-handshake clock correction",
@@ -377,10 +397,13 @@
         "322-byte TXT matches the native transcript and completes in 33.478 seconds with native-bound evidence",
         "original provider and transcription-verification failures remain preserved; no manual result or memory injection",
         "20 owned QA presentation records and four native files retired while protected user data and all three accounts remain unchanged",
-        "obsolete images, archive-verified source trees and exact unused cache records retired with current/recovery releases preserved"
+        "obsolete images, archive-verified source trees and exact unused cache records retired with current/recovery releases preserved",
+        "correctly attached ordinary published Luna background request completes in 28.811 seconds with one physical transcription and three model responses",
+        "completed background job automatically publishes its 322-byte TXT through the audited status boundary without replay; file hash matches physical transcript",
+        "published TXT viewer displays complete text; actual accepted inbox resource binds the uploaded audio to the current request",
+        "three round-51 QA conversations, eighteen presentation records and three owned native temporary files retired; all 1228 original native receipts and real user data preserved"
       ],
       "pending": [
-        "background transcription completion verification",
         "long and multilingual speech, broader media provider coverage",
         "physical mobile playback and sustained workload performance",
         "general Hermes/OpenClaw parity"
