@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from desktop.broker import DesktopBroker, DesktopOperationError, NativeBrowser
 from desktop.driver import DesktopDriver
+from executor.python_transport import python_resource_key
 
 
 class Device:
@@ -38,6 +39,81 @@ class BrokerTests(unittest.TestCase):
                 "sessionGeneration":self.session["sessionGeneration"],"controlRevision":self.broker.control_revision}}
     def observe(self):
         return self.broker.perform(self.operation({"operation":"observe"}))
+
+    def browser_program(self):
+        return {
+            "id": str(uuid.uuid4()), "executorId": "lenovo-bot", "executorEpoch": 3,
+            "resourceKey": python_resource_key("lenovo-bot", "owner", "conversation"),
+            "resourceFence": 7, "kind": "command", "capability": "python", "capabilityVersion": 3,
+            "inspection": False, "expiresAt": "2099-01-01T00:00:00Z",
+            "resourceBudget": {"memoryBytes": 512 * 1024**2, "heavy": False},
+            "browserAuthority": {
+                "sessionId": self.session["id"], "sessionGeneration": self.session["sessionGeneration"],
+                "browserSessionId": self.session["browserSessionId"], "profileId": self.session["profileId"],
+                "controlRevision": 0, "resourceKey": "desktop:lenovo-bot:" + self.session["id"],
+                "resourceFence": 8, "profileKey": "browser-profile:lenovo-bot:personal", "profileFence": 9,
+            },
+            "args": {"command": "Python cell", "cwd": "/workspace", "background": False,
+                "timeoutMs": 3000, "pythonCell": {"owner": "owner", "sessionId": "conversation",
+                    "code": "print('source')", "tools": ["browser_harness_rpc"], "reset": False,
+                    "fresh": True, "browserSession": "research", "maxToolCalls": 1, "outputBytes": 131072}},
+        }
+
+    def test_browser_program_uses_unchanged_parent_and_bound_private_command(self):
+        self.assertTrue(hasattr(DesktopBroker, "browser_program"), "The private native browser-program receiver is missing")
+        calls = []
+        self.broker.browser = type("Browser", (), {"program": lambda _, parent, command:
+            calls.append((parent, command)) or {"result": {"observed": "fixture"}}})()
+        parent = self.browser_program()
+        command = {"session": "research", "request": {"method": "Browser.getVersion"}, "timeoutMs": 5000}
+        result = self.broker.handle(0, {"operation": "browser-program", "envelope": parent, "command": command})
+        self.assertEqual(result, {"result": {"observed": "fixture"}})
+        self.assertEqual(calls, [(parent, command)])
+        self.assertEqual(parent["kind"], "command")
+        self.assertTrue(parent["resourceKey"].startswith("python-session:"))
+
+    def test_browser_program_rejects_unbound_or_foreign_authority_before_receiver(self):
+        self.assertTrue(hasattr(DesktopBroker, "browser_program"), "The private native browser-program receiver is missing")
+        import copy
+        calls = []
+        self.broker.browser = type("Browser", (), {"program": lambda _, parent, command: calls.append(command)})()
+        command = {"session": "research", "request": {"method": "Page.navigate"}, "timeoutMs": 5000}
+        parent = self.browser_program()
+        invalid = []
+        missing = copy.deepcopy(parent); missing.pop("browserAuthority"); invalid.append((missing, command))
+        foreign = copy.deepcopy(parent); foreign["browserAuthority"]["sessionGeneration"] = str(uuid.uuid4()); invalid.append((foreign, command))
+        profile = copy.deepcopy(parent); profile["browserAuthority"]["profileId"] = "foreign"; invalid.append((profile, command))
+        key = copy.deepcopy(parent); key["resourceKey"] = "python-session:foreign"; invalid.append((key, command))
+        invalid.append((parent, {**command, "session": "foreign"}))
+        for envelope, value in invalid:
+            with self.assertRaises(DesktopOperationError) as failure:
+                self.broker.handle(0, {"operation": "browser-program", "envelope": envelope, "command": value})
+            self.assertFalse(failure.exception.dispatched)
+        self.assertEqual(calls, [])
+
+    def test_browser_program_profile_fence_and_human_takeover_revoke_commands(self):
+        self.assertTrue(hasattr(DesktopBroker, "browser_program"), "The private native browser-program receiver is missing")
+        calls = []
+        def program(_, parent, command):
+            calls.append(command)
+            return {"result": {}}
+        self.broker.browser = type("Browser", (), {"program": program})()
+        parent = self.browser_program()
+        command = {"session": "research", "request": {"method": "Input.dispatchKeyEvent"}, "timeoutMs": 5000}
+        payload = {"operation": "browser-program", "envelope": parent, "command": command}
+        self.broker.handle(0, payload)
+        parent["browserAuthority"]["profileFence"] = 8
+        with self.assertRaises(DesktopOperationError) as failure: self.broker.handle(0, payload)
+        self.assertFalse(failure.exception.dispatched)
+        self.assertEqual(len(calls), 1)
+        parent["browserAuthority"]["profileFence"] = 9
+        def takeover(_, parent, command):
+            self.broker.control, self.broker.control_revision = "human", 1
+            return {"result": {}}
+        self.broker.browser = type("Browser", (), {"program": takeover})()
+        with self.assertRaises(DesktopOperationError) as failure: self.broker.handle(0, payload)
+        self.assertTrue(failure.exception.dispatched)
+        self.assertFalse(failure.exception.cleanup_confirmed)
     def test_root_peer_and_registered_destination_are_required(self):
         with self.assertRaisesRegex(ValueError,"root"):
             self.broker.handle(1003,{"operation":"status"})
@@ -112,6 +188,16 @@ class BrokerTests(unittest.TestCase):
 
 
 class BrowserRestartTests(unittest.TestCase):
+    def test_missing_script_backend_is_rejected_before_any_command_dispatch(self):
+        self.assertTrue(hasattr(NativeBrowser, "program"), "Native browser script preflight is missing")
+        with tempfile.TemporaryDirectory() as directory:
+            browser = NativeBrowser({}, directory, Path(directory), {}, Path(directory) / "worker.ts")
+            with patch.object(browser, "status", return_value={"state": "ready"}), patch.object(browser, "call") as send:
+                with self.assertRaises(DesktopOperationError) as failure:
+                    browser.program({"id": "parent"}, {"timeoutMs": 5000})
+                self.assertFalse(failure.exception.dispatched)
+                self.assertEqual(failure.exception.code, "BROWSER_SCRIPT_UNAVAILABLE")
+                send.assert_not_called()
     def test_control_changes_survive_a_browser_worker_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             browser=NativeBrowser({"browserSessionId":"session","sessionGeneration":"generation","profileId":"personal","width":640,"height":360},Path(directory),Path(directory),{"DISPLAY":":71","XAUTHORITY":"authority"},"worker.js")

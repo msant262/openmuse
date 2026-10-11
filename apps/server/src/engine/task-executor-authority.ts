@@ -20,6 +20,7 @@ import {
   nativeGraphicalReset,
   nativeInspection,
 } from "../executors/graphical-policy.ts";
+import type { BrowserProgramAuthority } from "../executors/protocol.ts";
 import {
   nativePythonArgsSchema,
   nativePythonReplyArgsSchema,
@@ -57,6 +58,10 @@ type NativeKind =
   | "desktop"
   | "browser"
   | "media";
+type BrowserProgramLease = ResourceLease & {
+  owner: string;
+  request: { key: string; mode: string };
+};
 export type NativeRequest = {
   id: string;
   executorId: string;
@@ -78,6 +83,7 @@ export type NativeOperation = Omit<NativeRequest, "inspection" | "capabilityVers
   expiresAt: string;
   createdAt: string;
   resourceBudget?: { memoryBytes: number; heavy: boolean };
+  browserAuthority?: BrowserProgramAuthority;
 };
 export type NativeReceipt = {
   status:
@@ -292,6 +298,7 @@ export class TaskExecutorAuthority {
     if (Boolean(request.inspection) !== inspection)
       throw new AppError("Native inspection does not match concrete operation", 422);
     let resourceKey = `system-admin:${registration.hostId}`;
+    let browserAuthority: BrowserProgramAuthority | undefined;
     const reset = nativeGraphicalReset(request.kind, request.args);
     const pythonReply = request.kind === "session" && request.args.operation === "python-reply";
     if (pythonReply && request.capability !== "python")
@@ -317,6 +324,13 @@ export class TaskExecutorAuthority {
           .strict()
           .parse(trusted.resourceBudget);
         resourceKey = pythonResourceKey(request.executorId, owner, args.pythonCell.sessionId);
+        if (args.pythonCell.browserSession !== undefined)
+          browserAuthority = await this.browserProgramAuthority(
+            owner,
+            request.executorId,
+            executorEpoch,
+            leases,
+          );
         const pending = (await this.journal.operations(owner, trusted.taskId)).filter(
           (operation) =>
             operation.effect &&
@@ -435,6 +449,7 @@ export class TaskExecutorAuthority {
       createdAt,
       expiresAt,
       ...(trusted.resourceBudget ? { resourceBudget: trusted.resourceBudget } : {}),
+      ...(browserAuthority ? { browserAuthority } : {}),
     };
     const { args: _args, ...metadata } = envelope;
     await this.journal.prepare(owner, {
@@ -613,6 +628,32 @@ export class TaskExecutorAuthority {
       stored.resourceFence !== operation.resourceFence
     )
       throw new AppError("Native dispatch binding or fence changed", 409);
+    const browserProgram =
+      operation.kind === "command" &&
+      operation.capability === "python" &&
+      nativePythonArgsSchema.parse(operation.args).pythonCell.browserSession !== undefined;
+    if (browserProgram) {
+      const leases = await Promise.all(
+        stored.resourceLeaseIds.map((id) =>
+          this.journal.db.get<BrowserProgramLease>("__runtime__", "resource-leases", id),
+        ),
+      );
+      if (leases.some((lease) => !lease || lease.owner !== owner)) throw new ResourceBusyError([]);
+      const current = await this.browserProgramAuthority(
+        owner,
+        operation.executorId,
+        operation.executorEpoch,
+        leases.filter((lease): lease is BrowserProgramLease => Boolean(lease)),
+      );
+      if (
+        !operation.browserAuthority ||
+        bindingHash(current) !== bindingHash(operation.browserAuthority) ||
+        bindingHash(stored.nativeEnvelope?.browserAuthority) !==
+          bindingHash(operation.browserAuthority)
+      )
+        throw new AppError("Native browser program authority changed", 409, "BROWSER_CONTROLLED");
+    } else if (operation.browserAuthority !== undefined)
+      throw new AppError("Native browser authority requires its bound Python program", 409);
     if (operation.kind === "desktop" || operation.kind === "browser") {
       const manual = stored.manualRequestId
         ? await this.journal.db.get<ManualRequest>(
@@ -664,6 +705,48 @@ export class TaskExecutorAuthority {
       );
     }
     await this.journal.authorizeDispatch(owner, operation.id, operation.revision, stored.runToken);
+  }
+  private async browserProgramAuthority(
+    owner: string,
+    executorId: string,
+    epoch: number,
+    leases: readonly BrowserProgramLease[],
+  ): Promise<BrowserProgramAuthority> {
+    const node = await this.journal.db.get<{
+      epoch: number;
+      hello: { readiness: { desktopSession?: NativeDesktopSession; browser: { state: string } } };
+    }>("__executors__", "nodes", executorId);
+    const desktop = node?.hello.readiness.desktopSession;
+    if (!desktop || node?.epoch !== epoch || node.hello.readiness.browser.state !== "ready")
+      throw new AppError("Native browser program requires its live registered desktop", 409);
+    const control = await this.journal.db.get<{ control: string; revision: number }>(
+      owner,
+      "desktop-control",
+      desktop.id,
+    );
+    if (control && control.control !== "agent")
+      throw new AppError("Desktop is under human control", 409, "BROWSER_CONTROLLED");
+    const session = { ...desktop, executorId };
+    const resourceKey = desktopResourceKey(session),
+      profileKey = desktopProfileKey(session);
+    const resource = leases.find(
+      (lease) => lease.request.key === resourceKey && lease.request.mode === "exclusive",
+    );
+    const profile = leases.find(
+      (lease) => lease.request.key === profileKey && lease.request.mode === "exclusive",
+    );
+    if (!resource || !profile) throw new ResourceBusyError([]);
+    return {
+      sessionId: desktop.id,
+      sessionGeneration: desktop.sessionGeneration,
+      browserSessionId: desktop.browserSessionId,
+      profileId: desktop.profileId,
+      controlRevision: control?.revision ?? 0,
+      resourceKey,
+      resourceFence: resource.fence,
+      profileKey,
+      profileFence: profile.fence,
+    };
   }
   private async graphicalSession(
     owner: string,

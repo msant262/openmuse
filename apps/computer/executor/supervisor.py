@@ -445,7 +445,8 @@ class Supervisor:
                 self.python_jobs = NativePythonJobs(config["executorId"], journal,
                     guard=lambda operation: self.gate.check(operation, inspection=operation.get("inspection") is True),
                     consume=transport.request, launch_factory=self.python_launchers.factory,
-                    publish=self.publish_python, stopped_scope=self.python_launchers.stopped_scope)
+                    publish=self.publish_python, stopped_scope=self.python_launchers.stopped_scope,
+                    local_browser=self.browser_program)
         owned_commands=journal.owned_commands(config["executorId"])
         for item in owned_commands:
             if item["operation"].get("capability") == "python": continue
@@ -503,6 +504,17 @@ class Supervisor:
             for operation_id in list(self.runtime.active):
                 self.budget.freeze(operation_id)
         return graphical and network and account and jobs and python and python_units and session
+
+    def browser_program(self, operation, command):
+        from .python_transport import LocalBrowserRejected
+        self.gate.check(operation)
+        if not self.desktop or self.desktop_frozen:
+            raise LocalBrowserRejected("Registered browser is unavailable or its desktop is contained")
+        # The watchdog renews the desktop's bounded permit. Do not send another
+        # gate update or publish/API request for each internal key/CDP command.
+        result = self.desktop.browser_program(operation, command)
+        self.gate.check(operation)
+        return result
 
     def publish_python(self):
         try: self.flush()
@@ -656,6 +668,10 @@ class Supervisor:
                 raise ValueError("Python capability only accepts a cell or its bound private reply")
             if operation["kind"] == "command" and (operation.get("capability") == "python" or "pythonCell" in operation["args"]):
                 if not self.python_jobs: raise ValueError("Registered persistent Python capability is disabled")
+                if operation.get("browserAuthority") is not None:
+                    if not self.desktop or self.desktop_frozen:
+                        raise ValueError("Registered browser is unavailable or its desktop is contained")
+                    self.desktop.gate(self.gate)
                 # The launch factory admits a durable per-unit RAM reservation.
                 # Keep the session lease separate from cpu-heavy native jobs so
                 # host RPC can call ordinary native commands without deadlock.

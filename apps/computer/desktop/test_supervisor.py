@@ -18,6 +18,30 @@ def operation(identity, session="display", generation="generation", revision=1, 
 
 
 class SupervisorDesktopTests(unittest.TestCase):
+    def test_browser_program_client_keeps_canonical_envelope_and_command_private(self):
+        self.assertTrue(hasattr(DesktopClient, "browser_program"), "Private browser-program transport is missing")
+        client = DesktopClient("node", {"uid": 1003})
+        parent, command = {"id": "owned-parent"}, {"timeoutMs": 5000, "session": "research", "request": {}}
+        with patch.object(client, "call", return_value={"result": {}}) as channel:
+            self.assertEqual(client.browser_program(parent, command), {"result": {}})
+            channel.assert_called_once_with({"operation": "browser-program", "envelope": parent, "command": command}, timeout=5.0)
+
+    def test_supervisor_browser_commands_use_existing_watchdog_and_never_api_per_key(self):
+        self.assertTrue(hasattr(Supervisor, "browser_program"), "Root program-to-desktop composition is missing")
+        checked, calls = [], []
+        supervisor = object.__new__(Supervisor)
+        supervisor.desktop_frozen = False
+        supervisor.gate = SimpleNamespace(check=lambda value: checked.append(value))
+        supervisor.desktop = SimpleNamespace(browser_program=lambda parent, command:
+            calls.append((parent, command)) or {"result": {}})
+        parent, command = {"id": "owned-parent"}, {"session": "research", "request": {}}
+        self.assertEqual(supervisor.browser_program(parent, command), {"result": {}})
+        self.assertEqual(checked, [parent, parent])
+        self.assertEqual(calls, [(parent, command)])
+        supervisor.desktop_frozen = True
+        with self.assertRaisesRegex(ValueError, "contained|unavailable"):
+            supervisor.browser_program(parent, command)
+        self.assertEqual(len(calls), 1)
     def test_blocked_browser_version_read_reconciles_cleanup_without_replaying_or_faking_success(self):
         with tempfile.TemporaryDirectory() as temporary:
             journal=Journal(Path(temporary)/"journal.sqlite");self.addCleanup(journal.close)

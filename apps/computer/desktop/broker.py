@@ -22,6 +22,7 @@ import uuid
 
 from .driver import DesktopDriver, integer
 from .session import NativeSession, SessionConfig, private_directory
+from executor.python_transport import validate_cell
 
 MAX_MESSAGE = 12 * 1024 * 1024
 
@@ -178,6 +179,53 @@ class DesktopBroker:
             return {**result,"cleanupConfirmed":True}
         raise ValueError("Unsupported registered desktop operation")
 
+    def authorize_browser_program(self, operation, command):
+        cell = validate_cell(operation)
+        authority = operation.get("browserAuthority")
+        fields = {"sessionId", "sessionGeneration", "browserSessionId", "profileId", "controlRevision",
+                  "resourceKey", "resourceFence", "profileKey", "profileFence"}
+        if (not isinstance(authority, dict) or set(authority) != fields
+                or cell.get("fresh") is not True or not cell.get("browserSession")
+                or not isinstance(command, dict) or set(command) != {"session", "request", "timeoutMs"}
+                or command["session"] != cell["browserSession"] or not isinstance(command["request"], dict)):
+            raise ValueError("Browser program requires its canonical desktop authority")
+        integer(command["timeoutMs"], 1, 1800000)
+        integer(operation["resourceFence"], 0, 2**53-1)
+        if (authority["profileId"] != self.session["profileId"]
+                or authority["browserSessionId"] != self.session["browserSessionId"]
+                or authority["profileKey"] != "browser-profile:" + self.executor_id + ":" + self.session["profileId"]):
+            raise ValueError("Browser program profile belongs to another registered desktop")
+        # Validate a desktop permit without rewriting or dispatching the parent.
+        # The root supervisor checks the parent's owned Python lease; this broker
+        # checks the independently granted desktop/profile and control fences.
+        permit = {**operation, "resourceKey": authority["resourceKey"], "resourceFence": authority["resourceFence"],
+                  "args": {**authority, "actor": "agent"}}
+        with self.state_lock:
+            self.authorize(permit)
+            fence = integer(authority["profileFence"], 0, 2**53-1)
+            if fence < self.fences.get(authority["profileKey"], 0):
+                raise ValueError("Browser program profile fence is stale")
+            self.fences[authority["profileKey"]] = fence
+            if getattr(self, "observation_suspended", False):
+                raise ValueError("Browser program is suspended during credential injection")
+
+    def browser_program(self, operation, command):
+        started = False
+        try:
+            self.authorize_browser_program(operation, command)
+            if not self.browser or not callable(getattr(self.browser, "program", None)):
+                raise ValueError("Registered browser script receiver is unavailable")
+            self.driver.invalidate()
+            started = True
+            result = self.browser.program(operation, command)
+            self.authorize_browser_program(operation, command)
+            return result
+        except DesktopOperationError:
+            raise
+        except Exception as error:
+            raise DesktopOperationError("Native browser program authority or command could not be confirmed",
+                code="BROWSER_CONTROLLED", dispatched=started, cleanup_confirmed=not started) from error
+
     def handle(self, peer_uid, payload):
         if payload.get("operation")=="protect" and self.browser and peer_uid==os.getuid() and isinstance(payload.get("token"),str) and hmac.compare_digest(payload["token"],self.browser.token):
             if payload.get("sessionId")!=self.session["id"] or payload.get("sessionGeneration")!=self.session["sessionGeneration"]:
@@ -195,6 +243,8 @@ class DesktopBroker:
             return {"desktopSession":self.session,"display":{"state":"ready"},"capture":{"state":"ready"},
                     "input":{"state":"ready"},"browser":self.browser.status() if self.browser else {"state":"unavailable","reason":"Native headed browser adapter absent"}}
         if set(payload)=={"operation","envelope"} and payload["operation"]=="perform":return self.perform(payload["envelope"])
+        if set(payload)=={"operation","envelope","command"} and payload["operation"]=="browser-program":
+            return self.browser_program(payload["envelope"], payload["command"])
         raise ValueError("Unsupported private desktop broker operation")
 
 
@@ -252,9 +302,9 @@ class NativeBrowser:
             if self.last_gate:self.gate(self.last_gate)
             if self.last_control:
                 exchange(self.socket,{**self.last_control,"token":self.token},expected_uid=os.getuid())
-    def call(self,payload):
+    def call(self,payload,timeout=45):
         self.start()
-        return exchange(self.socket,{**payload,"token":self.token},expected_uid=os.getuid())
+        return exchange(self.socket,{**payload,"token":self.token},expected_uid=os.getuid(),timeout=timeout)
     def status(self):
         try:return self.call({"operation":"status"})
         except Exception:return {"state":"unavailable","reason":"Native browser sandbox/runtime preflight unavailable"}
@@ -267,6 +317,13 @@ class NativeBrowser:
         if self.process and self.process.poll() is None:
             exchange(self.socket,{**self.last_control,"token":self.token},expected_uid=os.getuid())
     def perform(self,operation):return self.call({"operation":"perform","envelope":operation})
+    def program(self, operation, command):
+        status = self.status()
+        if status.get("state") != "ready" or status.get("browserScriptVersion") != 1:
+            raise DesktopOperationError("Native browser script backend is unavailable",
+                code="BROWSER_SCRIPT_UNAVAILABLE", dispatched=False, cleanup_confirmed=True)
+        return self.call({"operation": "browser-program", "envelope": operation, "command": command},
+                         timeout=command["timeoutMs"] / 1000)
     def refresh_protection(self):return self.call({"operation":"refresh-protection"})
     def close(self):
         if self.process:

@@ -115,6 +115,22 @@ export const executorRequestSchema = z.object({
   args: z.record(z.string(), z.unknown()),
   inspection: z.boolean().default(false),
 });
+/** Created by API task authority from live desktop state and held resources.
+ * It is output metadata, never a model-selected native request argument. */
+export const browserProgramAuthoritySchema = z
+  .object({
+    sessionId: z.uuid(),
+    sessionGeneration: z.uuid(),
+    browserSessionId: z.uuid(),
+    profileId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
+    controlRevision: z.number().int().nonnegative(),
+    resourceKey: z.string().min(1).max(256),
+    resourceFence: z.number().int().nonnegative(),
+    profileKey: z.string().min(1).max(256),
+    profileFence: z.number().int().nonnegative(),
+  })
+  .strict();
+export type BrowserProgramAuthority = z.infer<typeof browserProgramAuthoritySchema>;
 export const executorOperationSchema = executorRequestSchema.extend({
   taskId: safeOperationId,
   revision: z.number().int().nonnegative(),
@@ -127,6 +143,7 @@ export const executorOperationSchema = executorRequestSchema.extend({
   resourceBudget: z
     .object({ memoryBytes: z.number().int().positive(), heavy: z.boolean() })
     .optional(),
+  browserAuthority: browserProgramAuthoritySchema.optional(),
 });
 export const executorReceiptSchema = z.object({
   status: z.enum([

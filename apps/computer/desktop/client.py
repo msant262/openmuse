@@ -44,3 +44,6 @@ class DesktopClient:
         if epoch:return self.call({"operation":"gate","gate":{"epoch":epoch,"open":False,"reconciled":False,"ttl":2}},timeout=5)
         return {"accepted":True}
     def perform(self,operation):return self.call({"operation":"perform","envelope":operation})
+    def browser_program(self, operation, command):
+        return self.call({"operation": "browser-program", "envelope": operation, "command": command},
+                         timeout=command["timeoutMs"] / 1000)

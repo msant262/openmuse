@@ -10,6 +10,15 @@ import type { AgentTask } from "../../packages/domain/src/agent.ts";
 import { hello, registration } from "./executors.ts";
 import { taskRuntime } from "./task-runtime.ts";
 
+export const pythonBrowserDesktop = {
+  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  sessionGeneration: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  browserSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  profileId: "python-browser-qa",
+  width: 1280,
+  height: 720,
+};
+
 /** Real M3 task admission, journal, session leases and M4 authority. The native
  * peer's protocol receipts are fixtures; this helper proves no provider effect. */
 export async function pythonRuntime(
@@ -44,6 +53,7 @@ export async function pythonRuntime(
     advertisedPythonVersions?: number[];
     fresh?: boolean;
     browserSession?: string;
+    browserResources?: "complete" | "without-desktop" | "without-profile";
   } = {},
 ) {
   const server = await taskRuntime(t);
@@ -53,6 +63,13 @@ export async function pythonRuntime(
   const registry = new ExecutorRegistry(server.db, { registrations: [registration], authority });
   const { epoch } = await registry.register({
     ...hello,
+    ...(cell.browserSession !== undefined && {
+      readiness: {
+        ...hello.readiness,
+        desktopSession: pythonBrowserDesktop,
+        browser: { state: "ready" as const },
+      },
+    }),
     capabilities: [
       ...hello.capabilities,
       ...(cell.advertisedPythonVersions ?? [1, 2]).map((version) => ({
@@ -99,6 +116,24 @@ export async function pythonRuntime(
           mode: "exclusive",
         },
         { key: "system-admin:lenovo", units: 1, mode: "shared" },
+        ...(cell.browserSession !== undefined && cell.browserResources !== "without-desktop"
+          ? [
+              {
+                key: `desktop:${registration.executorId}:${pythonBrowserDesktop.id}`,
+                units: 1,
+                mode: "exclusive" as const,
+              },
+            ]
+          : []),
+        ...(cell.browserSession !== undefined && cell.browserResources !== "without-profile"
+          ? [
+              {
+                key: `browser-profile:${registration.executorId}:${pythonBrowserDesktop.profileId}`,
+                units: 1,
+                mode: "exclusive" as const,
+              },
+            ]
+          : []),
       ]);
       assert.ok(leases);
       for (const lease of leases) assert.equal(await server.agent.resourceLeases.hold(lease), true);
