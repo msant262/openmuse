@@ -325,12 +325,43 @@
         "actual UI cancellation of a background Python command interrupts its owned process; original PIDs disappear and no late final file appears",
         "cancelled host primitive autonomously reconciles from the verified physical receipt without changing original native operation records"
       ],
-      "pending": [
-        "broader Hermes/OpenClaw tool parity and performance acceptance"
-      ],
+      "pending": ["broader Hermes/OpenClaw tool parity and performance acceptance"],
       "acceptanceApproved": false,
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
+    },
+    {
+      "tools": ["image_generate", "web_search", "web_extract"],
+      "caseAcceptance": "verified",
+      "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
+      "verified": [
+        "ordinary published Portuguese infographic request without provider or tool hints",
+        "all eight executor responses use configured Luna; one actual codex/gpt-image-2 generation",
+        "actual public source fetch with independently verified complete spill bytes",
+        "original image delivered in 89.029 seconds and inspected in the published viewer",
+        "independent pixels confirm legibility, three examples and the source footer"
+      ],
+      "pending": ["broader media/task coverage and sustained physical-device performance"],
+      "acceptanceApproved": false
+    },
+    {
+      "tools": ["create_document", "inspect_document", "memory", "skill_manage", "execute_code"],
+      "caseAcceptance": "verified",
+      "apiSource": "6b5500353b731449cd53bbf59566f956a1463659",
+      "verified": [
+        "original learning parent-child dispatch deadlock reproduced through the real copied Code Mode worker",
+        "ordinary named PDF output retains its format over a reference to an existing infographic",
+        "published Luna PDF delivered in 65.629 seconds; actual text, pixels and PDF source link independently verified",
+        "automatic conversation review completes two Code Mode calls without the previous deadlock",
+        "automatic verified-task review persists a source-bound reusable PDF procedure without operator intervention",
+        "QA-derived procedure archived and all 25 original procedure versions preserved"
+      ],
+      "pending": [
+        "broader memory/procedure coverage",
+        "optimal tool selection: one invalid output lookup recovered",
+        "general Hermes/OpenClaw parity and performance"
+      ],
+      "acceptanceApproved": false
     }
   ],
   "updatedAt": "2026-10-11"
