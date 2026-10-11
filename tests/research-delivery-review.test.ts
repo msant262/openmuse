@@ -233,8 +233,8 @@ test("an existing unselected PDF is recovered by its actual ID without another g
         );
         assert.equal(
           fixture.reviewRequests.length,
-          1,
-          "an empty selection must not repeat the existing content approval",
+          0,
+          "an empty selection must offer the existing file before reviewing its selected bytes",
         );
       }
       return [
@@ -703,6 +703,12 @@ test("a document wording repair stays a content correction through an unnecessar
             operationId: "incorrect",
           },
         },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: { summary: "The comparison PDF is attached.", artifactIds: [fileId] },
+        },
         {
           name: "ask_user",
           arguments: { question: "Posso continuar pesquisando e trocar o curso?" },
@@ -714,6 +720,7 @@ test("a document wording repair stays a content correction through an unnecessar
             format: "pdf",
             content: content("costs €20"),
             operationId: "corrected",
+            replaceFileId: fileId,
           },
         },
         { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
@@ -771,7 +778,7 @@ test("a document wording repair stays a content correction through an unnecessar
   });
   await f.agent.worker.tick();
   const operations = await f.agent.journal.operations("owner", task.id);
-  const correction = operations.find((op) => op.toolName === "create_document")?.receipt as {
+  const correction = operations.find((op) => op.toolName === "finish_task")?.receipt as {
     instruction: string;
     needsMoreResearch: boolean;
   };
@@ -796,7 +803,7 @@ test("a document wording repair stays a content correction through an unnecessar
   assert.equal(fixture.reviewRequests.length, 2);
 });
 
-test("an unqualified PDF proposal is repaired before rendering and its bytes and pixels pass delivery", async (t) => {
+test("an unqualified local PDF is corrected after its actual selected bytes fail delivery", async (t) => {
   let fileId = "",
     receiptId = "";
   const rendered: string[] = [];
@@ -814,6 +821,12 @@ test("an unqualified PDF proposal is repaired before rendering and its bytes and
             content: "Premium AI: free registration, full access unconfirmed.",
           },
         },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: { summary: "The comparison PDF is attached.", artifactIds: [fileId] },
+        },
         {
           name: "ask_user",
           arguments: {
@@ -827,6 +840,7 @@ test("an unqualified PDF proposal is repaired before rendering and its bytes and
             name: "Courses",
             format: "pdf",
             operationId: "verified",
+            replaceFileId: fileId,
             content:
               "# Open AI\n\nAll lessons and exercises are free with no trial or subscription. Beginner generative AI, English, two hours. Optional certificate €20.\n\nSource: https://courses.example/open",
           },
@@ -911,9 +925,14 @@ test("an unqualified PDF proposal is repaired before rendering and its bytes and
     0,
     "replacing the agent's unqualified choice requires no new user answer",
   );
-  assert.equal(rendered.length, 1, "an unqualified proposal is rejected before rendering");
-  assert.ok(rendered[0].includes("Open AI"));
-  const rejectedOutput = JSON.parse(fixture.requests[2].body)
+  assert.equal(
+    rendered.length,
+    2,
+    "the reversible draft renders; its rejection requires corrected bytes",
+  );
+  assert.match(rendered[0], /Premium AI/);
+  assert.match(rendered[1], /Open AI/);
+  const rejectedOutput = JSON.parse(fixture.requests[5].body)
     .input.filter((item: { type: string }) => item.type === "function_call_output")
     .at(-1);
   assert.ok(rejectedOutput);
@@ -937,7 +956,7 @@ test("an unqualified PDF proposal is repaired before rendering and its bytes and
   assert.equal(
     fixture.reviewRequests.length,
     2,
-    "each proposal is checked once and the qualified rendered bytes reuse their content proof",
+    "each selected version is checked once; local draft creation needs no extra review",
   );
 });
 
@@ -1179,7 +1198,7 @@ test("wording-only rejection remains bound to the actual document until its byte
     assert.match(fixture.requests[i].body, /Correct the document: the certificate costs €20/);
 });
 
-test("a researched PDF has one factual content check whose trusted authoring and actual text are verified at delivery", async (t) => {
+test("a researched PDF renders without a preflight model call and reviews its actual selected text once at delivery", async (t) => {
   let fileId = "",
     receiptId = "",
     generations = 0,
@@ -1208,12 +1227,13 @@ test("a researched PDF has one factual content check whose trusted authoring and
       ][i],
     {
       researchReview: (body) => {
-        assert.equal(generations, 0, "qualify content before the first render");
-        assert.equal(visualReviews, 0);
+        assert.equal(generations, 1, "a local draft must render before its factual delivery check");
+        assert.equal(visualReviews, 1);
         const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
-        assert.equal(input.proposedDocument, true);
-        assert.deepEqual(input.artifacts, []);
-        assert.match(input.proposedAnswer, /optional certificate €20/);
+        assert.equal(input.proposedDocument, false);
+        assert.equal(input.artifacts.length, 1);
+        assert.equal(input.documents.length, 1);
+        assert.match(input.documents[0].text, /optional certificate €20/);
         return {
           complete: true,
           missing: [],
@@ -1266,11 +1286,7 @@ test("a researched PDF has one factual content check whose trusted authoring and
   assert.equal(fixture.reviewRequests.length, 1);
   assert.equal(generations, 1);
   assert.equal(visualReviews, 1);
-  assert.equal(
-    (saved.state.researchDeliveryReview as { reusedContentApproval?: boolean })
-      .reusedContentApproval,
-    true,
-  );
+  assert.equal(saved.state.researchDocumentApprovals, undefined);
   const actual = await new FileLibrary(f.files, f.db).read("owner", {
     fileId,
     offset: 0,
@@ -1333,7 +1349,7 @@ test("the executor and final PDF review receive the fetched FAQ without another 
         assert.equal(source.truncated, false);
         assert.equal(source.sourceRecovery.networkRead, false);
         assert.equal(source.sourceRecovery.sha256, source.spill.sha256);
-        assert.match(input.proposedAnswer, /Optional certificate: paid/);
+        assert.match(input.documents[0].text, /Optional certificate: paid/);
         return {
           complete: true,
           missing: [],

@@ -7,7 +7,7 @@ import { documentArgs } from "../apps/server/src/media-tools.ts";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
-test("an unqualified comparison is repaired before rendering, and its qualified PDF needs only one successful factual check", async (t) => {
+test("local draft creation does not review or deliver an unqualified comparison, and final rejection requires actual replacement bytes", async (t) => {
   const badUrl = "https://academy.example/trial";
   const goodUrl = "https://academy.example/open";
   let fileId = "",
@@ -20,9 +20,9 @@ test("an unqualified comparison is repaired before rendering, and its qualified 
         const result = JSON.parse(
           input.findLast((item: { type: string }) => item.type === "function_call_output").output,
         );
-        assert.equal(result.complete, false);
-        assert.equal(result.repairable, true);
-        assert.equal(result.fileId, undefined, "the unqualified proposal must not become a PDF");
+        assert.ok(result.fileId, "local draft creation must finish without an extra model");
+        assert.equal(fixture.reviewRequests.length, 0);
+        assert.equal(result.complete, undefined, "a file receipt is not task completion");
       }
       return [
         { name: "web_fetch", arguments: { url: badUrl } },
@@ -35,6 +35,12 @@ test("an unqualified comparison is repaired before rendering, and its qualified 
             content: `# Preview AI\n\nAccess is not confirmed free. English, two hours. Certificate not stated.\n\nSource: ${badUrl}`,
           },
         },
+        { name: "inspect_document", arguments: { fileId, pageCount: 4 } },
+        { name: "confirm_document_review", arguments: { receiptId, passed: true, issues: [] } },
+        {
+          name: "finish_task",
+          arguments: { summary: "The PDF comparison is attached.", artifactIds: [fileId] },
+        },
         { name: "web_fetch", arguments: { url: goodUrl } },
         {
           name: "create_document",
@@ -42,6 +48,7 @@ test("an unqualified comparison is repaired before rendering, and its qualified 
             name: "AI course",
             format: "pdf",
             operationId: "qualified",
+            replaceFileId: fileId,
             content: `# Open AI\n\nAll lessons are free. English, two hours. Optional certificate: paid.\n\nSource: ${goodUrl}`,
           },
         },
@@ -56,7 +63,8 @@ test("an unqualified comparison is repaired before rendering, and its qualified 
     {
       researchReview: (body) => {
         const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
-        const bad = input.proposedAnswer.includes("Preview AI");
+        assert.equal(input.proposedDocument, false);
+        const bad = input.documents[0].text.includes("Preview AI");
         return {
           complete: !bad,
           needsMoreResearch: bad,
@@ -110,13 +118,13 @@ test("an unqualified comparison is repaired before rendering, and its qualified 
   assert.equal(saved.completion?.status, "verified");
   assert.equal(
     (await f.db.list("owner", "document-generations")).length,
-    1,
-    "no rejected draft was rendered or persisted",
+    2,
+    "reversible drafts exist, but only corrected selected bytes may complete delivery",
   );
   assert.equal(
     fixture.reviewRequests.length,
     2,
-    "one rejected proposal and one qualified factual check; no duplicate final check",
+    "one rejected final file and one qualified final file; no draft preflight calls",
   );
   const actual = await new FileLibrary(f.files, f.db).read("owner", {
     fileId,
@@ -158,7 +166,7 @@ test("rendered coverage preserves negations, values and every requested field ac
   );
 });
 
-test("an unavailable draft review resumes the preserved proposal before another executor turn", async (t) => {
+test("an unavailable final review preserves the rendered and inspected draft and resumes without another executor turn", async (t) => {
   const url = "https://academy.example/open";
   let unavailable = true;
   let fileId = "",
@@ -227,8 +235,15 @@ test("an unavailable draft review resumes the preserved proposal before another 
   await f.agent.worker.tick();
   const waiting = await f.agent.getTask("owner", task.id);
   assert.equal(waiting.status, "waiting_provider");
-  assert.equal((await f.db.list("owner", "document-generations")).length, 0);
-  assert.ok(waiting.state.pendingDocumentGeneration);
+  assert.equal((await f.db.list("owner", "document-generations")).length, 1);
+  assert.ok(waiting.state.pendingResearchDelivery);
+  assert.equal(waiting.state.pendingDocumentGeneration, undefined);
+  assert.equal(fixture.requests.length, 5);
+  assert.deepEqual(
+    (await f.agent.detail("owner", task.id)).files,
+    [],
+    "the draft is not a verified delivery",
+  );
   unavailable = false;
   const { sharedModelRouter } = await import("../apps/server/src/providers/model-router.ts");
   const cooldown = sharedModelRouter(f.agent.config.modelProviders!).health.get(
@@ -248,11 +263,11 @@ test("an unavailable draft review resumes the preserved proposal before another 
   assert.equal(
     fixture.reviewRequests.length,
     2,
-    "one unavailable request then one successful review, with no final duplicate",
+    "one unavailable final request then one successful final review, without regenerating",
   );
 });
 
-test("changed source evidence invalidates a draft approval and requires correction of the actual delivered PDF", async (t) => {
+test("the final review uses the latest source evidence and requires correction of the actual delivered PDF", async (t) => {
   const url = "https://academy.example/open";
   let fileId = "",
     receiptId = "",
@@ -301,16 +316,16 @@ test("changed source evidence invalidates a draft approval and requires correcti
     {
       researchReview: (body, i) => {
         const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
-        if (i === 1) {
+        if (i === 0) {
           assert.equal(input.proposedDocument, false);
           assert.match(input.documents[0].text, /price not published/);
           assert.ok(input.observations.some((read: { text: string }) => read.text.includes("€20")));
         }
         return {
-          complete: i !== 1,
+          complete: i !== 0,
           needsMoreResearch: false,
-          missing: i === 1 ? ["The certificate fee is now published"] : [],
-          nextSteps: i === 1 ? ["Correct the actual document to state €20"] : [],
+          missing: i === 0 ? ["The certificate fee is now published"] : [],
+          nextSteps: i === 0 ? ["Correct the actual document to state €20"] : [],
           accessAudit: [
             { option: "Open AI", access: "free", sourceUrl: url, quote: "All lessons are free." },
           ],
@@ -351,8 +366,8 @@ test("changed source evidence invalidates a draft approval and requires correcti
   assert.equal((await f.db.list("owner", "document-generations")).length, 2);
   assert.equal(
     fixture.reviewRequests.length,
-    3,
-    "the changed evidence is reviewed; the unchanged final render is not reviewed twice",
+    2,
+    "only final selected files are reviewed, using all current source evidence",
   );
   const actual = await new FileLibrary(f.files, f.db).read("owner", {
     fileId,
@@ -454,7 +469,7 @@ test("an observed exhausted access blocker still permits an honest partial PDF w
   assert.match(actual.text, /requires an account invitation/);
 });
 
-test("eligible partial drafts can be composed into a multi-file request without pretending that either draft completes it", async (t) => {
+test("multiple local drafts can be composed without extra model checks and their selected contents are reviewed together", async (t) => {
   const url = "https://academy.example/open";
   let fileId = "",
     receiptId = "";
@@ -492,21 +507,23 @@ test("eligible partial drafts can be composed into a multi-file request without 
         },
       ][i],
     {
-      researchReview: (_body, i) => ({
-        complete: i === 2,
-        draftEligible: true,
-        needsMoreResearch: false,
-        missing: i < 2 ? ["The other separately requested report is still to be written"] : [],
-        nextSteps: i < 2 ? ["Create the other report"] : [],
-        accessAudit: [
-          {
-            option: i === 1 ? "Intro AI" : "Open AI",
+      researchReview: (body) => {
+        const input = JSON.parse(JSON.parse(body).input[0].content[0].text);
+        assert.equal(input.documents.length, 2);
+        assert.equal(input.proposedDocument, false);
+        return {
+          complete: true,
+          needsMoreResearch: false,
+          missing: [],
+          nextSteps: [],
+          accessAudit: ["Open AI", "Intro AI"].map((option) => ({
+            option,
             access: "free",
             sourceUrl: url,
             quote: "All lessons are free.",
-          },
-        ],
-      }),
+          })),
+        };
+      },
     },
   );
   const f = await taskRuntime(t, {
@@ -543,7 +560,7 @@ test("eligible partial drafts can be composed into a multi-file request without 
   assert.equal(saved.completion?.status, "verified");
   assert.equal(fileIds.length, 2);
   assert.deepEqual(saved.artifactIds, fileIds);
-  assert.equal(fixture.reviewRequests.length, 3);
+  assert.equal(fixture.reviewRequests.length, 1);
   const actual = await new FileLibrary(f.files, f.db).read("owner", {
     fileId: fileIds[1],
     offset: 0,
