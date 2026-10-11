@@ -2,7 +2,23 @@
 
 **Ainda não está entregue.** Há correções publicadas e operações reais verificadas pelo chat. Depois da publicação mais recente, o pedido normal entregou um PDF em **1min24,503s**, com **12 respostas de Luna**, mas a pesquisa continua **reprovada**: incluiu como gratuita uma opção cujo acesso completo exige pagamento ou auxílio financeiro, deixou campos sem confirmação e não comprovou três conteúdos distintos. O arquivo físico foi entregue e abriu no app; o pedido não foi cumprido integralmente. A equivalência integral com Hermes/OpenClaw, a cobertura completa do Google Workspace e a performance sustentada no celular continuam sem aprovação.
 
-Estado conferido às **05:31 UTC de 11/10/2026**: o app publicado responde; API, navegador e OpenBao estão saudáveis; não há tarefas, conversas ou solicitações HTTP ativas. A versão `8a8de0d0` está em execução. A nova repetição pelo compositor terminou às **05:28:29,773 UTC**, com Luna. Essa fotografia não comprova disponibilidade sustentada.
+Estado conferido às **06:00:33 UTC de 11/10/2026**: API, navegador e OpenBao estão saudáveis; não há tarefas, conversas, solicitações HTTP ou entregas nativas ativas. A versão **`8a8de0d0` continua em execução**. A `main` local e o origin já contêm **`841f4bf4`**, cuja imagem foi construída, mas **ainda não foi publicada**. A última repetição pelo compositor terminou às **05:28:29,773 UTC**, com Luna. Essa fotografia não comprova disponibilidade sustentada.
+
+## Correção mais recente: pesquisa incompleta no caminho HTTP
+
+Foi reproduzida a causa que restava aberta na última entrega: a leitura HTTP aceitava uma página como completa quando havia perguntas de FAQ sem as respostas. A recuperação do provedor existia, mas não era alcançada por esse caminho. Além disso, a leitura em lote dispensava a recuperação quando o cache continha toda a representação extraída, mesmo que essa representação não tivesse as respostas.
+
+A correção **`841f4bf495cf3447cad5103cd47f6dad58a99ecd` está commitada e enviada para a `main`**. HTTP, extrator e navegador agora registram explicitamente as perguntas sem resposta antes de limitar o texto exibido. A leitura automática tenta recuperar o conteúdo; a falha conserva o texto observado com a indicação de incompletude. Ter a representação inteira no cache já não impede essa recuperação. Uma FAQ completa mantém o caminho normal, sem leitura extra obrigatória. Não houve troca para modelo de fronteira nem adição de uma revisão obrigatória por outro modelo.
+
+Os testes reproduziram **quatro falhas antes da correção**, com um controle já aprovado. Depois, **70/70 testes focados passaram**, sem falhas, cancelamentos ou casos ignorados. TypeScript e o build do servidor passaram. O lint dos três arquivos terminou sem erros, com quatro avisos e duas informações. Uma leitura HTTP real da página da Coursera, às **05:45:04 UTC**, devolveu 7.616 caracteres e identificou três perguntas sem resposta: agora a representação é marcada como parcial. Esse diagnóstico confirma a classificação da fonte; **não aprova uma nova pesquisa autônoma pelo chat**.
+
+A imagem exata de `841f4bf4` foi construída na VPS: `sha256:ce86bcdc2b9544ecafddb04116f5ea649be9a8042c08bf7b39489fefe4143d2b`. Sua publicação e a repetição normal pelo chat ainda estão pendentes. A evidência anterior da pesquisa incorreta não foi substituída por um teste induzido.
+
+A suíte completa do workspace está em execução com **dois processos de teste simultâneos** e ainda não tem resultado terminal; portanto, não está aprovada. Essa execução também inclui as alterações locais de criação de kanban descritas abaixo, que não pertencem à imagem `841f4bf4`. A primeira tentativa não aplicou o limite de concorrência na posição correta, iniciou processos demais e foi interrompida após a inspeção do consumo. A segunda foi iniciada com o argumento antes dos arquivos. Os dois logs foram preservados. O tempo de 248,898 segundos dos 70 testes focados foi afetado pela concorrência dessa primeira tentativa; não é apresentado como desempenho normal do produto.
+
+## Auditoria dos registros históricos
+
+A inspeção somente de leitura encontrou **62 entradas de journal pendentes em 28 tarefas**. Os filtros existentes excluem leituras específicas de estado e operações nativas cuja contenção já foi confirmada; por isso, o indicador operacional continua em **44**. Há registros de desktop, navegador, arquivos e outras ferramentas. A lista identifica os caminhos a investigar, mas não comprova o resultado de cada operação. Nenhum desses registros foi apagado ou marcado artificialmente como concluído. A prontidão do backup com escritor parado permanece sem aprovação.
 
 ## O que já foi publicado e testado no chat
 
@@ -68,12 +84,13 @@ O PDF final tem **47.850 bytes**, duas páginas e SHA-256 `45a86b5dde981f96a1890
 
 **Entrega física aprovada; pesquisa reprovada.** O PDF voltou a tratar o conteúdo da Coursera como gratuito, apesar da [FAQ da página exata](https://www.coursera.org/learn/introduction-to-generative-ai) exigir pagamento ou auxílio financeiro para acesso completo. Também deixou sem confirmação o idioma e as condições do badge do [Google Skills](https://www.skills.google/course_templates/536), além da duração total da [série da Microsoft](https://learn.microsoft.com/en-us/shows/generative-ai-for-beginners/). Três conteúdos distintos não foram demonstrados. O fechamento nativo conferiu arquivo e revisão visual; não conferiu esses fatos.
 
-A causa da leitura incompleta foi localizada: nessa execução, o extrator HTTP devolveu títulos de FAQ sem as respostas e `extraction.status: readable`. `PublicWeb.read` aceita essa representação e não chama a recuperação do provedor, pois a página parece legível. A detecção de perguntas sem respostas publicada anteriormente está em `Integrations.extract`; ela não foi alcançada nesse caminho. Isso também afeta outras leituras HTTP aceitas pelo mesmo ramo, não apenas o lote. O conteúdo, os metadados e o caminho de execução foram preservados como diagnóstico. **Esse defeito ainda está aberto; não é apresentado como corrigido pela versão `8a8de0d0`.**
+A causa da leitura incompleta foi localizada: nessa execução, o extrator HTTP devolveu títulos de FAQ sem as respostas e `extraction.status: readable`. `PublicWeb.read` aceitava essa representação e não chamava a recuperação do provedor, pois a página parecia legível. A detecção de perguntas sem respostas publicada anteriormente estava em `Integrations.extract`; ela não foi alcançada nesse caminho. Isso afetava outras leituras HTTP aceitas pelo mesmo ramo, não apenas o lote. O conteúdo, os metadados e o caminho de execução foram preservados como diagnóstico. **A correção está na `main` em `841f4bf4`, descrita acima; ainda não está na produção `8a8de0d0`.**
 
 A evidência desta rodada está em `artifacts/harness-parity-20261009/private-round58-vps`, fora do Git. O manifesto confere os hashes de treze arquivos de diagnóstico, incluindo PDF, execução, publicação, resultado factual, plano/recibo de limpeza e integridade dos dados preservados.
 
 ## Testes e versão
 
+- **Código já enviado para a main:** `841f4bf495cf3447cad5103cd47f6dad58a99ecd`, com a correção compartilhada de qualidade e recuperação de FAQ. Imagem construída; publicação pendente. Os 70 testes focados, TypeScript e build passaram. A suíte completa do workspace continua em execução e inclui trabalho local não publicado; não representa aprovação integral dessa release.
 - **Produção atual:** `8a8de0d05d6671af7f1254508ddf5c9892670707`. Inclui preservação binária e repetição durável de anexos, orientação de pesquisa e design, recuperação de extração e as correções anteriores. A última publicação levou 18,85 segundos, com parada limpa e preservação de banco, ambiente e navegador.
 - Antes desta publicação, a validação focada passou **55/55**, sem falhas, cancelamentos ou casos ignorados, em **8,885 segundos**, usando Node **24.16.0**. Ela cobre núcleo de kanban, anexos físicos, download binário, importação de arquivos, extração e contratos de documentos. TypeScript e o build do servidor/harness passaram. O lint dos nove arquivos terminou sem erros, com seis avisos e duas informações. As falhas de repetição e de duplicação binária foram reproduzidas antes das correções. Essa é uma execução focada, não a suíte completa nem aprovação do produto inteiro.
 - **Correções publicadas:** `fd9906c3` recupera FAQs incompletas; `427e77dc` limita o contexto de kanban e completa a paginação. Ambas estão incluídas em `095013d4`.
@@ -105,7 +122,7 @@ Está em desenvolvimento a preservação dos parâmetros originais de criação 
 
 ## O que ainda falta
 
-1. Corrigir a classificação de leituras HTTP com respostas ausentes e a conclusão prematura de pesquisas com campos essenciais sem confirmação. A recuperação do provedor já foi publicada, mas esse caminho a ignora. A repetição normal com Luna entregou o arquivo em 1min24,503s e voltou a falhar na pesquisa; a pesquisa completa ainda não passou.
+1. Publicar a correção `841f4bf4` e repetir o pedido normal com Luna, conferindo conteúdo, idiomas, durações, gratuidade e opções distintas nas fontes reais. A classificação de FAQ parcial passou nos testes e no diagnóstico HTTP; a conclusão correta da pesquisa pelo chat ainda não passou.
 2. Completar os contratos ainda ausentes do Hermes/OpenClaw, incluindo integração das quinze ferramentas de kanban e execução de navegador. A equivalência integral permanece **reprovada**.
 3. Ampliar a cobertura real do Google Workspace, incluindo operações de alteração/exclusão e seus cards; os casos aprovados acima não cobrem todas as ações possíveis.
 4. Resolver a divergência de contador de Ações e verificar a UX completa em desktop e celular.

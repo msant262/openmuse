@@ -536,16 +536,18 @@
     },
     {
       "surface": "research.incomplete-faq-extraction",
-      "implementationSource": "fd9906c3",
-      "caseAcceptance": "published-provider-recovery-http-path-factual-failure",
+      "implementationSource": "841f4bf4",
+      "caseAcceptance": "shared-http-recovery-tests-pass-image-built-publication-pending",
       "verified": [
-        "The three original recovery/partial/browser-rescue regressions fail on the original implementation and pass after the change.",
-        "Structurally missing FAQ answers trigger one bounded advanced retry; complete reads retain the single basic request. Failed retries preserve observed partial text and metadata for existing renderer rescue; cancellation still propagates.",
-        "49 integration/public-extract/web-fetch cases and twelve kanban cases pass in the final focused 61-test invocation on Node 24.16.0. TypeScript and final server/copied-harness build pass."
+        "Four regression failures reproduced before the shared HTTP/renderer metadata and batch cached-source rescue correction; the complete-FAQ control already passed.",
+        "70 focused checks pass on Node 24.16.0; TypeScript and server build pass. Lint has no errors. This is not a complete release suite.",
+        "Direct real Coursera HTTP read at 2026-10-11T05:45:04Z returns 7616 characters, identifies three missing FAQ answers, and marks the representation partial before excerpt slicing.",
+        "Exact main/origin source 841f4bf4 Docker image built successfully; production still runs 8a8de0d0."
       ],
       "pending": [
-        "Recover or explicitly mark missing FAQ answers on directly accepted HTTP pages, before treating them as readable. The published provider recovery does not run on that path.",
-        "Unchanged ordinary factual and distinct-option acceptance; the 84.503-second QA58 physical delivery still fails these requirements."
+        "Publish the built image after validation and normal drain; repeat the unchanged ordinary composer request with Luna.",
+        "Verify actual free access, distinct options and all requested comparison fields using the real delivered PDF and observed primary sources. Latest completed ordinary QA58 remains factually failed.",
+        "Complete workspace suite has no terminal result and includes unpublished local kanban-create work; do not represent it as immutable release approval."
       ],
       "acceptanceApproved": false,
       "apiSource": "8a8de0d0"
@@ -582,9 +584,22 @@
       "pending": [
         "Correct shared source-completeness handling and research closure using actual relevant facts; whole-harness, Workspace and physical-mobile acceptance remain false."
       ]
+    },
+    {
+      "surface": "operations.historical-pending-read-audit",
+      "apiSource": "8a8de0d0",
+      "caseAcceptance": "read-only-inventory-reconciliation-pending",
+      "acceptanceApproved": false,
+      "verified": [
+        "Read-only journal audit found 62 pending rows across 28 tasks; existing containment/status exclusions leave 44 in the operational active count.",
+        "No pending operation erased or outcome fabricated; inspector hooks and listener were closed after the read."
+      ],
+      "pending": [
+        "Determine and prove the actual terminal outcome or confirmed containment for each applicable operation; stopped-writer backup readiness remains false."
+      ]
     }
   ],
-  "updatedAt": "2026-10-11",
+  "updatedAt": "2026-10-11T06:00:33.265435Z",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
