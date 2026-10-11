@@ -1356,9 +1356,41 @@
       "preservationChecks": 13,
       "wholeHarnessApproved": false,
       "note": "Combines optional query with queries without dropping distinct terms or repeating identical terms. Shared output budget, exact offsets, source hash and owner scope preserved. These tests overlap the previous 44-test group and must not be summed."
+    },
+    {
+      "surface": "research.native-document-field-audit",
+      "tools": [
+        "read_web_source",
+        "create_document",
+        "inspect_document",
+        "confirm_document_review"
+      ],
+      "apiSource": "28f4d42ad0d1f4f3669230f2dd0b2dfdd8ae95c1",
+      "apiImage": "sha256:505174645d47d2e4dcdec6fadf026739b68d1eb498df0f8d3c97f0e2d7fdbaa8",
+      "caseAcceptance": "physical-delivery-and-autonomy-verified-factual-and-latency-failed",
+      "verified": [
+        "required-turn exact schema is executed rather than only advertised",
+        "native requestAudit in existing executor response; no independent model added",
+        "explicit unsatisfied field blocks aggregate passed true and is preserved with source/file/revision binding",
+        "40 related tests and 5 distinct optional-review cases passed; TypeScript/build/lint passed",
+        "published ordinary request sent once without tool hints or operator guidance; Luna only, 26 responses",
+        "first natural review contains 12 field checks and resumes research after 3 gaps",
+        "four owned PDF drafts; final 65896-byte PDF with 2 pages and 8 distinct source destinations opened in published reader",
+        "provider reported 2702644 input + 9241 output = 2711885 total tokens; 576128 cache-read already included",
+        "12 owned presentation records retired; 1929 nonselected records unchanged; 13 preservation comparisons passed"
+      ],
+      "pending": [
+        "semantic source-proof and complete factual request satisfaction: final Google language and Google/IBM credential price remain qualified unknown",
+        "latency: 574.748 seconds client to last model response; four drafts and repeated composition objections",
+        "reduce repeated context; maximum input in one response 150938 tokens",
+        "complete missing Hermes browser_exec and remaining Kanban/tool contracts",
+        "physical mobile and sustained performance",
+        "complete Workspace/memory/proactivity/UX acceptance"
+      ],
+      "acceptanceApproved": false
     }
   ],
-  "updatedAt": "2026-10-11T20:18:36.143080+00:00",
+  "updatedAt": "2026-10-11T20:52:39.789470+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
@@ -1396,7 +1428,7 @@
     },
     {
       "surface": "Hermes browser_exec",
-      "status": "pending",
+      "status": "missing",
       "upstream": "e0550c97bbd916cd5ff8fa0450e6291c31921b94",
       "readSources": [
         "tools/browser_use_cli.py",
@@ -1418,7 +1450,18 @@
         "screenshots": "A newly captured screenshot path is resolved to actual native image output",
         "desktopControl": "Bot Desktop routes use the same human-control lease fence as built-in browser tools"
       },
-      "note": "Backend-gated Python browser helpers, named daemon/tab isolation, vault-aware output redaction, physical timeout containment and browser-session routing require their own contract verification; existing Python host callbacks are not full parity evidence."
+      "note": "The app has native Python host callbacks and built-in browser tools, but no registered browser_exec or configured browser-use backend. The pinned Hermes contract has fresh Python variables, pre-imported helpers, persistent named browser/workspace, process-group timeout containment, vault egress redaction and desktop control fencing. This is missing implementation, not merely an unrun test; general execute_code is not full parity.",
+      "registeredInApp": false,
+      "revalidatedAt": "2026-10-11T20:32:59.856864+00:00",
+      "implementationEvidence": {
+        "searchedRoots": [
+          "apps/server/src",
+          "apps/worker/src"
+        ],
+        "registeredNameFound": false,
+        "pinnedContractSource": "tools/browser_use_cli.py",
+        "genericPythonCallbackIsEquivalent": false
+      }
     }
   ]
 }

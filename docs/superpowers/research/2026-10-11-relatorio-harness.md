@@ -1,6 +1,34 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Estado atual — conferência das 20:13 UTC
+## Estado atual — conferência das 20:50 UTC
+
+**Não terminou o harness completo.** Há correções publicadas, limpeza aplicada
+e entrega real de PDF por Luna, mas o último teste continua caro e lento.
+
+| Frente | Feito e comprovado | Pendência / limite |
+| --- | --- | --- |
+| Main e publicação | Implementação **`28f4d42a`** na main local/remota e API publicada, imagem **`50517464`**. Dez hashes compilados conferidos, publicação em 23,14s e 13 comparações de preservação aprovadas. | Web segue no release `harness80-20261011-e1fd91f9`; APK, navegador e executor físico mantidos. O commit posterior deste relatório é somente documentação. |
+| Pesquisa e tool calling | Busca de vários campos/ocorrências na mesma fonte preservada já publicada. Agora o executor valida o esquema exato da revisão exigida; antes ele era anunciado, mas não aplicado na execução. Revisão factual padrão registra cada requisito no mesmo turno do executor, sem modelo extra. Uma lacuna marcada como pendente impede aprovação agregada. | Confere consistência do protocolo, não a verdade de toda evidência escrita pelo modelo. Enumerar todos os requisitos e comparar corretamente fontes ainda depende do executor. |
+| Testes desta implementação | **40/40 testes relacionados e cinco casos distintos da revisão independente opcional passaram**; TypeScript, build e lint sem erros. Duas reproduções falharam antes da correção. | Os grupos intermediários sobrepostos não foram somados. Testes controlados não aprovam todo o harness nem todas as ferramentas. |
+| Pedido comum pelo chat | Uma mensagem em conversa nova, sem sugestões de ferramentas, perguntas ou orientações do operador. **26 respostas somente de Luna**, quatro versões e um PDF final de **65.896 bytes / duas páginas**. Bytes, pixels e oito destinos de fontes conferidos no leitor público. | Cerca de **9min35s** até a última resposta. Primeira revisão detectou três lacunas e retomou pesquisa sozinha; também houve exigências de diagramação não pedidas. **Rapidez e completude factual reprovadas**: idioma e preços ainda aparecem como não determinados. |
+| Consumo real | Metadados da própria sessão: **2.702.644 tokens de entrada + 9.241 de saída = 2.711.885**. Entrada em cache: **576.128**, já incluída no total; maior entrada individual: 150.938 tokens. | Continua caro para esta tarefa. Não houve troca para modelo de fronteira. Não há isolamento de tempo/custo por ferramenta nem atribuição causal exclusiva ao novo audit. |
+| Inicialização e leitor, correções anteriores | Recuperação do desktop caiu de **60,580s para 1,300s** e início do HTTP de **79,188s para 18,784s** em duas inicializações reais. Leitor PDF desenha uma página por vez e reutiliza os bytes durante navegação. | São correções já registradas no histórico. Consumo do celular, carregamento incremental de todas as conversas e estabilidade sob carga ainda não estão aprovados. |
+| Limpeza do app nesta etapa | **12 registros próprios do QA** recolhidos: oito arquivos/previews, tarefa, conversa, notificação e inbox. **1.929 registros fora da seleção permaneceram iguais**. Recibos/evidências preservados, inspector fechado, hooks removidos, navegador temporário encerrado e dispositivo revogado. | Não houve limpeza de dados reais ou de históricos incertos. Nenhum procedimento novo precisou ser arquivado. |
+| Dados preservados | As **13 comparações finais passaram**: companions/perfil, 58 arquivos, duas conversas, três memórias, 35 procedimentos e **três contas Google simultâneas**. Versões dos procedimentos anteriores iguais. | Preservação não é aprovação de memória/proatividade ou de todas as operações Google Workspace. |
+| Armazenamento | Retirada mais uma imagem antiga da API, seu contexto e archive: **435.486.720 bytes (~415,3 MiB)** livres adicionais na VPS. Archive local correspondente de **53.492.344 bytes** retirado com hash conferido. Limpeza anterior de imagens/cache liberou **~25,44 GiB**; 12 APKs antigos foram retirados em etapas anteriores. | Valores históricos identificados separadamente; nenhum APK novo foi removido nesta etapa. Atual/recuperação, web, APK publicado, OpenBao, volumes e dados reais mantidos. |
+| Saúde atual | Às **20:50 UTC**, página/API HTTP 200, três containers saudáveis, sem manutenção, seis contadores de execução em zero. Amostra API: **1,077 GiB / 53,57% CPU**; navegador: **543,1 MiB / 9,92% CPU**. | Amostra pontual, sem aprovação de pico, GPU, celular ou estabilidade. As 44 operações históricas incertas continuam preservadas. |
+| Paridade e restantes | Inventário revalidado: **`browser_exec` do Hermes está ausente** no servidor/worker. Não foi tratado como implementado por existir execução genérica de Python. | Falta implementar e validar esse contrato; completar os contratos de Kanban e ferramentas restantes; aprovar Workspace completo, memória/proatividade, desempenho e UX. **Paridade integral Hermes/OpenClaw permanece falsa.** |
+
+[Causa, implementação, teste real e limites da revisão factual](2026-10-11-native-field-audit.md).
+[Inventário de ferramentas e contratos pendentes](2026-10-09-harness-tool-inventory.json).
+Evidências desta etapa: `artifacts/harness-parity-20261009/`, fora do Git,
+com arquivos privados 0600 e diretório de cópias 0700.
+
+O trabalho seguinte precisa reduzir as quatro regenerações e o contexto
+repetido medido, separar ajustes cosméticos de pendências factuais e concluir
+os contratos ausentes. A meta permanece ativa; não há declaração de entrega integral.
+
+## Histórico — conferência das 20:13 UTC
 
 **O harness completo ainda não está entregue.** A pesquisa ganhou busca
 de vários campos na mesma fonte e compatibilidade com termos redundantes.
