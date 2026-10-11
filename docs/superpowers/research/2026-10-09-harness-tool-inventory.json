@@ -799,9 +799,36 @@
         "Establish allocation/latency causes and measure sustained physical-mobile performance.",
         "Whole Hermes/OpenClaw and Google Workspace acceptance remains open."
       ]
+    },
+    {
+      "surface": "research.actual-dispatch-and-current-draft-review-round66",
+      "caseAcceptance": "published-boundary-repairs-but-ordinary-research-rejected",
+      "acceptanceApproved": false,
+      "productionEnabled": true,
+      "apiSource": "b1ce9f193cd5ee573651c53d0ec9f7734f45737f",
+      "verified": [
+        "Raw search arguments parsed in real execution; mixed query/queries preserve five actual intended searches.",
+        "Old draft confirmation rejected after replacement; real TaskWorker and execute_code regressions reproduce old failures.",
+        "23/23 focused controls pass; TypeScript, server/assets/harness builds and lint pass; two prior lint warnings.",
+        "API-only clean handoff 19.74 seconds; compiled artifacts match source build; browser505/webD888 unchanged.",
+        "Seven owned presentation records retired; 1835 nonselected records and 33 prior procedure versions identical.",
+        "Three concurrent accounts, three memories, companions and 58 protected files preserved; fourteen private remote files hash-matched.",
+        "Automatic Grok fallback removed after QA; Luna primary and MiMo fallback, one environment field changed, same image/database/browser, 16.78-second clean handoff, accounts/memories unchanged and maintenance cleared."
+      ],
+      "failed": [
+        "Unchanged ordinary public-composer request still running at 699.539 seconds with 54 completed responses on Luna AND Grok fallback, 27 searches, two documents and rejected reviews; owned QA cancelled by operator.",
+        "Educational credential/certificate question falsely rejected as authentication credential input.",
+        "Last diagnostic PDF has two pages/59842 bytes, SHA256 2ed08dea7452bdc131d4ab449b99aeb1e283d7d181e2cbaeee29b92c768894cc; no autonomous final delivery or full factual/viewer acceptance."
+      ],
+      "pending": [
+        "Fix repeated research/review, factual completion and educational-credential false positive.",
+        "Repeat unchanged ordinary research under small-model-only fallback policy.",
+        "Establish high-resident-memory causes and sustained physical-mobile performance.",
+        "Complete all Workspace operations and actual Hermes/OpenClaw contract acceptance."
+      ]
     }
   ],
-  "updatedAt": "2026-10-11T09:50:22.372337Z",
+  "updatedAt": "2026-10-11T10:23:55.711162Z",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
