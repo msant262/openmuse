@@ -1,10 +1,23 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
+## Atualização de status — 13:34 UTC
+
+**Não terminou.** O critério de entrega pedido — pesquisa e documentos corretos, integração completa de ferramentas e conclusão autônoma — ainda não foi atendido.
+
+- **Main local e remota:** `2a9bd79c`, com despacho automático, publicação na conversa de origem e preservação de fontes, arquivos e recibos entre tentativas. Os **114/114 controles ampliados** passaram; os **41/41 controles finais** também passaram, em um grupo sobreposto. As correções desse commit ainda não estão publicadas.
+- **Correção em andamento, fora do commit:** a retomada de um card após uma resposta do usuário falhou no worker real. O teste reproduziu `Current run ownership could not be proven; nothing changed`: o bloqueio encerra o run do card, mas a resposta tenta continuar com o vínculo encerrado. Há alterações locais em cinco arquivos e um novo teste de reprodução; a correção ainda não foi validada e não deve ser tratada como entregue. Evidência: `artifacts/harness-parity-20261009/round75-resume-red.log`.
+- **Produção conferida novamente:** às **13:33 UTC**, página e `/api/health` responderam **HTTP 200** a partir desta estação com user-agent de navegador. Às **13:33:34 UTC**, os três containers estavam saudáveis; API permanece em `c0c2c9ec`, navegador em `505e4f2f`. Uma consulta Python sem esse user-agent, feita da VPS, recebeu HTTP 403; não equivale a uma queda dos containers nem comprova que o acesso de todos os clientes funciona.
+- **Pesquisa pelo chat já comprovada:** o pedido natural anterior entregou um PDF real em **98,617 segundos**, somente com Luna. A navegação e a entrega passaram; a atribuição factual integral não passou. Não houve novo pedido natural nesta continuação.
+- **Limpeza já executada:** registros próprios de QA, imagens/releases obsoletos e 12 APKs antigos foram retirados conforme os recibos abaixo. A última conferência de preservação manteve companions, dados reais de Beatriz, três contas Google simultâneas, três memórias e 58 arquivos protegidos. O espaço livre atual na VPS é **32.370.475.008 bytes**, aproximadamente **30,15 GiB**. Nenhum dado de produção foi apagado nesta atualização de status.
+- **Ainda falta:** concluir e verificar a retomada, publicar código e executor, testar os fluxos naturalmente no chat, completar a cobertura do Workspace/Hermes/OpenClaw e corrigir/medir performance e UX. Os testes locais não aprovam esses itens.
+
+As seções seguintes preservam os resultados anteriores e suas limitações. O estado de 12:56 UTC é histórico; o commit atual é o indicado acima.
+
 **O trabalho completo ainda não está entregue.** A API publicada está em `c0c2c9ec`. O último pedido normal de pesquisa concluiu sozinho em **1min38,617s**, com um PDF real, usando **14 respostas somente de Luna**. O arquivo abriu no app e a navegação nas duas páginas funcionou. A comprovação factual de todos os campos ainda não passou; a integração completa do Workspace, a equivalência integral com Hermes/OpenClaw e a performance sustentada também continuam abertas.
 
 A continuação local integrou o despacho automático e a publicação na conversa de origem. Foram corrigidas também a fase das tentativas seguintes e a perda de evidências/arquivos entre tentativas. **114/114 controles ampliados passaram; 41/41 controles dos caminhos afetados passaram novamente após os ajustes finais. Ainda não publicado.** O histórico abaixo conserva a reprodução anterior de 0/4; o estado atual desta etapa está no [registro de despacho automático](2026-10-11-kanban-auto-dispatch.md).
 
-## Estado conferido às 12:56 UTC
+## Estado histórico conferido às 12:56 UTC
 
 - **Código:** main local e main no GitHub conferidas em `3beefbf7e08fcbba36c3f3469c3afe61b41aa455` antes desta atualização documental. Esse é o último commit de implementação. As correções locais de posse, workspace, perfis e prazo de execução descritas abaixo estão commitadas e enviadas, mas ainda não foram publicadas no servidor ou no executor físico.
 - **Produção:** às **12:56:33 UTC**, página inicial e `/api/health` responderam **HTTP 200**. API, navegador do agente e OpenBao estavam em execução e saudáveis. As imagens continuam `b2d6cdaa`, `6bab849f` e `6d2b9385`, respectivamente. Esta conferência de disponibilidade não prova que o consumo ou as quedas intermitentes estejam corrigidos.
