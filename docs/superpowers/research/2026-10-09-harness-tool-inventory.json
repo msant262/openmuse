@@ -878,7 +878,7 @@
       "caseAcceptance": "local-host-binding-foundation-not-automatic-dispatcher",
       "acceptanceApproved": false,
       "productionEnabled": false,
-      "published": false,
+      "published": true,
       "verified": [
         "Canonical claim and native task/binding atomically committed under owner scope, authenticated profile CAS and final pause fence.",
         "Fixture provider uses real worker, source receipt and finish handoff without manual execution-binding insertion; acknowledged outcome replay creates no extra run.",
@@ -892,14 +892,21 @@
         "Declared model/provider, skills and budgets; goal/PR/exact-commit CI completion gates.",
         "Conversation/subscriber delivery provenance and a natural public-chat acceptance run.",
         "Publication and whole-harness/Workspace/performance acceptance."
-      ]
+      ],
+      "publication": {
+        "source": "8aa6d4796cd0a33d8b2e5af166a3df39635babd5",
+        "apiImage": "sha256:26ee81b1e33a989ffd632241e418bb5a8a8cd91713bf1fd6372f9d8637d4939e",
+        "nativeChangedFiles": 4,
+        "naturalContractAcceptance": false,
+        "wholeHarnessApproved": false
+      }
     },
     {
       "surface": "kanban.native-run-ownership-round69",
       "caseAcceptance": "local-native-authority-and-final-transaction-barriers",
       "acceptanceApproved": false,
       "productionEnabled": false,
-      "published": false,
+      "published": true,
       "verified": [
         "Card run uses native task/actor authority across queued/running/waiting states; legacy unbound cards preserve their TTL contract.",
         "Final transaction checks actor, database-clock expiry, binding, originating card and global pause without rewriting checked rows.",
@@ -913,14 +920,21 @@
         "Effective model/provider/skills/budgets and goal/PR/exact-commit CI gates.",
         "Durable conversation/subscriber delivery, publication and natural public-chat acceptance.",
         "Full Workspace, factual research, sustained mobile performance and whole-harness acceptance."
-      ]
+      ],
+      "publication": {
+        "source": "8aa6d4796cd0a33d8b2e5af166a3df39635babd5",
+        "apiImage": "sha256:26ee81b1e33a989ffd632241e418bb5a8a8cd91713bf1fd6372f9d8637d4939e",
+        "nativeChangedFiles": 4,
+        "naturalContractAcceptance": false,
+        "wholeHarnessApproved": false
+      }
     },
     {
       "surface": "kanban.workspace-and-python-cwd-round70",
       "caseAcceptance": "local-physical-workspace-and-versioned-native-python",
       "acceptanceApproved": false,
       "productionEnabled": false,
-      "published": false,
+      "published": true,
       "verified": [
         "Canonical claim stages workspace intent; admitted existing native worker provisions stable scratch/directories or actual Git worktrees through existing journal/resources.",
         "Final task-actor/expiry/state/profile/card/pause barriers preserve physical receipts when authority changes; unrelated linked branch and files stay intact.",
@@ -935,14 +949,21 @@
         "Goal/PR/exact-commit CI completion gates and automatic worker dispatch.",
         "Registered native OS rollout, durable conversation delivery and normal public-chat acceptance.",
         "Full Google Workspace, factual research, sustained mobile performance and whole-harness acceptance."
-      ]
+      ],
+      "publication": {
+        "source": "8aa6d4796cd0a33d8b2e5af166a3df39635babd5",
+        "apiImage": "sha256:26ee81b1e33a989ffd632241e418bb5a8a8cd91713bf1fd6372f9d8637d4939e",
+        "nativeChangedFiles": 4,
+        "naturalContractAcceptance": false,
+        "wholeHarnessApproved": false
+      }
     },
     {
       "surface": "kanban.authenticated-execution-config-and-explanation-round71",
       "caseAcceptance": "local-worker-config-and-instruction-intent",
       "acceptanceApproved": false,
       "productionEnabled": false,
-      "published": false,
+      "published": true,
       "verified": [
         "Registered projects/default directories reach native creation and physical Git worktree provisioning.",
         "Available card model overrides profile/account model; provider mismatches and unavailable routes cannot leave claims or queue orphans.",
@@ -957,14 +978,21 @@
         "Automatic dispatch and original conversation delivery.",
         "Native OS rollout and normal public-chat acceptance.",
         "Complete factual research, all Workspace operations and sustained performance."
-      ]
+      ],
+      "publication": {
+        "source": "8aa6d4796cd0a33d8b2e5af166a3df39635babd5",
+        "apiImage": "sha256:26ee81b1e33a989ffd632241e418bb5a8a8cd91713bf1fd6372f9d8637d4939e",
+        "nativeChangedFiles": 4,
+        "naturalContractAcceptance": false,
+        "wholeHarnessApproved": false
+      }
     },
     {
       "surface": "kanban.declared-physical-runtime-round72",
       "caseAcceptance": "local-worker-deadline-and-physical-timeout",
       "acceptanceApproved": false,
       "productionEnabled": false,
-      "published": false,
+      "published": true,
       "verified": [
         "Explicit card/profile runtime binds one deadline per canonical run; no declaration adds no automatic duration cap.",
         "Worker abort and physical command/worktree/Python timeouts preserve restart/poll budget and resource occupancy until same-job cancellation is confirmed.",
@@ -976,14 +1004,21 @@
         "Expired-card phase/retry handling, automatic dispatch, original conversation delivery, goal/PR/CI and complete project inheritance.",
         "Registered executor rollout and normal public-chat acceptance.",
         "Full Google Workspace, factual research and sustained mobile performance."
-      ]
+      ],
+      "publication": {
+        "source": "8aa6d4796cd0a33d8b2e5af166a3df39635babd5",
+        "apiImage": "sha256:26ee81b1e33a989ffd632241e418bb5a8a8cd91713bf1fd6372f9d8637d4939e",
+        "nativeChangedFiles": 4,
+        "naturalContractAcceptance": false,
+        "wholeHarnessApproved": false
+      }
     },
     {
       "surface": "kanban.automatic-dispatch-continuation-and-origin-round74",
       "caseAcceptance": "local-automatic-worker-and-publication",
       "acceptanceApproved": false,
       "productionEnabled": false,
-      "published": false,
+      "published": true,
       "verified": [
         "Existing routine loop selects compact owner/profile/platform/dependency-scoped candidates and stages the existing native worker atomically.",
         "Host-recorded origin publishes once to the correct conversation; deletion before discovery or at commit prevents fresh execution.",
@@ -997,11 +1032,18 @@
         "Goal/PR/CI and complete project inheritance; pending direction/decision continuation integration.",
         "Registered executor rollout, production deployment and natural public-chat acceptance with small models.",
         "Complete factual research, all Google Workspace operations, broader UX and sustained mobile performance."
-      ]
+      ],
+      "publication": {
+        "source": "8aa6d4796cd0a33d8b2e5af166a3df39635babd5",
+        "apiImage": "sha256:26ee81b1e33a989ffd632241e418bb5a8a8cd91713bf1fd6372f9d8637d4939e",
+        "nativeChangedFiles": 4,
+        "naturalContractAcceptance": false,
+        "wholeHarnessApproved": false
+      }
     },
     {
       "surface": "kanban.native-question-resume-and-text-handoff-round75",
-      "status": "locally-verified-not-published",
+      "status": "locally-verified-published-not-naturally-accepted",
       "sources": [
         "apps/server/src/engine/service.ts",
         "apps/server/src/engine/worker.ts",
@@ -1020,13 +1062,71 @@
         "groupsOverlap": true
       },
       "naturalPublicChatAccepted": false,
-      "published": false,
+      "published": true,
       "wholeHarnessApproved": false,
       "note": "Same-task resumption requires an answered owned question and ended blocked run. Final transaction fences lease, profile, binding, pause and unsettled effects. Saved source readback requalifies evidence without network replay; ordinary final text uses the native journaled handoff. Actual interpreter-variable continuity on the registered executor, late-terminal direction transfer and complete upstream contracts remain unverified.",
-      "record": "docs/superpowers/research/2026-10-11-kanban-native-resume.md"
+      "record": "docs/superpowers/research/2026-10-11-kanban-native-resume.md",
+      "publication": {
+        "source": "8aa6d4796cd0a33d8b2e5af166a3df39635babd5",
+        "apiImage": "sha256:26ee81b1e33a989ffd632241e418bb5a8a8cd91713bf1fd6372f9d8637d4939e",
+        "nativeChangedFiles": 4,
+        "naturalContractAcceptance": false,
+        "wholeHarnessApproved": false
+      }
+    },
+    {
+      "surface": "api-and-native-publication-round75",
+      "published": true,
+      "apiSource": "8aa6d4796cd0a33d8b2e5af166a3df39635babd5",
+      "apiImage": "sha256:26ee81b1e33a989ffd632241e418bb5a8a8cd91713bf1fd6372f9d8637d4939e",
+      "compiledHashesVerified": 9,
+      "apiHandoffSeconds": 77.6,
+      "nativeHandoffSeconds": 4.29,
+      "nativeChangedFiles": 4,
+      "nativeReceiptsPreserved": 1236,
+      "protectedDataUnchanged": true,
+      "historicalUncertainOperationsPreserved": 44,
+      "naturalPublicChatAccepted": false,
+      "wholeHarnessApproved": false,
+      "record": "docs/superpowers/research/2026-10-11-relatorio-harness.md",
+      "note": "API and registered executor deployed with unchanged database/configuration and canonical receipts. Initialization returned 502 for part of the 77.60-second handoff and remains unexplained. A single normal request delivered a real two-page PDF in 354.928 seconds using twenty Luna responses and two PDF generations, without human direction. Physical file/viewer accepted; missing concrete duration for one course and remaining source attribution prevent full research acceptance. New kanban contracts still lack natural acceptance."
+    },
+    {
+      "surface": "research.ordinary-pdf-round75",
+      "published": true,
+      "apiSource": "8aa6d4796cd0a33d8b2e5af166a3df39635babd5",
+      "normalUiRequest": true,
+      "operatorDirectedTools": false,
+      "humanDirectionsOrAnswers": false,
+      "elapsedSeconds": 354.928,
+      "model": "chatgpt/gpt-6-luna",
+      "completedResponses": 20,
+      "generatedDocuments": 2,
+      "fileBytes": 52117,
+      "pageCount": 2,
+      "sha256": "11f6349871237c7ec454afcfe1bfc9d20c1b04e98bce5ce46c82b67120ca4db2",
+      "physicalDeliveryAccepted": true,
+      "publicViewerAccepted": true,
+      "fullResearchAccepted": false,
+      "wholeHarnessApproved": false,
+      "pending": [
+        "Concrete duration for Microsoft option",
+        "Independent attribution of every other requested field",
+        "Repeated generation and nearly six-minute latency",
+        "New native kanban contracts and complete upstream coverage"
+      ],
+      "record": "docs/superpowers/research/2026-10-11-relatorio-harness.md",
+      "cleanup": {
+        "presentationRecords": 8,
+        "nonselectedUnchanged": 1846,
+        "qaProceduresArchived": 1,
+        "previousProceduresUnchanged": 33,
+        "canonicalReceiptsPreserved": true,
+        "protectedDataUnchanged": true
+      }
     }
   ],
-  "updatedAt": "2026-10-11T13:49:47.857522+00:00",
+  "updatedAt": "2026-10-11T14:10:57Z",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

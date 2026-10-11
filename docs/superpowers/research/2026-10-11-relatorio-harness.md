@@ -1,12 +1,26 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Continuação — retomada corrigida e verificada localmente
+## Estado atual — publicação e novo teste de 11/10
 
-**A falha de retomada descrita na atualização de 13:34 UTC foi corrigida localmente. Ainda não publicada nem aceita por pedido natural.** A resposta agora reconecta a mesma tarefa a um novo run, reutiliza o diretório e conserva fontes e recibos. Orientações recebidas são aplicadas antes da inferência. Uma segunda reprodução identificou a falha de conclusão por resposta em texto; esse caminho passou a usar o mesmo journal e gate de entrega do `finish_task`.
+**O trabalho completo ainda não terminou. API e executor foram atualizados; isso não aprova todo o harness.**
+
+- **Main local/remota:** contém a implementação `8aa6d479`. A API usa exatamente esse commit e a imagem `26ee81b1`; nove artefatos compilados conferem com os hashes da verificação local. Web permanece `d8882335`, navegador da VPS `505e4f2f`; nenhum APK novo foi criado.
+- **Mudanças publicadas:** despacho automático de cards elegíveis, entrega na conversa de origem, preservação de fontes/arquivos/recibos entre tentativas, aplicação de orientações antes da inferência, retomada da mesma tarefa após resposta e conclusão em texto pelo mesmo gate de entrega. Diretório/projeto, modelo, skills e tempo declarados são resolvidos pelo host. A retomada foi reproduzida antes da correção; os **163/163 testes de integração** e a repetição dos **9/9 cenários de retomada** passaram, com grupos sobrepostos. TypeScript e build passaram. São controles locais com provedor de teste, não aceitação natural desses contratos.
+- **Executor físico:** quatro arquivos instalados com hashes conferidos para Python v2/diretório e prazo restante de comandos. Publicação em **4,29 segundos**. Os **1.236 recibos históricos** permaneceram iguais, assim como 14 outros arquivos, configuração, contas e worker. Conectado novamente, epoch 46, com arquivos, navegador, captura e runtime prontos. Persistência de variáveis no novo diretório ainda precisa prova física específica.
+- **Disponibilidade:** página e health responderam **HTTP 200** após a troca. API, navegador e OpenBao saudáveis. A troca da API levou **77,60 segundos** e expôs um intervalo de HTTP 502. A inicialização mais lenta permanece sem causa comprovada; disponibilidade sustentada e consumo de recursos não estão aprovados.
+- **Preservação:** após a troca da API, conferidos sem mudança companions/perfil, duas conversas, três tarefas, duas ações, cinco atividades, **58 arquivos**, **três memórias**, **três contas Google simultâneas** e 33 procedimentos. Aprendizado habilitado, sem revisão ativa e sem erro. As **44 operações históricas incertas** continuam preservadas.
+- **Limpeza já feita:** retirados registros próprios de QA, imagens/releases obsoletos e **12 APKs antigos**, conforme recibos nas seções históricas. Mantidos os dados reais, versões atuais/de recuperação, volumes e backups. Na conferência das **14:10:57 UTC**, após a nova imagem e a limpeza do teste, a VPS tinha **31.291.715.584 bytes livres**, aproximadamente **29,14 GiB**; a nova build consumiu parte do espaço liberado. Não houve nova remoção de dados reais nesta publicação.
+- **Novo teste pelo chat:** pedido natural de pesquisa/PDF enviado às **14:01:49,215 UTC**, uma vez, em conversa nova, sem mencionar ferramentas nem pedir cards. Concluiu sem resposta/orientação humana às **14:07:44,143 UTC**: **354,928 segundos (5min55s)**, com **20 respostas somente de Luna**. Gerou dois PDFs e entregou o segundo: **52.117 bytes, duas páginas**, SHA-256 `11f6349871237c7ec454afcfe1bfc9d20c1b04e98bce5ce46c82b67120ca4db2`. Bytes, texto, pixels e navegação nas duas páginas conferidos. **Entrega física aprovada; pesquisa completa e latência não aprovadas.** Um curso ficou sem duração concreta, e a comprovação de todos os demais campos não foi aprovada. Oito registros de apresentação desse QA foram retirados: quatro arquivos, tarefa, conversa, notificação e inbox. **1.846 registros fora da seleção permaneceram iguais**. O aprendizado criou automaticamente um procedimento do teste; ele foi arquivado, preservando os **33 anteriores** e seus dados. Recibos canônicos mantidos.
+
+**Falta para a entrega:** preencher e comprovar os campos pesquisados, sem concluir com a duração ausente; reduzir a repetição e latência observadas; teste natural dos contratos novos; cobertura integral de Workspace/Hermes/OpenClaw; objetivos/PR/CI e navegador programático; transferência de orientações para uma tentativa sucessora; investigação da inicialização, uso de recursos e celular; revisão ampla de UX. Nenhum desses itens recebe aprovação por causa do HTTP 200 ou da suíte local.
+
+## Verificação local anterior à publicação — retomada corrigida
+
+**A falha de retomada descrita na atualização de 13:34 UTC foi corrigida e verificada localmente antes da publicação descrita acima. Não aceita ainda por pedido natural.** A resposta agora reconecta a mesma tarefa a um novo run, reutiliza o diretório e conserva fontes e recibos. Orientações recebidas são aplicadas antes da inferência. Uma segunda reprodução identificou a falha de conclusão por resposta em texto; esse caminho passou a usar o mesmo journal e gate de entrega do `finish_task`.
 
 **163/163 controles de integração passaram**, incluindo Google Workspace, e os **nove controles de retomada passaram novamente** após os últimos ajustes; os grupos são sobrepostos. TypeScript e build do servidor passaram. A pausa global foi testada tanto para impedir a gravação quanto para permitir a conclusão depois da liberação. Às **13:47:10 UTC**, a produção continuava em `c0c2c9ec`, sem tarefas/conversas/HTTP/entregas nativas/admissões/recursos ativos, manutenção desligada e as 44 operações incertas preservadas. [Detalhes e limites da retomada](2026-10-11-kanban-native-resume.md).
 
-Publicação e executor, aceitação natural, cobertura integral de ferramentas e Workspace, comprovação factual, performance e UX continuam pendentes. Os snapshots seguintes são históricos.
+A verificação natural dos novos contratos, a cobertura integral de ferramentas e Workspace, a comprovação factual, performance e UX continuam pendentes. Os snapshots seguintes são históricos.
 
 ## Atualização de status — 13:34 UTC
 
@@ -21,7 +35,7 @@ Publicação e executor, aceitação natural, cobertura integral de ferramentas 
 
 As seções seguintes preservam os resultados anteriores e suas limitações. O estado de 12:56 UTC é histórico; o commit atual é o indicado acima.
 
-**O trabalho completo ainda não está entregue.** A API publicada está em `c0c2c9ec`. O último pedido normal de pesquisa concluiu sozinho em **1min38,617s**, com um PDF real, usando **14 respostas somente de Luna**. O arquivo abriu no app e a navegação nas duas páginas funcionou. A comprovação factual de todos os campos ainda não passou; a integração completa do Workspace, a equivalência integral com Hermes/OpenClaw e a performance sustentada também continuam abertas.
+**Snapshot histórico anterior à publicação atual.** A API então publicada estava em `c0c2c9ec`. O pedido normal anterior de pesquisa concluiu sozinho em **1min38,617s**, com um PDF real, usando **14 respostas somente de Luna**. O arquivo abriu no app e a navegação nas duas páginas funcionou. A comprovação factual de todos os campos ainda não passou; a integração completa do Workspace, a equivalência integral com Hermes/OpenClaw e a performance sustentada também continuam abertas.
 
 A continuação local integrou o despacho automático e a publicação na conversa de origem. Foram corrigidas também a fase das tentativas seguintes e a perda de evidências/arquivos entre tentativas. **114/114 controles ampliados passaram; 41/41 controles dos caminhos afetados passaram novamente após os ajustes finais. Ainda não publicado.** O histórico abaixo conserva a reprodução anterior de 0/4; o estado atual desta etapa está no [registro de despacho automático](2026-10-11-kanban-auto-dispatch.md).
 
@@ -46,7 +60,7 @@ A continuação local integrou o despacho automático e a publicação na conver
 
 TypeScript do projeto, build do servidor, assets e harness passaram para `c0c2c9ec`. Lint terminou sem erros, com **dois avisos preexistentes**. Os grupos de testes têm escopos próprios; não são uma nova aprovação da suíte completa ou de todo o produto.
 
-## Último pedido normal pelo chat publicado
+## Pedido normal anterior pelo chat publicado — 10:37 UTC
 
 Enviado uma única vez em conversa nova, sem citar ferramentas, orientar o agente, responder a perguntas ou reparar a tarefa manualmente:
 
@@ -116,3 +130,11 @@ Na continuação atual, o ciclo existente passou a iniciar cards automaticamente
 **16 arquivos privados da VPS foram copiados com hashes conferidos**, incluindo publicação, resultado, PDF, integridade e limpeza. Evidência privada atual em `artifacts/harness-parity-20261009/private-round67-vps`, fora do Git. O [histórico técnico](2026-10-09-harness-parity.md) e a [matriz de ferramentas](2026-10-09-harness-tool-inventory.json) preservam os resultados e limites de cada rodada.
 
 **O objetivo permanece ativo. Não há aprovação integral do harness, do Workspace ou da performance.**
+
+## Fechamento desta atualização — 14:10:57 UTC
+
+A conferência após a limpeza manteve todos os dados protegidos e as três contas/memórias, sem erro de aprendizado. O procedimento aprendido exclusivamente pelo QA está arquivado, e os 33 anteriores ficaram iguais. Containers saudáveis, manutenção desligada e 44 operações históricas incertas preservadas. Havia **uma tarefa e uma admissão em segundo plano**, sem conversa, HTTP, entrega nativa ou recurso ativo; esta fotografia não é um estado totalmente ocioso e não aprova performance.
+
+O arquivo produzido no novo pedido normal comprova entrega física, mas também expõe o aceite indevido de pesquisa sem duração concreta em um dos itens. Esse achado, os 5min55s/20 respostas e a inicialização de 77,60s continuam sem correção nesta atualização. O relatório foi atualizado para separar publicação, testes locais e aceite funcional.
+
+**17 comprovantes privados desta atualização** foram copiados da VPS/computador com SHA-256 conferido e permissões 0600. Incluem publicação, hashes da imagem, resultado real, preservação e limpeza. A sessão web temporária de QA foi revogada após fechar o navegador; a sessão de diagnóstico foi preservada. Evidências locais em `artifacts/harness-parity-20261009/private-round75-vps` e `private-round75-native`, fora do Git.

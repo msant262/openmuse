@@ -1,6 +1,6 @@
 # Retomada após resposta e conclusão em texto — 11/10/2026
 
-**Corrigido e verificado localmente. A publicação e a aceitação natural no app ainda estão pendentes. O objetivo completo permanece aberto.**
+**Corrigido, verificado localmente e publicado em `8aa6d479`. A aceitação natural dos contratos novos ainda está pendente. O objetivo completo permanece aberto.**
 
 O worker real reproduziu a falha: `kanban_block` encerrava o run do card; depois da resposta, a mesma tarefa tentava usar o vínculo encerrado e falhava com `Current run ownership could not be proven`. A resposta estava salva corretamente. Não era necessário criar outra tarefa, repetir pesquisa ou pedir ao usuário para reparar a execução.
 
@@ -20,4 +20,8 @@ O teste com nova orientação revelou também um caminho sem identidade de journ
 - TypeScript, build do servidor, assets e harness foram verificados. O manifesto privado desta rodada registra os hashes das fontes, logs e artefatos compilados. A suíte completa não foi executada.
 - Os testes usam Store/PGlite e o worker reais, com provedor e serviços externos de teste. A aprovação de exclusão no grupo Workspace é um controle do protocolo, não uma nova exclusão real no Google. Isso não substitui pedidos naturais com Luna no app publicado.
 
-**Ainda falta** publicar código e executor; verificar os fluxos naturalmente; completar objetivo/PR/CI, navegador programático e cobertura integral das ferramentas; corrigir e medir performance/UX. A transferência de orientações que chegaram tarde a uma tentativa já encerrada, antes de sua sucessora, também permanece distinta da retomada da mesma tarefa tratada aqui. Não houve novo APK ou limpeza de dados de produção nesta implementação.
+**Ainda falta** verificar os fluxos naturalmente; completar objetivo/PR/CI, navegador programático e cobertura integral das ferramentas; corrigir e medir performance/UX. A transferência de orientações que chegaram tarde a uma tentativa já encerrada, antes de sua sucessora, também permanece distinta da retomada da mesma tarefa tratada aqui. Não houve novo APK ou limpeza de dados de produção nesta implementação.
+
+## Publicação posterior
+
+API `8aa6d479` publicada na imagem `26ee81b1`, com nove hashes compilados conferidos. A troca levou **77,60 segundos**, preservando banco, configuração, navegador e operações históricas; houve HTTP 502 durante a inicialização. Os quatro arquivos do executor foram instalados separadamente em **4,29 segundos**, preservando os **1.236 recibos** e os demais arquivos/configuração/contas/worker. Conferência após a API manteve os dados protegidos, três contas, três memórias e 58 arquivos. Essa publicação não comprova a persistência física da nova sessão nem a aceitação natural de bloqueio/resposta. Recibos privados: `deployment-harness75-8aa6d479.json`, `harness75-image-verification.json`, `harness75-final-integrity.json` e `native-harness75-deployment.json`.
