@@ -17,25 +17,34 @@ export function searchTools(
     result?: (result: SearchResult) => Promise<void>;
   } = {},
 ) {
+  const parameters = searchInputSchema
+    .extend({
+      query: searchInputSchema.shape.query.optional(),
+      queries: z.array(searchInputSchema.shape.query).min(1).max(4).optional(),
+      sessionId: z.uuid().optional(),
+    })
+    .refine((args) => args.query !== undefined || args.queries !== undefined, {
+      message: "Supply query or queries",
+    });
   return [
     defineTool({
       name: "search_web",
       description:
-        "Discover public web sources. Supply query for one search or queries for up to four independent searches together, with limit per query (default five, up to one hundred). HTTP searches run together; profile-backed searches retain their lease order. Results preserve each query's status and index provenance; snippets are leads, not full source reads.",
-      parameters: searchInputSchema
-        .extend({
-          query: searchInputSchema.shape.query.optional(),
-          queries: z.array(searchInputSchema.shape.query).min(1).max(4).optional(),
-          sessionId: z.uuid().optional(),
-        })
-        .refine((args) => (args.query !== undefined) !== (args.queries !== undefined), {
-          message: "Supply query or queries, not both",
-        }),
-      execute: (args) => {
+        "Discover public web sources. Supply query for one search, queries for up to four independent searches, or both; every unique trimmed query is searched. Limit applies per query (default five, up to one hundred). HTTP searches run together; profile-backed searches retain their lease order. Results preserve each query's status and index provenance; snippets are leads, not full source reads.",
+      parameters,
+      execute: (raw) => {
+        // JSON schema cannot carry Zod refinements or normalization. Host
+        // dispatch and Code Mode call execute with raw model arguments.
+        const args = parameters.parse(raw);
         const run = async () => {
           if (options.stopped?.())
             return { status: "cancelled", code: "TASK_STOPPED", sources: [], dispatched: false };
-          const queries = [...new Set(args.query !== undefined ? [args.query] : args.queries)];
+          const queries = [
+            ...new Set([
+              ...(args.query !== undefined ? [args.query] : []),
+              ...(args.queries ?? []),
+            ]),
+          ];
           const context = {
             ...options,
             owner,

@@ -19,6 +19,91 @@ const png = Buffer.from(
   "base64",
 );
 
+test("actual worker rejects approval of a replaced draft without changing its failed review", async (t) => {
+  let firstFileId = "",
+    finalFileId = "",
+    firstReceiptId = "",
+    finalReceiptId = "";
+  const document = {
+    name: "Current document.pdf",
+    format: "pdf",
+    content: "# Current document\n\nUseful content.",
+    design: { cover: false },
+  };
+  await modelFixture(
+    t,
+    (index) =>
+      [
+        { name: "create_document", arguments: { ...document, operationId: "old-draft" } },
+        { name: "inspect_document", arguments: { fileId: firstFileId, pageCount: 4 } },
+        {
+          name: "confirm_document_review",
+          arguments: {
+            receiptId: firstReceiptId,
+            passed: false,
+            issues: ["Correct the draft content."],
+          },
+        },
+        {
+          name: "create_document",
+          arguments: {
+            ...document,
+            operationId: "replacement",
+            replaceFileId: firstFileId,
+            content: "# Current document\n\nCorrected useful content.",
+          },
+        },
+        {
+          name: "confirm_document_review",
+          arguments: { receiptId: firstReceiptId, passed: true, issues: [] },
+        },
+        { name: "inspect_document", arguments: { fileId: finalFileId, pageCount: 4 } },
+        {
+          name: "confirm_document_review",
+          arguments: { receiptId: finalReceiptId, passed: true, issues: [] },
+        },
+        {
+          name: "finish_task",
+          arguments: { summary: "The current document is attached.", artifactIds: [finalFileId] },
+        },
+      ][index],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const capability = f.agent.config.modelProviders?.routing?.capabilities["openai/fixture"];
+  assert.ok(capability);
+  capability.vision = true;
+  const create = f.agent.media.createDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "createDocument", async (...args: Parameters<typeof create>) => {
+    const result = await create(...args);
+    if (!firstFileId) firstFileId = result.fileId;
+    else finalFileId = result.fileId;
+    return result;
+  });
+  const inspect = f.agent.media.inspectDocument.bind(f.agent.media);
+  t.mock.method(f.agent.media, "inspectDocument", async (...args: Parameters<typeof inspect>) => {
+    const result = await inspect(...args);
+    if (!firstReceiptId) firstReceiptId = result.receiptId;
+    else finalReceiptId = result.receiptId;
+    return result;
+  });
+  const task = await f.agent.createTask("owner", { prompt: "Create a PDF with useful content." });
+  await f.agent.worker.tick();
+  const operations = await f.agent.journal.operations("owner", task.id);
+  const confirmations = operations.filter((op) => op.toolName === "confirm_document_review");
+  assert.equal(confirmations.length, 3);
+  assert.equal(
+    confirmations[1].status,
+    "failed",
+    "an obsolete draft cannot be approved after replacement",
+  );
+  assert.match((confirmations[1].receipt as { error: string }).error, /replaced|current document/i);
+  assert.equal((await f.db.get("owner", "document-reviews", firstReceiptId))?.passed, false);
+  const saved = await f.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "succeeded", saved.error ?? saved.question);
+  assert.deepEqual(saved.artifactIds, [finalFileId]);
+  assert.equal(saved.completion?.status, "verified");
+});
+
 test("document review needs image dispatch, exact scope/revision, full page coverage and no failed latest assessment", async (t) => {
   const server = await taskRuntime(t);
   const review = new DocumentReview(server.db, server.files);

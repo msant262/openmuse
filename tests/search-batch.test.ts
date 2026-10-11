@@ -15,7 +15,7 @@ import {
 
 function execute(tool: ReturnType<typeof searchTools>[number], raw: unknown) {
   assert.ok(tool.execute);
-  return tool.execute(tool.parameters.parse(raw));
+  return tool.execute(raw as never);
 }
 
 function result(query: string, status: SearchResult["status"] = "ok"): SearchResult {
@@ -130,7 +130,7 @@ test("profile-backed batches remain serial and stopped tasks dispatch no searche
   assert.equal(calls, 2);
 });
 
-test("single-query result stays identical and invalid mixed input cannot dispatch", async () => {
+test("single-query result stays identical and malformed raw inputs cannot queue or dispatch", async () => {
   const expected = result("alpha");
   let calls = 0;
   const tool = searchTools(
@@ -143,10 +143,45 @@ test("single-query result stays identical and invalid mixed input cannot dispatc
     "owner",
   )[0];
   assert.deepEqual(await execute(tool, { query: "alpha" }), expected);
-  assert.throws(() => tool.parameters.parse({ query: "alpha", queries: ["beta"] }));
-  assert.throws(() => tool.parameters.parse({ queries: [] }));
-  assert.throws(() => tool.parameters.parse({}));
+  for (const raw of [{}, { queries: [] }, { query: "  " }, { query: "alpha", limit: 101 }])
+    await assert.rejects(async () => execute(tool, raw));
   assert.equal(calls, 1);
+});
+
+test("raw mixed selectors preserve every normalized unique query and validate before queue admission", async () => {
+  const dispatched: { query: string; limit: number }[] = [];
+  let queued = 0;
+  const tool = searchTools(
+    {
+      parallelSearches: true,
+      search: async (input) => {
+        dispatched.push(input);
+        return result(input.query);
+      },
+    },
+    "owner",
+    {
+      queue: async (run) => {
+        queued++;
+        return run();
+      },
+    },
+  )[0];
+  const receipt = (await execute(tool, {
+    query: " alpha ",
+    queries: ["beta", " alpha ", " gamma "],
+  })) as { queries: string[]; searches: SearchResult[] };
+  assert.deepEqual(receipt.queries, ["alpha", "beta", "gamma"]);
+  assert.deepEqual(
+    dispatched,
+    receipt.queries.map((query) => ({ query, limit: 5 })),
+  );
+  assert.deepEqual(
+    receipt.searches.map((search) => search.query),
+    receipt.queries,
+  );
+  await assert.rejects(async () => execute(tool, { queries: [] }));
+  assert.equal(queued, 1, "invalid arguments cannot enter the serialized task queue");
 });
 
 test("search can return seventy actual safe RSS leads with accurate truncation instead of the old ten/fifty caps", async () => {

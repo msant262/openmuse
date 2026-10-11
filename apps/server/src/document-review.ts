@@ -150,7 +150,12 @@ export class DocumentReview {
     }
   }
 
-  async confirm(owner: string, scope: DocumentReviewScope, raw: unknown) {
+  async confirm(
+    owner: string,
+    scope: DocumentReviewScope,
+    raw: unknown,
+    currentFileIds?: readonly string[],
+  ) {
     const args = documentReviewArgs.parse(raw);
     const receipt = await this.db.get<Inspection>(owner, "document-inspections", args.receiptId);
     if (!receipt || receipt.scope !== scope.scope || receipt.revision !== scope.revision) {
@@ -168,6 +173,11 @@ export class DocumentReview {
         409,
       );
     }
+    if (currentFileIds && !currentFileIds.includes(receipt.fileId))
+      throw new AppError(
+        "This inspection belongs to a replaced draft. Inspect and review the current document before finishing.",
+        409,
+      );
     const seen = await this.db.get<{
       id: string;
       scope: string;

@@ -2469,6 +2469,7 @@ export async function executeModelTask(
             revision: Number(task.state.appliedRevision ?? 0),
           },
           args,
+          task.artifactIds,
         ),
     ),
     tool(
