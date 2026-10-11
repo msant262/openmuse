@@ -1,6 +1,38 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Estado atual — 16:14 UTC
+## Estado atual — atualização das 17:10 UTC
+
+**Ainda não entregue. Há correções publicadas e limpeza concluída desta rodada,
+mas o último pedido normal de pesquisa/PDF falhou no aceite de autonomia.**
+
+| Frente | Feito e verificado | Resultado / pendência |
+| --- | --- | --- |
+| Código publicado | `2a2ef44c` na main local/remota e na API, imagem `763c49fc`; quatro hashes compilados iguais ao build verificado. | A publicação da API levou **81,99s**. Navegador `ab3d9265`, web `d8882335`, executor físico `8aa6d479` mantidos. Sem APK novo. |
+| Leitura das fontes | Conteúdo útil do artigo vem antes da navegação; elementos ocultos não deslocam a fonte visível; catálogos mantêm todos os artigos e blocos laterais mantêm preços/duração. | No pedido real, o README em português já começou no conteúdo útil com trecho de apenas 2 mil caracteres. Isso aprova essa correção específica. |
+| Verificação local | **106/106 testes relacionados** passaram, zero falhas/cancelamentos/ignorados. TypeScript e build passaram; lint sem erros. | Testes locais não aprovam a execução inteira pelo chat. Não somei esses testes aos conjuntos anteriores, que têm sobreposição. |
+| Pedido normal pelo chat | Conversa nova, uma mensagem normal, nenhum direcionamento de ferramenta, resposta ou resgate; somente **Luna**, com **34 respostas** e **dois PDFs criados**. | **Falhou em 567,602s (9min27,602s)**: revisões reprovaram os PDFs e o agente pediu que o usuário decidisse a substituição de um curso escolhido pelo próprio agente. **Zero arquivos finais entregues.** Somente esse QA foi cancelado após a falha observada. |
+| Causa de autonomia | Localizada no guard de `ask_user`: consulta revisões opcionais ausentes neste pedido e ignora a revisão nativa do documento que já contém os reparos. | **Identificada, ainda não corrigida.** O próximo ajuste deve continuar o reparo/pesquisa já autorizado, preservando perguntas sobre informações privadas indispensáveis. |
+| Limpeza do app | **11 registros próprios do QA** recolhidos: tarefa, conversa, quatro arquivos/previews, três notificações, inbox e sugestão. | Primeira etapa preservou **1.885 registros fora da seleção**; retirada da notificação tardia preservou **427 outros registros de notificação**. Atividade interna que tratou dados reais e recibos canônicos preservados. |
+| Dados reais | **13 conferências finais passaram**. Mantidos companions/perfil, duas conversas, 58 arquivos, três memórias, 35 procedimentos e **três contas Google simultâneas**. | Links temporários dos arquivos renovam `expires`/`signature`; todos os campos armazenados e rotas de conteúdo permaneceram iguais. Aprendizado automático completo ainda não está aprovado. |
+| Limpeza da VPS | Retiradas **quatro imagens Docker antigas**, **cinco diretórios de build** e **quatro arquivos de release**; aumento medido de espaço livre nas duas etapas: **1.712.840.704 bytes (~1,60 GiB)**. | API/navegador atuais e respectivas recuperações imediatas, OpenBao, volumes, perfis e dados reais preservados. 59.447 arquivos dos contextos foram inventariados; três contextos também conferiram integralmente com seus arquivos de release. |
+| Limpeza local / APK | Quatro releases locais retirados, **212.852.783 bytes** de conteúdo (**212.860.928 bytes alocados**). | Releases atual/recuperação mantidos. Os **12 APKs obsoletos** já retirados estão no histórico; nesta rodada não houve nova exclusão nem publicação de APK. |
+| Disponibilidade | Às **17:08:39 UTC**, API e página pública HTTP 200; API, navegador e OpenBao saudáveis; manutenção desligada e seis contadores de trabalho ativos em zero. | Fotografia pontual, sem aprovação de estabilidade sustentada. As **44 operações históricas incertas** seguem preservadas. |
+| Performance / visualização | Recarga pontual do compositor em **859ms**; amostra da API durante pesquisa: **958 MiB e 28,73% de CPU**. | Não é pico nem prova da causa do consumo. Celular, startup, leitor PDF e latência continuam sem aprovação. |
+| Workspace e cobertura de ferramentas | Casos anteriores comprovaram Drive com nome aproximado, Gmail/labels/rascunhos/envio, documentos, planilhas, slides, agenda e exclusão com card. | São casos específicos; **Workspace completo e equivalência integral Hermes/OpenClaw não estão aprovados**. Os contratos restantes continuam na matriz de ferramentas. |
+
+O relatório anterior inferiu ausência de recuperação completa do GitHub pela
+falta de uma chamada manual. Essa interpretação foi corrigida: a projeção para
+inferência recupera automaticamente fontes preservadas; o recibo da interface
+não captura essa projeção. Controles locais verificam a requisição seguinte ao
+modelo, mas não são captura da inferência daquele QA histórico.
+
+[Correção, causa restante e evidências desta rodada](2026-10-11-public-source-content.md).
+[Inventário e contratos ainda pendentes](2026-10-09-harness-tool-inventory.json).
+**22 evidências privadas** copiadas da VPS com SHA-256 conferido, em diretório
+0700 e arquivos 0600, fora do Git. O navegador temporário foi fechado e seu
+dispositivo revogado. A meta permanece ativa.
+
+## Histórico — publicação e teste das 16:14 UTC
 
 **Ainda não entregue como um todo. A API foi corrigida e publicada; o novo
 pedido normal terminou com um PDF real. A latência, a atribuição de parte dos
@@ -11,7 +43,7 @@ fatos, o visualizador web e a cobertura integral permanecem sem aprovação.**
 | Implementação | `790114cd` na main local/remota e na API; imagem `6fc61b47`. Cinco hashes compilados conferidos. | Navegador `ab3d9265`, web `d8882335`, executor físico `8aa6d479` mantidos. Sem APK novo. |
 | Conclusão de documentos | Revisão ausente/reprovada retorna reparo específico; resultado parcial não contorna trabalho executável. Página inválida é corrigível; falha real do Office tem código próprio. | 192/192 testes relacionados passaram, TypeScript/build passaram, lint sem erros. Não é aprovação integral do harness. |
 | Pedido normal pelo chat | Uma mensagem, conversa nova, zero respostas/direções do operador; **25 respostas somente de Luna**. Concluiu em **475,604s (7min55,604s)**, com um PDF entregue de **54.278 bytes e duas páginas**, revisado pelo agente. | Criou três versões; as duas primeiras foram rejeitadas por uma última página quase vazia. Tempo e repetição continuam excessivos. Não atribuo a diferença de tempo somente à correção. |
-| Conteúdo e fontes | PDF contém os três cursos e campos solicitados, com qualificações para informações não publicadas. Fonte completa foi preservada. | GitHub retornou só 10.000 bytes visíveis de 54.057 bytes preservados, conforme `maxChars:10000` escolhido pelo agente. Não há recuperação registrada desse trecho antes das declarações sobre traduções. A atribuição integral não está comprovada; isso não afirma que os valores sejam falsos. |
+| Conteúdo e fontes | PDF contém os três cursos e campos solicitados, com qualificações para informações não publicadas. Fonte completa foi preservada. | GitHub retornou só 10.000 bytes visíveis de 54.057 bytes preservados, conforme `maxChars:10000` escolhido pelo agente. O recibo não captura a projeção à inferência. A ausência de chamada manual não demonstra ausência de recuperação automática; veja a correção da interpretação no estado atual. A atribuição integral ainda não está comprovada. |
 | Visualizador | Arquivo disponível na conversa, controles navegaram de 1/2 para 2/2; bytes/texto e rasterização local conferidos. | O iframe PDF ficou vazio no navegador headless. Os controles não provam pixels visíveis no app. Compatibilidade e visualização pública ainda precisam verificação/correção. |
 | Limpeza do QA | Dez registros próprios retirados da apresentação: conversa, tarefa, seis arquivos/previews, notificação e inbox. Procedimento aprendido automaticamente nesse QA foi arquivado. | 1.871 registros não selecionados iguais; 34 procedimentos anteriores mantêm suas versões. Recibos canônicos preservados. |
 | Dados reais | Treze conferências de preservação passaram: companions/perfil, conversas, tarefas, ações, atividades, 58 arquivos, três memórias e três contas Google simultâneas. | Navegador de QA fechado e dispositivo temporário revogado; aprendizado permanece habilitado. Cobertura proativa continua parcial em algumas fontes. |

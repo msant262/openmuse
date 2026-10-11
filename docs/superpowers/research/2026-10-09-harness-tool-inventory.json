@@ -1199,9 +1199,56 @@
       "factsAttributionApproved": false,
       "publicPixelViewerApproved": false,
       "note": "Two drafts rejected only for a sparse final page. GitHub preserved 54057 bytes but returned 10000 selected by the executor; no read_tool_output recovery recorded. PDF iframe blank in headless; controls changed 1/2 to 2/2 but do not establish visible pixels. Own QA cleaned with protected data unchanged. Full parity remains unapproved."
+    },
+    {
+      "surface": "research.public-source-content-round78",
+      "published": true,
+      "source": "2a2ef44ce7ff6854f8403947d36c3c344803c54b",
+      "apiImage": "sha256:763c49fc832ccb89a543b48a5dded7b3f18921dfc2d9d49bea60700a917e7dfc",
+      "compiledHashesVerified": 4,
+      "relatedTests": {
+        "passed": 106,
+        "failed": 0,
+        "skipped": 0
+      },
+      "publicationSeconds": 81.99,
+      "protectedDataUnchanged": true,
+      "normalPublishedSourceFixObserved": true,
+      "wholeHarnessApproved": false,
+      "note": "Visible main/article selection prioritizes useful content without dropping sidebar facts or catalogue articles. Published fetch of Portuguese README begins in article content with maxChars=2000. Deep HTML regression removed before final suite."
+    },
+    {
+      "surface": "research.ordinary-pdf-round78",
+      "normalPublicChatRequest": true,
+      "operatorDirectionsOrAnswers": false,
+      "observedTaskStatus": "waiting_input",
+      "cleanupTaskStatus": "cancelled",
+      "models": [
+        "chatgpt/gpt-6-luna"
+      ],
+      "completedResponses": 34,
+      "elapsedToWaitingSeconds": 567.602,
+      "createdPdfCount": 2,
+      "deliveredFileCount": 0,
+      "naturalAcceptance": false,
+      "wholeHarnessApproved": false,
+      "rootCause": "ask_user public recovery guard consults optional documentBriefReview/researchDeliveryReview; it ignores the existing failed native document review when those optional reviews are absent. Default optional research review disabled. Root identified, not patched in round78.",
+      "note": "Two drafts rejected for layout and source attribution. Partial completion returned concrete repair, but the agent asked the user to decide its own public course replacement. No answer/rescue provided. Own diagnostic presentation records hidden with 13 preservation checks; current stored file fields/content routes unchanged, temporary URL expiry/signature renewed."
+    },
+    {
+      "surface": "research.full-source-projection-evidence-correction",
+      "historicalRound": 77,
+      "canonicalReceiptIsInferenceCapture": false,
+      "automaticRecoveryExists": true,
+      "verifiedControlledContextWindows": [
+        131072,
+        1048576
+      ],
+      "historicalLiveInferenceCaptured": false,
+      "note": "Absence of a manual read_tool_output call does not demonstrate missing full source text: projectToolResult calls recoverResearchToolResult before inference. The old private false flag was an inference from canonical receipts. Controlled tests verify the next inference request; they do not establish that historical live request."
     }
   ],
-  "updatedAt": "2026-10-11T16:14:50.270514+00:00",
+  "updatedAt": "2026-10-11T17:08:02.069634+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
