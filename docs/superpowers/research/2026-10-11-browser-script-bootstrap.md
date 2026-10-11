@@ -97,6 +97,26 @@ Produção permaneceu em `b5043529`. A prévia T3 informou bloqueio de AppArmor;
 o fluxo Playwright existente abriu a mesma URL publicada, conferiu pixels
 da tela pública de entrada e encerrou seu contexto. Não houve login,
 mensagem de usuário, nova tarefa/arquivo no app ou alteração nos dados reais.
+Às **21:40:55 UTC**, página/API responderam HTTP 200 e os três containers
+continuavam saudáveis, nas mesmas imagens.
+
+## Resíduo local de QA recolhido
+
+A conferência de processos encontrou um helper `browser.cjs` aberto desde
+09:30, com seis filhos Chromium, no computador de desenvolvimento. Foram
+encerrados os **sete processos próprios de QA** depois de conferir comando,
+workspace e parentesco. O RSS somado observado era 1.645.789.184 bytes; esse
+valor contém páginas compartilhadas e **não é uma medida de RAM física
+liberada**, nem de consumo do celular ou da VPS.
+
+SIGTERM encerrou o navegador, mas o Node permanecia aguardando readline.
+O helper local de QA foi corrigido para fechar a entrada e sair ao receber
+SIGTERM/SIGINT. Nova execução real, mantendo stdin aberto, encerrou em
+**0,064s**, com exit code zero. A conferência final não encontrou processos
+desse helper ou do runner Python. Isso corrige o fluxo local de testes;
+não é uma correção publicada do harness do produto.
 
 Evidências fora do Git: `artifacts/harness-parity-20261009/round87-*.log`,
 `round87-browser-granularity-proof.json` e `round87-public-entry.png`.
+Recibos de limpeza: `round87-old-local-browser-cleanup.json` e
+`round87-browser-helper-shutdown.json`.

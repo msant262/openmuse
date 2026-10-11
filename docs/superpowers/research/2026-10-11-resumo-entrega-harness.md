@@ -74,6 +74,9 @@ revisão inconsistente permanecem problemas a corrigir.
   reconciliação; não foram marcadas como sucesso nem apagadas.
 - Espaço livre observado às 21:21 UTC: **45.471.838.208 bytes**, cerca de
   **42,35 GiB**. Esse é o espaço disponível, não o total liberado.
+- Conferência posterior recolheu sete processos de um navegador de QA local
+  aberto desde 09:30. Corrigido o encerramento do helper de testes e confirmado
+  exit code zero em 0,064s. Essa limpeza ocorreu no computador de desenvolvimento.
 
 ## Trabalho local e próximos critérios de aceite
 
