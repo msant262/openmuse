@@ -1,16 +1,18 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
 [Relatório consolidado de correções, limpeza, testes e pendências](2026-10-11-resumo-entrega-harness.md).
-Base copiada em **`a404b96d`** e receptor de comandos locais em **`fa3ef6cf`**,
-com helpers originais e execução Python por processo novo. Passaram 159 testes
-do executor e 37 de protocolo/integração, TypeScript, build e lint. O teto de
+Base copiada em **`a404b96d`**, receptor local em **`fa3ef6cf`** e composição
+com autoridade do desktop/broker em **`189dce56`**, sem publicação. Passaram
+159 testes do executor, 32 do desktop, 42 de Python/API e 22 dos fluxos
+gráficos, TypeScript, build e lint. O teto de
 200 chamadas foi reproduzido antes da correção. No novo receptor, Chromium
 real recebeu 120/1.200 caracteres em 0,409s/2,565s, sem chamadas à API para os
-comandos, com valores relidos corretamente. Falta ligar o receptor ao broker
-publicado e implementar o backend completo; `browser_exec` continua sem
+comandos, com valores relidos corretamente. O Supervisor agora liga o receptor
+ao broker; falta o protocolo completo no worker, que ainda é recusado antes de
+comandos. Não há teste comum com Luna por esse caminho; `browser_exec` continua sem
 registro e a produção permanece em `b5043529`. **Aceite integral pendente.**
 [Detalhes da base, limite reproduzido e próximo transporte](2026-10-11-browser-script-bootstrap.md).
-Última conferência de containers/API às **21:57 UTC**: HTTP 200 e três
+Última conferência de containers/API às **22:24 UTC**: HTTP 200 e três
 containers saudáveis. O navegador abriu também a tela pública da mesma URL
 em conferência posterior, sem login ou criação de tarefa de teste.
 

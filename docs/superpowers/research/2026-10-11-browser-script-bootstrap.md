@@ -2,6 +2,7 @@
 
 Base copiada na main: **`a404b96d905309676e69074c84da5dab98c06e66`**.
 Transporte interno adicional: **`fa3ef6cffa0921a9c23b41bab4aff8b273d07376`**.
+Composição com autoridade do desktop e broker: **`189dce56a60d7d6e11ab121b5972088057d821dd`**.
 Não publicada na API ou no executor físico. **`browser_exec` continua sem
 registro no catálogo; seu contrato completo permanece pendente.**
 
@@ -119,17 +120,48 @@ de protocolo/integração**, TypeScript, build do servidor/harness, Biome e
 `git diff --check` passaram. Os novos testes foram reproduzidos falhando antes
 das correções; esses conjuntos substituem, sem somar, os conjuntos sobrepostos.
 
-**O Supervisor ainda não fornece esse receptor ao broker de produção.** O
-transporte local é uma peça funcional verificada; a ligação, recursos e
-controle do navegador completo precisam ser implementados antes de anunciar
-`browser_exec` no catálogo. O caminho antigo via API permanece onde nenhum
-receptor local foi configurado e não deve servir à nova ferramenta.
+Na rodada 88, o Supervisor ainda não fornecia esse receptor ao broker. A
+rodada 89 fez essa composição, descrita abaixo. O worker de navegador ainda
+não implementa o protocolo completo; a ferramenta continua sem registro.
+O caminho antigo via API permanece onde nenhum receptor local foi configurado
+e não deve servir à nova ferramenta.
+
+## Autoridade do desktop e composição privada — rodada 89
+
+A API agora deriva `browserAuthority` da sessão e do controle registrados,
+com reservas exclusivas tanto do desktop quanto do perfil. O script não
+seleciona esses identificadores ou seus fences. A operação preserva sua
+identidade Python e recebe a autorização adicional no envelope canônico.
+O vínculo é persistido e revalidado antes do envio. Perfil forjado, reserva
+ausente, controle humano ou revisão alterada impedem o envio.
+
+O Supervisor passa o receptor local a `NativePythonJobs`. O cliente envia
+o **mesmo envelope** e o comando pelo socket privado; o broker exige peer
+root, identidade Python válida, sessão/generation/perfil correspondentes,
+revisão de controle e fences do desktop/perfil. Checa novamente depois do
+retorno. Usa a renovação existente do watchdog, sem nova viagem à API ou
+atualização de gate por tecla. O início de um programa atualiza o permit uma
+vez. Nenhum token do broker é entregue ao interpretador.
+
+O worker atual **não declara `browserScriptVersion: 1`**. O encaminhamento
+recusa esse backend antes de mandar o comando, com
+`BROWSER_SCRIPT_UNAVAILABLE`, em vez de simular execução. Portanto,
+**essa composição não torna `browser_exec` disponível**. Falta implementar
+CDP/meta, abas persistentes e pertencentes à sessão, eventos, iframes,
+uploads, screenshots com proteção e efeitos com aprovação no worker.
+
+Passaram **159 testes do executor, 32 do desktop, 42 de Python/API e 22 dos
+fluxos gráficos**, além de TypeScript, build do servidor/harness, Biome e
+`git diff --check`. Os cinco novos casos de autoridade falharam antes da
+implementação. As verificações do receptor nativo usam um backend controlado;
+não comprovam execução do SDK no worker nem teste comum com Luna. A medição
+com Chromium real da rodada 88 permanece identificada separadamente.
 
 ## Restante necessário para `browser_exec`
 
-1. Ligar o receptor local ao broker, com os comandos/meta do SDK e autorização
-   da sessão, geração, perfil, lease e fence do desktop além da sessão Python.
-   A autoridade Python isoladamente não autoriza usar o navegador.
+1. Implementar o protocolo CDP/meta do SDK no worker, recebendo o envelope
+   canônico pela composição privada já criada. Autoridade Python, desktop,
+   geração, perfil, controle e fences devem continuar válidos por comando.
 2. Sessões e abas persistentes, isoladas pela tarefa/proprietário, incluindo
    iframes, eventos, espera, upload e captura de imagem.
 3. Controle humano, navegação/egress, redaction e efeitos com aprovação no
@@ -142,7 +174,7 @@ Produção permaneceu em `b5043529`. A prévia T3 informou bloqueio de AppArmor;
 o fluxo Playwright existente abriu a mesma URL publicada, conferiu pixels
 da tela pública de entrada e encerrou seu contexto. Não houve login,
 mensagem de usuário, nova tarefa/arquivo no app ou alteração nos dados reais.
-Às **21:57:06 UTC**, página/API responderam HTTP 200 e os três containers
+Às **22:24:09 UTC**, página/API responderam HTTP 200 e os três containers
 continuavam saudáveis, nas mesmas imagens.
 
 ## Resíduo local de QA recolhido
@@ -171,3 +203,7 @@ medido, dos valores e encerramento; `round88-executor-suite-final.log`,
 e `round88-source.patch` preservam a verificação. O erro inicial da prévia e o
 preflight de QA sem `--enable-automation` foram identificados; a flag foi
 corrigida no teste antes da medição final, sem mudar configuração de produção.
+Rodada 89: logs `round89-native-executor-suite.log`,
+`round89-native-desktop-suite.log`, `round89-python-api-suite.log`,
+`round89-graphical-api-suite.log`, `round89-typecheck-final.log`,
+`round89-biome-final.log`; as reproduções ficam em `round89-*-red-final.log`.

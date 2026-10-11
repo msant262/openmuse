@@ -1516,9 +1516,45 @@
         "Publish, register only with real backend availability, and verify ordinary model chat tasks"
       ],
       "note": "Real Chromium DOM typing is an isolated local QA probe, not a natural model task or proof of published native authorization. No API/web/APK/native executor publication and no app user-data mutation."
+    },
+    {
+      "surface": "native.browser-program-canonical-authority-and-private-broker",
+      "source": "189dce56a60d7d6e11ab121b5972088057d821dd",
+      "published": false,
+      "supervisorBrokerWired": true,
+      "canonicalDesktopAndProfileAuthority": true,
+      "pythonEnvelopePreserved": true,
+      "requiresExclusiveDesktopAndProfileLeases": true,
+      "humanTakeoverAndForgedProfileRejected": true,
+      "rootOnlyPrivateBrokerReceiver": true,
+      "perKeyApiCalls": false,
+      "perKeySupervisorGateRenewal": false,
+      "workerScriptProtocolImplemented": false,
+      "workerScriptVersionRequired": 1,
+      "backendMissingRejectedBeforeDispatch": true,
+      "tests": {
+        "nativeExecutor": 159,
+        "nativeDesktop": 32,
+        "pythonApi": 42,
+        "graphicalApi": 22
+      },
+      "typescriptPassed": true,
+      "buildPassed": true,
+      "lintErrors": 0,
+      "lintWarnings": 0,
+      "nativeBrokerBackendEffectsAreFixtures": true,
+      "naturalBrowserExecTest": false,
+      "wholeBrowserExecApproved": false,
+      "wholeHarnessApproved": false,
+      "acceptanceApproved": false,
+      "pending": [
+        "Implement complete CDP/meta SDK protocol in the worker before declaring browserScriptVersion 1",
+        "Keep task/control/profile authority, persistent owned tabs, protected image output, uploads and approvals",
+        "Publish and verify ordinary model tasks plus the remaining full harness acceptance"
+      ]
     }
   ],
-  "updatedAt": "2026-10-11T21:57:54.549650+00:00",
+  "updatedAt": "2026-10-11T22:25:15.306692+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
@@ -1578,7 +1614,7 @@
         "screenshots": "A newly captured screenshot path is resolved to actual native image output",
         "desktopControl": "Bot Desktop routes use the same human-control lease fence as built-in browser tools"
       },
-      "note": "No registered browser_exec or complete backend exists yet. Copied helpers and fresh Python lifecycle are implemented. A new trusted local receiver keeps internal commands off the API and ordinary tool quota, with bounded totals and uncertain-effect handling. Real isolated Chromium typing is verified, but Supervisor-to-broker composition, desktop/profile leases, persistent owned tabs, redaction, effect review, backend availability and ordinary chat acceptance remain required. General execute_code and this foundation are not full parity.",
+      "note": "browser_exec is not registered. Copied helpers, fresh Python processes, a bounded local command receiver and canonical desktop/profile authority are implemented. Supervisor now forwards original program envelopes to the private native broker. The worker does not implement the full script protocol or advertise browserScriptVersion 1; it is rejected before commands. Persistent owned tabs, events, iframes, protected image output, uploads, redaction, effect review, backend availability, publication and ordinary model-chat acceptance remain required. Isolated Chromium typing from round 88 does not prove the published broker or full parity.",
       "registeredInApp": false,
       "revalidatedAt": "2026-10-11T21:40:19.501087+00:00",
       "implementationEvidence": {
@@ -1651,6 +1687,36 @@
             "allProcessesStopped": true
           },
           "wholeBrowserExecApproved": false
+        },
+        "nativeBrokerComposition": {
+          "source": "189dce56a60d7d6e11ab121b5972088057d821dd",
+          "published": false,
+          "supervisorBrokerWired": true,
+          "canonicalDesktopAndProfileAuthority": true,
+          "pythonEnvelopePreserved": true,
+          "requiresExclusiveDesktopAndProfileLeases": true,
+          "humanTakeoverAndForgedProfileRejected": true,
+          "rootOnlyPrivateBrokerReceiver": true,
+          "perKeyApiCalls": false,
+          "perKeySupervisorGateRenewal": false,
+          "workerScriptProtocolImplemented": false,
+          "workerScriptVersionRequired": 1,
+          "backendMissingRejectedBeforeDispatch": true,
+          "tests": {
+            "nativeExecutor": 159,
+            "nativeDesktop": 32,
+            "pythonApi": 42,
+            "graphicalApi": 22
+          },
+          "typescriptPassed": true,
+          "buildPassed": true,
+          "lintErrors": 0,
+          "lintWarnings": 0,
+          "nativeBrokerBackendEffectsAreFixtures": true,
+          "naturalBrowserExecTest": false,
+          "wholeBrowserExecApproved": false,
+          "wholeHarnessApproved": false,
+          "acceptanceApproved": false
         }
       }
     }
