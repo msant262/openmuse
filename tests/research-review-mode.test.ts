@@ -113,4 +113,20 @@ for (const enabled of [false, true])
         fixture.requests[0]!.body,
       ),
     );
+    const instructions = JSON.parse(fixture.requests[3]!.body).instructions as string;
+    const forcedReview = instructions.slice(
+      instructions.lastIndexOf("Assess the actual document preview in this inference"),
+    );
+    assert.ok(
+      /fulfillment of the original request/.test(forcedReview),
+      "the existing executor assessment must cover requested facts, not only page appearance",
+    );
+    assert.ok(forcedReview.includes(task.prompt), "the assessment must retain the actual request");
+    assert.ok(/source facts/.test(forcedReview));
+    assert.ok(/Other requested sections may be on pages outside this preview/.test(forcedReview));
+    assert.ok(
+      !/passed:true only if these displayed pages have no concrete delivery defect/.test(
+        forcedReview,
+      ),
+    );
   });

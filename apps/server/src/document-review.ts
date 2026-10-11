@@ -80,7 +80,12 @@ export class DocumentReview {
       hash(await this.files.bytes(owner, receipt.previewFileId)) !== receipt.previewSha256
     )
       return undefined;
-    return { receiptId: receipt.id, fileId: receipt.fileId, pages: receipt.pages };
+    return {
+      receiptId: receipt.id,
+      fileId: receipt.fileId,
+      pageCount: receipt.pageCount,
+      pages: receipt.pages,
+    };
   }
 
   /** Reuse only a completed delivery's full review of these exact owned bytes. */

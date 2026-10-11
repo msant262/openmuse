@@ -43,6 +43,11 @@ test("document review needs image dispatch, exact scope/revision, full page cove
     });
   const first = await record([1, 2]);
   assert.equal(
+    (await review.pendingAssessment("owner", scope, preview.id, [document.id]))?.pageCount,
+    3,
+    "the executor must distinguish the displayed pages from the complete document",
+  );
+  assert.equal(
     (await review.pendingAssessment("owner", scope, preview.id, [document.id]))?.receiptId,
     first.receiptId,
   );
