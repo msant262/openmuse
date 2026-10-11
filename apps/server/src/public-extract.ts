@@ -139,7 +139,12 @@ export async function extractPublicSources(
           fallback:
             Boolean(render) &&
             !readablePage(page) &&
-            !("spill" in page && page.spill && !page.spill.truncated),
+            (!("spill" in page && page.spill && !page.spill.truncated) ||
+              Boolean(
+                page.extraction &&
+                  "missingQuestions" in page.extraction &&
+                  page.extraction.missingQuestions?.length,
+              )),
         };
       } catch (error) {
         signal?.throwIfAborted();

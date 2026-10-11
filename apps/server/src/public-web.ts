@@ -59,7 +59,7 @@ export type RenderedPublicPage = {
   truncated: boolean;
   sessionId?: string;
   links?: { title: string; url: string }[];
-  extraction?: { status: "readable" | "partial"; reason?: string };
+  extraction?: { status: "readable" | "partial"; reason?: string; missingQuestions?: string[] };
 };
 
 export type PublicSourceSpill = {
@@ -497,6 +497,17 @@ export function missingPublicQuestionAnswers(text: string): string[] {
   return missing;
 }
 
+function publicQuestionExtraction(text: string): RenderedPublicPage["extraction"] {
+  const missingQuestions = missingPublicQuestionAnswers(text);
+  return missingQuestions.length
+    ? {
+        status: "partial",
+        missingQuestions,
+        reason: `This representation omitted the answer bodies for these questions: ${missingQuestions.join("; ")}. Recover another representation before drawing conclusions.`,
+      }
+    : undefined;
+}
+
 export function readablePage(
   value: unknown,
 ): value is { url: string; title: string; text: string; sessionId?: string; observedAt?: string } {
@@ -761,7 +772,8 @@ export class PublicWeb {
       links: rendered.links ?? [],
       dataSources: rendered.dataSources ?? [],
       truncated: rendered.truncated || text.length > limit,
-      extraction: rendered.extraction ?? { status: "readable" as const },
+      extraction: publicQuestionExtraction(text) ??
+        rendered.extraction ?? { status: "readable" as const },
       observedAt: new Date().toISOString(),
       provenance: { backend: "browser" as const, mode: "headless" as const },
     };
@@ -799,7 +811,8 @@ export class PublicWeb {
       ...(spill && { spill }),
       truncated: page.truncated || page.text.length > limit,
       observedAt: page.observedAt ?? new Date().toISOString(),
-      extraction: page.extraction ?? { status: "readable" as const },
+      extraction: publicQuestionExtraction(page.text) ??
+        page.extraction ?? { status: "readable" as const },
     };
   }
   private async readHttp(url: string, signal?: AbortSignal, options: PublicReadOptions = {}) {
@@ -951,13 +964,14 @@ export class PublicWeb {
       htmlNodes(root, (node) => node.nodeName === "script" && Boolean(htmlAttribute(node, "src")))
         .length > 0;
     const extraction =
-      pending || unresolvedBindings || (shell && !data.embedded && !products.length)
+      publicQuestionExtraction(readableText) ??
+      (pending || unresolvedBindings || (shell && !data.embedded && !products.length)
         ? {
             status: "partial" as const,
             reason:
               "Application content is still loading. Inspect published dataSources or available structured tools first; explicitly use mode=headless if rendering is needed.",
           }
-        : { status: "readable" as const };
+        : { status: "readable" as const });
     if (!readablePage({ url: document.url, title, text }) && !data.dataSources.length)
       throw new WebReadError(
         "PAGE_BLOCKED",
