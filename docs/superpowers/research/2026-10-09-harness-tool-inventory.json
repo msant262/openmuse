@@ -325,19 +325,13 @@
         "actual UI cancellation of a background Python command interrupts its owned process; original PIDs disappear and no late final file appears",
         "cancelled host primitive autonomously reconciles from the verified physical receipt without changing original native operation records"
       ],
-      "pending": [
-        "broader Hermes/OpenClaw tool parity and performance acceptance"
-      ],
+      "pending": ["broader Hermes/OpenClaw tool parity and performance acceptance"],
       "acceptanceApproved": false,
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
     },
     {
-      "tools": [
-        "image_generate",
-        "web_search",
-        "web_extract"
-      ],
+      "tools": ["image_generate", "web_search", "web_extract"],
       "caseAcceptance": "verified",
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "verified": [
@@ -347,19 +341,11 @@
         "original image delivered in 89.029 seconds and inspected in the published viewer",
         "independent pixels confirm legibility, three examples and the source footer"
       ],
-      "pending": [
-        "broader media/task coverage and sustained physical-device performance"
-      ],
+      "pending": ["broader media/task coverage and sustained physical-device performance"],
       "acceptanceApproved": false
     },
     {
-      "tools": [
-        "create_document",
-        "inspect_document",
-        "memory",
-        "skill_manage",
-        "execute_code"
-      ],
+      "tools": ["create_document", "inspect_document", "memory", "skill_manage", "execute_code"],
       "caseAcceptance": "verified",
       "apiSource": "6b5500353b731449cd53bbf59566f956a1463659",
       "verified": [
@@ -378,14 +364,8 @@
       "acceptanceApproved": false
     },
     {
-      "tools": [
-        "text_to_speech",
-        "transcribe"
-      ],
-      "upstreamCapability": [
-        "Hermes text_to_speech",
-        "OpenClaw Microsoft tts provider"
-      ],
+      "tools": ["text_to_speech", "transcribe"],
+      "upstreamCapability": ["Hermes text_to_speech", "OpenClaw Microsoft tts provider"],
       "caseAcceptance": "verified",
       "apiSource": "d733ef64b97b2cc3cabecedecdef93eb2715931b",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72",
@@ -502,9 +482,7 @@
         "kanban_unblock",
         "kanban_link"
       ],
-      "additionalRegisteredToolsOutsideCoreList": [
-        "kanban_schedule"
-      ],
+      "additionalRegisteredToolsOutsideCoreList": ["kanban_schedule"],
       "schedulingContract": "kanban_schedule parks the owned current run until an orchestrator unblocks it; it creates no timer and cannot bypass a goal-mode completion judge.",
       "note": "The pinned module registers fifteen kanban tools; kanban_schedule is outside the literal Hermes core list and remains in the required contract audit. Todo lists and child delegation do not implement dispatcher ownership, compare-and-swap run transitions, review/change states, structured handoffs, dependency routing, scheduling and attachments."
     },
