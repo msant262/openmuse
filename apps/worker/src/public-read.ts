@@ -95,6 +95,13 @@ export async function readPublicContent(
           // all options have loaded. Explicit aria-busy above still gates an
           // asynchronous select; its default selection is not page loading.
           if (node.matches("select, option")) return false;
+          // Duration labels can be server-rendered before the numeric values
+          // arrive, without aria-busy or a generic loading class.
+          if (
+            /(?:^|[\s_-])duration(?:[\s_-]|$)/i.test(node.className) &&
+            /^(?:min(?:ute)?s?|hours?|hrs?|horas?|minutos?)?$/i.test(node.innerText.trim())
+          )
+            return true;
           return (
             /(?:^|[\s_-])(?:skeleton|placeholder|loading)(?:[\s_-]|$)/i.test(node.className) &&
             node.innerText.trim().length > 0

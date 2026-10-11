@@ -59,7 +59,12 @@ export type RenderedPublicPage = {
   truncated: boolean;
   sessionId?: string;
   links?: { title: string; url: string }[];
-  extraction?: { status: "readable" | "partial"; reason?: string; missingQuestions?: string[] };
+  extraction?: {
+    status: "readable" | "partial";
+    reason?: string;
+    missingQuestions?: string[];
+    missingFields?: string[];
+  };
 };
 
 export type PublicSourceSpill = {
@@ -497,13 +502,29 @@ export function missingPublicQuestionAnswers(text: string): string[] {
   return missing;
 }
 
-function publicQuestionExtraction(text: string): RenderedPublicPage["extraction"] {
+function publicTextExtraction(text: string): RenderedPublicPage["extraction"] {
   const missingQuestions = missingPublicQuestionAnswers(text);
-  return missingQuestions.length
+  if (missingQuestions.length)
+    return {
+      status: "partial",
+      missingQuestions,
+      reason: `This representation omitted the answer bodies for these questions: ${missingQuestions.join("; ")}. Recover another representation before drawing conclusions.`,
+    };
+  // Course unit lists can survive extraction while their JavaScript-filled
+  // numbers disappear. A link followed only by a time unit is not a duration.
+  const missingFields = [
+    ...text.matchAll(
+      /^\s*(?:[-*+]\s+)?\[([^\]\n]+)\]\([^\n)]+\)\s+(?:min(?:ute)?s?|hours?|hrs?|horas?|minutos?)\s*$/gim,
+    ),
+  ]
+    .map((match) => `Duration: ${match[1]}`)
+    .slice(0, 20);
+  return missingFields.length
     ? {
         status: "partial",
-        missingQuestions,
-        reason: `This representation omitted the answer bodies for these questions: ${missingQuestions.join("; ")}. Recover another representation before drawing conclusions.`,
+        missingFields,
+        reason:
+          "Duration labels are present without their numeric values. Recover a rendered representation before treating duration as unpublished.",
       }
     : undefined;
 }
@@ -772,7 +793,7 @@ export class PublicWeb {
       links: rendered.links ?? [],
       dataSources: rendered.dataSources ?? [],
       truncated: rendered.truncated || text.length > limit,
-      extraction: publicQuestionExtraction(text) ??
+      extraction: publicTextExtraction(text) ??
         rendered.extraction ?? { status: "readable" as const },
       observedAt: new Date().toISOString(),
       provenance: { backend: "browser" as const, mode: "headless" as const },
@@ -811,7 +832,7 @@ export class PublicWeb {
       ...(spill && { spill }),
       truncated: page.truncated || page.text.length > limit,
       observedAt: page.observedAt ?? new Date().toISOString(),
-      extraction: publicQuestionExtraction(page.text) ??
+      extraction: publicTextExtraction(page.text) ??
         page.extraction ?? { status: "readable" as const },
     };
   }
@@ -948,6 +969,24 @@ export class PublicWeb {
         );
       }).length > 0;
     const hasScripts = htmlNodes(root, (node) => node.nodeName === "script").length > 0;
+    const unfilledDurations =
+      html &&
+      hasScripts &&
+      htmlNodes(main ?? root, (node) => {
+        if (["script", "style", "code", "pre"].includes(node.nodeName)) return false;
+        if (!/(?:^|[\s_-])duration(?:[\s_-]|$)/i.test(htmlAttribute(node, "class") ?? ""))
+          return false;
+        let ancestor: typeof node | null = node;
+        while (ancestor) {
+          if (
+            htmlAttribute(ancestor, "hidden") !== undefined ||
+            htmlAttribute(ancestor, "aria-hidden") === "true"
+          )
+            return false;
+          ancestor = "parentNode" in ancestor ? ancestor.parentNode : null;
+        }
+        return /^(?:min(?:ute)?s?|hours?|hrs?|horas?|minutos?)?$/i.test(htmlText(node).trim());
+      }).length > 0;
     // Live widgets can contain substantial article text while their data is
     // still a template. Default zero counts beside unresolved fields are not
     // observed results. Code examples remain ordinary readable content.
@@ -964,7 +1003,15 @@ export class PublicWeb {
       htmlNodes(root, (node) => node.nodeName === "script" && Boolean(htmlAttribute(node, "src")))
         .length > 0;
     const extraction =
-      publicQuestionExtraction(readableText) ??
+      publicTextExtraction(readableText) ??
+      (unfilledDurations
+        ? {
+            status: "partial" as const,
+            missingFields: ["Duration"],
+            reason:
+              "Duration fields have not received their numeric values from the page scripts. Read the rendered source before treating duration as unpublished.",
+          }
+        : undefined) ??
       (pending || unresolvedBindings || (shell && !data.embedded && !products.length)
         ? {
             status: "partial" as const,

@@ -142,8 +142,9 @@ export async function extractPublicSources(
             (!("spill" in page && page.spill && !page.spill.truncated) ||
               Boolean(
                 page.extraction &&
-                  "missingQuestions" in page.extraction &&
-                  page.extraction.missingQuestions?.length,
+                  (("missingQuestions" in page.extraction &&
+                    page.extraction.missingQuestions?.length) ||
+                    ("missingFields" in page.extraction && page.extraction.missingFields?.length)),
               )),
         };
       } catch (error) {

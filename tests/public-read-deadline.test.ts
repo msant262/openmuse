@@ -4,6 +4,33 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { observePublicDataRequests, readPublicContent } from "../apps/worker/src/public-read.ts";
 
+test("the DOM reader waits for duration hydration before certifying a course as complete", {
+  timeout: 10_000,
+}, async (t) => {
+  const workerRequire = createRequire(resolve("apps/worker/package.json"));
+  const { chromium }: typeof import("../apps/worker/node_modules/playwright/index.js") =
+    workerRequire("playwright");
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(
+    '<main><h1>Introduction to generative AI</h1><li class="module-duration-minutes"></li><span class="unit-duration">min</span></main>',
+  );
+  await page.evaluate(() => {
+    setTimeout(() => {
+      const module = document.querySelector(".module-duration-minutes");
+      const unit = document.querySelector(".unit-duration");
+      if (!module || !unit) throw new Error("Course duration fixture is missing");
+      module.textContent = "37 min";
+      unit.textContent = "1 min";
+    }, 300);
+  });
+  const result = await readPublicContent(page);
+  assert.equal(result.extraction.status, "readable");
+  assert.match(result.text, /37 min/);
+  assert.match(result.text, /1 min/);
+});
+
 test("public reading ignores a hung TrustArc analytics collector while observing actual data", {
   timeout: 10_000,
 }, async (t) => {

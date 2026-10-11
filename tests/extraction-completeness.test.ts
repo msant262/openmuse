@@ -11,6 +11,87 @@ const incomplete =
 const complete =
   "# Introduction\nEnroll for free\n\n## Frequently asked questions\n\n### Can I access all lessons?\n\nFull lessons require a paid enrollment.\n\n### Is the certificate included?\n\nYes, it is included in paid enrollment.";
 
+const durationShell =
+  '<title>Introduction to generative AI and agents</title><main><h1>Introduction to generative AI and agents</h1><ul><li class="module-duration-minutes"></li><li>7 Units</li></ul><p>Learn how language models use prompts and how agents apply these models. This introductory module explains the concepts and includes an exercise.</p><a href="1-introduction">Introduction</a><span class="unit-duration">min</span></main><script src="/learner.js"></script>';
+
+test("HTTP evidence with unfilled duration slots cannot claim that published course duration is absent", async () => {
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: durationShell,
+    }),
+  });
+  const page = await web.read(url, undefined, { mode: "http" });
+  assert.equal(page.extraction?.status, "partial");
+  assert.match(page.extraction?.reason ?? "", /duration|numeric|measurement/i);
+  assert.match(page.text, /7 Units/);
+});
+
+test("batch extraction recovers duration values even when a provider preserves only unit labels and a full spill", async () => {
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: durationShell,
+    }),
+  });
+  const [page] = await extractPublicSources(
+    web,
+    [url],
+    undefined,
+    async (source) => ({
+      url: source,
+      title: "Introduction to generative AI and agents",
+      text: "Introduction to generative AI and agents\n37 min\n7 Units\nIntroduction\n1 min",
+      truncated: false,
+    }),
+    {
+      maxChars: 100,
+      extract: async (source) => ({
+        url: source,
+        title: "Introduction to generative AI and agents",
+        text: "# Introduction to generative AI and agents\n7 Units\n* [Introduction](1-introduction) min\n* [Language models](3-language-models) min",
+        truncated: false,
+      }),
+      spill: async (source) => ({
+        fileId: "source-cache",
+        chars: source.text.length,
+        size: Buffer.byteLength(source.text),
+        sha256: "source-hash",
+        truncated: false,
+      }),
+    },
+  );
+  assert.equal(page.extraction?.status, "readable");
+  assert.match(page.text, /37 min/);
+  assert.equal(page.provenance?.backend, "browser");
+});
+
+test("filled duration slots and ordinary documentation stay on HTTP", async () => {
+  const web = new PublicWeb({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: durationShell
+        .replace(
+          'class="module-duration-minutes"></li>',
+          'class="module-duration-minutes">37 min</li>',
+        )
+        .replace('class="unit-duration">min', 'class="unit-duration">1 min'),
+    }),
+  });
+  const [page] = await extractPublicSources(web, [url], undefined, async () => {
+    throw new Error("A filled duration does not require JavaScript recovery");
+  });
+  assert.equal(page.extraction?.status, "readable");
+  assert.match(page.text, /37 min/);
+  assert.equal(page.provenance?.backend, "http");
+});
+
 for (const mode of ["recovered", "partial", "failed", "aborted"])
   test(`collapsed FAQ extraction handles ${mode} recovery without claiming public absence`, async (t) => {
     const db = await createStore();

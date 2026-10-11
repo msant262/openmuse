@@ -1,5 +1,16 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
+## Atualização local — causa da duração ausente comprovada
+
+**Ainda não publicado nem aprovado pelo chat.** O módulo Microsoft do PDF anterior
+publica 37 minutos, mas os campos chegam vazios no HTML e são preenchidos por
+JavaScript. Três testes reproduziram a certificação indevida e a falta de
+recuperação. O leitor HTTP, a extração em lote e o leitor DOM foram corrigidos;
+**53/53 controles passaram**, assim como TypeScript e build. O leitor corrigido
+recuperou a duração na fonte pública real em **2,495 segundos**. A suíte completa
+está em execução; a publicação e a repetição natural ainda faltam.
+[Causa, verificação e limites](2026-10-11-research-duration-recovery.md).
+
 ## Estado atual — publicação e novo teste de 11/10
 
 **O trabalho completo ainda não terminou. API e executor foram atualizados; isso não aprova todo o harness.**
