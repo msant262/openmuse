@@ -11,6 +11,14 @@ recuperou a duração na fonte pública real em **2,495 segundos**. A suíte com
 está em execução; a publicação e a repetição natural ainda faltam.
 [Causa, verificação e limites](2026-10-11-research-duration-recovery.md).
 
+A suíte ampla também reproduziu duas falhas de execução: sem prazo configurado,
+o adaptador alterava indevidamente o timeout de comandos simples. Corrigido esse
+caminho, **16/16 controles de computador/prazo passaram**. Dois controles de idioma
+falhavam antes de executar o componente por uma dependência ausente na fixture;
+**2/2 passaram** com o módulo real. A primeira passagem ampla permanece registrada
+com quatro falhas, e o resultado integral ainda está pendente. As imagens da
+primeira correção foram construídas e conferidas, mas não substituíram a produção.
+
 ## Estado atual — publicação e novo teste de 11/10
 
 **O trabalho completo ainda não terminou. API e executor foram atualizados; isso não aprova todo o harness.**

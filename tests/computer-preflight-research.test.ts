@@ -117,6 +117,12 @@ test("a confirmed computer start completes its journal and permits the next auth
       completion: result.task.completion,
       criteria: result.task.criteria,
       error: result.task.error,
+      question: result.task.question,
+      operations: result.operations.map(({ toolName, status, receipt }) => ({
+        toolName,
+        status,
+        receipt,
+      })),
     }),
   );
   const start = result.operations.find((op) => op.toolName === "start_computer");
@@ -172,7 +178,19 @@ test("premature program delivery continues to actual execution without a user an
   await f.db.compareAndSwapTask("owner", task.id, { status: "queued" }, { artifactIds: [file.id] });
   await f.agent.worker.tick();
   const detail = await f.agent.detail("owner", task.id);
-  assert.equal(detail.task.status, "succeeded", JSON.stringify(detail.task.completion));
+  assert.equal(
+    detail.task.status,
+    "succeeded",
+    JSON.stringify({
+      completion: detail.task.completion,
+      question: detail.task.question,
+      operations: detail.operations.map(({ toolName, status, receipt }) => ({
+        toolName,
+        status,
+        receipt,
+      })),
+    }),
+  );
   const finishes = detail.operations.filter((op) => op.toolName === "finish_task");
   assert.equal(finishes.length, 2);
   assert.equal((finishes[0].receipt as { repairable?: boolean }).repairable, true);

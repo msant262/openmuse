@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import * as threadSelection from "../apps/mobile/src/thread-selection.ts";
 import { componentHarness } from "./helpers/component.ts";
 
 function fixture(setLocale: (locale: "en" | "pt-BR") => Promise<void>) {
@@ -26,6 +27,7 @@ function fixture(setLocale: (locale: "en" | "pt-BR") => Promise<void>) {
       "./google-actions-screen": {},
       "./muse-surfaces-model": {},
       "./thread-actions": {},
+      "./thread-selection": threadSelection,
       "./task-removal": {},
       "./task-status": {},
       "./memory-settings": { MemorySettings: "MemorySettings" },

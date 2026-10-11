@@ -44,6 +44,32 @@ de curso codificado na implementação, nem nova chamada de avaliação ao model
 - A suíte completa está em execução. A correção ainda não foi publicada e o
   pedido natural completo ainda não foi repetido nesta rodada.
 
+## Falhas adicionais reveladas pela suíte completa
+
+Os controles `a confirmed computer start completes its journal and permits the
+next authorized command` e `premature program delivery continues to actual
+execution without a user answer` falharam também quando executados isoladamente.
+O diagnóstico confirmou início bem-sucedido e rejeição do comando: a função
+`remainingRuntimeMs` existe no contexto mesmo quando não há prazo configurado.
+O adaptador testava a existência da função e inseria um timeout de 30 minutos
+em comandos cujo backend isolado usa seu próprio padrão. O backend rejeitava o
+argumento antes de executar e a tarefa pausava por resultado incerto.
+
+O adaptador agora só vincula o timeout físico quando a função retorna um prazo
+real. Sem prazo, preserva os argumentos e o padrão do backend. **16/16 controles**
+de computador e prazo passaram depois da correção, incluindo as duas reproduções.
+Limites configurados e interrupção de processos continuam verificados.
+
+Dois controles do seletor de idioma não chegavam ao componente: a fixture
+ignorava o novo import `thread-selection`. Ela agora fornece o módulo real.
+**2/2 passaram**; isso não é apresentado como uma correção de produto nem como
+um bug de idioma comprovado. A primeira passagem da suíte ampla conserva essas
+quatro falhas no log; ainda não há aprovação integral da suíte.
+
+Evidências adicionais: `round76-computer-reproduction.log`,
+`round76-computer-diagnostic.log`, `round76-computer-green.log`,
+`round76-language-reproduction.log` e `round76-language-green.log`.
+
 A recuperação de uma fonte não aprova todo o harness, a escolha dos demais
 cursos, os outros campos, a velocidade de entrega, todas as ferramentas ou a
 integração completa do Google Workspace. Não se altera manualmente o resultado

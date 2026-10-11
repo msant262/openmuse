@@ -205,17 +205,14 @@ export function computerTools(
       "run_computer_command",
       "Run bash only inside the private computer and return its persisted output and exit receipt",
       commandSchema,
-      async ({ operationId, ...args }) =>
-        computer.execute(
+      async ({ operationId, ...args }) => {
+        const remaining = options.remainingRuntimeMs?.();
+        return computer.execute(
           owner,
           {
             ...args,
-            ...(options.remainingRuntimeMs && {
-              timeoutMs: physicalRuntimeMs(
-                args.timeoutMs ?? 1800000,
-                options.remainingRuntimeMs(),
-                1000,
-              ),
+            ...(remaining !== undefined && {
+              timeoutMs: physicalRuntimeMs(args.timeoutMs ?? 1800000, remaining, 1000),
             }),
           },
           {
@@ -225,7 +222,8 @@ export function computerTools(
             onDispatch: options.onComputerDispatch,
             dispatchContext: await options.dispatchContext?.(),
           },
-        ),
+        );
+      },
       true,
     ),
     tool(
