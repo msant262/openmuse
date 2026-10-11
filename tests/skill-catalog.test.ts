@@ -40,6 +40,19 @@ test("the first background inference sees the original skill-selection catalog b
     provider.requests[1].body.includes("# Research toward the user's requested outcome"),
     "the selected read returns the actual complete workflow",
   );
+  const loaded = JSON.parse(provider.requests[1].body)
+    .input.filter((item: { type: string }) => item.type === "function_call_output")
+    .map((item: { output: string }) => JSON.parse(item.output))
+    .find((item: { id?: string }) => item.id === "builtin:research");
+  assert.ok(loaded, "the executor must receive the real selected research workflow");
+  assert.ok(
+    !loaded.content.includes(
+      "If a source does not state a requested attribute, say it is not confirmed",
+    ),
+    "one incomplete source cannot close a requested comparison field",
+  );
+  assert.match(loaded.content, /read_web_source/);
+  assert.match(loaded.content, /spill\.fileId/);
 });
 
 test("the initial catalog bounds UTF-8 and XML expansion without loading workflow bodies", async (t) => {
