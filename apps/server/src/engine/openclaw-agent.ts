@@ -68,6 +68,10 @@ type Options = {
     result: unknown,
     contextTokens: number,
   ) => Promise<unknown>;
+  projectModelContext?: (context: {
+    systemPrompts: string[];
+    messages: ModelMessage[];
+  }) => Promise<{ systemPrompts: string[]; messages: ModelMessage[] }>;
   onMessages?: (messages: ModelMessage[], phase: string) => Promise<void>;
   /** A pending host assessment owns one inference; its result restores ordinary tools. */
   requiredToolTurn?: (
@@ -1227,10 +1231,13 @@ export function openclawAgent(options: Options) {
                 stream.push({ type: "start", partial: message });
                 const calls = new Map<string, { id: string; name: string; args: string }>();
                 let text = "";
+                const inference = options.projectModelContext
+                  ? await options.projectModelContext({ systemPrompts, messages: responseMessages })
+                  : { systemPrompts, messages: responseMessages };
                 for await (const event of adapter.chatStream({
                   model: options.model,
-                  messages: responseMessages,
-                  systemPrompts,
+                  messages: inference.messages,
+                  systemPrompts: inference.systemPrompts,
                   tools: selected,
                   request: { signal },
                   logger: resolveDebugOption(false),

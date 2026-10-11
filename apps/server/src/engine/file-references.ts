@@ -100,6 +100,82 @@ export class ModelFileReferences {
   arguments(value: unknown) {
     return this.walk(value, false);
   }
+  /** Only the inference view changes. Stored history and user/document text stay exact. */
+  async context<T>(value: T): Promise<T> {
+    const codeCalls = new Set<string>();
+    const messages = (value as { messages?: unknown[] })?.messages ?? [];
+    for (const message of messages) {
+      const calls = (message as { toolCalls?: unknown[] }).toolCalls ?? [];
+      for (const call of calls) {
+        const entry = call as { id?: string; function?: { name?: string; arguments?: string } };
+        let code = entry.function?.name === "execute_code";
+        if (entry.function?.name === "tool_call") {
+          try {
+            code = JSON.parse(entry.function.arguments ?? "{}").id === "okami_execute_code";
+          } catch {
+            /* Incomplete arguments remain original history. */
+          }
+        }
+        if (code && entry.id) codeCalls.add(entry.id);
+      }
+    }
+    let boundCount = -1;
+    let pattern: RegExp | undefined;
+    let references = new Map<string, string>();
+    const rewrite = (text: string) => {
+      if (boundCount !== this.ids.size) {
+        boundCount = this.ids.size;
+        references = new Map([...this.ids].map(([reference, id]) => [id, reference]));
+        const ids = [...references.keys()].map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+        pattern = ids.length
+          ? new RegExp(`(?<![\\w-])(?:${ids.join("|")})(?![\\w-])`, "g")
+          : undefined;
+      }
+      return pattern
+        ? text.replace(pattern, (match, offset: number) => {
+            // A checksum is evidence, even when a fixture makes it equal to an ID.
+            const prefix = text.slice(Math.max(0, offset - 80), offset).replaceAll("\\", "");
+            return /(?:sha256|\w*Hash|\w*Digest)"\s*:\s*"$/.test(prefix) ||
+              /(?:https?:\/\/|\/api\/files\/)[^\s"']*$/.test(prefix)
+              ? match
+              : (references.get(match) ?? match);
+          })
+        : text;
+    };
+    const visit = async (entry: unknown, field?: string): Promise<unknown> => {
+      if (typeof entry === "string") {
+        if (field && fileFields.has(field)) return this.register(entry);
+        if (field && /^(?:sha256|\w*Hash|\w*Digest|code|name|title|text|url|path)$/.test(field))
+          return entry;
+        try {
+          const parsed: unknown = JSON.parse(entry);
+          if (parsed && typeof parsed === "object") return JSON.stringify(await visit(parsed));
+        } catch {
+          /* Plain guidance is not JSON. */
+        }
+        return rewrite(entry);
+      }
+      if (Array.isArray(entry)) return Promise.all(entry.map((item) => visit(item, field)));
+      if (entry && typeof entry === "object") {
+        const record = entry as Record<string, unknown>;
+        if (
+          record.role === "user" ||
+          (record.role === "tool" &&
+            typeof record.toolCallId === "string" &&
+            codeCalls.has(record.toolCallId)) ||
+          (typeof record.id === "string" && codeCalls.has(record.id))
+        )
+          return entry;
+        return Object.fromEntries(
+          await Promise.all(
+            Object.entries(record).map(async ([key, item]) => [key, await visit(item, key)]),
+          ),
+        );
+      }
+      return entry;
+    };
+    return (await visit(value)) as T;
+  }
   async attachments(ids: readonly string[]) {
     return Promise.all(
       [...new Set(ids)].map(async (id) => {

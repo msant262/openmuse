@@ -148,3 +148,134 @@ test("file references survive reconstruction and reject foreign scopes, revision
     { fileId: "google-native-id", content: projected.fileId },
   );
 });
+
+test("a resumed delivery exposes exact file references and recovers an invalid selection without regeneration", async (t) => {
+  let fileId = "";
+  let selectedReference = "";
+  const fixture = await modelFixture(t, (i) => {
+    if (i === 0)
+      return {
+        name: "finish_task",
+        arguments: { summary: "Arquivo pronto.", artifactIds: [fileId.slice(0, 48)] },
+      };
+    selectedReference = /app_file_[a-f0-9]{12}/.exec(fixture.requests[i].body)?.[0] ?? "";
+    return {
+      name: "finish_task",
+      arguments: { summary: "Arquivo entregue.", artifactIds: [selectedReference || fileId] },
+    };
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const file = await f.files.importAttachment(
+    "owner",
+    "comparacao.txt",
+    Buffer.from("Comparação solicitada e suas fontes."),
+    "Generated",
+    "text/plain",
+    "generated-comparison",
+  );
+  fileId = file.id;
+  const task = await f.agent.createTask("owner", {
+    prompt: "Me entregue a comparação em um arquivo TXT.",
+  });
+  await f.db.put("owner", "tasks", {
+    ...task,
+    artifactIds: [file.id],
+    state: { ...task.state, completionFollowup: [`Deliver document ${file.id}.`] },
+  });
+  await f.agent.worker.tick();
+  const completed = await f.agent.getTask("owner", task.id);
+  assert.equal(completed.status, "succeeded", completed.error ?? completed.result);
+  assert.deepEqual(completed.artifactIds, [file.id]);
+  assert.equal(
+    fixture.requests.length,
+    2,
+    "one invalid selection is recovered without a new research loop",
+  );
+  assert.match(selectedReference, /^app_file_[a-f0-9]{12}$/);
+  assert.ok(
+    !fixture.requests[0].body.includes(file.id),
+    "resumed host context must not leak a long canonical file ID",
+  );
+  assert.match(fixture.requests[1].body, /availableFiles/);
+  const operations = await f.agent.journal.operations("owner", task.id);
+  assert.equal(operations.filter((o) => o.toolName === "create_document").length, 0);
+  const finishes = operations.filter((o) => o.toolName === "finish_task");
+  assert.equal(
+    (finishes[0].receipt as { complete: boolean }).complete,
+    false,
+    "a truncated ID is never guessed or accepted",
+  );
+  assert.deepEqual((finishes[1].args as { artifactIds: string[] }).artifactIds, [file.id]);
+  assert.ok(
+    !JSON.stringify(operations).includes("app_file_"),
+    "canonical journal remains unchanged",
+  );
+});
+
+test("inference references preserve user text, checksums, source text and Code Mode results", async (t) => {
+  const f = await taskRuntime(t);
+  const file = await f.files.importAttachment(
+    "owner",
+    "own.txt",
+    Buffer.from("own"),
+    "Generated",
+    "text/plain",
+    "context-file",
+  );
+  const references = new ModelFileReferences(f.files, "owner", "task:projection:0");
+  await references.project({ fileId: file.id });
+  const user = { role: "user", content: `My literal identifier is ${file.id}.` };
+  const code = {
+    role: "assistant",
+    toolCalls: [
+      {
+        id: "code-1",
+        function: {
+          name: "execute_code",
+          arguments: JSON.stringify({ code: `return '${file.id}'` }),
+        },
+      },
+    ],
+  };
+  const codeResult = {
+    role: "tool",
+    toolCallId: "code-1",
+    content: JSON.stringify({ fileId: file.id }),
+  };
+  const source = { text: `Source text ${file.id}`, sha256: file.id, fileId: file.id };
+  const context = {
+    systemPrompts: [
+      `Deliver file ${file.id}.`,
+      `Open https://app.example/api/files/${file.id}/content.`,
+    ],
+    messages: [
+      user,
+      code,
+      codeResult,
+      { role: "tool", toolCallId: "read-1", content: JSON.stringify(source) },
+    ],
+  };
+  const before = JSON.stringify(context);
+  const projected = await references.context(context);
+  assert.deepEqual(projected.messages.slice(0, 3), [user, code, codeResult]);
+  const observedMessage = projected.messages[3];
+  assert.ok("content" in observedMessage);
+  const observationContent = observedMessage.content;
+  assert.equal(typeof observationContent, "string");
+  const observation = JSON.parse(observationContent as string);
+  assert.equal(observation.sha256, file.id);
+  assert.equal(observation.text, source.text);
+  assert.match(observation.fileId, /^app_file_[a-f0-9]{12}$/);
+  assert.equal(await references.resolveId(observation.fileId), file.id);
+  assert.ok(!projected.systemPrompts[0].includes(file.id));
+  assert.equal(
+    projected.systemPrompts[1],
+    context.systemPrompts[1],
+    "a usable file URL is not an alias",
+  );
+  assert.equal(
+    JSON.stringify(context),
+    before,
+    "inference projection never mutates persisted input",
+  );
+});

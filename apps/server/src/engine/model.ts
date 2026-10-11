@@ -533,7 +533,15 @@ export async function executeModelTask(
         complete: false,
         repairable: true,
         missing: ["Choose only this task's existing deliverable files."],
-        nextSteps: ["Select the actual final files using artifactIds."],
+        nextSteps: [
+          "Copy the exact fileId of the intended final file below into artifactIds. Do not reconstruct, shorten or guess an identifier; reuse the existing file.",
+        ],
+        availableFiles: await Promise.all(
+          task.artifactIds.map(async (fileId) => {
+            const file = await service.files.get(owner, fileId);
+            return { fileId, name: file.name, mimeType: file.mimeType, size: file.size };
+          }),
+        ),
       };
     const revision = Number(task.state.appliedRevision ?? 0);
     if (claimsPendingReview(summary)) {
@@ -2830,9 +2838,11 @@ export async function executeModelTask(
   const attachedFiles = await fileReferences.attachments(
     await taskAttachedFileIds(service.db, owner, task),
   );
+  await fileReferences.project({ artifactIds: task.artifactIds });
   const agent = openclawAgent({
     dataDir: config.dataDir,
     resolveToolArguments: (args) => fileReferences.arguments(args),
+    projectModelContext: (context) => fileReferences.context(context),
     projectToolResult: async (name, result, contextTokens) =>
       fileReferences.project(
         await recoverResearchToolResult(service.files, owner, name, result, contextTokens),

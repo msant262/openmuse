@@ -1035,6 +1035,7 @@ export class ConversationAgent extends AbstractAgent {
         selectedModel = `${model.provider}/${model.model}`;
       },
       resolveToolArguments: (args) => fileReferences.arguments(args),
+      projectModelContext: (context) => fileReferences.context(context),
       projectToolResult: (_name, result) => fileReferences.project(result),
       loadFileImage: async (id) =>
         this.service.files.imageContent(this.owner, await fileReferences.resolveId(id)),

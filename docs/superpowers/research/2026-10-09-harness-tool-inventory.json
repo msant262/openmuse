@@ -325,19 +325,13 @@
         "actual UI cancellation of a background Python command interrupts its owned process; original PIDs disappear and no late final file appears",
         "cancelled host primitive autonomously reconciles from the verified physical receipt without changing original native operation records"
       ],
-      "pending": [
-        "broader Hermes/OpenClaw tool parity and performance acceptance"
-      ],
+      "pending": ["broader Hermes/OpenClaw tool parity and performance acceptance"],
       "acceptanceApproved": false,
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
     },
     {
-      "tools": [
-        "image_generate",
-        "web_search",
-        "web_extract"
-      ],
+      "tools": ["image_generate", "web_search", "web_extract"],
       "caseAcceptance": "verified",
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "verified": [
@@ -347,19 +341,11 @@
         "original image delivered in 89.029 seconds and inspected in the published viewer",
         "independent pixels confirm legibility, three examples and the source footer"
       ],
-      "pending": [
-        "broader media/task coverage and sustained physical-device performance"
-      ],
+      "pending": ["broader media/task coverage and sustained physical-device performance"],
       "acceptanceApproved": false
     },
     {
-      "tools": [
-        "create_document",
-        "inspect_document",
-        "memory",
-        "skill_manage",
-        "execute_code"
-      ],
+      "tools": ["create_document", "inspect_document", "memory", "skill_manage", "execute_code"],
       "caseAcceptance": "verified",
       "apiSource": "6b5500353b731449cd53bbf59566f956a1463659",
       "verified": [
@@ -378,14 +364,8 @@
       "acceptanceApproved": false
     },
     {
-      "tools": [
-        "text_to_speech",
-        "transcribe"
-      ],
-      "upstreamCapability": [
-        "Hermes text_to_speech",
-        "OpenClaw Microsoft tts provider"
-      ],
+      "tools": ["text_to_speech", "transcribe"],
+      "upstreamCapability": ["Hermes text_to_speech", "OpenClaw Microsoft tts provider"],
       "caseAcceptance": "verified",
       "apiSource": "d733ef64b97b2cc3cabecedecdef93eb2715931b",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72",
@@ -412,20 +392,42 @@
     },
     {
       "surface": "task-coordination.history-and-fanout",
-      "caseAcceptance": "local-service-worker-verified-publication-pending",
+      "caseAcceptance": "published-admission-read-verified-document-repetition-failed",
       "apiSource": "e4947a32c31d8673ba0ffe76eb70e05907ce282d",
       "verified": [
         "actual database/service regressions reproduce 18.76 MB unrelated history hydration on delegation and approximately 8.7 MB on settlement/cancellation",
         "scoped outcome/status queries retain useful conversation results and owner isolation without transferring execution state",
         "actual worker runs four children and admits the fifth queued child after slots release",
         "nested cancellation and finished descendant retirement preserve foreign owners and canonical receipt records",
-        "twelve focused continuity, authority and maintenance regressions pass; root TypeScript and server build pass"
+        "twelve focused continuity, authority and maintenance regressions pass; root TypeScript and server build pass",
+        "published API-only idle handoff completes in 20.79 seconds with unchanged browser, database and environment",
+        "ordinary Luna course/PDF request creates its durable task in 5.639 seconds; actual observed delegation makes zero owner-wide task lists",
+        "seven owned QA presentation records retired; all 1691 nonselected scoped records, companions, real data and three Google accounts remain unchanged",
+        "exact obsolete d058c85d image and archive-verified source tree retired with current/recovery versions preserved"
       ],
       "pending": [
-        "complete local suite",
-        "ordinary published Luna research and actual document verification",
+        "ordinary published Luna research and actual document verification after reference recovery repair",
         "normal model delegation and broader coordination coverage",
         "Hermes dispatcher kanban lifecycle, review/change states, handoffs, dependency routing and attachments"
+      ],
+      "acceptanceApproved": false,
+      "failed": [
+        "ordinary course/PDF repetition has 120 Luna responses and twelve finish attempts before normal cancellation; final artifact selection repeatedly truncates a canonical file ID",
+        "live tool-result references alone do not project resumed host context or recovered serialized history"
+      ]
+    },
+    {
+      "surface": "artifact-reference.resumed-delivery",
+      "caseAcceptance": "local-worker-verified-publication-pending",
+      "verified": [
+        "actual worker rejects a truncated generated-file ID, supplies exact current artifact metadata and completes on the next finish attempt without regeneration",
+        "inference context uses exact owner/task/revision bindings while preserving original user messages, checksums, source text, usable URLs, Code Mode and canonical journal/file IDs",
+        "twelve attachment/document-review and twenty-three image/browser/Code Mode/compaction regressions pass"
+      ],
+      "pending": [
+        "complete root/mobile suite and final TypeScript/server build",
+        "ordinary published Luna course/PDF repetition and scoped cleanup",
+        "general Hermes/OpenClaw parity"
       ],
       "acceptanceApproved": false
     }
