@@ -31,12 +31,64 @@ export type KanbanRunAuthority = {
   task: Pick<AgentTask, "id" | "status" | "leaseId" | "leaseUntil"> | null;
   unsettled: boolean;
 };
+export type KanbanDispatchCandidate = {
+  owner: string;
+  board: string;
+  cardId: string;
+  profile: string;
+  cardRevision: number;
+  profileRevision: number;
+};
 interface Database {
   query: (sql: string, params?: unknown[]) => Promise<{ rows: Row[] }>;
   close: () => Promise<void>;
 }
 
 export class Store {
+  /** Discover only runnable cards or terminal native attempts. Old card bodies,
+   * messages, receipts and task histories never enter the scheduler's queue. */
+  async kanbanDispatchCandidates(
+    phase: "ready" | "terminal",
+    limit = 200,
+  ): Promise<KanbanDispatchCandidate[]> {
+    const predicate =
+      phase === "ready"
+        ? `card.data->>'status' IN ('ready','todo','review')
+         AND COALESCE(card.data->'currentRun','null'::jsonb)='null'::jsonb
+         AND profile.id IS NOT NULL
+         AND COALESCE(profile.data->'platformToolsets'->'task',profile.data->'toolsets','[]'::jsonb) ? 'kanban'
+         AND NOT COALESCE(profile.data->'disabledToolsets','[]'::jsonb) ? 'kanban'
+         AND NOT EXISTS(SELECT 1 FROM records origin WHERE origin.owner=card.owner
+           AND origin.kind='threads' AND origin.id=card.data->'nativeOrigin'->>'threadId'
+           AND origin.data->>'deletedAt' IS NOT NULL)
+         AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(COALESCE(card.data->'parents','[]'::jsonb)) dependency
+           LEFT JOIN records parent ON parent.owner=card.owner AND parent.kind=card.kind AND parent.id=dependency.value
+           WHERE COALESCE(parent.data->>'status','missing') NOT IN ('done','archived'))`
+        : `native.data->>'status' IN ('failed','cancelled','succeeded')
+         AND (card.data->>'status'='running' OR (card.data->>'status'='blocked'
+           AND card.data->>'awaitingNativeSettlement'='true'
+           AND NOT openmuse_kanban_task_unsettled(card.owner,native.id,native.data)))`;
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('owner',card.owner,'board',substring(card.kind FROM 14),
+         'cardId',card.id,'profile',card.data->>'assignee','cardRevision',card.data->'revision',
+         'profileRevision',COALESCE(profile.data->'revision','0'::jsonb)) AS data
+       FROM records card LEFT JOIN records profile ON profile.owner=card.owner
+         AND profile.kind='execution-profiles' AND profile.id=card.data->>'assignee'
+       LEFT JOIN records native ON native.owner=card.owner AND native.kind='tasks'
+         AND native.id=card.data->'currentRun'->>'nativeTaskId'
+       WHERE card.kind LIKE 'kanban-cards:%' AND (${predicate})
+         AND NOT EXISTS(SELECT 1 FROM records attempt WHERE attempt.owner=card.owner
+           AND attempt.kind='kanban-dispatch-state' AND attempt.id=substring(card.kind FROM 14)||':'||card.id
+           AND attempt.data->'cardRevision'=card.data->'revision'
+           AND attempt.data->'profileRevision'=COALESCE(profile.data->'revision','0'::jsonb)
+           AND attempt.data->>'retryAt'>$1)
+       ORDER BY CASE WHEN jsonb_typeof(card.data->'priority')='number'
+         THEN (card.data->>'priority')::numeric ELSE 0 END DESC,
+         card.data->>'createdAt',card.owner,card.kind,card.id LIMIT $2`,
+      [new Date().toISOString(), Math.min(200, Math.max(1, limit))],
+    );
+    return result.rows.map((row) => row.data as KanbanDispatchCandidate);
+  }
   /** Resolve only this run's host binding and compact native lease. Never load
    * task history, evidence or tool responses to establish workflow ownership. */
   async kanbanRunAuthority(
@@ -171,7 +223,19 @@ export class Store {
   }
   async taskOperations<T>(owner: string, taskId: string): Promise<T[]> {
     const result = await this.db.query(
-      "SELECT data FROM records WHERE owner=$1 AND kind='task-operations' AND data->>'taskId'=$2 ORDER BY data->>'createdAt',id",
+      `WITH RECURSIVE attempts(id,seen) AS (
+         SELECT $2::text,ARRAY[$2::text]
+         UNION ALL SELECT previous.id,attempts.seen||previous.id FROM attempts
+           JOIN records current ON current.owner=$1 AND current.kind='tasks' AND current.id=attempts.id
+           JOIN records previous ON previous.owner=$1 AND previous.kind='tasks'
+             AND previous.id=current.data->'state'->>'kanbanContinuationTaskId'
+           JOIN records root_binding ON root_binding.owner=$1 AND root_binding.kind='kanban-executions' AND root_binding.id=$2
+           JOIN records previous_binding ON previous_binding.owner=$1 AND previous_binding.kind='kanban-executions'
+             AND previous_binding.id=previous.id AND previous_binding.data->>'board'=root_binding.data->>'board'
+             AND previous_binding.data->>'cardId'=root_binding.data->>'cardId'
+           WHERE NOT previous.id=ANY(attempts.seen)
+       ) SELECT op.data FROM records op WHERE op.owner=$1 AND op.kind='task-operations'
+         AND op.data->>'taskId' IN (SELECT id FROM attempts) ORDER BY op.data->>'createdAt',op.id`,
       [owner, taskId],
     );
     return result.rows.map((row) => row.data as T);
@@ -2027,6 +2091,9 @@ export async function createStore(
   );
   await database.query(
     "CREATE INDEX IF NOT EXISTS records_kind_updated ON records(kind,updated_at,id)",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS kanban_dispatch_candidates ON records((data->>'status'),owner,kind,id) WHERE kind LIKE 'kanban-cards:%' AND data->>'status' IN ('ready','todo','review','running','blocked')",
   );
   await database.query(
     "CREATE INDEX IF NOT EXISTS task_parent_lookup ON records(owner,(data->'state'->>'parentTaskId'),id) WHERE kind='tasks'",

@@ -216,7 +216,10 @@ export class AgentService {
     if (this.routineRefreshing) return;
     this.routineRefreshing = true;
     try {
-      if (!(await this.runtimePause.get("__runtime__")).paused) await this.routines.tick();
+      if (!(await this.runtimePause.get("__runtime__")).paused) {
+        await this.routines.tick();
+        await this.dispatchKanban();
+      }
       await this.push.recover();
       await this.flushPublications();
       await this.proactivity.recoverContinuations();
@@ -849,6 +852,69 @@ export class AgentService {
   }
   /** Host dispatcher entry point. Models never provide the native run binding.
    * Queue the existing task contract atomically with the canonical card claim. */
+  private async dispatchKanban() {
+    // The existing routine guard coalesces ticks. Atomic board claims remain
+    // the authority across hosts and restarts; this loop is not another worker.
+    for (const phase of ["terminal", "ready"] as const) {
+      for (const candidate of await this.db.kanbanDispatchCandidates(phase)) {
+        const { owner, board, cardId, profile, cardRevision, profileRevision } = candidate;
+        try {
+          if (phase === "terminal") {
+            const workflow = new KanbanWorkflow(this.db, owner, board, {
+              profileExists: (name) => this.executionProfiles.exists(owner, name),
+            });
+            const card = await workflow.get(cardId);
+            if (!card.currentRun?.nativeTaskId) continue;
+            const settings = await this.db.get<{ dispatchFailureLimit?: number }>(
+              owner,
+              "execution-profiles",
+              profile,
+            );
+            await workflow.settleNativeRun(
+              cardId,
+              card.currentRun.nativeTaskId,
+              settings?.dispatchFailureLimit ?? 2,
+            );
+          } else {
+            await this.dispatchKanbanCard(
+              owner,
+              board,
+              cardId,
+              profile,
+              `dispatch:${cardId}:${cardRevision}`,
+            );
+          }
+        } catch (error) {
+          // A preparation/refusal did not run the card and does not consume
+          // its failure circuit. Persist spacing instead of spinning each second.
+          const id = `${board}:${cardId}`;
+          const prior = await this.db.get<{
+            cardRevision: number;
+            profileRevision: number;
+            attempts: number;
+          }>(owner, "kanban-dispatch-state", id);
+          const attempts =
+            prior?.cardRevision === cardRevision && prior.profileRevision === profileRevision
+              ? prior.attempts + 1
+              : 1;
+          await this.db.put(owner, "kanban-dispatch-state", {
+            id,
+            cardRevision,
+            profileRevision,
+            attempts,
+            retryAt: new Date(
+              Date.now() + Math.min(60_000, 5_000 * 2 ** Math.min(attempts - 1, 4)),
+            ).toISOString(),
+            error:
+              error instanceof AppError
+                ? error.message.slice(0, 2_000)
+                : "Não foi possível preparar esta execução. O servidor tentará novamente.",
+          });
+          backgroundFailure("kanban dispatch", error);
+        }
+      }
+    }
+  }
   async dispatchKanbanCard(
     owner: string,
     board: string,
@@ -895,11 +961,104 @@ export class AgentService {
           throw new AppError("Finish or cancel some tasks before adding more", 409);
         const id = nativeId(run.id);
         const runtime = taskRuntimeLimit(card.maxRuntimeSeconds ?? profile.maxRuntimeSeconds);
+        const source =
+          card.nativeOrigin &&
+          (await this.db.get<AgentTask>(owner, "tasks", card.nativeOrigin.taskId));
+        const originThread = card.nativeOrigin?.threadId
+          ? await this.db.get<{ id: string; deletedAt?: string }>(
+              owner,
+              "threads",
+              card.nativeOrigin.threadId,
+            )
+          : null;
+        if (originThread?.deletedAt)
+          throw new AppError(
+            "A conversa de origem foi removida; este card não será executado.",
+            409,
+          );
         const task = await this.taskRecord(
           owner,
-          { title: card.title, prompt: [card.title, card.body].filter(Boolean).join("\n\n") },
+          {
+            title: card.title,
+            prompt: [card.title, card.body].filter(Boolean).join("\n\n"),
+            originThreadId: card.nativeOrigin?.threadId,
+            originMessageId: card.nativeOrigin?.messageId,
+            ...(Array.isArray(source?.input.attachmentIds) && {
+              input: { attachmentIds: source.input.attachmentIds },
+            }),
+          },
           id,
         );
+        const continuationFences: Parameters<Store["durableMutation"]>[3] = [];
+        if (card.nativeContinuationTaskId) {
+          const previous = await this.db.get<AgentTask>(
+            owner,
+            "tasks",
+            card.nativeContinuationTaskId,
+          );
+          const previousBinding = await this.db.get<KanbanExecution>(
+            owner,
+            "kanban-executions",
+            card.nativeContinuationTaskId,
+          );
+          if (!previous || previousBinding?.board !== board || previousBinding.cardId !== card.id)
+            throw new AppError(
+              "O vínculo da tentativa anterior precisa ser conferido antes de continuar.",
+              409,
+            );
+          const authority = await this.db.kanbanRunAuthority(
+            owner,
+            board,
+            card.id,
+            previousBinding.runId,
+            previous.id,
+          );
+          if (!authority || authority.unsettled)
+            throw new AppError(
+              "A tentativa anterior ainda tem uma operação sem resultado confirmado. Nenhuma ação será repetida.",
+              409,
+            );
+          if (
+            Number(previous.state.desiredRevision ?? 0) !==
+            Number(previous.state.appliedRevision ?? 0)
+          )
+            throw new AppError(
+              "Há uma orientação recebida pela tentativa anterior que ainda precisa ser aplicada antes de continuar.",
+              409,
+            );
+          task.evidence = previous.evidence;
+          task.artifactIds = previous.artifactIds;
+          task.state.kanbanContinuationTaskId = previous.id;
+          if (previous.prompt === task.prompt) {
+            task.criteria = previous.criteria;
+            task.state.appliedRevision = Number(previous.state.appliedRevision ?? 0);
+            task.state.desiredRevision = task.state.appliedRevision;
+            for (const key of [
+              "providerCheckpoint",
+              "answer",
+              "criteriaOrigin",
+              "conversationContext",
+            ])
+              if (previous.state[key] !== undefined) task.state[key] = previous.state[key];
+          }
+          continuationFences.push(
+            {
+              kind: "kanban-executions",
+              id: previous.id,
+              mode: "check",
+              expected: { ...previousBinding },
+              value: {},
+            },
+            {
+              kind: "tasks",
+              id: previous.id,
+              mode: "check",
+              expected: { status: previous.status, state: previous.state },
+              requireSettledTask: true,
+              value: {},
+            },
+          );
+        }
         const execution: KanbanExecution = {
           id,
           board,
@@ -926,6 +1085,19 @@ export class AgentService {
             },
             { kind: "tasks", id, mode: "insert", value: { ...task } },
             { kind: "kanban-executions", id, mode: "insert", value: { ...execution } },
+            ...continuationFences,
+            // The existing owner-locked tombstone check sees threadId in this
+            // check's value. A deletion after preparation forbids the whole claim.
+            ...(originThread
+              ? [
+                  {
+                    kind: "threads",
+                    id: originThread.id,
+                    mode: "check" as const,
+                    value: { threadId: originThread.id },
+                  },
+                ]
+              : []),
           ],
         };
       },

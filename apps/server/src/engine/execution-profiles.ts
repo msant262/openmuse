@@ -19,6 +19,8 @@ export const executionProfileSettings = z
       .optional(),
     skills: selection.optional(),
     maxRuntimeSeconds: z.number().int().positive().optional(),
+    // Hermes' failure circuit counts actual failed attempts, not model/tool calls.
+    dispatchFailureLimit: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     projects: z
       .array(
         z

@@ -120,6 +120,11 @@ export async function kanbanTaskTools(
   const workflow = (board = activeBoard) =>
     new KanbanWorkflow(service.db, owner, board, {
       ...profileWorkspaceOptions(profile),
+      nativeOrigin: {
+        taskId: task.id,
+        ...(task.originThreadId && { threadId: task.originThreadId }),
+        ...(task.originMessageId && { messageId: task.originMessageId }),
+      },
       profileExists: (name) => service.executionProfiles.exists(owner, name),
       storeAttachment: (...args) => artifacts.store(...args),
       beforeHandoff: async (...args) => {

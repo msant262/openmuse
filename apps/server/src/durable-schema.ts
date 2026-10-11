@@ -33,7 +33,8 @@ export async function initializeDurableConversations(query: (sql: string) => Pro
         OR EXISTS(SELECT 1 FROM records op WHERE op.owner=task_owner AND op.kind='task-operations'
           AND op.data->>'taskId'=task_id AND op.data->>'effect'='true'
           AND op.data->>'status' NOT IN ('succeeded','failed','rejected_not_dispatched','superseded')
-          AND COALESCE(op.data->'receipt'->'data'->>'cleanupConfirmed','false')<>'true'),false)
+          AND (op.data->>'status'='outcome_unknown'
+            OR COALESCE(op.data->'receipt'->'data'->>'cleanupConfirmed','false')<>'true')),false)
     $$`);
   await query(`CREATE OR REPLACE FUNCTION openmuse_durable_mutation(mutation_owner text, receipt_id text, binding_hash text, mutations jsonb, events jsonb)
     RETURNS jsonb LANGUAGE plpgsql AS $$
