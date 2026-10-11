@@ -102,4 +102,15 @@ for (const enabled of [false, true])
       5,
       "no repeated executor loop for unchanged selected content",
     );
+    assert.ok(
+      /An unknown requested field is unfinished research while relevant recovery paths remain/.test(
+        fixture.requests[0]!.body,
+      ),
+      "the executor must research requested fields even when independent review is disabled",
+    );
+    assert.ok(
+      !/satisfies reporting that field after the relevant source has been read/.test(
+        fixture.requests[0]!.body,
+      ),
+    );
   });

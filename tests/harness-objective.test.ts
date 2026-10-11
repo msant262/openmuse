@@ -3,7 +3,7 @@ import test from "node:test";
 import { modelFixture } from "./helpers/model.ts";
 import { taskRuntime } from "./helpers/task-runtime.ts";
 
-test("research workers receive the same boundary for unstated descriptive fields as their reviewers", async (t) => {
+test("research workers keep requested comparison fields open while useful research paths remain", async (t) => {
   const model = await modelFixture(t, () => ({
     name: "ask_user",
     arguments: { question: "Fixture pause" },
@@ -19,7 +19,18 @@ test("research workers receive the same boundary for unstated descriptive fields
     /DESCRIPTIVE_FIELD_SCOPE/.test(model.requests[0]!.body),
     "Worker must receive descriptive-field scope",
   );
-  assert.ok(/not stated by the consulted provider/.test(model.requests[0]!.body));
+  assert.ok(
+    /An unknown requested field is unfinished research while relevant recovery paths remain/.test(
+      model.requests[0]!.body,
+    ),
+    "one source read must not turn an unconfirmed requested fact into fulfilled work",
+  );
+  assert.ok(/replace an incompletely documented option/.test(model.requests[0]!.body));
+  assert.ok(
+    !/satisfies reporting that field after the relevant source has been read/.test(
+      model.requests[0]!.body,
+    ),
+  );
   assert.ok(/does not waive eligibility constraints/.test(model.requests[0]!.body));
   assert.equal((await server.agent.getTask("owner", task.id)).status, "waiting_input");
 });
