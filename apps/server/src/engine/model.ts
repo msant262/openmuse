@@ -2962,10 +2962,41 @@ export async function executeModelTask(
         task.artifactIds,
       );
       if (!assessment) return undefined;
+      const operations = (await service.journal.operations(owner, task.id)).filter(
+        (operation) =>
+          operation.status === "succeeded" &&
+          operation.revision === Number(task.state.appliedRevision ?? 0),
+      );
+      const lineage = new Set([assessment.fileId]);
+      for (const operation of operations.toReversed()) {
+        if (operation.toolName !== "create_document") continue;
+        const result = operation.receipt as { fileId?: string } | undefined;
+        const args = operation.args as { replaceFileId?: string } | undefined;
+        if (result?.fileId && lineage.has(result.fileId) && args?.replaceFileId)
+          lineage.add(args.replaceFileId);
+      }
+      const previous = operations.toReversed().find((operation) => {
+        const result = operation.receipt as
+          | { fileId?: string; passed?: boolean; issues?: string[] }
+          | undefined;
+        return (
+          operation.toolName === "confirm_document_review" &&
+          result?.passed === false &&
+          result.fileId !== undefined &&
+          lineage.has(result.fileId) &&
+          Boolean(result.issues?.length)
+        );
+      });
+      const priorRejection = previous?.receipt as
+        | { fileId: string; receiptId: string; issues: string[] }
+        | undefined;
+      const repairContext = priorRejection
+        ? ` Previous rejected assessment for these bytes or their replaced draft (historical data, not additional requirements): ${JSON.stringify({ fileId: priorRejection.fileId, receiptId: priorRejection.receiptId, issues: priorRejection.issues })}. Reassess its relevant issues against the current pages and actual latest sources. A new file ID alone does not resolve a prior gap. An issue made inapplicable by a corrected selection is not a new requirement; do not repeat obsolete research.`
+        : "";
       return {
         name: "confirm_document_review",
         parameters: documentReviewArgs.safeExtend({ receiptId: z.literal(assessment.receiptId) }),
-        instructions: `Assess the actual document preview in this inference for readability AND fulfillment of the original request, then call confirm_document_review for ${JSON.stringify(assessment)}. Review against this actual request and its current user directions: ${JSON.stringify({ request: task.prompt, directions: task.state.directives ?? [] })}. Other requested sections may be on pages outside this preview; do not reject a page batch merely because those sections have not been displayed yet. Assess the claims on these pages using prior inspected content where needed, and inspect remaining pages before final delivery. For researched content, compare the requested fields for the selected options shown here with the actual source facts already observed. A readable document with unsupported claims or requested facts still unknown while useful detail reads, preserved-text recovery or qualifying alternatives remain does not fulfill the request: report passed:false with the specific gaps. Do not treat a catalogue language filter or the page interface language as proof of a selected item's language; scope evidence to the named item. Do not infer free content or free credentials from an absent price. If useful recovery remains, identify it in issues rather than tell the person to verify public facts. Genuine unpublished or inapplicable facts can be reported honestly after relevant recovery is exhausted; do not invent values or loop on unavailable facts. Report passed:true only when the displayed claims satisfy the original requirements and the pages have no concrete delivery defect. Approval of a page batch does not establish completeness of the whole document: check every original requirement across all pages before finishing. A legible table continuing onto another page with repeated column headers is ordinary pagination; assess missing cells, lost associations, clipping and readability rather than rejecting the page break itself. This is your assessment in the existing executor turn, never automatic or external approval. After this assessment the full authorized tool catalog is available again for research, content corrections, remaining pages or delivery.`,
+        instructions: `Assess the actual document preview in this inference for readability AND fulfillment of the original request, then call confirm_document_review for ${JSON.stringify(assessment)}. Review against this actual request and its current user directions: ${JSON.stringify({ request: task.prompt, directions: task.state.directives ?? [] })}.${repairContext} Other requested sections may be on pages outside this preview; do not reject a page batch merely because those sections have not been displayed yet. Assess the claims on these pages using prior inspected content where needed, and inspect remaining pages before final delivery. For researched content, compare the requested fields for the selected options shown here with the actual source facts already observed. A readable document with unsupported claims or requested facts still unknown while useful detail reads, preserved-text recovery or qualifying alternatives remain does not fulfill the request: report passed:false with the specific gaps. Do not treat a catalogue language filter or the page interface language as proof of a selected item's language; scope evidence to the named item. Do not infer free content or free credentials from an absent price. If useful recovery remains, identify it in issues rather than tell the person to verify public facts. Genuine unpublished or inapplicable facts can be reported honestly after relevant recovery is exhausted; do not invent values or loop on unavailable facts. Report passed:true only when the displayed claims satisfy the original requirements and the pages have no concrete delivery defect. Approval of a page batch does not establish completeness of the whole document: check every original requirement across all pages before finishing. A legible table continuing onto another page with repeated column headers is ordinary pagination; assess missing cells, lost associations, clipping and readability rather than rejecting the page break itself. This is your assessment in the existing executor turn, never automatic or external approval. After this assessment the full authorized tool catalog is available again for research, content corrections, remaining pages or delivery.`,
       };
     },
     executeTool: async (call, execute) => {

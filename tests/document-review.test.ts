@@ -345,6 +345,28 @@ test("worker replaces a failed reviewed draft, reviews the replacement pixels an
         request.tools[0].parameters.properties.id.const,
         "okami_confirm_document_review",
       );
+      if (index === 5) {
+        const forcedReview = (request.instructions as string).slice(
+          (request.instructions as string).lastIndexOf(
+            "Assess the actual document preview in this inference",
+          ),
+        );
+        assert.ok(
+          forcedReview.includes("A conclusão precisa de destaque visual"),
+          "a replacement's required review must retain the actual earlier rejected issue",
+        );
+        const earlierOutputs = JSON.parse(fixture.requests[3].body).input;
+        const earlierReview = JSON.parse(
+          earlierOutputs.findLast((item: { type: string }) => item.type === "function_call_output")
+            .output,
+        );
+        assert.equal(typeof earlierReview.fileId, "string");
+        assert.ok(
+          forcedReview.includes(`"fileId":${JSON.stringify(earlierReview.fileId)}`),
+          "historical rejection must retain the same model-visible file reference as its actual receipt",
+        );
+        assert.ok(/not additional requirements/.test(forcedReview));
+      }
       const receipts = await server.db.list<{ id: string; fileId: string }>(
         "owner",
         "document-inspections",
