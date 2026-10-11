@@ -1246,9 +1246,64 @@
       ],
       "historicalLiveInferenceCaptured": false,
       "note": "Absence of a manual read_tool_output call does not demonstrate missing full source text: projectToolResult calls recoverResearchToolResult before inference. The old private false flag was an inference from canonical receipts. Controlled tests verify the next inference request; they do not establish that historical live request."
+    },
+    {
+      "surface": "harness.native-document-question-recovery-round79",
+      "source": "10b4cf1801a752153de69cf902c3e0628a75875b",
+      "published": true,
+      "serverImage": "ab52237c7904869932ffd9f6523605df4d241df21c6842ff50835d16277c1ea5",
+      "tests": {
+        "total": 77,
+        "passed": 77,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "typescriptPassed": true,
+      "buildPassed": true,
+      "reproductionsFailedBeforeFix": 2,
+      "privateInputControlsPreserved": true,
+      "optionalResearchReviewEnabled": false,
+      "extraClassifierModelAdded": false,
+      "nativeReviewBinding": [
+        "taskScope",
+        "appliedRevision",
+        "sourceSha256",
+        "previewSha256"
+      ],
+      "publicationSeconds": 80.5,
+      "startupAfterContainerCreationSeconds": 74.077,
+      "startupRootCauseIsolated": false,
+      "wholeHarnessApproved": false,
+      "note": "Research document repair consults current native review before creating a question. Public repair continues; current indispensable private input can still pause. Invalid or stale native assessments carry neither repair issues nor private-input flags. Local cases exercise the guard; the natural round79 request made no question call."
+    },
+    {
+      "surface": "research.ordinary-pdf-round79",
+      "normalPublicChatRequest": true,
+      "operatorDirectionsOrAnswers": false,
+      "models": [
+        "chatgpt/gpt-6-luna"
+      ],
+      "completedResponses": 20,
+      "elapsedSeconds": 308.319,
+      "createdPdfCount": 2,
+      "deliveredFileCount": 1,
+      "fileBytes": 50028,
+      "pageCount": 3,
+      "observedTaskStatus": "succeeded",
+      "internalCompletionStatus": "verified",
+      "nativeQuestionGuardObserved": false,
+      "questionCalls": 0,
+      "physicalDeliveryApproved": true,
+      "factualCompletenessApproved": false,
+      "documentDesignApproved": false,
+      "publicPixelViewerApproved": false,
+      "naturalAcceptance": false,
+      "wholeHarnessApproved": false,
+      "note": "Actual final PDF bytes/hash/text/raster checked. Some requested course language/credential cost/duration fields remain unestablished. Nearly empty third page passed native assessment. Headless public iframe shows no PDF pixels; not evidence that all browsers fail. Own QA presentation records hidden; thirteen preservation checks passed."
     }
   ],
-  "updatedAt": "2026-10-11T17:08:02.069634+00:00",
+  "updatedAt": "2026-10-11T17:48:48.806888+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

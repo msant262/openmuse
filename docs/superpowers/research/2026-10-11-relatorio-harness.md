@@ -1,6 +1,34 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Estado atual — atualização das 17:10 UTC
+## Estado atual — atualização das 17:47 UTC
+
+**Ainda não entregue como um todo. A correção de continuação está publicada,
+e o novo pedido normal entregou um PDF sem intervenção. A pesquisa completa,
+a apresentação do documento, a performance e a cobertura integral continuam
+sem aprovação.**
+
+| Frente | Feito e verificado | Resultado / pendência |
+| --- | --- | --- |
+| Código | Implementação `10b4cf18` na main local/remota e na API; imagem `ab52237c`, com cinco hashes compilados conferidos. | Publicação somente da API. Web `d8882335`, navegador `ab3d9265` e executor físico `8aa6d479` mantidos. Sem APK novo. |
+| Autonomia | `ask_user` agora consulta a revisão nativa vigente do documento: problemas reparáveis em pesquisa pública retornam continuação concreta. Perguntas indispensáveis sobre informação privada continuam permitidas. | Revisões de outra tarefa, revisão antiga, arquivo alterado ou preview diferente não autorizam a pergunta. A classificação de informação privada continua dependendo da avaliação do modelo. |
+| Verificação | **77/77 testes relacionados** passaram, zero falhas/cancelamentos/ignorados; TypeScript e build passaram. Lint sem erros. | Duas reproduções falharam antes da correção e passaram depois. O conjunto inclui perguntas privadas legítimas. Não somei grupos sobrepostos nem repeti a suíte inteira. |
+| Pedido normal pelo chat | Uma mensagem comum em conversa nova; **20 respostas somente de Luna**, sem fallback, perguntas, orientações ou resgate. Entregou um PDF real de **50.028 bytes e três páginas** em **308,319s (5min08,319s)**; criou duas versões. | **Entrega física aprovada; aceite completo reprovado.** A nova proteção de pergunta foi exercitada nos testes locais, mas não neste pedido real, que não chamou `ask_user`. Não atribuo a diferença de tempo exclusivamente à correção. |
+| Conteúdo / apresentação | Bytes e SHA-256 do PDF conferidos; texto extraído e páginas rasterizadas. O bloco oficial da IBM comprova conteúdo, quatro idiomas e três horas. | Idioma do curso Google, preços de credenciais e carga horária total Microsoft não ficaram estabelecidos. O PDF ainda tem uma terceira página quase vazia. O status interno `verified` não aprova esses pontos. |
+| Leitor web | Arquivo aparece na conversa e abre os controles do leitor. | A captura do navegador headless mostra o iframe vazio, sem pixels do PDF. Não comprova o mesmo comportamento em todos os navegadores; compatibilidade web/celular continua pendente. |
+| Limpeza do app | **Nove registros próprios do teste** recolhidos: conversa, tarefa, cinco arquivos/previews, notificação e inbox. **1.894 registros fora da seleção permaneceram iguais.** | Recibos canônicos mantidos; nenhum procedimento novo desse teste precisou ser arquivado. Os 35 procedimentos anteriores mantêm suas versões. |
+| Preservação | **13 conferências finais passaram:** companions/perfil, duas conversas, 58 arquivos, três memórias, 35 procedimentos e **três contas Google simultâneas** preservados. | Rotas de arquivos iguais; somente assinatura/expiração dos links temporários renovadas. Navegador temporário fechado e dispositivo revogado. Isso não aprova todo o aprendizado automático. |
+| Limpeza de armazenamento | Retiradas mais **uma imagem Docker antiga**, **um contexto de build** e **um release**. Espaço livre aumentou **435.220.480 bytes (~415,1 MiB)** na VPS. 11.914 arquivos do contexto conferidos, inclusive contra o release. Retirado também o release local obsoleto de **53.442.768 bytes**. | API/navegador atuais e suas recuperações imediatas, OpenBao, volumes, perfis e dados reais mantidos. Os 12 APKs obsoletos retirados anteriormente estão no histórico. Sem nova remoção/publicação de APK nesta rodada. |
+| Disponibilidade / startup | Às **17:47:02 UTC**, API e página pública HTTP 200; API, navegador e OpenBao saudáveis; manutenção desligada e seis contadores de trabalho ativos em zero. | Publicação levou **80,50s**: contêiner criado em 2,586s; health pronto em 76,663s. Há **74,077s entre criação e readiness**, com causa interna ainda não isolada. As 44 operações históricas incertas seguem preservadas. |
+| Performance / escopo completo | Amostra durante o teste: API **1,069 GiB e 7,70% CPU**; recarga pontual do compositor em 1.375ms. | Amostras não são pico nem teste de carga. Performance no celular, Workspace completo, todos os contratos Hermes/OpenClaw e revisão ampla de UX continuam pendentes. |
+
+[Causa, correção e evidências desta etapa](2026-10-11-native-document-question-recovery.md).
+[Inventário e contratos ainda pendentes](2026-10-09-harness-tool-inventory.json).
+**22 evidências privadas** desta rodada copiadas da VPS e conferidas por
+SHA-256, em diretório 0700 e arquivos 0600, fora do Git.
+A meta permanece ativa. As seções seguintes preservam os resultados anteriores,
+inclusive os pedidos que falharam; não representam o estado atual da API.
+
+## Histórico — atualização das 17:10 UTC
 
 **Ainda não entregue. Há correções publicadas e limpeza concluída desta rodada,
 mas o último pedido normal de pesquisa/PDF falhou no aceite de autonomia.**
