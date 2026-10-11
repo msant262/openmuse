@@ -325,13 +325,19 @@
         "actual UI cancellation of a background Python command interrupts its owned process; original PIDs disappear and no late final file appears",
         "cancelled host primitive autonomously reconciles from the verified physical receipt without changing original native operation records"
       ],
-      "pending": ["broader Hermes/OpenClaw tool parity and performance acceptance"],
+      "pending": [
+        "broader Hermes/OpenClaw tool parity and performance acceptance"
+      ],
       "acceptanceApproved": false,
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
     },
     {
-      "tools": ["image_generate", "web_search", "web_extract"],
+      "tools": [
+        "image_generate",
+        "web_search",
+        "web_extract"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "verified": [
@@ -341,11 +347,19 @@
         "original image delivered in 89.029 seconds and inspected in the published viewer",
         "independent pixels confirm legibility, three examples and the source footer"
       ],
-      "pending": ["broader media/task coverage and sustained physical-device performance"],
+      "pending": [
+        "broader media/task coverage and sustained physical-device performance"
+      ],
       "acceptanceApproved": false
     },
     {
-      "tools": ["create_document", "inspect_document", "memory", "skill_manage", "execute_code"],
+      "tools": [
+        "create_document",
+        "inspect_document",
+        "memory",
+        "skill_manage",
+        "execute_code"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "6b5500353b731449cd53bbf59566f956a1463659",
       "verified": [
@@ -364,8 +378,14 @@
       "acceptanceApproved": false
     },
     {
-      "tools": ["text_to_speech", "transcribe"],
-      "upstreamCapability": ["Hermes text_to_speech", "OpenClaw Microsoft tts provider"],
+      "tools": [
+        "text_to_speech",
+        "transcribe"
+      ],
+      "upstreamCapability": [
+        "Hermes text_to_speech",
+        "OpenClaw Microsoft tts provider"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "d733ef64b97b2cc3cabecedecdef93eb2715931b",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72",
@@ -418,16 +438,36 @@
     },
     {
       "surface": "artifact-reference.resumed-delivery",
-      "caseAcceptance": "local-worker-verified-publication-pending",
+      "caseAcceptance": "published-ordinary-worker-delivery-and-scoped-cleanup-verified-latency-pending",
       "verified": [
         "actual worker rejects a truncated generated-file ID, supplies exact current artifact metadata and completes on the next finish attempt without regeneration",
         "inference context uses exact owner/task/revision bindings while preserving original user messages, checksums, source text, usable URLs, Code Mode and canonical journal/file IDs",
-        "twelve attachment/document-review and twenty-three image/browser/Code Mode/compaction regressions pass"
+        "twelve attachment/document-review and twenty-three image/browser/Code Mode/compaction regressions pass",
+        "complete root/mobile suite passes 1954/1954 with zero failures, cancellations or skips; root TypeScript and server/copied-harness build pass",
+        "runtime dff49510 is pushed to main and published through a 21.35-second idle API-only handoff; environment, browser identity, database and forty-four historical canonical pending operations are preserved",
+        "same ordinary Portuguese request submitted through the published composer at 03:06:29.335 UTC finishes verified at 03:16:57.818 UTC with 52 Luna responses, Luna review and one successful finish attempt; no operator answers or manual repair",
+        "actual 51756-byte two-page comparison PDF, text, legibility, four source links and published Chromium PDF viewer independently checked; SHA-256 238621a0bd9c7390a1f837e5be9533f55f8124d6817360224ce7ad6599e0abe5",
+        "eight QA presentation records retired, 1708 nonselected scoped rows unchanged and one QA learned procedure archived; real Beatriz data, companions, three simultaneous Google accounts and canonical receipts preserved",
+        "obsolete e4947a32 image and verified 11877-file build/archive retired, recording 436461568 bytes of VPS free-space increase; obsolete local archive releases 53108736 allocated bytes while current/recovery and APKs remain protected"
       ],
       "pending": [
-        "complete root/mobile suite and final TypeScript/server build",
-        "ordinary published Luna course/PDF repetition and scoped cleanup",
+        "research/review latency: 628.483 seconds from actual composer submission remains unapproved",
         "general Hermes/OpenClaw parity"
+      ],
+      "acceptanceApproved": false
+    },
+    {
+      "surface": "research.partial-quote-and-source-reference-contract",
+      "caseAcceptance": "committed-locally-verified-not-published",
+      "verified": [
+        "partial reviewer quote repair retains the unresolved other option and request requirements even if the correction reply accidentally approves them; focused test passes",
+        "real copied-harness worker regression exposes the actual offered short reference and advertised source schema mismatch; old pattern fails own offered ID assertion, corrected pattern passes and journal retains canonical owner-scoped ID",
+        "complete affected group passes 85/85 with zero failures, cancellations or skips in 171.516 seconds; final source-reference check passes; root TypeScript and changed-file Biome pass",
+        "final server/copied-harness build passes; runtime fixes committed as 1ccb9e45 while production remains dff49510"
+      ],
+      "pending": [
+        "publish runtime 1ccb9e45",
+        "ordinary published small-model research repetition and latency measurement"
       ],
       "acceptanceApproved": false
     }
@@ -445,7 +485,28 @@
         "tests/tools/test_kanban_tools.py",
         "tests/tools/test_kanban_toolset_opt_in.py"
       ],
-      "note": "Todo lists and child delegation do not implement dispatcher ownership, compare-and-swap run transitions, review/change states, structured handoffs, dependency routing and attachments."
+      "registeredTools": [
+        "kanban_show",
+        "kanban_list",
+        "kanban_complete",
+        "kanban_block",
+        "kanban_schedule",
+        "kanban_request_review",
+        "kanban_request_changes",
+        "kanban_heartbeat",
+        "kanban_comment",
+        "kanban_attach",
+        "kanban_attach_url",
+        "kanban_attachments",
+        "kanban_create",
+        "kanban_unblock",
+        "kanban_link"
+      ],
+      "additionalRegisteredToolsOutsideCoreList": [
+        "kanban_schedule"
+      ],
+      "schedulingContract": "kanban_schedule parks the owned current run until an orchestrator unblocks it; it creates no timer and cannot bypass a goal-mode completion judge.",
+      "note": "The pinned module registers fifteen kanban tools; kanban_schedule is outside the literal Hermes core list and remains in the required contract audit. Todo lists and child delegation do not implement dispatcher ownership, compare-and-swap run transitions, review/change states, structured handoffs, dependency routing, scheduling and attachments."
     },
     {
       "surface": "Hermes browser_exec",
@@ -456,6 +517,21 @@
         "tools/browser_tool.py",
         "tools/browser_vault_tool.py"
       ],
+      "executionContract": {
+        "language": "Python with pre-imported browser helpers",
+        "pythonVariables": "Fresh interpreter on each call; variables do not persist",
+        "browserAndWorkspace": "Named browser session and owned workspace persist across calls",
+        "toolSelection": "Configured browser-use backend replaces the default browser tool surface; availability is checked during schema selection",
+        "namedSessionIsolation": "Shared CDP routes pin named daemons to their own targets; private per-name routes preserve their private browser",
+        "timeoutSeconds": {
+          "default": 300,
+          "minimum": 5,
+          "maximum": 1800
+        },
+        "redaction": "Vault-injected values are redacted from model-visible stdout and stderr",
+        "screenshots": "A newly captured screenshot path is resolved to actual native image output",
+        "desktopControl": "Bot Desktop routes use the same human-control lease fence as built-in browser tools"
+      },
       "note": "Backend-gated Python browser helpers, named daemon/tab isolation, vault-aware output redaction, physical timeout containment and browser-session routing require their own contract verification; existing Python host callbacks are not full parity evidence."
     }
   ]
