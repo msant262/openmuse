@@ -277,7 +277,7 @@ test("an existing unselected PDF is recovered by its actual ID without another g
   const f = await baseTaskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   await f.files.importAttachment("another-owner", "Private.txt", Buffer.from("Private"), "private");
@@ -601,7 +601,7 @@ test("document preflight defers only file delivery while retaining factual and a
   assert.equal(fixture.reviewRequests.length, 5);
 });
 
-test("free-only recommendations repair unconfirmed access with the selected model even when optional review is disabled", async (t) => {
+test("explicitly enabled free-only review repairs unconfirmed access with the selected model", async (t) => {
   let reviews = 0;
   const fixture = await modelFixture(
     t,
@@ -658,7 +658,7 @@ test("free-only recommendations repair unconfirmed access with the selected mode
   const f = await baseTaskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   const reads: string[] = [];
   t.mock.method(f.agent.web, "document", async (url: string) => {
@@ -753,7 +753,7 @@ test("a document wording repair stays a content correction through an unnecessar
   const f = await baseTaskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
@@ -891,7 +891,7 @@ test("an unqualified local PDF is corrected after its actual selected bytes fail
   const f = await baseTaskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   t.mock.method(f.agent.web, "document", async (url: string) => ({
@@ -1061,7 +1061,7 @@ test("unchanged rejected document reuses its access review, while new source and
   const f = await baseTaskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   t.mock.method(f.agent.web, "document", async (url: string) => ({
     url,
@@ -1154,7 +1154,11 @@ test("wording-only rejection remains bound to the actual document until its byte
       }),
     },
   );
-  const f = await baseTaskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  const f = await baseTaskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    researchReviewEnabled: true,
+  });
   t.mock.method(f.agent.web, "document", async (url: string) => ({
     url,
     contentType: "text/html",
@@ -1253,7 +1257,7 @@ test("a researched PDF renders without a preflight model call and reviews its ac
   const f = await baseTaskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   const read = t.mock.method(f.agent.web, "document", async (url: string) => ({
@@ -1364,7 +1368,7 @@ test("the executor and final PDF review receive the fetched FAQ without another 
   const f = await baseTaskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   const read = t.mock.method(f.agent.web, "document", async () => ({
@@ -1681,7 +1685,7 @@ test("a missing researched file continues authoring without treating navigation 
   const f = await baseTaskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   t.mock.method(f.agent.web, "document", async (url: string) => ({
     url,
@@ -1755,7 +1759,7 @@ test("free-access delivery reaches its focused review instead of treating unrela
   const f = await baseTaskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   t.mock.method(f.agent.web, "document", async (url: string) => ({
     url,

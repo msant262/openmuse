@@ -85,7 +85,7 @@ test("local draft creation does not review or deliver an unqualified comparison,
   const f = await taskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   t.mock.method(f.agent.web, "document", async (url: string) => ({
@@ -207,7 +207,7 @@ test("an unavailable final review preserves the rendered and inspected draft and
   const f = await taskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   f.agent.config.modelProviders!.routing!.maxAttempts = 1;
@@ -336,7 +336,7 @@ test("the final review uses the latest source evidence and requires correction o
   const f = await taskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   t.mock.method(f.agent.web, "document", async () => ({
@@ -423,7 +423,7 @@ test("an observed exhausted access blocker still permits an honest partial PDF w
   const f = await taskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   t.mock.method(f.agent.web, "document", async () => ({
@@ -529,7 +529,7 @@ test("multiple local drafts can be composed without extra model checks and their
   const f = await taskRuntime(t, {
     agentBackend: "model",
     model: "openai/fixture",
-    researchReviewEnabled: false,
+    researchReviewEnabled: true,
   });
   f.agent.config.modelProviders!.routing!.capabilities["openai/fixture"].vision = true;
   t.mock.method(f.agent.web, "document", async () => ({

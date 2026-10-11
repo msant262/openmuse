@@ -154,8 +154,10 @@ export async function executeModelTask(
   let task = await service.actor.apply(owner, initial, ctx);
   task = await ctx.checkpoint({ state: { ...task.state, artifactDeliveryPending: true } });
   let selectedModel = config.model;
-  const deliveryReviewEnabled = () =>
-    config.researchReviewEnabled || requiresAccessConstraintReview(task);
+  // Semantic review is an explicitly configured extra model pass. Ordinary
+  // research keeps source grounding and native delivery/effect checks, without
+  // silently opting into a second executor because its request says "free".
+  const deliveryReviewEnabled = () => config.researchReviewEnabled === true;
   type ResearchReview = Awaited<ReturnType<typeof reviewResearchDelivery>> & {
     attempts: number;
     repairAttempts: number;
