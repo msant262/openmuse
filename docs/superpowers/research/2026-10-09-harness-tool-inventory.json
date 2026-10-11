@@ -624,18 +624,37 @@
       "acceptanceApproved": false,
       "productionEnabled": false,
       "verified": [
-        "29 focused checks passed after project inheritance, workspace-path metadata, concurrent-key convergence, initial-status and ownership-expiry handling."
+        "32/32 focused checks pass after fixing stable creation acknowledgments, request rebinding rejection and concurrent participant receipts; root TypeScript and server/copied-harness build pass.",
+        "Fixed tracked tree e39225a788f8c193e2fbfe98d2971e3e49055182 captured before later native-tool changes; complete bounded suite is still running, not approved."
+      ],
+      "failed": [],
+      "pending": [
+        "Local core and tests remain uncommitted and unpublished; observe the complete fixed-tree suite terminal result.",
+        "Create physical workspaces, execute runtime overrides and wire the actual dispatcher, native goal verification and exact-head CI gate."
+      ]
+    },
+    {
+      "surface": "Hermes.kanban-native-tools-unpublished",
+      "caseAcceptance": "native-executor-foundation-partial",
+      "acceptanceApproved": false,
+      "productionEnabled": false,
+      "verified": [
+        "Fifteen pinned upstream schemas connected locally to the existing guarded executor, journal, owner store and compact progressive discovery.",
+        "Three controlled-provider tests pass: configured orchestrator create/show, delegated-child isolation and authenticated per-platform configuration with durable request binding.",
+        "Worker heartbeat now returns card state inside a receipt envelope; its journal operation succeeds in the failing worker integration case."
       ],
       "failed": [
-        "Latest creation group: 10/12 pass; deduplicated request acknowledgment is unstable after later card mutation, and its request ID can be rebound to different input."
+        "Worker completion test still pauses the native task and leaves the card running. Its own dispatched completion operation is counted as an uncertain effect during verification, including after a source is read through native web_fetch.",
+        "No normal autonomous Luna acceptance or complete fifteen-tool behavior proof."
       ],
       "pending": [
-        "Fix and verify durable deduplicated acknowledgments; local code and tests are uncommitted and unpublished.",
-        "Create physical workspaces, execute runtime overrides, register model tools with explicit profile scope and wire the dispatcher and exact-head CI gate."
+        "Fix self-verification and persist the native completion assessment with current revision authority.",
+        "Complete dispatcher/profile/workspace execution, goal and exact-head CI gates, original offline lifecycle and full opt-in fidelity.",
+        "Validate actual chat-platform availability, all tools and negative scope cases; local code remains uncommitted and unpublished."
       ]
     }
   ],
-  "updatedAt": "2026-10-11T06:21:44.211312Z",
+  "updatedAt": "2026-10-11T06:45:07.597447Z",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

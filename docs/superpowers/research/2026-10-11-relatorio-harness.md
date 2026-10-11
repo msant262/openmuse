@@ -2,21 +2,22 @@
 
 **Ainda não está entregue.** Há correções publicadas e operações reais verificadas pelo chat. No último pedido normal, Luna entregou e abriu um PDF em **1min23,352s**, com **11 respostas**, mas a pesquisa continua **reprovada**: não confirmou todos os campos pedidos nem demonstrou três conteúdos distintos. A equivalência integral com Hermes/OpenClaw, a cobertura completa do Google Workspace e a performance sustentada no celular continuam sem aprovação.
 
-Estado conferido às **06:21:44 UTC de 11/10/2026**: API, navegador e OpenBao saudáveis; nenhuma tarefa, conversa, solicitação HTTP ou entrega nativa ativa. **`841f4bf4` está publicada** e seu código está na `main` local e no origin. Permanecem 44 registros históricos de operações com efeito incerto, preservados para reconciliação. Essa fotografia não comprova disponibilidade sustentada.
+Estado conferido às **06:45:07 UTC de 11/10/2026**: API, navegador e OpenBao saudáveis; nenhuma tarefa, conversa, solicitação HTTP ou entrega nativa ativa. A imagem conferida continua sendo a de **`841f4bf4`**, cujo código está na `main` local e no origin. Permanecem 44 registros históricos de operações com efeito incerto, preservados para reconciliação. Essa fotografia não comprova disponibilidade sustentada.
 
 ## Resultado atual
 
 | Item | Situação verificada |
 | --- | --- |
 | Publicação | `841f4bf4`, troca somente da API em 18,54 segundos; banco, ambiente e navegador preservados. |
-| Testes | 70/70 focados, TypeScript e build aprovados. A suíte do workspace terminou com 1.996/1.996 aprovados; inclui uma versão anterior do trabalho local de kanban, não as alterações locais posteriores. |
+| Testes da publicação | 70/70 focados, TypeScript e build aprovados. A suíte anterior do workspace terminou com 1.996/1.996 aprovados; inclui uma versão anterior do trabalho local de kanban, não as alterações locais posteriores. |
+| Desenvolvimento local | Repetição durável de criação corrigida: 32/32 focados, TypeScript e build aprovados. Nova suíte completa em árvore fixa ainda em execução. A integração nativa das ferramentas passou três testes; o teste acrescentado de conclusão do worker falha. Nada disso foi publicado. |
 | Pedido normal com Luna | PDF real de três páginas entregue em 83,352 segundos e aberto no visualizador; pesquisa completa reprovada. |
 | Limpeza mais recente | Seis registros de QA retirados; 1.771 registros fora da seleção permaneceram idênticos. |
 | Preservação | Companions, dados reais, três contas simultâneas, três memórias e 31 procedimentos preservados. Treze arquivos privados de evidência copiados com hashes conferidos. |
 | Carregamento observado | Compositor disponível após recarga em 529 ms; consumo sustentado em celular físico ainda não medido. |
-| Armazenamento | 34.313.003.008 bytes livres na VPS na conferência das 06:21:44 UTC. As retiradas de APKs e imagens antigas estão detalhadas abaixo; nenhuma nova retirada desses arquivos nesta rodada. |
+| Armazenamento | 34.312.093.696 bytes livres na VPS na conferência das 06:45:07 UTC. As retiradas de APKs e imagens antigas estão detalhadas abaixo; nenhuma nova retirada desses arquivos nesta rodada. |
 
-O último conjunto local de criação de kanban tem dois testes de repetição durável ainda falhando. Esse trabalho não está commitado nem publicado e não integra a release acima.
+As falhas locais de repetição durável da criação de kanban foram corrigidas. A integração nativa ainda falha ao concluir o worker e não está pronta para publicação. A aprovação integral do harness permanece falsa.
 
 ## Correção mais recente: pesquisa incompleta no caminho HTTP
 
@@ -145,9 +146,17 @@ Também foram retiradas imagens Docker e árvores de build obsoletas com confer�
 
 ## Trabalho local ainda não publicado
 
-Está em desenvolvimento a preservação dos parâmetros originais de criação de cards: workspace, modelo, provedor, skills, tempo máximo, objetivo, contrato de conclusão e chave de automação. A implementação local também trata herança de projeto, caminho de checkout próprio, criação concorrente com a mesma chave, estado inicial inválido e perda da posse durante a resolução do projeto. Uma execução focada passou **29/29**. Dois testes acrescentados depois reproduziram falhas ainda abertas: a repetição de uma solicitação deduplicada devolve o estado novo do card em vez da confirmação original, e o mesmo identificador pode ser reutilizado com entrada diferente. O último grupo de criação terminou em **10/12**, com essas duas falhas.
+Está em desenvolvimento a preservação dos parâmetros originais de criação de cards: workspace, modelo, provedor, skills, tempo máximo, objetivo, contrato de conclusão e chave de automação. A implementação local também trata herança de projeto, caminho de checkout próprio, criação concorrente com a mesma chave, estado inicial inválido e perda da posse durante a resolução do projeto.
 
-Essas alterações **não estão commitadas nem publicadas**. O código local calcula metadados de workspace, mas ainda não cria o worktree físico. Execução real de modelo/provedor/skills/prazo, opt-in de ferramentas, integração ao dispatcher e verificação do CI sobre o commit exato continuam pendentes. Esse núcleo não representa integração completa das quinze ferramentas de kanban. Os anexos e o download binário descritos acima já entraram na versão publicada.
+Três casos reproduziram falhas de confirmação durável: a repetição de uma solicitação deduplicada devolvia o estado novo do card em vez da confirmação original; o mesmo identificador podia ser reutilizado com entrada diferente; e os dois participantes de uma criação concorrente não conservavam suas confirmações. A correção guarda a confirmação original de cada solicitação e mantém seu vínculo com a entrada. O conjunto final passou **32/32**, sem falhas, cancelamentos ou casos ignorados, em **14,154 segundos**. TypeScript e build do servidor/harness passaram. O lint dos dois arquivos terminou sem erros, com dois avisos. Os logs de falha e aprovação foram preservados.
+
+A nova suíte completa foi iniciada em uma árvore fixa, `e39225a788f8c193e2fbfe98d2971e3e49055182`, baseada em `3e35f5ab` mais a correção de criação e seus testes. **Ainda estava em execução na atualização deste relatório.** Não inclui a integração nativa acrescentada depois; não é apresentada como aprovação da árvore de trabalho inteira.
+
+A integração local usa os quinze nomes e schemas do Hermes, descoberta compacta de ferramentas e a execução nativa existente. Três testes passaram: configuração explícita disponibiliza criação/leitura no executor do modelo; tarefa delegada não herda essa permissão; e a API autenticada conserva a configuração por plataforma e rejeita reutilização indevida da solicitação. Esses testes usam um provedor controlado, não são aprovação de um pedido autônomo com Luna, e não comprovam que todas as ferramentas já funcionam.
+
+O teste acrescentado de worker reproduziu duas falhas. Primeiro, o journal confundia o estado `running` do card retornado pelo heartbeat com uma operação ainda pendente; o retorno foi separado, e essa etapa passou a registrar sucesso. Depois, a conclusão continuou falhando: a própria operação de concluir aparece como efeito pendente durante sua verificação. A reprodução com uma fonte lida pelo caminho nativo também terminou com o worker pausado e o card em execução. **O teste de conclusão permanece reprovado**, e a preservação da verificação nativa ainda precisa ser corrigida.
+
+Essas alterações **não estão commitadas nem publicadas**. O código local calcula metadados de workspace, mas ainda não cria o worktree físico. Execução real de modelo/provedor/skills/prazo, ligação entre dispatcher e worker, verificação de objetivos e CI sobre o commit exato continuam pendentes. A configuração por plataforma foi testada na API, mas a disponibilização efetiva no chat e toda a fidelidade das regras originais ainda não foram aprovadas. A existência dos quinze nomes não representa integração completa das quinze ferramentas. Os anexos e o download binário descritos acima já entraram na versão publicada.
 
 ## O que ainda falta
 
