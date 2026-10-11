@@ -509,7 +509,7 @@
       ],
       "acceptanceApproved": false,
       "localVerified": [
-        "Commit 427e77dc passes twelve real-PGlite lifecycle/context tests, including bounded SQL discovery, parent handoffs, prior-run context, incremental authored comments, cursor traversal of 211 cards and continuation of 205 children. It is not yet published or connected to the model tool/dispatcher/UI surfaces."
+        "Commit 427e77dc passes twelve real-PGlite lifecycle/context tests, including bounded SQL discovery, parent handoffs, prior-run context, incremental authored comments, cursor traversal of 211 cards and continuation of 205 children. This core is included in published 8a8de0d0; model tools, dispatcher and UI integration remain pending."
       ]
     },
     {
@@ -537,16 +537,51 @@
     {
       "surface": "research.incomplete-faq-extraction",
       "implementationSource": "fd9906c3",
-      "caseAcceptance": "committed-locally-verified-not-published",
+      "caseAcceptance": "published-provider-recovery-http-path-factual-failure",
       "verified": [
         "The three original recovery/partial/browser-rescue regressions fail on the original implementation and pass after the change.",
         "Structurally missing FAQ answers trigger one bounded advanced retry; complete reads retain the single basic request. Failed retries preserve observed partial text and metadata for existing renderer rescue; cancellation still propagates.",
         "49 integration/public-extract/web-fetch cases and twelve kanban cases pass in the final focused 61-test invocation on Node 24.16.0. TypeScript and final server/copied-harness build pass."
       ],
       "pending": [
-        "Publication and unchanged ordinary factual/latency acceptance."
+        "Recover or explicitly mark missing FAQ answers on directly accepted HTTP pages, before treating them as readable. The published provider recovery does not run on that path.",
+        "Unchanged ordinary factual and distinct-option acceptance; the 84.503-second QA58 physical delivery still fails these requirements."
       ],
-      "acceptanceApproved": false
+      "acceptanceApproved": false,
+      "apiSource": "8a8de0d0"
+    },
+    {
+      "surface": "kanban.native-artifact-preservation",
+      "apiSource": "8a8de0d0",
+      "caseAcceptance": "published-core-tests-model-dispatcher-pending",
+      "acceptanceApproved": false,
+      "verified": [
+        "55 focused checks pass on Node 24.16.0; TypeScript and final server/copied-harness build pass. This invocation is not an additional complete suite.",
+        "Actual native bytes survive a store restart; missing files and expired ownership cannot end the run. URL attachment acknowledgment replays after run completion.",
+        "Canonical import metadata replays unchanged; attachment history records metadata rather than another binary payload. Binary download checks redirects and cancellation, including the expanded size limit."
+      ],
+      "pending": [
+        "Actual scoped kanban model tools, original opt-in rules, dispatcher/profile/workspace contracts and CI evidence gates."
+      ]
+    },
+    {
+      "surface": "research.normal-composer-round58",
+      "apiSource": "8a8de0d0",
+      "caseAcceptance": "published-physical-delivery-factual-failure",
+      "acceptanceApproved": false,
+      "verified": [
+        "Identical ordinary composer request delivers a 47850-byte two-page PDF in 84.503 seconds, with twelve Luna responses and zero failed operations; no operator hints or repairs.",
+        "Real PDF text, pixels, four distinct link URLs and published navigation through both pages were checked.",
+        "Own six QA presentation records retired; 1767 nonselected scoped rows remained identical. Three simultaneous accounts, companions, real data and 44 uncertain canonical operations preserved."
+      ],
+      "failed": [
+        "Coursera content incorrectly classified free despite payment/aid requirement in exact FAQ.",
+        "Three distinct underlying courses and all requested language/duration/badge facts not demonstrated.",
+        "Direct HTTP extraction contains FAQ headings without answer bodies while marked readable; provider fallback was bypassed."
+      ],
+      "pending": [
+        "Correct shared source-completeness handling and research closure using actual relevant facts; whole-harness, Workspace and physical-mobile acceptance remain false."
+      ]
     }
   ],
   "updatedAt": "2026-10-11",
