@@ -1590,9 +1590,40 @@
         "Prove protected screenshots, redaction, destructive approvals and cancellation in actual backend",
         "Only then declare backend availability, register, publish and test ordinary model chat"
       ]
+    },
+    {
+      "surface": "browser.owned-oop-iframe-helper-protocol",
+      "source": "7d044174e5a570f8b9585adbf32cce60b4734af3",
+      "published": false,
+      "iframeProtocolImplemented": true,
+      "nestedOwnedOopAncestry": true,
+      "foreignIframeRejected": true,
+      "getFrameTreeOmissionsReproduced": true,
+      "actualCdpParentEdgesObserved": true,
+      "realPythonCopiedHelperIframeReadVerified": true,
+      "driverTests": {
+        "total": 10,
+        "passed": 10,
+        "failed": 0,
+        "skipped": 0
+      },
+      "realQaProgramSeconds": 1.645,
+      "productionLatencyMeasured": false,
+      "naturalModelTask": false,
+      "browserManagerIntegrated": false,
+      "nativeHandlerIntegrated": false,
+      "uploadProtocolImplemented": false,
+      "realNativePolicyProof": false,
+      "typescriptPassed": true,
+      "buildPassed": true,
+      "lintErrors": 0,
+      "lintWarnings": 0,
+      "wholeBrowserExecApproved": false,
+      "wholeHarnessApproved": false,
+      "acceptanceApproved": false
     }
   ],
-  "updatedAt": "2026-10-11T22:45:21.932724+00:00",
+  "updatedAt": "2026-10-11T22:59:45.823578+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
@@ -1652,7 +1683,7 @@
         "screenshots": "A newly captured screenshot path is resolved to actual native image output",
         "desktopControl": "Bot Desktop routes use the same human-control lease fence as built-in browser tools"
       },
-      "note": "browser_exec is not registered. The owned CDP/meta driver now runs unchanged Python helpers against isolated real Chromium over the existing pipe. Named-session target isolation, tab switching, typing, PNG bytes, bounded events and timeout without replay are tested. The driver is not integrated with BrowserManager/native worker; iframe and upload protocols and real authorization/redaction/protected-image/effect-approval policies remain incomplete. No availability declaration, publication or natural model task proves full parity.",
+      "note": "browser_exec remains unregistered. The isolated CDP driver now supports named owned pages and OOP iframe ancestry, verified with unchanged Python helpers against real Chromium. Cross-conversation targets remain rejected. Manager/native-handler integration, uploads, actual redaction/protected-image/destructive-approval/control policies, publication and ordinary model tasks still do not prove full parity.",
       "registeredInApp": false,
       "revalidatedAt": "2026-10-11T21:40:19.501087+00:00",
       "implementationEvidence": {
@@ -1779,6 +1810,36 @@
           "productionLatencyMeasured": false,
           "naturalModelSelectionVerified": false,
           "nativePolicyProof": false,
+          "typescriptPassed": true,
+          "buildPassed": true,
+          "lintErrors": 0,
+          "lintWarnings": 0,
+          "wholeBrowserExecApproved": false,
+          "wholeHarnessApproved": false,
+          "acceptanceApproved": false
+        },
+        "ownedIframeProtocol": {
+          "source": "7d044174e5a570f8b9585adbf32cce60b4734af3",
+          "published": false,
+          "iframeProtocolImplemented": true,
+          "nestedOwnedOopAncestry": true,
+          "foreignIframeRejected": true,
+          "getFrameTreeOmissionsReproduced": true,
+          "actualCdpParentEdgesObserved": true,
+          "realPythonCopiedHelperIframeReadVerified": true,
+          "driverTests": {
+            "total": 10,
+            "passed": 10,
+            "failed": 0,
+            "skipped": 0
+          },
+          "realQaProgramSeconds": 1.645,
+          "productionLatencyMeasured": false,
+          "naturalModelTask": false,
+          "browserManagerIntegrated": false,
+          "nativeHandlerIntegrated": false,
+          "uploadProtocolImplemented": false,
+          "realNativePolicyProof": false,
           "typescriptPassed": true,
           "buildPassed": true,
           "lintErrors": 0,

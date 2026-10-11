@@ -4,6 +4,7 @@ Base copiada na main: **`a404b96d905309676e69074c84da5dab98c06e66`**.
 Transporte interno adicional: **`fa3ef6cffa0921a9c23b41bab4aff8b273d07376`**.
 Composição com autoridade do desktop e broker: **`189dce56a60d7d6e11ab121b5972088057d821dd`**.
 Driver CDP/meta com helpers reais: **`1fc7cb6b`**.
+Iframes separados por conversa, incluindo OOP: **`7d044174`**.
 Não publicada na API ou no executor físico. **`browser_exec` continua sem
 registro no catálogo; seu contrato completo permanece pendente.**
 
@@ -177,13 +178,34 @@ ao voltar para a aba, criação depois de fechar a aba atual e timeout sem repla
 TypeScript, build e Biome passaram. Os testes do host usam funções controladas
 de autorização; isso **não comprova as aprovações e a proteção publicadas**.
 
-O driver atual **não cobre iframes nem uploads**, e seus hooks precisam ser
+O driver daquela rodada ainda não cobria iframes nem uploads, e seus hooks precisam ser
 integrados às políticas existentes. `browserScriptVersion: 1` continua ausente,
 `browser_exec` continua sem registro e não houve publicação ou chat natural
 por esse caminho. Evidências: `round90-driver-final-tests.log`,
 `round90-typecheck-final2.log`, `round90-biome-final2.log` e os testes com
 proveniência explícita no repositório. A falha inicial de importação de tipos
 foi corrigida antes da verificação final.
+
+Na rodada 91, a descoberta de iframe foi implementada e verificada em
+**Chromium real com os helpers Python originais**. O primeiro teste real
+falhou: `Page.getFrameTree` omitia o iframe de outro processo. A observação
+CDP confirmou `parentId`/`parentFrameId`, e a implementação passou a resolver
+a cadeia de parentesco a partir das páginas pertencentes à conversa,
+incluindo iframe aninhado. Alvo estrangeiro permanece recusado. O comando
+`Target.closeTarget` de iframe não fecha inadvertidamente sua página pai.
+
+Passaram **10/10 testes do driver e helpers**, com leitura real de conteúdo
+de iframe de outra origem, além da digitação, abas, PNG, isolamento e timeout
+anteriores. No conjunto final, esse programa completo levou **1,645s**.
+TypeScript, build e Biome passaram. São tempos de teste local sem modelo;
+os hooks de autorização continuam controlados no teste. **Manager, handler
+nativo, uploads, políticas completas, publicação e teste comum com Luna
+continuam pendentes.** Não foi declarado `browserScriptVersion: 1`.
+
+Evidências da rodada: `round91-owned-iframe-red.log`,
+`round91-oop-ancestry-red.log`, `round91-real-iframe-helper.log`,
+`round91-real-iframe-diagnostic.json`, `round91-iframe-tests-clean.log`,
+`round91-typecheck.log` e `round91-biome-final.log`.
 
 1. Integrar o driver CDP/meta ao worker e concluir seu protocolo, recebendo o
    envelope canônico pela composição privada já criada. Autoridade Python, desktop,
