@@ -34,6 +34,25 @@ export class Files {
     const mime = attachmentMime(name, mimeType);
     if (mime === "application/pdf")
       return this.import(owner, name, bytes, source, undefined, operationId, internal);
+    return this.importBinaryAttachment(owner, name, bytes, source, mimeType, operationId, internal);
+  }
+  /** Preserve an already-created deliverable without eagerly parsing its pages.
+   * Kanban scratch cleanup must not discard a valid file above the parser's
+   * separate inspection limit. Inspection remains explicit and bounded. */
+  async importBinaryAttachment(
+    owner: string,
+    name: string,
+    bytes: Uint8Array,
+    source: string,
+    mimeType?: string,
+    operationId: string | undefined = taskOperationId(),
+    internal = false,
+  ): Promise<Artifact> {
+    if (bytes.length > attachmentLimit)
+      throw new AppError("Attachments must be 25 MB or smaller", 413);
+    const mime = attachmentMime(name, mimeType);
+    if (mime === "application/pdf" && Buffer.from(bytes.subarray(0, 5)).toString() !== "%PDF-")
+      throw new AppError("The PDF content does not match its file type", 422);
     if (mime.startsWith("image/") && rasterMime(bytes) !== mime)
       throw new AppError("The image content does not match its file type", 422);
     const safeName = this.safeName(name);
@@ -53,8 +72,14 @@ export class Files {
     };
     const directory = join(this.config.dataDir, "files");
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    await this.publish(owner, artifact, bytes, join(directory, `${id}.bin`), operationId);
-    return this.signed(owner, artifact);
+    await this.publish(
+      owner,
+      artifact,
+      bytes,
+      join(directory, `${id}.${mime === "application/pdf" ? "pdf" : "bin"}`),
+      operationId,
+    );
+    return this.signed(owner, await this.get(owner, id));
   }
   private safeName(name: string) {
     return (

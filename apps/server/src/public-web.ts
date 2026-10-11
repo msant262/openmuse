@@ -38,7 +38,7 @@ function publicJson(body: string) {
   };
 }
 type Target = Awaited<ReturnType<typeof validatePublicUrl>>;
-type Response = { status: number; headers: IncomingHttpHeaders; body: string };
+type Response = { status: number; headers: IncomingHttpHeaders; body: string; bodyBytes?: Buffer };
 export class WebReadError extends Error {
   constructor(
     readonly code: string,
@@ -127,7 +127,7 @@ export const publicReadDescription =
   "Read a public page or JSON over HTTP. Leave mode=auto for normal research: it avoids opening a browser. Use headless only after an actual HTTP read cannot expose required JavaScript content. Omit maxChars for a substantial default excerpt; a very short excerpt can hide pricing or relevant facts. Truncated sources expose spill.fileId: use read_web_source to search/read the full fetched text without another network request. Inspect dataSources for published datasets; unread fields are not absent.";
 
 export const publicResearchInstructions =
-  " Search with search_web and read relevant pages with web_fetch or web_extract (up to four URLs together). Snippets are leads, not full source reads. Prefer HTTP; use headless for JavaScript content. Follow relevant page links before treating missing facts as unavailable: Match the subject, metric, category and date of each data record to the request; dataSources can include unrelated analytics or datasets for other subjects. A page listing other subjects is a lead to follow, not the requested comparison. Every reported number must appear in a relevant source read or a computation from its data; never fill missing values from memory. Use observed URLs or published URL templates, never invented endpoints. Use run_computer_command for complex datasets and batches; discover read_web_data when its structured queries help. Do not page thousands of records to compute a summary. Truncated excerpts and missing fields are not absence of data. Use the live runtime date. Attribute a reputable publisher's data honestly when direct primary-source access is unavailable. Public research needs no new credentials. Once the requested facts are sufficient, produce the requested deliverable. Report partial results only after relevant available paths are exhausted.";
+  " Search with search_web and read relevant pages with web_fetch or web_extract (up to four URLs together). Snippets are leads, not full source reads. Prefer HTTP; use headless for JavaScript content. Before composing a comparison, verify each requested field for each option. When an option lacks essential facts, follow relevant links, search the missing fact, or choose another suitable option whose requested facts can be verified. Different platforms can offer the same underlying item; verify distinct options rather than counting platform URLs. An unknown cell is unfinished research while these paths remain available. Match the subject, metric, category and date of each data record to the request; dataSources can include unrelated analytics or datasets for other subjects. A page listing other subjects is a lead to follow, not the requested comparison. Every reported number must appear in a relevant source read or a computation from its data; never fill missing values from memory. Use observed URLs or published URL templates, never invented endpoints. Use run_computer_command for complex datasets and batches; discover read_web_data when its structured queries help. Do not page thousands of records to compute a summary. Truncated excerpts and missing fields are not absence of data. Use the live runtime date. Attribute a reputable publisher's data honestly when direct primary-source access is unavailable. Public research needs no new credentials. Once the requested facts are sufficient, produce the requested deliverable. Report partial results only after relevant available paths are exhausted.";
 
 function pageData(root: Node, base: string) {
   const dataSources: { url: string; kind: string }[] = [];
@@ -198,6 +198,7 @@ export function requestPublicPage(
   target: Target,
   signal: AbortSignal,
   byteLimit = maxBytes,
+  binary = false,
 ): Promise<Response> {
   return new Promise((resolve, reject) => {
     const request = target.url.protocol === "https:" ? httpsRequest : httpRequest;
@@ -209,7 +210,9 @@ export function requestPublicPage(
         agent: false,
         headers: {
           "User-Agent": "Mozilla/5.0",
-          Accept: "text/html,application/xhtml+xml,text/plain,application/json;q=0.8",
+          Accept: binary
+            ? "*/*"
+            : "text/html,application/xhtml+xml,text/plain,application/json;q=0.8",
           "Accept-Encoding": "gzip, deflate, br",
         },
         lookup: (_host, options, callback) => {
@@ -286,6 +289,15 @@ export function requestPublicPage(
         content.on("error", reject);
         content.on("end", () => {
           try {
+            if (binary) {
+              resolve({
+                status,
+                headers: incoming.headers,
+                body: "",
+                bodyBytes: Buffer.concat(chunks),
+              });
+              return;
+            }
             const charset =
               String(incoming.headers["content-type"] ?? "").match(
                 /charset\s*=\s*["']?([^;"'\s]+)/i,
@@ -309,6 +321,19 @@ export function requestPublicPage(
     outgoing.on("error", reject);
     outgoing.end();
   });
+}
+
+export async function requestPublicAttachment(
+  target: Target,
+  signal: AbortSignal,
+  byteLimit: number,
+) {
+  const response = await requestPublicPage(target, signal, byteLimit, true);
+  return {
+    status: response.status,
+    headers: response.headers,
+    bytes: response.bodyBytes ?? Buffer.alloc(0),
+  };
 }
 
 type Node = DefaultTreeAdapterMap["node"];
@@ -497,9 +522,56 @@ export class PublicWeb {
     private readonly dependencies: {
       resolve?: Resolver;
       request?: typeof requestPublicPage;
+      requestBinary?: typeof requestPublicAttachment;
       renderHtml?: (html: string) => Promise<string>;
     } = {},
   ) {}
+  /** Real file bytes, with destination checks on every redirect and a transfer
+   * cap while streaming. A binary artifact must never pass through text decoding. */
+  async download(rawUrl: string, maxSize: number, externalSignal?: AbortSignal) {
+    if (!Number.isSafeInteger(maxSize) || maxSize < 1 || maxSize > 25 * 1024 * 1024)
+      throw new WebReadError(
+        "INVALID_DOWNLOAD_LIMIT",
+        "Download cap must be between 1 byte and 25 MB.",
+      );
+    const signal = AbortSignal.any([
+      ...(externalSignal ? [externalSignal] : []),
+      AbortSignal.timeout(30000),
+    ]);
+    let url = rawUrl;
+    for (let redirects = 0; redirects <= 5; redirects++) {
+      signal.throwIfAborted();
+      const target = await this.validate(url, signal);
+      signal.throwIfAborted();
+      const response = await (this.dependencies.requestBinary ?? requestPublicAttachment)(
+        target,
+        signal,
+        maxSize,
+      );
+      signal.throwIfAborted();
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        if (!response.headers.location)
+          throw new WebReadError("INVALID_REDIRECT", "Download returned an empty redirect.");
+        url = new URL(response.headers.location, target.url).href;
+        continue;
+      }
+      if (response.status < 200 || response.status >= 300)
+        throw new WebReadError(
+          `HTTP_${response.status}`,
+          `File download returned HTTP ${response.status}.`,
+        );
+      if (response.bytes.length > maxSize)
+        throw new WebReadError("PAGE_TOO_LARGE", "Downloaded attachment exceeds its byte cap.");
+      return {
+        url: target.url.href,
+        bytes: response.bytes,
+        contentType: String(response.headers["content-type"] ?? "application/octet-stream")
+          .split(";")[0]
+          .trim(),
+      };
+    }
+    throw new WebReadError("TOO_MANY_REDIRECTS", "File download exceeded five redirects.");
+  }
   async readData(url: string, query: PublicDataQuery = {}, signal?: AbortSignal) {
     const document = await this.document(url, signal, maxDataBytes);
     let source: ReturnType<typeof publicJson>;
