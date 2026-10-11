@@ -246,6 +246,67 @@ export class BrowserHarnessDriver {
     });
     return this.options.redact(value.targetInfo) as Params;
   }
+  private async discoverFrames(state: State, timeoutMs: number) {
+    const value = await this.browser(state.scope, "Target.getTargets");
+    const infos = Array.isArray(value.targetInfos) ? (value.targetInfos as Params[]) : [];
+    const owners = new Map<string, Page>();
+    for (const target of state.targets.values()) {
+      if (target.kind !== "page" || target.page.isClosed()) continue;
+      owners.set(target.targetId, target.page);
+      const session = [...state.sessions.values()].find(
+        (session) => session.target === target && this.wires.has(session.wire),
+      );
+      if (!session) continue;
+      await this.options.authorize(state.scope, target.page, "Page.getFrameTree", {});
+      const response = await this.send(session, "Page.getFrameTree", {}, timeoutMs);
+      if (response.error)
+        throw new WorkerError(
+          "BROWSER_SCRIPT_FRAME_OBSERVATION",
+          "Owned frame tree could not be observed",
+          409,
+        );
+      const pending: unknown[] = [(response.result as Params)?.frameTree];
+      while (pending.length) {
+        const entry = pending.pop();
+        if (!entry || typeof entry !== "object") continue;
+        const tree = entry as Params,
+          frame = tree.frame as Params | undefined;
+        if (typeof frame?.id === "string") owners.set(frame.id, target.page);
+        if (Array.isArray(tree.childFrames)) pending.push(...tree.childFrames);
+      }
+    }
+    const observed = new Set<string>();
+    // OOP children are omitted from Page.getFrameTree in Chromium. Their
+    // browser target parentId/parentFrameId supplies the ownership edge. Resolve
+    // arbitrary ordering and nested OOP targets from already-owned ancestors.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const info of infos) {
+        if (
+          info.type !== "iframe" ||
+          typeof info.targetId !== "string" ||
+          observed.has(info.targetId)
+        )
+          continue;
+        const page =
+          owners.get(info.targetId) ??
+          (typeof info.parentId === "string" ? owners.get(info.parentId) : undefined) ??
+          (typeof info.parentFrameId === "string" ? owners.get(info.parentFrameId) : undefined);
+        if (!page) continue;
+        owners.set(info.targetId, page);
+        observed.add(info.targetId);
+        state.targets.set(info.targetId, { targetId: info.targetId, page, kind: "iframe" });
+        changed = true;
+      }
+    }
+    for (const [id, target] of state.targets) {
+      if (target.kind !== "iframe" || observed.has(id)) continue;
+      state.targets.delete(id);
+      for (const session of state.sessions.values())
+        if (session.target.targetId === id) this.detached({ sessionId: session.wire });
+    }
+  }
   async handle(scope: BrowserHarnessScope, raw: unknown, timeoutMs = 5000): Promise<Params> {
     this.guard(scope);
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 1800000)
@@ -329,6 +390,7 @@ export class BrowserHarnessDriver {
     await this.options.authorize(scope, policyTarget?.page, method, params);
     this.guard(scope);
     if (method === "Target.getTargets") {
+      await this.discoverFrames(state, timeoutMs);
       const targetInfos = await Promise.all(
         [...state.targets.values()]
           .filter((target) => !target.page.isClosed())
@@ -370,7 +432,9 @@ export class BrowserHarnessDriver {
     }
     if (method === "Target.closeTarget") {
       const target = this.target(state, params.targetId);
-      await target.page.close();
+      if (target.kind === "iframe")
+        await this.browser(scope, method, { targetId: target.targetId });
+      else await target.page.close();
       state.targets.delete(target.targetId);
       this.guard(scope);
       return { result: { success: true } };

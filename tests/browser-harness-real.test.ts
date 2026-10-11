@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
 import test from "node:test";
@@ -11,11 +12,33 @@ const { chromium } =
 
 test("unchanged Python helpers type, switch named tabs and save actual PNG bytes through the owned CDP driver", {
   timeout: 45_000,
-}, async () => {
+}, async (t) => {
   // Isolated local regression fixture. This launch does not prove native sandbox/control policy.
+  const server = createServer((request, response) => {
+    response.setHeader("Content-Type", "text/html; charset=utf-8");
+    if (request.url === "/frame")
+      response.end("<title>Owned iframe</title><p id='answer'>iframe value 42</p>");
+    else {
+      const address = server.address();
+      assert.ok(address && typeof address === "object");
+      response.end(
+        `<title>Frame parent</title><iframe src="http://localhost:${address.port}/frame"></iframe>`,
+      );
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const frameParent = `http://127.0.0.1:${address.port}/parent`;
   const browser = await chromium.launch({
     headless: true,
-    args: ["--no-sandbox", "--enable-automation"],
+    args: ["--no-sandbox", "--enable-automation", "--site-per-process"],
   });
   const context = await browser.newContext();
   const cdp = await browser.newBrowserCDPSession();
@@ -68,7 +91,12 @@ test("unchanged Python helpers type, switch named tabs and save actual PNG bytes
     "path = capture_screenshot()",
     "png = pathlib.Path(path).read_bytes()",
     "tabs = list_tabs()",
-    "print(json.dumps({'value':observed, 'firstTitle':first_title,'secondTitle':second_title, 'tabs':len(tabs),'pngHeader':png[:8].hex(),'pngBytes':len(png)}))",
+    `goto_url(${JSON.stringify(frameParent)})`,
+    "wait_for_load()",
+    "frame = iframe_target('/frame')",
+    "assert frame, 'Owned OOP iframe target was not discovered'",
+    "frame_value = js(\"document.querySelector('#answer').textContent\", target_id=frame)",
+    "print(json.dumps({'value':observed, 'firstTitle':first_title,'secondTitle':second_title, 'tabs':len(tabs),'pngHeader':png[:8].hex(),'pngBytes':len(png),'iframeValue':frame_value}))",
   ].join("\n");
   child.stdin.write(`${JSON.stringify({ code })}\n`);
   let result: Record<string, unknown> | undefined;
@@ -115,6 +143,7 @@ test("unchanged Python helpers type, switch named tabs and save actual PNG bytes
       },
     );
     assert.equal(observed.pngHeader, "89504e470d0a1a0a");
+    assert.equal(observed.iframeValue, "iframe value 42");
     assert.ok(observed.pngBytes > 1000);
     assert.ok(commands > 200);
     assert.equal(execution.tool_calls.length, 0);

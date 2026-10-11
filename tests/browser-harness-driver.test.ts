@@ -18,9 +18,12 @@ async function driverModule() {
 
 class RootCdp extends EventEmitter {
   replies = true;
+  targetInfos: Record<string, unknown>[] = [];
+  frameTrees: Record<string, unknown> = {};
   sent: { method: string; params: Record<string, unknown> }[] = [];
   async send(method: string, params: Record<string, unknown> = {}) {
     this.sent.push({ method, params });
+    if (method === "Target.getTargets") return { targetInfos: this.targetInfos };
     if (method === "Target.attachToTarget") return { sessionId: `wire-${params.targetId}` };
     if (method === "Target.getTargetInfo")
       return {
@@ -28,10 +31,14 @@ class RootCdp extends EventEmitter {
       };
     if (method === "Target.sendMessageToTarget" && this.replies) {
       const message = JSON.parse(String(params.message));
+      const result =
+        message.method === "Page.getFrameTree"
+          ? { frameTree: this.frameTrees[String(params.sessionId)] ?? { frame: { id: "main" } } }
+          : { observedMethod: message.method };
       queueMicrotask(() =>
         this.emit("Target.receivedMessageFromTarget", {
           sessionId: params.sessionId,
-          message: JSON.stringify({ id: message.id, result: { observedMethod: message.method } }),
+          message: JSON.stringify({ id: message.id, result }),
         }),
       );
     }
@@ -81,6 +88,85 @@ async function fixture() {
 }
 
 const scope = { owner: "owner", conversation: "conversation", name: "research" };
+
+test("iframe targets must belong to a frame tree of this conversation's owned page", async () => {
+  const f = await fixture();
+  try {
+    await f.driver.handle(scope, { meta: "session" });
+    const other = { ...scope, conversation: "other" };
+    await f.driver.handle(other, { meta: "session" });
+    f.cdp.targetInfos = [
+      { targetId: "frame-owned", type: "iframe", url: "https://frame.example.org/owned" },
+      { targetId: "frame-foreign", type: "iframe", url: "https://frame.example.org/foreign" },
+    ];
+    f.cdp.frameTrees["wire-owned-0"] = {
+      frame: { id: "main-owned" },
+      childFrames: [{ frame: { id: "frame-owned" } }],
+    };
+    f.cdp.frameTrees["wire-owned-1"] = {
+      frame: { id: "main-other" },
+      childFrames: [{ frame: { id: "frame-foreign" } }],
+    };
+    const targets = await f.driver.handle(scope, { method: "Target.getTargets", params: {} });
+    assert.deepEqual(
+      targets.result.targetInfos.map((target: { targetId: string }) => target.targetId),
+      ["owned-0", "frame-owned"],
+    );
+    const attached = await f.driver.handle(scope, {
+      method: "Target.attachToTarget",
+      params: { targetId: "frame-owned", flatten: true },
+    });
+    assert.deepEqual(
+      await f.driver.handle(scope, {
+        method: "Runtime.evaluate",
+        params: { expression: "42" },
+        session_id: attached.result.sessionId,
+      }),
+      { result: { observedMethod: "Runtime.evaluate" } },
+    );
+    const before = f.cdp.sent.length;
+    await assert.rejects(
+      f.driver.handle(scope, {
+        method: "Target.attachToTarget",
+        params: { targetId: "frame-foreign", flatten: true },
+      }),
+      /owned|foreign/i,
+    );
+    assert.equal(f.cdp.sent.length, before);
+  } finally {
+    await f.driver.close();
+  }
+});
+
+test("OOP iframe ancestry is owned even when getFrameTree omits remote child renderers", async () => {
+  const f = await fixture();
+  try {
+    await f.driver.handle(scope, { meta: "session" });
+    f.cdp.targetInfos = [
+      { targetId: "nested", type: "iframe", parentId: "child", url: "https://nested.example.org" },
+      {
+        targetId: "foreign",
+        type: "iframe",
+        parentId: "another-page",
+        url: "https://foreign.example.org",
+      },
+      {
+        targetId: "child",
+        type: "iframe",
+        parentId: "owned-0",
+        parentFrameId: "owned-0",
+        url: "https://child.example.org",
+      },
+    ];
+    const targets = await f.driver.handle(scope, { method: "Target.getTargets", params: {} });
+    assert.deepEqual(
+      new Set(targets.result.targetInfos.map((target: { targetId: string }) => target.targetId)),
+      new Set(["owned-0", "child", "nested"]),
+    );
+  } finally {
+    await f.driver.close();
+  }
+});
 
 test("copied helper meta and page commands use a persistent owned named session", async () => {
   const f = await fixture();
