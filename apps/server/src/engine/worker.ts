@@ -77,6 +77,9 @@ export class TaskWorker {
       resourceLeases?: ResourceLeases;
       runtimePause?: RuntimePause;
       retainAdmission?: (owner: string, taskId: string) => Promise<boolean>;
+      /** Host preparation under the claimed native lease, before its runtime
+       * is resolved. Applies accepted directions and restores paused bindings. */
+      prepareRun?: (owner: string, task: AgentTask) => Promise<AgentTask>;
       runtimeLimit?: (owner: string, task: AgentTask) => Promise<TaskRuntimeLimit | undefined>;
       runtimeExpired?: (owner: string, task: AgentTask) => Promise<void>;
     } = {},
@@ -472,6 +475,11 @@ export class TaskWorker {
         startedAt,
         status: "running",
       });
+      if (!inspectionLifecycle && this.options.prepareRun) {
+        task = await this.options.prepareRun(owner, task);
+        if (task.id !== taskId || task.status !== "running" || task.leaseId !== leaseId)
+          throw new LostLeaseError();
+      }
       runtime = inspectionLifecycle ? undefined : await this.options.runtimeLimit?.(owner, task);
       armRuntime();
       await guard();

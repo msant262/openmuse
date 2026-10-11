@@ -639,6 +639,7 @@ export class Store {
       /** Host-only transaction barriers. Checks produce no writes or values. */
       activeTaskLease?: boolean;
       requireSettledTask?: boolean;
+      requireSettledEffects?: boolean;
     }[],
     events: Omit<ConversationEvent, "seq">[] = [],
     requireActive = false,

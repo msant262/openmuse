@@ -24,7 +24,11 @@ import type {
   Mail,
   ProposalInput,
 } from "../../../../packages/domain/src/index.ts";
-import type { TaskBudget, TaskTiming } from "../../../../packages/domain/src/runtime.ts";
+import type {
+  QuestionInteractionRequest,
+  TaskBudget,
+  TaskTiming,
+} from "../../../../packages/domain/src/runtime.ts";
 import { ActionLog } from "../action-log.ts";
 import type { ActionService } from "../actions.ts";
 import { AgentProfile } from "../agent-profile.ts";
@@ -362,7 +366,11 @@ export class AgentService {
       browserReleased: async (owner, id) =>
         (await this.browser.control(owner, id)).control === "agent",
       workAdmission: this.workAdmission,
-      runtimeLimit: (owner, task) => kanbanRuntimeLimit(db, owner, task, this.journal),
+      prepareRun: (owner, task) => this.prepareNativeRun(owner, task),
+      runtimeLimit: (owner, task) =>
+        task.state.userRequestedStop === true
+          ? Promise.resolve(undefined)
+          : kanbanRuntimeLimit(db, owner, task, this.journal),
       runtimeExpired: async (owner, task) => {
         await cancelTaskComputerJob(this.computer, owner, task);
       },
@@ -1966,12 +1974,109 @@ export class AgentService {
       );
     return proposal;
   }
+  /** Apply accepted directions before resolving a runtime. A question that
+   * ended the canonical run resumes this native task, not a duplicate task. */
+  private async prepareNativeRun(owner: string, claimed: AgentTask): Promise<AgentTask> {
+    if (!claimed.leaseId) throw new LostLeaseError();
+    const task = await this.mailbox.apply(owner, claimed.id, claimed.leaseId);
+    if (task.state.userRequestedStop === true) return task;
+    const execution = await this.db.get<KanbanExecution>(owner, "kanban-executions", task.id);
+    if (!execution) return task;
+    const workflow = new KanbanWorkflow(this.db, owner, execution.board, {
+      profileExists: (name) => this.executionProfiles.exists(owner, name),
+    });
+    const card = await workflow.get(execution.cardId);
+    // Live runs, committed handoffs and another actor's run use their existing
+    // ownership/recovery path. None grants permission to replace the claim.
+    if (card.currentRun || ["done", "review", "archived"].includes(card.status)) return task;
+    if (execution.id !== task.id || card.assignee !== execution.profile)
+      throw new AppError("A tarefa foi reatribuída; esta execução não pode retomar o card.", 409);
+    const answerId = task.state.interactionRequestId;
+    const answer =
+      typeof answerId === "string"
+        ? await this.db.get<QuestionInteractionRequest>(owner, "interaction-requests", answerId)
+        : null;
+    if (
+      answer?.kind !== "question" ||
+      answer.status !== "answered" ||
+      answer.taskId !== task.id ||
+      !answer.answeredAt
+    )
+      throw new AppError(
+        "Responda à pergunta deste card para continuar a execução interrompida.",
+        409,
+      );
+    await this.runtimePause.assertResumed(owner);
+    const profile = await this.executionProfiles.get(owner, execution.profile);
+    if (!this.executionProfiles.kanbanEnabled(profile, "task"))
+      throw new AppError("A execução de cards está desativada neste perfil.", 409);
+    await workflow.resumeNativeTask(
+      card.id,
+      task,
+      execution.runId,
+      answer.answeredAt,
+      `resume:${task.id}:${execution.runId}:${answer.id}`,
+      async (current, run) => {
+        if (current.assignee !== execution.profile)
+          throw new AppError("O responsável pelo card mudou antes da retomada.", 409);
+        const runtime = taskRuntimeLimit(
+          execution.configuration?.runtime
+            ? execution.configuration.runtime.maxMilliseconds / 1000
+            : (current.maxRuntimeSeconds ?? profile.maxRuntimeSeconds),
+        );
+        const resumed: KanbanExecution = {
+          ...execution,
+          runId: run.id,
+          continuationRunId: execution.continuationRunId ?? execution.runId,
+          ...(execution.configuration && {
+            configuration: {
+              ...execution.configuration,
+              ...(runtime && { runtime }),
+            },
+          }),
+        };
+        return [
+          {
+            kind: "kanban-executions",
+            id: task.id,
+            mode: "replace",
+            expected: { ...execution },
+            value: { ...resumed },
+          },
+          {
+            kind: "interaction-requests",
+            id: answer.id,
+            mode: "check",
+            expected: { ...answer },
+            value: {},
+          },
+          {
+            kind: "execution-profiles",
+            id: profile.id,
+            mode: "check",
+            expected: { revision: profile.revision },
+            value: {},
+          },
+          ...(task.originThreadId
+            ? [
+                {
+                  kind: "threads",
+                  id: task.originThreadId,
+                  mode: "check" as const,
+                  value: { threadId: task.originThreadId },
+                },
+              ]
+            : []),
+        ];
+      },
+    );
+    return task;
+  }
   private async execute(
     owner: string,
     task: AgentTask,
     context: TaskContext,
   ): Promise<Partial<AgentTask>> {
-    task = await this.actor.apply(owner, task, context);
     if (task.input.memoryReview === true) return this.learning.review(owner, task, context);
     if (task.input.procedureMaintenance === true)
       return this.procedureMaintenance.run(owner, task, context);

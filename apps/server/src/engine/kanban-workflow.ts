@@ -792,7 +792,7 @@ export class KanbanWorkflow {
       mutations,
       [],
       (event === "claimed" && this.options.requireActiveClaims === true) ||
-        fences.some((fence) => fence.activeTaskLease),
+        mutations.some((mutation) => mutation.activeTaskLease),
     );
     if (result.status === "paused")
       throw new RuntimePausedError(await new RuntimePause(this.db).get(this.owner));
@@ -1351,6 +1351,95 @@ export class KanbanWorkflow {
           },
           outcome: cancelled ? "cancelled" : "failed",
           extra: fences,
+        };
+      },
+    );
+  }
+  /** An answered question restarts the canonical workflow around the same
+   * leased native task. Only the host may reconnect this execution identity. */
+  async resumeNativeTask(
+    cardId: string,
+    task: AgentTask,
+    previousRunId: string,
+    answeredAt: string,
+    requestId: string,
+    stage: (card: KanbanCard, run: Run) => Promise<Mutation[]>,
+  ) {
+    const current = await this.get(cardId);
+    if (current.currentRun) this.fail("The card already has a run; do not borrow its ownership");
+    const oldRun = await this.db.get<
+      Run & { status: string; outcome: string; nativeTaskId: string; endedAt: string }
+    >(this.owner, this.runs(cardId), previousRunId);
+    if (
+      oldRun?.status !== "ended" ||
+      oldRun.outcome !== "blocked" ||
+      oldRun.nativeTaskId !== task.id ||
+      oldRun.profile !== current.assignee
+    )
+      this.fail("The paused native run does not prove this card's identity");
+    if (
+      !Number.isFinite(Date.parse(answeredAt)) ||
+      !(Date.parse(answeredAt) >= Date.parse(oldRun.endedAt))
+    )
+      this.fail("The answer predates this blocked run; no execution was resumed");
+    const scope: KanbanScope = { role: "orchestrator", profile: current.assignee };
+    return this.update(
+      scope,
+      cardId,
+      "native_resumed",
+      requestId,
+      { nativeTaskId: task.id, previousRunId },
+      async (card) => {
+        if (card.currentRun || !["blocked", "triage"].includes(card.status))
+          this.fail("The card is not awaiting native resumption");
+        if ((await this.blockedBy(card)).length) this.fail("Parent dependencies remain unfinished");
+        await this.profile(card.assignee);
+        const run: Run = {
+          id: randomUUID(),
+          profile: card.assignee,
+          phase: oldRun.phase,
+          nativeTaskId: task.id,
+          expiresAt: this.now() + (this.options.leaseMs ?? 120000),
+        };
+        const extra = await stage(card, run);
+        return {
+          patch: {
+            status: "running",
+            currentRun: run,
+            reason: null,
+            blockKind: null,
+            nativeRetryPhase: run.phase,
+          },
+          extra: [
+            ...extra,
+            {
+              kind: this.runs(cardId),
+              id: previousRunId,
+              mode: "check",
+              expected: { ...oldRun },
+              value: {},
+            },
+            {
+              kind: "tasks",
+              id: task.id,
+              mode: "check",
+              expected: { status: "running", leaseId: task.leaseId, state: task.state },
+              activeTaskLease: true,
+              requireSettledEffects: true,
+              value: {},
+            },
+            {
+              kind: this.runs(cardId),
+              id: run.id,
+              mode: "insert",
+              value: {
+                ...run,
+                status: "running",
+                startedAt: this.time(),
+                resumedFrom: previousRunId,
+              },
+            },
+          ],
         };
       },
     );

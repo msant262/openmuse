@@ -21,10 +21,9 @@ export async function initializeDurableConversations(query: (sql: string) => Pro
     END $$`);
   // Shared by compact workflow reads and the final locked transaction. A
   // terminal task with dispatched/uncertain effects is not safe to supersede.
-  await query(`CREATE OR REPLACE FUNCTION openmuse_kanban_task_unsettled(task_owner text, task_id text, task_value jsonb)
+  await query(`CREATE OR REPLACE FUNCTION openmuse_kanban_effects_unsettled(task_owner text, task_id text, task_value jsonb)
     RETURNS boolean LANGUAGE sql STABLE AS $$
-      SELECT COALESCE(COALESCE(task_value->>'status','missing') NOT IN ('succeeded','failed','cancelled')
-        OR COALESCE(task_value->'state'->>'nativeAdmissionPending','false')='true'
+      SELECT COALESCE(COALESCE(task_value->'state'->>'nativeAdmissionPending','false')='true'
         OR COALESCE(task_value->'state'->>'nativeCleanupPending','false')='true'
         OR jsonb_typeof(task_value->'state'->'computerCleanupPendingId')='string'
         OR jsonb_typeof(task_value->'state'->'waitingComputerCommandId')='string'
@@ -35,6 +34,11 @@ export async function initializeDurableConversations(query: (sql: string) => Pro
           AND op.data->>'status' NOT IN ('succeeded','failed','rejected_not_dispatched','superseded')
           AND (op.data->>'status'='outcome_unknown'
             OR COALESCE(op.data->'receipt'->'data'->>'cleanupConfirmed','false')<>'true')),false)
+    $$`);
+  await query(`CREATE OR REPLACE FUNCTION openmuse_kanban_task_unsettled(task_owner text, task_id text, task_value jsonb)
+    RETURNS boolean LANGUAGE sql STABLE AS $$
+      SELECT COALESCE(task_value->>'status','missing') NOT IN ('succeeded','failed','cancelled')
+        OR openmuse_kanban_effects_unsettled(task_owner,task_id,task_value)
     $$`);
   await query(`CREATE OR REPLACE FUNCTION openmuse_durable_mutation(mutation_owner text, receipt_id text, binding_hash text, mutations jsonb, events jsonb)
     RETURNS jsonb LANGUAGE plpgsql AS $$
@@ -70,6 +74,10 @@ export async function initializeDurableConversations(query: (sql: string) => Pro
         END IF;
         IF change->>'requireSettledTask'='true' AND
           (change->>'kind'<>'tasks' OR openmuse_kanban_task_unsettled(mutation_owner,change->>'id',saved)) THEN
+          RETURN jsonb_build_object('status','revision_conflict');
+        END IF;
+        IF change->>'requireSettledEffects'='true' AND
+          (change->>'kind'<>'tasks' OR openmuse_kanban_effects_unsettled(mutation_owner,change->>'id',saved)) THEN
           RETURN jsonb_build_object('status','revision_conflict');
         END IF;
       END LOOP;

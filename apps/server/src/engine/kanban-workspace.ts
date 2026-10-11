@@ -153,7 +153,7 @@ export async function prepareKanbanWorkspace(
   )
     throw new AppError("The task workspace requires the current native worker", 409);
   const intent = execution.workspace;
-  const sessionId = `kanban:${task.id}:${execution.runId}`;
+  const sessionId = `kanban:${task.id}:${execution.continuationRunId ?? execution.runId}`;
   if (intent.prepared) return { cwd: workspacePath(intent.prepared.cwd), sessionId };
   if (service.config.computerEnabled !== true)
     throw new AppError("Enable the agent computer to prepare this task workspace", 409);

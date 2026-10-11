@@ -894,8 +894,34 @@ export async function executeModelTask(
       };
     }
     if (kanbanDelivery && deliveryOutcome === "completed") {
-      const delivered = await kanbanDelivery({ summary, artifacts: selected });
-      return { complete: true, completion: delivered.completion };
+      const handoff = kanbanDelivery;
+      const args = { summary, artifacts: selected };
+      // An ordinary final text can deliver the requested result too. It still
+      // needs the exact journal identity and handoff gate used by finish_task.
+      const delivered = taskOperationId()
+        ? await handoff(args)
+        : await service.journal.run(
+            owner,
+            task,
+            {
+              id: `text-handoff:${revision}:${createHash("sha256")
+                .update(JSON.stringify({ args, runId: execution?.runId }))
+                .digest("hex")}`,
+              name: "finish_task",
+              args: { summary, outcome: deliveryOutcome, artifactIds: selected },
+            },
+            () => handoff(args),
+            false,
+          );
+      if (!delivered || typeof delivered !== "object" || "error" in delivered)
+        throw new AppError(
+          `The native text handoff did not complete: ${delivered && typeof delivered === "object" && "error" in delivered ? String(delivered.error) : "missing receipt"}`,
+          409,
+        );
+      return {
+        complete: true,
+        completion: (delivered as Awaited<ReturnType<typeof handoff>>).completion,
+      };
     }
     const finished = await service.finish(
       task,

@@ -998,9 +998,35 @@
         "Registered executor rollout, production deployment and natural public-chat acceptance with small models.",
         "Complete factual research, all Google Workspace operations, broader UX and sustained mobile performance."
       ]
+    },
+    {
+      "surface": "kanban.native-question-resume-and-text-handoff-round75",
+      "status": "locally-verified-not-published",
+      "sources": [
+        "apps/server/src/engine/service.ts",
+        "apps/server/src/engine/worker.ts",
+        "apps/server/src/engine/kanban-workflow.ts",
+        "apps/server/src/engine/kanban-workspace.ts",
+        "apps/server/src/engine/model.ts",
+        "apps/server/src/durable-schema.ts"
+      ],
+      "newScenarios": 9,
+      "verification": {
+        "expandedTests": 163,
+        "expandedFiles": 17,
+        "expandedLog": "artifacts/harness-parity-20261009/round75-final-integration.log",
+        "finalResumeTests": 9,
+        "finalLog": "artifacts/harness-parity-20261009/round75-final-resume.log",
+        "groupsOverlap": true
+      },
+      "naturalPublicChatAccepted": false,
+      "published": false,
+      "wholeHarnessApproved": false,
+      "note": "Same-task resumption requires an answered owned question and ended blocked run. Final transaction fences lease, profile, binding, pause and unsettled effects. Saved source readback requalifies evidence without network replay; ordinary final text uses the native journaled handoff. Actual interpreter-variable continuity on the registered executor, late-terminal direction transfer and complete upstream contracts remain unverified.",
+      "record": "docs/superpowers/research/2026-10-11-kanban-native-resume.md"
     }
   ],
-  "updatedAt": "2026-10-11T13:16:19.869264+00:00",
+  "updatedAt": "2026-10-11T13:49:47.857522+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

@@ -1,5 +1,13 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
+## Continuação — retomada corrigida e verificada localmente
+
+**A falha de retomada descrita na atualização de 13:34 UTC foi corrigida localmente. Ainda não publicada nem aceita por pedido natural.** A resposta agora reconecta a mesma tarefa a um novo run, reutiliza o diretório e conserva fontes e recibos. Orientações recebidas são aplicadas antes da inferência. Uma segunda reprodução identificou a falha de conclusão por resposta em texto; esse caminho passou a usar o mesmo journal e gate de entrega do `finish_task`.
+
+**163/163 controles de integração passaram**, incluindo Google Workspace, e os **nove controles de retomada passaram novamente** após os últimos ajustes; os grupos são sobrepostos. TypeScript e build do servidor passaram. A pausa global foi testada tanto para impedir a gravação quanto para permitir a conclusão depois da liberação. Às **13:47:10 UTC**, a produção continuava em `c0c2c9ec`, sem tarefas/conversas/HTTP/entregas nativas/admissões/recursos ativos, manutenção desligada e as 44 operações incertas preservadas. [Detalhes e limites da retomada](2026-10-11-kanban-native-resume.md).
+
+Publicação e executor, aceitação natural, cobertura integral de ferramentas e Workspace, comprovação factual, performance e UX continuam pendentes. Os snapshots seguintes são históricos.
+
 ## Atualização de status — 13:34 UTC
 
 **Não terminou.** O critério de entrega pedido — pesquisa e documentos corretos, integração completa de ferramentas e conclusão autônoma — ainda não foi atendido.

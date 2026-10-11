@@ -27,6 +27,8 @@ export type KanbanExecution = {
   cardId: string;
   profile: string;
   runId: string;
+  /** Host-only interpreter continuity when the same native task resumes. */
+  continuationRunId?: string;
   workspace?: KanbanWorkspace;
   configuration?: {
     profileRevision: number;
