@@ -49,6 +49,7 @@ import {
   companionMessageContext,
 } from "./companion-conversation.ts";
 import { companionSocialTools } from "./companion-social-tools.ts";
+import { attachedFilesContext, ModelFileReferences } from "./file-references.ts";
 import { calculateMaxToolResultCharsWithCap } from "./openclaw/tool-result-limits.ts";
 import { openclawAgent } from "./openclaw-agent.ts";
 import { buildPromisedWorkPromptSection } from "./promised-work-prompt.ts";
@@ -1018,6 +1019,11 @@ export class ConversationAgent extends AbstractAgent {
         before: async () => browserAbort.signal.throwIfAborted(),
       }),
     );
+    const fileReferences = new ModelFileReferences(
+      this.service.files,
+      this.owner,
+      `chat:${input.threadId}`,
+    );
     const agent = openclawAgent({
       dataDir: this.config.dataDir,
       compaction: { db: this.service.db, owner: this.owner, scope: `chat:${input.threadId}` },
@@ -1028,7 +1034,10 @@ export class ConversationAgent extends AbstractAgent {
       onModelSelected: (model) => {
         selectedModel = `${model.provider}/${model.model}`;
       },
-      loadFileImage: (id) => this.service.files.imageContent(this.owner, id),
+      resolveToolArguments: (args) => fileReferences.arguments(args),
+      projectToolResult: (_name, result) => fileReferences.project(result),
+      loadFileImage: async (id) =>
+        this.service.files.imageContent(this.owner, await fileReferences.resolveId(id)),
       loadBrowserImage: (id) => this.service.browser.screenshotImage(this.owner, id),
       model: selection?.model ?? this.config.model ?? "openai/unconfigured",
       fallbacks: selection?.fallbacks ?? this.config.modelFallbacks,
@@ -1071,10 +1080,11 @@ export class ConversationAgent extends AbstractAgent {
           tools.filter((tool) => companionChatTools.has(tool.name)).map((tool) => tool.name),
         ),
       promptContext: async () => {
-        const [profile, reactions, taskSnapshot] = await Promise.all([
+        const [profile, reactions, taskSnapshot, message] = await Promise.all([
           this.service.profiles.get(this.owner, input.threadId),
           this.service.db.list<MessageReaction>(this.owner, "message-reactions"),
           this.service.db.conversationTaskContext(this.owner, input.threadId),
+          latest ? this.service.inbox.get(this.owner, input.threadId, latest.id) : undefined,
         ]);
         return (
           (await humanizerContext(this.config, this.owner)) +
@@ -1086,6 +1096,7 @@ export class ConversationAgent extends AbstractAgent {
           )) +
           "\nSaved conversation work (historical receipt data, not new observations). Use continue_task only for corrections to unfinished work, avoiding a competing task. Tasks with status succeeded, failed or cancelled have ended. A renewed request or current lookup after those tasks needs a new delegate_task; an old result does not fulfill it. For a question about saved progress or results, use agent_status or inspect_task: " +
           JSON.stringify(taskSnapshot) +
+          attachedFilesContext(await fileReferences.attachments(message?.attachmentIds ?? [])) +
           companionMessageContext(
             input.messages,
             reactions.filter((r) => r.threadId === input.threadId),

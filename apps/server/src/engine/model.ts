@@ -19,6 +19,11 @@ import { preservePublicSource, publicReadDescription, readablePage } from "../pu
 import { searchInstructions, searchTools } from "../search-tools.ts";
 import { TaskBrowserHistory } from "./browser-history.ts";
 import { delegatedContextMessages } from "./delegated-context.ts";
+import {
+  attachedFilesContext,
+  ModelFileReferences,
+  taskAttachedFileIds,
+} from "./file-references.ts";
 import { activeTodoContext, type Todo, writeTodos } from "./hermes/todo-store.ts";
 import {
   consumePlanCompletionCheck,
@@ -2787,10 +2792,21 @@ export async function executeModelTask(
     if (message?.text.trim() === task.prompt.trim())
       originalCalendarContext = calendarRequestContext(task.prompt, message.createdAt);
   }
+  const fileReferences = new ModelFileReferences(
+    service.files,
+    owner,
+    `task:${task.id}:${revision}`,
+  );
+  const attachedFiles = await fileReferences.attachments(
+    await taskAttachedFileIds(service.db, owner, task),
+  );
   const agent = openclawAgent({
     dataDir: config.dataDir,
-    projectToolResult: (name, result, contextTokens) =>
-      recoverResearchToolResult(service.files, owner, name, result, contextTokens),
+    resolveToolArguments: (args) => fileReferences.arguments(args),
+    projectToolResult: async (name, result, contextTokens) =>
+      fileReferences.project(
+        await recoverResearchToolResult(service.files, owner, name, result, contextTokens),
+      ),
     directToolNames: [
       ...(pythonAvailable ? ["execute_code"] : []),
       ...googleTaskTools(task.prompt),
@@ -2967,15 +2983,16 @@ export async function executeModelTask(
         },
       });
     },
-    loadFileImage: (id) => service.files.imageContent(owner, id),
-    onFileImageObserved: (id) =>
+    loadFileImage: async (id) =>
+      service.files.imageContent(owner, await fileReferences.resolveId(id)),
+    onFileImageObserved: async (id) =>
       documentReview.recordObserved(
         owner,
         {
           scope: `task:${task.id}`,
           revision: Number(task.state.appliedRevision ?? 0),
         },
-        id,
+        await fileReferences.resolveId(id),
       ),
     loadBrowserImage: (id) => service.browser.screenshotImage(owner, id),
     model: config.model,
@@ -3041,6 +3058,7 @@ export async function executeModelTask(
       (Number(task.state.appliedRevision ?? 0) === 0 ? originalCalendarContext : "") +
       pythonRequestContext(task, pythonAvailable) +
       (await googleAgentContext(service.workspace, owner, selectedTools, task.prompt)) +
+      attachedFilesContext(attachedFiles) +
       `\nConnected image capabilities (server data): ${JSON.stringify(await service.media.imageCapabilities(selectedModel))}` +
       `\nDirections applied at revision ${Number(task.state.appliedRevision ?? 0)}: ${JSON.stringify(task.state.directives ?? [])}` +
       buildProfileContext(

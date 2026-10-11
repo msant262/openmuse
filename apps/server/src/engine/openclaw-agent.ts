@@ -56,6 +56,8 @@ type Options = {
   compaction?: { db: Store; owner: string; scope: string };
   requiredOperationIds?: () => Promise<readonly string[]>;
   trackTool?: (execute: () => Promise<unknown>) => Promise<unknown>;
+  /** Resolve model-only references before journaling or invoking host effects. */
+  resolveToolArguments?: (args: unknown) => Promise<unknown>;
   executeTool?: (
     call: { id: string; toolCallId: string; name: string; args: unknown },
     execute: () => Promise<unknown>,
@@ -929,25 +931,31 @@ export function openclawAgent(options: Options) {
                   ...(messageId ? { parentMessageId: messageId } : {}),
                 });
                 emit({ type: EventType.TOOL_CALL_ARGS, toolCallId, delta: JSON.stringify(raw) });
+                let resolved = raw;
                 const execute = () => {
                   if (requiredTurn && tool.name !== requiredTurn.name)
                     throw new Error(
                       `Record the pending assessment with ${requiredTurn.name} before continuing. ${requiredTurn.instructions}`,
                     );
-                  return (tool.execute as (args: unknown) => Promise<unknown>)(raw);
+                  return (tool.execute as (args: unknown) => Promise<unknown>)(resolved);
                 };
-                const dispatch = () =>
-                  options.executeTool
+                const dispatch = async () => {
+                  resolved = options.resolveToolArguments
+                    ? await options.resolveToolArguments(raw)
+                    : raw;
+                  receipt.args = resolved;
+                  return options.executeTool
                     ? options.executeTool(
                         {
                           id: `${input.runId}:${toolCallId}`,
                           toolCallId,
                           name: tool.name,
-                          args: raw,
+                          args: resolved,
                         },
                         execute,
                       )
                     : execute();
+                };
                 let result: unknown;
                 try {
                   result = await (options.trackTool ? options.trackTool(dispatch) : dispatch());
@@ -964,7 +972,7 @@ export function openclawAgent(options: Options) {
                       {
                         id: toolCallId,
                         type: "function",
-                        function: { name: tool.name, arguments: JSON.stringify(raw) },
+                        function: { name: tool.name, arguments: JSON.stringify(resolved) },
                       },
                     ],
                   },
