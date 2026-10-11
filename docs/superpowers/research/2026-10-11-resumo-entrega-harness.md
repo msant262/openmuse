@@ -16,8 +16,8 @@ pendentes.
 - Web: release `harness80-20261011-e1fd91f9`.
 - Main local e remota conferidas iguais em `3183604c`, antes deste relatório.
 - Não foi publicado APK novo nesta etapa.
-- O ajuste novo de execução Python está **local, sem commit de implementação
-  ou publicação**. Não representa uma ferramenta de navegador já disponível.
+- A nova base de execução Python está na **main em `a404b96d`, sem publicação**.
+  Não representa uma ferramenta de navegador já disponível.
 
 ## Correções publicadas e efeitos observados
 
@@ -79,18 +79,23 @@ revisão inconsistente permanecem problemas a corrigir.
 
 O contrato original do Hermes `browser_exec` exige um processo Python novo
 por chamada, mantendo as abas e o workspace. O executor existente retinha
-o processo. Está em implementação local o ciclo de criação e encerramento,
-com confirmação de parada dos processos filhos, protocolo compatível e
-rejeição antes do envio quando o executor antigo não oferece a capacidade.
-Esse trabalho **não implementa sozinho `browser_exec`**: faltam os helpers,
-sessões e ligação completa ao navegador com os controles de acesso existentes.
+o processo. A base na main cria e encerra o processo, confirma parada dos
+descendentes e carrega os helpers originais copiados, com sessão vinculada.
+Esse trabalho **não implementa sozinho `browser_exec`**: falta o transporte
+local e a ligação completa ao navegador, incluindo abas e controles de acesso.
 
-Verificação local desta base: **69/69 testes Python e 33/33 testes de
-protocolo/integração passaram**, além de TypeScript e lint/formatação sem
+Verificação final desta base: **152/152 testes do executor e 36/36 testes de
+protocolo/integração passaram**, além de TypeScript, build e lint/formatação sem
 erros. Inclui processo filho real, chamada ao host, pausa, cancelamento,
 compatibilidade com executor antigo e bloqueio de repetição de efeitos.
 São testes controlados; não substituem um pedido comum com o modelo nem
 o teste de todas as ferramentas no app publicado.
+
+Antes da publicação foi reproduzido um limite indevido: `fill_input` com
+120 caracteres atingiu a quota de 200 chamadas da adaptação atual. Os
+comandos internos precisam executar no broker local, sem virar uma viagem
+e uma chamada de ferramenta pela API a cada tecla. A ferramenta continua
+indisponível no catálogo; [implementação, evidência e pendências](2026-10-11-browser-script-bootstrap.md).
 
 Os seguintes pontos impedem declarar a entrega:
 

@@ -1,11 +1,16 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
 [Relatório consolidado de correções, limpeza, testes e pendências](2026-10-11-resumo-entrega-harness.md).
-Nova conferência de disponibilidade às **21:21 UTC**: página/API HTTP 200,
-três containers saudáveis e API ainda em `b5043529`. A base nova do executor
-Python passou localmente em 69 testes Python e 33 de protocolo/integração,
-com TypeScript e lint sem erros; segue sem commit de implementação ou
-publicação e não implementa sozinha `browser_exec`. **Aceite integral pendente.**
+Nova base na main em **`a404b96d`**, com helpers originais copiados e execução
+Python por processo novo. Passaram 152 testes do executor e 36 de protocolo/
+integração, TypeScript, build e lint. Antes da publicação foi reproduzido
+um teto indevido em `fill_input`: 120 caracteres atingiram 200 chamadas.
+Falta o transporte local e o backend completo; `browser_exec` continua sem
+registro e a produção permanece em `b5043529`. **Aceite integral pendente.**
+[Detalhes da base, limite reproduzido e próximo transporte](2026-10-11-browser-script-bootstrap.md).
+Última conferência de containers/API às **21:21 UTC**: HTTP 200 e três
+containers saudáveis. O navegador abriu também a tela pública da mesma URL
+em conferência posterior, sem login ou criação de tarefa de teste.
 
 ## Última publicação — conferência 21:09 UTC
 

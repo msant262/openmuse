@@ -1430,9 +1430,43 @@
         "Complete Google Workspace, memory, proactivity, mobile and sustained performance acceptance"
       ],
       "note": "Indexes only the model inference view of batch search sources. Retains each query order, errors and provenance and each distinct snippet even at the same URL; original canonical/UI/CodeMode receipts remain complete. Forty-two final tests are not summed with overlapping intermediate runs. A 47.6% decrease in these search-result bytes is not a measured whole-request token or latency decrease."
+    },
+    {
+      "surface": "native.browser-script-bootstrap",
+      "source": "a404b96d905309676e69074c84da5dab98c06e66",
+      "published": false,
+      "tests": {
+        "nativeExecutor": {
+          "total": 152,
+          "passed": 152,
+          "failed": 0,
+          "skipped": 0
+        },
+        "apiProtocolIntegration": {
+          "total": 36,
+          "passed": 36,
+          "failed": 0,
+          "skipped": 0
+        }
+      },
+      "typescriptPassed": true,
+      "buildPassed": true,
+      "lintErrors": 0,
+      "unchangedUpstreamHashesVerified": 5,
+      "naturalBrowserExecTest": false,
+      "actualBrowserBackendEffects": false,
+      "wholeHarnessApproved": false,
+      "acceptanceApproved": false,
+      "pending": [
+        "Replace per-CDP API host calls with bound native-local broker transport",
+        "Remove ordinary tool quota from internal helper commands without unbounded result history",
+        "Implement persistent owned browser sessions and complete helper protocol",
+        "Complete redaction, effect approvals, backend availability and ordinary chat acceptance"
+      ],
+      "note": "Actual interpreter/task/private-RPC closure tests; browser replies are fixtures. Final suites are not summed with overlapping focused runs. No API/web/native executor publication or user-data mutation."
     }
   ],
-  "updatedAt": "2026-10-11T21:09:10.652Z",
+  "updatedAt": "2026-10-11T21:40:19.501087+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
@@ -1492,9 +1526,9 @@
         "screenshots": "A newly captured screenshot path is resolved to actual native image output",
         "desktopControl": "Bot Desktop routes use the same human-control lease fence as built-in browser tools"
       },
-      "note": "The app has native Python host callbacks and built-in browser tools, but no registered browser_exec or configured browser-use backend. The pinned Hermes contract has fresh Python variables, pre-imported helpers, persistent named browser/workspace, process-group timeout containment, vault egress redaction and desktop control fencing. This is missing implementation, not merely an unrun test; general execute_code is not full parity.",
+      "note": "No registered browser_exec or complete backend exists yet. Native Python v3 now supports fresh source lifecycles and unchanged Browser Harness helpers under a bound named session. The current host-RPC transport is a prototype: fill_input with 120 characters reaches the 200-call ordinary tool budget. Native-local CDP/meta transport, persistent owned tabs, redaction, effect review and ordinary chat acceptance are still required. General execute_code and this bootstrap are not full parity.",
       "registeredInApp": false,
-      "revalidatedAt": "2026-10-11T20:32:59.856864+00:00",
+      "revalidatedAt": "2026-10-11T21:40:19.501087+00:00",
       "implementationEvidence": {
         "searchedRoots": [
           "apps/server/src",
@@ -1502,7 +1536,31 @@
         ],
         "registeredNameFound": false,
         "pinnedContractSource": "tools/browser_use_cli.py",
-        "genericPythonCallbackIsEquivalent": false
+        "genericPythonCallbackIsEquivalent": false,
+        "nativeBootstrap": {
+          "source": "a404b96d905309676e69074c84da5dab98c06e66",
+          "published": false,
+          "copiedRepository": "https://github.com/browser-use/browser-harness",
+          "copiedCommit": "dbf0e4f3a37ebc31aaeaf9d378ab1760b5776c15",
+          "unchangedFiles": [
+            "helpers.py",
+            "paths.py",
+            "recorder.py",
+            "__init__.py",
+            "LICENSE"
+          ],
+          "manifest": "apps/computer/executor/vendor/browser_harness/UPSTREAM.json",
+          "nativeExecutorTests": 152,
+          "apiProtocolIntegrationTests": 36,
+          "backendEffectsAreFixtures": true,
+          "wholeBrowserExecApproved": false,
+          "granularityFailure": {
+            "characters": 120,
+            "receiverCalls": 200,
+            "status": "error",
+            "backendFixture": true
+          }
+        }
       }
     }
   ]
