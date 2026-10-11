@@ -28,6 +28,7 @@ export type KanbanExecution = {
 export type KanbanHandoffVerification = { completion: CompletionAssessment; revision: number };
 export type KanbanTaskSurface = {
   tools: ToolDefinition[];
+  context?: string;
   deliver?: (handoff: Handoff) => Promise<{ completion?: CompletionAssessment }>;
 };
 type NativeTool = <T extends z.ZodType>(
@@ -440,5 +441,11 @@ export async function kanbanTaskTools(
         };
       });
     });
-  return { tools, ...(execution && { deliver: (input: Handoff) => complete(activeBoard, input) }) };
+  return {
+    tools,
+    ...(execution && {
+      context: (await workflow().show(execution.cardId)).worker_context,
+      deliver: (input: Handoff) => complete(activeBoard, input),
+    }),
+  };
 }

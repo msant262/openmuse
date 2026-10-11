@@ -85,6 +85,8 @@ import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
 import { delegatedContext } from "./delegated-context.ts";
 import { ExecutionProfiles } from "./execution-profiles.ts";
 import { analyzeSpending } from "./finance.ts";
+import type { KanbanExecution } from "./kanban-tools.ts";
+import { KanbanWorkflow } from "./kanban-workflow.ts";
 import { executeModelTask } from "./model.ts";
 import { MonitorObservations, type MonitorPage } from "./monitor-observations.ts";
 import { nativeWebMarkdown, stopOpenclawHarness } from "./openclaw-agent.ts";
@@ -837,6 +839,80 @@ export class AgentService {
     }
     await this.db.insertIfAbsent(owner, "tasks", task);
     return (await this.db.get<AgentTask>(owner, "tasks", id)) ?? task;
+  }
+  /** Host dispatcher entry point. Models never provide the native run binding.
+   * Queue the existing task contract atomically with the canonical card claim. */
+  async dispatchKanbanCard(
+    owner: string,
+    board: string,
+    cardId: string,
+    profileName: string,
+    requestId: string,
+  ): Promise<AgentTask> {
+    const nativeId = (runId: string) => hash(`kanban:${owner}:${board}:${cardId}:${runId}`);
+    const workflow = new KanbanWorkflow(this.db, owner, board, {
+      profileExists: (name) => this.executionProfiles.exists(owner, name),
+      requireActiveClaims: true,
+      beforeClaim: async (card, run) => {
+        await this.runtimePause.assertResumed(owner);
+        const profile = await this.executionProfiles.get(owner, profileName);
+        if (!this.executionProfiles.kanbanEnabled(profile, "task"))
+          throw new AppError("Kanban dispatch is not enabled for this execution profile", 409);
+        // These declared contracts still need their actual provisioner/judge.
+        // Never dispatch them as an ordinary local task and report completion.
+        const pending = [
+          card.workspaceKind && card.workspaceKind !== "scratch" && "workspace",
+          (card.workspacePath || card.project) && "workspace binding",
+          card.goalMode && "goal",
+          card.completionContract && card.completionContract !== "local-only" && "PR/CI",
+          (card.model || card.provider) && "model override",
+          card.skills?.length && "skill binding",
+          card.maxRuntimeSeconds && "physical runtime budget",
+          card.goalMaxTurns && "goal turn budget",
+        ].filter(Boolean);
+        if (pending.length)
+          throw new AppError(`This card requires ${pending.join(", ")} dispatcher support`, 409);
+        if ((await this.db.unfinishedTaskCount(owner)) >= 100)
+          throw new AppError("Finish or cancel some tasks before adding more", 409);
+        const id = nativeId(run.id);
+        const task = await this.taskRecord(
+          owner,
+          { title: card.title, prompt: [card.title, card.body].filter(Boolean).join("\n\n") },
+          id,
+        );
+        const execution: KanbanExecution = {
+          id,
+          board,
+          cardId,
+          profile: profileName,
+          runId: run.id,
+        };
+        return [
+          {
+            kind: "execution-profiles",
+            id: profileName,
+            mode: "merge",
+            expected: { revision: profile.revision },
+            value: {},
+          },
+          { kind: "tasks", id, mode: "insert", value: { ...task } },
+          { kind: "kanban-executions", id, mode: "insert", value: { ...execution } },
+        ];
+      },
+    });
+    const claimed = await workflow.claim(cardId, profileName, requestId);
+    const id = nativeId(claimed.runId);
+    const binding = await this.db.get<KanbanExecution>(owner, "kanban-executions", id);
+    if (
+      !binding ||
+      binding.id !== id ||
+      binding.board !== board ||
+      binding.cardId !== cardId ||
+      binding.profile !== profileName ||
+      binding.runId !== claimed.runId
+    )
+      throw new AppError("The recorded card claim has no matching native execution", 409);
+    return this.getTask(owner, id);
   }
   /** Construct the existing task contract so adapters can commit links and admission intent atomically. */
   async taskRecord(

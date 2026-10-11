@@ -5,6 +5,7 @@ import { decodeBase64 } from "../base64.ts";
 import { bindingHash } from "../conversation-inbox.ts";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
+import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
 
 // Lifecycle contract: Hermes e0550c97, kanban_tools / kanban_db.
 // This store is separate from user tasks. Dispatcher/tool integration must bind
@@ -135,6 +136,10 @@ export class KanbanWorkflow {
         project: string,
         scope: KanbanScope,
       ) => KanbanProject | null | Promise<KanbanProject | null>;
+      /** The dispatcher stages its native task/binding in the SAME transaction
+       * as the board claim. A failed preparation or CAS must leave no orphan. */
+      beforeClaim?: (card: KanbanCard, run: Run) => Promise<Mutation[]>;
+      requireActiveClaims?: boolean;
       /** Preserve actual artifacts and enforce goal/delivery evidence BEFORE
        * terminating the run. An unavailable gate must never imply success. */
       beforeHandoff?: (
@@ -610,7 +615,11 @@ export class KanbanWorkflow {
       `kanban:${this.board}:${requestId}`,
       bindingHash({ board: this.board, scope, event, input }),
       mutations,
+      [],
+      event === "claimed" && this.options.requireActiveClaims === true,
     );
+    if (result.status === "paused")
+      throw new RuntimePausedError(await new RuntimePause(this.db).get(this.owner));
     if (result.status === "binding_conflict")
       this.fail("Operation ID belongs to another board action");
     if (!["applied", "duplicate"].includes(result.status))
@@ -870,6 +879,7 @@ export class KanbanWorkflow {
           phase: old.status === "review" ? "review" : (old.currentRun?.phase ?? "implementation"),
           expiresAt: this.now() + (this.options.leaseMs ?? 120000),
         };
+        const native = (await this.options.beforeClaim?.(old, run)) ?? [];
         return {
           patch: { status: "running", currentRun: run },
           ...(old.currentRun ? { outcome: "reclaimed" } : {}),
@@ -880,6 +890,7 @@ export class KanbanWorkflow {
               mode: "insert",
               value: { ...run, status: "running", startedAt: this.time() },
             },
+            ...native,
           ],
         };
       },

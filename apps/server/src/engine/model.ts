@@ -2560,7 +2560,9 @@ export async function executeModelTask(
       service.memory.context(owner, task.prompt),
       service.playbooks.context(owner),
     ])
-  ).join("\n");
+  )
+    .concat(kanban.context ?? [])
+    .join("\n");
   const recordBlocked = async (error: unknown) => {
     if (error instanceof Error && "outcomeUnknown" in error && error.outcomeUnknown === true)
       error = new TaskOutcomeUnknownError(
