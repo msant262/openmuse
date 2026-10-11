@@ -2,6 +2,16 @@
 
 The user's acceptance requires complete research, real document delivery, robust name lookup and the tools used by Hermes/OpenClaw. **Whole-harness acceptance remains open.** Source presence, aliases, fixture-model tests and individual passing chats do not establish complete parity or perfect model behavior.
 
+## Latest verified status — 2026-10-11
+
+The current publication is **eab48171**, API-only handoff in **19.87 seconds**, including native recovery 820c880b and mandatory request/source review 4f8163da. The unchanged ordinary composer request still **failed factual acceptance**: 260.127 seconds, 21 Luna responses, real 60030-byte three-page PDF, no operator hints/replies or manual task repair. Its first assessment rejected three factual gaps; one additional Google read and a replacement PDF led to a passing assessment without resolving IBM language or recovering full truncated Microsoft text. Canonical completion still certifies a physical PDF, not the requested comparative facts.
+
+The actual loaded research workflow retained a conflicting one-read shortcut. **59721605** corrects it and explicitly directs preserved-source recovery. Seventeen focused controls plus the final context case, TypeScript, assets and copied-harness build pass. The sidebar also recreated saved/retired conversations as drafts from local visited state when absent from the returned server page. **6b295f52** corrects that classification; five controls, root/mobile TypeScript and final lint pass. **Both new fixes are on main, not yet published or normally accepted.**
+
+Latest QA cleanup retired eight own presentation records while 1795 nonselected records stayed byte-identical; all real data, companions, three accounts, three memories and 32 existing procedure-version records remain. Three obsolete API images and matching source builds/archives freed approximately 1.31 GB net on VPS after exact references and 35644 source hashes were checked; three obsolete local archives freed 159584256 allocated bytes. Eight current/rollback/service images, volumes, backups and canonical uncertain receipts remain. Last VPS free-space observation: 33467715584 bytes. Historical sections below retain the release/test scope at the time of each observation.
+
+Current Portuguese report: [relatório de entrega](2026-10-11-relatorio-harness.md). Whole-harness, full Workspace, dispatcher/profile/workspace execution and sustained physical-mobile acceptance remain **open**.
+
 ## Reference scope
 
 Readonly source snapshots: Hermes `e0550c97bbd916cd5ff8fa0450e6291c31921b94`, OpenClaw `432ade6f500de6cdb0bcd4b0948a07bf466672f1`. The checked-in loop remains original OpenClaw at `b56ae70a5e7e302dc2165c96b60214e84e19c7b1`. No upstream product was installed. The accompanying JSON preserves Hermes's 55 literal core tools and OpenClaw source-name observations, with their limitations. Hermes check functions and OpenClaw embedded mode gate some surfaces; optional plugins are not automatically installed tools.
