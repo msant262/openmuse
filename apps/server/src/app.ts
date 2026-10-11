@@ -93,6 +93,7 @@ export async function createApp(
   db: Store,
   config: Config,
   options: {
+    startupCheckpoint?: (phase: string) => void;
     docker?: DockerRunner;
     credentialSecretStore?: SecretStore;
     credentialAdapters?: CredentialAdapter[];
@@ -111,10 +112,12 @@ export async function createApp(
     ) => Promise<ExecutorDispatchContext>;
   } = {},
 ) {
+  options.startupCheckpoint?.("application-started");
   const auth = await createAuth(db, config),
     files = new Files(db, config, auth),
     google = new GoogleAuth(db, config),
     workspace = new WorkspaceService(db, config, files, google);
+  options.startupCheckpoint?.("application-auth-ready");
   const runtimePause = new RuntimePause(db);
   const actions = new ActionService(db, {
     policy: approvalPolicy(config),
@@ -328,6 +331,7 @@ export async function createApp(
         )
       : undefined;
   const desktopViewers = desktop ? new DesktopViewers(agent, desktop) : undefined;
+  options.startupCheckpoint?.("application-services-ready");
   if (desktop) {
     browser.configureNative(desktop);
     configureNativeCredentialInjector(desktop, credentialGrants);
@@ -338,6 +342,7 @@ export async function createApp(
     });
     await desktopViewers!.recover();
   }
+  options.startupCheckpoint?.("application-desktop-recovered");
   if (config.browserFallbackEnabled)
     browser.configureFallback(
       new CapabilityRouter(db, {
@@ -492,7 +497,9 @@ export async function createApp(
     );
   }
   await agent.initialize();
+  options.startupCheckpoint?.("application-agent-initialized");
   if (threads instanceof LocalThreads) await threads.initializeInbox();
+  options.startupCheckpoint?.("application-inbox-ready");
   const runtime = makeRuntime(config, agent, auth, threads);
   const app = new Hono<{ Variables: { owner: string } }>();
   const apiQuotas = options.apiQuotas ?? new ApiQuotas();

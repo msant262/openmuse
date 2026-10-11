@@ -73,5 +73,18 @@ export async function browserImageMessages(
   const loader = latest?.file ? loadFile : load;
   if (!latest || !loader) return transformed;
   const image = await loader(latest.id);
-  return [...transformed, browserImageMessage(latest, image)];
+  const receiptIndex = transformed.findLastIndex(
+    (message) =>
+      message.role === "tool" &&
+      (latest.toolCallId
+        ? message.toolCallId === latest.toolCallId
+        : message.content === latest.text),
+  );
+  // Chat Completions needs a user image, but it remains evidence from this
+  // historical tool call. Later assessments, repair receipts and actual user
+  // directions must stay later. Complete a parallel tool-result batch first.
+  let insertAt = receiptIndex + 1;
+  while (transformed[insertAt]?.role === "tool") insertAt++;
+  transformed.splice(insertAt, 0, browserImageMessage(latest, image));
+  return transformed;
 }

@@ -35,7 +35,9 @@ await db.recoverInterruptedActions();
 startupCheckpoint("interrupted-actions-recovered");
 await new ActionLog(db).reconcile(true);
 startupCheckpoint("actions-reconciled");
-const { app, agent, actions, threads, executors, codexConnection } = await createApp(db, config);
+const { app, agent, actions, threads, executors, codexConnection } = await createApp(db, config, {
+  startupCheckpoint,
+});
 startupCheckpoint("application-created");
 if (config.agentBackend === "model") await warmOpenclawHarness(config.dataDir);
 startupCheckpoint("harness-ready");

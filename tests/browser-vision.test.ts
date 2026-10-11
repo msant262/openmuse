@@ -198,6 +198,20 @@ for (const protocol of ["responses", "chat-completions", "chatgpt"] as const) {
     assert.ok(!replayEvents.some((event) => event.type === EventType.RUN_ERROR));
     assert.equal(calls, 1, "replaying a receipt never takes another screenshot");
     assert.ok(wire.at(-1)?.body.includes(`data:image/jpeg;base64,${image}`));
+    const latestWire = wire.at(-1);
+    assert.ok(latestWire);
+    const replayWire = JSON.parse(latestWire.body);
+    const replayMessages = replayWire.messages ?? replayWire.input;
+    const screenshotIndex = replayMessages.findIndex((message: unknown) =>
+      JSON.stringify(message).includes(`data:image/jpeg;base64,${image}`),
+    );
+    const latestUserIndex = replayMessages.findIndex((message: unknown) =>
+      JSON.stringify(message).includes("Recall the screenshot."),
+    );
+    assert.ok(
+      screenshotIndex >= 0 && screenshotIndex < latestUserIndex,
+      "replayed screenshot evidence must precede the person's subsequent message on the wire",
+    );
   });
 }
 
