@@ -10,7 +10,7 @@ overrides:
 patchedDependencies:
   '@copilotkit/react-native@1.70.1': f41abcdba974fdca400d0422aa4d342eed1d7bcc4700d9064f522ade40c0ae99
   metro@0.83.3: 20087230389821adbacf16bca471a094832709355236048977ed552496f6dd6e
-  node-edge-tts@1.2.10: 72c90c12d3d90656471446589047cbbc43f0bc2be8f25bf8f3fbe488f27be272
+  node-edge-tts@1.2.10: 7483ef8a11cbd4a0b4c616e653c02dcc530d437a4ce7f9546a5d4a395b66ee7f
 
 importers:
 
@@ -192,7 +192,7 @@ importers:
         version: 10.2.6
       node-edge-tts:
         specifier: 1.2.10
-        version: 1.2.10(patch_hash=72c90c12d3d90656471446589047cbbc43f0bc2be8f25bf8f3fbe488f27be272)(supports-color@8.1.1)
+        version: 1.2.10(patch_hash=7483ef8a11cbd4a0b4c616e653c02dcc530d437a4ce7f9546a5d4a395b66ee7f)(supports-color@8.1.1)
       openai:
         specifier: 7.23.0
         version: 7.23.0(undici@8.11.2)(ws@8.21.3)(zod@4.6.5)
@@ -14416,7 +14416,7 @@ snapshots:
 
   node-domexception@1.0.0: {}
 
-  node-edge-tts@1.2.10(patch_hash=72c90c12d3d90656471446589047cbbc43f0bc2be8f25bf8f3fbe488f27be272)(supports-color@8.1.1):
+  node-edge-tts@1.2.10(patch_hash=7483ef8a11cbd4a0b4c616e653c02dcc530d437a4ce7f9546a5d4a395b66ee7f)(supports-color@8.1.1):
     dependencies:
       https-proxy-agent: 7.0.6(supports-color@8.1.1)
       ws: 8.21.3

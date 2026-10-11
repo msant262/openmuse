@@ -1,13 +1,30 @@
+diff --git a/dist/drm.js b/dist/drm.js
+index 82d0f11a6f57a91e6f5249a50f42053b123ff919..8a6766ff6add6f99709985e31b39e136ace57597 100644
+--- a/dist/drm.js
++++ b/dist/drm.js
+@@ -5,8 +5,8 @@ const node_crypto_1 = require("node:crypto");
+ exports.CHROMIUM_FULL_VERSION = '143.0.3650.75';
+ exports.TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
+ const WINDOWS_FILE_TIME_EPOCH = 11644473600n;
+-function generateSecMsGecToken() {
+-    const ticks = BigInt(Math.floor((Date.now() / 1000) + Number(WINDOWS_FILE_TIME_EPOCH))) * 10000000n;
++function generateSecMsGecToken(clockSkewMs = 0) {
++    const ticks = BigInt(Math.floor(((Date.now() + clockSkewMs) / 1000) + Number(WINDOWS_FILE_TIME_EPOCH))) * 10000000n;
+     const roundedTicks = ticks - (ticks % 3000000000n);
+     const strToHash = `${roundedTicks}${exports.TRUSTED_CLIENT_TOKEN}`;
+     const hash = (0, node_crypto_1.createHash)('sha256');
 diff --git a/dist/edge-tts.js b/dist/edge-tts.js
-index fc6c84090696e013411686f4ef1d394248f9be97..28136afebb08aee26ee576b0a93e9312181abc61 100644
+index fc6c84090696e013411686f4ef1d394248f9be97..7f1af7cfc6e5cc38ba89f2d8d63434adcc6a1495 100644
 --- a/dist/edge-tts.js
 +++ b/dist/edge-tts.js
-@@ -31,10 +31,11 @@ class EdgeTTS {
+@@ -30,11 +30,12 @@ class EdgeTTS {
+         this.volume = volume;
          this.timeout = timeout;
      }
-     async _connectWebSocket() {
+-    async _connectWebSocket() {
 -        const wsConnect = new ws_1.WebSocket(`wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${drm_1.TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${(0, drm_1.generateSecMsGecToken)()}&Sec-MS-GEC-Version=1-${drm_1.CHROMIUM_FULL_VERSION}`, {
-+        const wsConnect = new ws_1.WebSocket(`wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${drm_1.TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${(0, drm_1.generateSecMsGecToken)()}&Sec-MS-GEC-Version=1-${drm_1.CHROMIUM_FULL_VERSION}&ConnectionId=${(0, node_crypto_1.randomBytes)(16).toString('hex')}`, {
++    async _connectWebSocket(clockSkewMs = 0, retried = false) {
++        const wsConnect = new ws_1.WebSocket(`wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${drm_1.TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${(0, drm_1.generateSecMsGecToken)(clockSkewMs)}&Sec-MS-GEC-Version=1-${drm_1.CHROMIUM_FULL_VERSION}&ConnectionId=${(0, node_crypto_1.randomBytes)(16).toString('hex')}`, {
              host: 'speech.platform.bing.com',
              origin: 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
              headers: {
@@ -15,3 +32,34 @@ index fc6c84090696e013411686f4ef1d394248f9be97..28136afebb08aee26ee576b0a93e9312
                  'Pragma': 'no-cache',
                  'Cache-Control': 'no-cache',
                  'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${drm_1.CHROMIUM_FULL_VERSION.split('.')[0]}.0.0.0 Safari/537.36 Edg/${drm_1.CHROMIUM_FULL_VERSION.split('.')[0]}.0.0.0`,
+@@ -44,6 +45,14 @@ class EdgeTTS {
+             agent: this.proxy ? new https_proxy_agent_1.HttpsProxyAgent(this.proxy) : undefined
+         });
+         return new Promise((resolve, reject) => {
++            wsConnect.on('unexpected-response', (request, response) => {
++                const error = new Error(`Unexpected server response: ${response.statusCode}`);
++                error.statusCode = response.statusCode;
++                error.serverDate = response.headers.date;
++                response.resume();
++                request.destroy();
++                reject(error);
++            });
+             wsConnect.on('open', () => {
+                 wsConnect.send(`Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n
+           {
+@@ -65,6 +74,15 @@ class EdgeTTS {
+             wsConnect.on('error', (err) => {
+                 reject(err);
+             });
++        }).catch(error => {
++            // Match the Python Edge client used by Hermes: only a denied
++            // handshake may retry, once, using the provider's clock. No SSML
++            // or audio has been sent, so an effect is never replayed.
++            if (!retried && error.statusCode === 403) {
++                const providerTime = Date.parse(error.serverDate);
++                return this._connectWebSocket(Number.isFinite(providerTime) ? providerTime - Date.now() : clockSkewMs, true);
++            }
++            throw error;
+         });
+     }
+     _saveSubFile(subFile, text, audioPath) {
