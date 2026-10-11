@@ -175,7 +175,7 @@ export class TaskJournal {
     const ids: string[] = [];
     for (const op of await this.operations(owner, taskId)) {
       if (
-        !/^(create_document|inspect_document|import_pdf|fill_pdf|export_computer_(pdf|file)|manual_native\.export)$/.test(
+        !/^(create_document|text_to_speech|inspect_document|import_pdf|fill_pdf|export_computer_(pdf|file)|manual_native\.export)$/.test(
           op.toolName,
         ) ||
         !["dispatching", "outcome_unknown"].includes(op.status)
@@ -249,6 +249,25 @@ export class TaskJournal {
               .update(await files.bytes(owner, recovered[0].id))
               .digest("hex"),
           });
+      }
+      if (op.toolName === "text_to_speech" && recovered.length === 1) {
+        const id = createHash("sha256").update(op.id).digest("hex");
+        const generation = await this.db.get<{
+          id: string;
+          sha256?: string;
+          scope: string;
+          [key: string]: unknown;
+        }>(owner, "speech-generations", id);
+        const sha256 = createHash("sha256")
+          .update(await files.bytes(owner, recovered[0].id))
+          .digest("hex");
+        if (!generation || generation.scope !== `task:${taskId}` || generation.sha256 !== sha256)
+          continue;
+        await this.db.put(owner, "speech-generations", {
+          ...generation,
+          fileId: recovered[0].id,
+          status: "succeeded",
+        });
       }
       const receipt =
         recovered.length === 1

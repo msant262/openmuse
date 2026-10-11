@@ -21,3 +21,4 @@ overrides:
 patchedDependencies:
   "@copilotkit/react-native@1.70.1": patches/@copilotkit__react-native@1.70.1.patch
   metro@0.83.3: patches/metro@0.83.3.patch
+  node-edge-tts@1.2.10: patches/node-edge-tts@1.2.10.patch

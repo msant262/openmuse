@@ -89,6 +89,7 @@
     "mdast-util-gfm-table": "2.0.0",
     "micromark-extension-gfm-table": "2.1.2",
     "minimatch": "10.2.6",
+    "node-edge-tts": "1.2.10",
     "openai": "7.23.0",
     "p-limit": "7.3.3",
     "p-map": "7.0.8",

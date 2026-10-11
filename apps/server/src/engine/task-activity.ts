@@ -8,6 +8,7 @@ export function taskActivity(name: string) {
   if (name === "organize_gmail") return "Organizing Gmail";
   if (name === "prepare_gmail_trash") return "Preparing the next step";
   if (name === "create_document") return "Creating the document";
+  if (name === "text_to_speech") return "Generating audio";
   if (/^(inspect_document|confirm_document_review|view_file)$/.test(name))
     return "Checking the result";
   if (name === "finish_task") return "Checking and preparing the delivery";

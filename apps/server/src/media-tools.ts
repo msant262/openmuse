@@ -24,6 +24,11 @@ import {
   renderDocument,
 } from "../../../packages/integrations/src/document-render.ts";
 import { inspectPdfHyperlinks } from "../../../packages/integrations/src/pdf.ts";
+import {
+  inspectMp3,
+  type SpeechGenerator,
+  synthesizeSpeech,
+} from "../../../packages/integrations/src/speech.ts";
 import { ActionLog } from "./action-log.ts";
 import { base64Limit, decodeBase64 } from "./base64.ts";
 import {
@@ -47,6 +52,18 @@ import { availableImageModels, imageProvider } from "./providers/images.ts";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const hashBytes = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+export const speechArgs = z
+  .object({
+    text: z.string().trim().min(1).max(50000),
+    operationId: z.string().min(1).max(120),
+    name: z.string().trim().min(1).max(120).default("audio"),
+    voice: z
+      .string()
+      .regex(/^[a-z]{2,3}-[A-Z]{2}-[A-Za-z0-9]+Neural$/)
+      .default("pt-BR-FranciscaNeural"),
+    timeoutMs: z.number().int().min(1).max(120000).default(60000),
+  })
+  .strict();
 export const imageArgs = z.object({
   prompt: z.string().trim().min(1).max(8000),
   operationId: z.string().min(1).max(120),
@@ -111,8 +128,117 @@ export class MediaService {
     readonly files: Files,
     readonly config: Config,
     readonly upstream: typeof fetch = fetch,
+    readonly speech: SpeechGenerator = synthesizeSpeech,
   ) {
     this.documentReview = new DocumentReview(db, files);
+  }
+  async createSpeech(owner: string, raw: unknown, scope: string, signal?: AbortSignal) {
+    const args = speechArgs.parse(raw);
+    const operationId = taskOperationId() ?? `${scope}:${args.operationId}`;
+    const id = hash(operationId),
+      binding = hash(JSON.stringify(args));
+    type Receipt = {
+      id: string;
+      binding: string;
+      scope: string;
+      text: string;
+      voice: string;
+      status: string;
+      fileId?: string;
+      sha256?: string;
+      durationSeconds?: number;
+    };
+    const initial: Receipt = {
+      id,
+      binding,
+      scope,
+      text: args.text,
+      voice: args.voice,
+      status: "prepared",
+    };
+    const previous =
+      (await this.db.insertIfAbsent(owner, "speech-generations", initial)) ??
+      (await this.db.get<Receipt>(owner, "speech-generations", id));
+    if (!previous || previous.binding !== binding)
+      throw new AppError("Operation ID already belongs to a different speech request", 409);
+    const reference = async (receipt: Receipt) => {
+      if (!receipt.fileId) throw new AppError("Speech attachment is not published", 409);
+      return {
+        ...(await this.files.reference(owner, receipt.fileId)),
+        provider: "microsoft-edge",
+        voice: receipt.voice,
+        sha256: receipt.sha256,
+        durationSeconds: receipt.durationSeconds,
+      };
+    };
+    if (previous.fileId) {
+      if (hashBytes(await this.files.bytes(owner, previous.fileId)) !== previous.sha256)
+        throw new AppError("Published speech no longer matches its receipt", 409);
+      return reference(previous);
+    }
+    if (
+      !(await this.db.compareAndSwap(
+        owner,
+        "speech-generations",
+        id,
+        { binding, status: "prepared" },
+        { status: "running" },
+      ))
+    )
+      throw new AppError(
+        "This speech operation already ran or is pending; inspect its recorded result before using a fresh operation ID",
+        409,
+      );
+    let publicationStarted = false;
+    try {
+      signal?.throwIfAborted();
+      await authorizeTaskEffect();
+      const bytes = await this.speech(args, signal);
+      signal?.throwIfAborted();
+      const { durationSeconds } = inspectMp3(bytes);
+      const sha256 = hashBytes(bytes);
+      await this.db.compareAndSwap(
+        owner,
+        "speech-generations",
+        id,
+        { binding, status: "running" },
+        { sha256, durationSeconds },
+      );
+      const name = `${
+        args.name
+          .split(/[\\/]/)
+          .at(-1)
+          ?.replace(/\.mp3$/i, "") || "audio"
+      }.mp3`;
+      publicationStarted = true;
+      const file = await this.files.importAttachment(
+        owner,
+        name,
+        bytes,
+        "Generated speech (Microsoft Edge)",
+        "audio/mpeg",
+        operationId,
+      );
+      if (hashBytes(await this.files.bytes(owner, file.id)) !== sha256)
+        throw new AppError("Speech persistence verification failed", 409);
+      const receipt = { ...initial, status: "succeeded", fileId: file.id, sha256, durationSeconds };
+      await this.db.put(owner, "speech-generations", receipt);
+      return reference(receipt);
+    } catch (error) {
+      await this.db.compareAndSwap(
+        owner,
+        "speech-generations",
+        id,
+        { binding, status: "running" },
+        { status: publicationStarted ? "outcome_unknown" : "failed" },
+      );
+      if (error instanceof Error)
+        Object.assign(
+          error,
+          publicationStarted ? { outcomeUnknown: true } : { speechFailedBeforePublication: true },
+        );
+      throw error;
+    }
   }
   async recentDocumentDesigns(owner: string) {
     const generations = (await this.db.list<DocumentGeneration>(owner, "document-generations"))
@@ -651,7 +777,7 @@ export const imageInstructions =
   "For an image, illustration, poster or infographic, use generate_image to create the actual downloadable image. For factual comparisons, first read or compute the complete requested data. Match each source record to the requested subject, metric, category and date; records about other subjects do not supply missing values. Every value in the image brief must come from those reads or computations. Never fill a missing value from memory or a plausible estimate. A paginated sample is incomplete; follow nextOffset or compute the whole dataset. Before generating, check that the visual brief contains all requested labels and values, preserves the user's requested form (a geographic map needs geographic boundaries), and includes exact verified dates and source names in the user's language. Resolve coverage gaps before spending an image generation; do not stop at a text outline. The image generator is independent of the chat model: image_generation_status lists connected image capabilities, including subscriptions. Auto selection prefers separately connected GPT Image through ChatGPT/Codex authorization, then Grok Imagine, independently of the chat model. For an explicit ChatGPT/GPT Image request use provider chatgpt; for Grok use provider grok. If the requested provider is not connected, show its Settings connection rather than substitute a different provider. Never add a billed API implicitly. No email or PDF attachment is needed to create an image. Give the image a descriptive name. Generated images are drafts until checked against the original request. Use view_file to inspect pixels when image input is supported. Do not claim visual inspection if you only received a file receipt. Select only the final intended image IDs with finish_task.artifactIds; rejected drafts remain saved without being delivered. Refer to delivered attachments naturally without exposing internal IDs.";
 
 export const audioInstructions =
-  "Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before a completed file receipt or repeat a pending/uncertain generation automatically.";
+  "Use text_to_speech for an explicit request for spoken audio/voice/TTS; it generates an actual downloadable MP3 with Microsoft Edge independently of the chat model, without a billed API. Provide the exact plain text to speak and a descriptive name. Choose a matching Neural voice (pt-BR-FranciscaNeural for Brazilian Portuguese, en-US-AriaNeural for English, de-DE-KatjaNeural for German); Portuguese is the default. Deliver the returned audio attachment with finish_task, never just promise to read aloud. Use transcribe for owned audio/video in the computer; use preview_computer_file for Office-to-PDF. Long computer media jobs may run in background; poll computer_command_status and report actual receipts. Never claim success before a completed file receipt or repeat a pending/uncertain generation automatically.";
 
 // Foreground chat may describe the full catalog. Task execution loads only the selected family.
 export const mediaInstructions = [
@@ -682,7 +808,12 @@ export function mediaInstructionGroups() {
       text: imageInstructions,
     },
     {
-      names: new Set(["transcribe", "computer_command_status", "cancel_computer_command"]),
+      names: new Set([
+        "text_to_speech",
+        "transcribe",
+        "computer_command_status",
+        "cancel_computer_command",
+      ]),
       text: audioInstructions,
     },
   ];
@@ -783,6 +914,13 @@ export function mediaTools(
             }
             return {
               error: error instanceof Error ? error.message : "Media processing failed",
+              ...(name === "text_to_speech" &&
+              error &&
+              typeof error === "object" &&
+              "speechFailedBeforePublication" in error &&
+              error.speechFailedBeforePublication === true
+                ? { status: "failed" }
+                : {}),
               ...(error &&
               typeof error === "object" &&
               "outcomeUnknown" in error &&
@@ -887,6 +1025,13 @@ export function mediaTools(
           },
         };
       },
+    ),
+    tool(
+      "text_to_speech",
+      "Generate a spoken audio/voice/TTS MP3 from exact plain text (gerar áudio, ler em voz alta, narrar). Uses the free Microsoft Edge provider, independently of the chat model. Default voice pt-BR-FranciscaNeural; select a matching Neural voice for another language. Returns a real attachment with duration and SHA-256. No audio for ordinary text replies. Deliver this file with finish_task. A timeout or cancellation closes the generator; never claim success without the attachment.",
+      speechArgs,
+      (args) => media.createSpeech(owner, args, scope, options.signal),
+      true,
     ),
     tool(
       "create_document",

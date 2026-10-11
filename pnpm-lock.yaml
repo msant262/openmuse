@@ -10,6 +10,7 @@ overrides:
 patchedDependencies:
   '@copilotkit/react-native@1.70.1': f41abcdba974fdca400d0422aa4d342eed1d7bcc4700d9064f522ade40c0ae99
   metro@0.83.3: 20087230389821adbacf16bca471a094832709355236048977ed552496f6dd6e
+  node-edge-tts@1.2.10: 72c90c12d3d90656471446589047cbbc43f0bc2be8f25bf8f3fbe488f27be272
 
 importers:
 
@@ -189,6 +190,9 @@ importers:
       minimatch:
         specifier: 10.2.6
         version: 10.2.6
+      node-edge-tts:
+        specifier: 1.2.10
+        version: 1.2.10(patch_hash=72c90c12d3d90656471446589047cbbc43f0bc2be8f25bf8f3fbe488f27be272)(supports-color@8.1.1)
       openai:
         specifier: 7.23.0
         version: 7.23.0(undici@8.11.2)(ws@8.21.3)(zod@4.6.5)
@@ -5876,6 +5880,10 @@ packages:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
     engines: {node: '>=10.5.0'}
     deprecated: Use your platform's native DOMException instead
+
+  node-edge-tts@1.2.10:
+    resolution: {integrity: sha512-bV2i4XU54D45+US0Zm1HcJRkifuB3W438dWyuJEHLQdKxnuqlI1kim2MOvR6Q3XUQZvfF9PoDyR1Rt7aeXhPdQ==}
+    hasBin: true
 
   node-fetch@2.7.0:
     resolution: {integrity: sha512-c4FRfUm/dbcWZ7U+1Wq0AwCyFL+3nt2bEw05wfxSz+DWpWsitgmSgYmy2dQdWyKC1694ELPqMs/YzUSNozLt8A==}
@@ -14407,6 +14415,16 @@ snapshots:
   nested-error-stacks@2.0.1: {}
 
   node-domexception@1.0.0: {}
+
+  node-edge-tts@1.2.10(patch_hash=72c90c12d3d90656471446589047cbbc43f0bc2be8f25bf8f3fbe488f27be272)(supports-color@8.1.1):
+    dependencies:
+      https-proxy-agent: 7.0.6(supports-color@8.1.1)
+      ws: 8.21.3
+      yargs: 17.7.3
+    transitivePeerDependencies:
+      - bufferutil
+      - supports-color
+      - utf-8-validate
 
   node-fetch@2.7.0:
     dependencies:

@@ -1,0 +1,17 @@
+diff --git a/dist/edge-tts.js b/dist/edge-tts.js
+index fc6c84090696e013411686f4ef1d394248f9be97..28136afebb08aee26ee576b0a93e9312181abc61 100644
+--- a/dist/edge-tts.js
++++ b/dist/edge-tts.js
+@@ -31,10 +31,11 @@ class EdgeTTS {
+         this.timeout = timeout;
+     }
+     async _connectWebSocket() {
+-        const wsConnect = new ws_1.WebSocket(`wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${drm_1.TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${(0, drm_1.generateSecMsGecToken)()}&Sec-MS-GEC-Version=1-${drm_1.CHROMIUM_FULL_VERSION}`, {
++        const wsConnect = new ws_1.WebSocket(`wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${drm_1.TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${(0, drm_1.generateSecMsGecToken)()}&Sec-MS-GEC-Version=1-${drm_1.CHROMIUM_FULL_VERSION}&ConnectionId=${(0, node_crypto_1.randomBytes)(16).toString('hex')}`, {
+             host: 'speech.platform.bing.com',
+             origin: 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
+             headers: {
++                'Cookie': `muid=${(0, node_crypto_1.randomBytes)(16).toString('hex').toUpperCase()};`,
+                 'Pragma': 'no-cache',
+                 'Cache-Control': 'no-cache',
+                 'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${drm_1.CHROMIUM_FULL_VERSION.split('.')[0]}.0.0.0 Safari/537.36 Edg/${drm_1.CHROMIUM_FULL_VERSION.split('.')[0]}.0.0.0`,

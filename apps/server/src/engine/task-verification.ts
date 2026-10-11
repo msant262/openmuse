@@ -15,6 +15,7 @@ import {
 } from "../../../../packages/domain/src/runtime.ts";
 import { inspectPdf } from "../../../../packages/integrations/src/pdf.ts";
 import { readPdfText } from "../../../../packages/integrations/src/pdf-text.ts";
+import { inspectMp3 } from "../../../../packages/integrations/src/speech.ts";
 import { workspacePath } from "../computer.ts";
 import { commandReceiptSchema, computerSearchReceipt } from "../computer-contract.ts";
 import { bindingHash } from "../conversation-inbox.ts";
@@ -224,7 +225,7 @@ function requestedFileOutput(prompt: string, mailRequest = false) {
  * infographic requires a PDF. Do not let a later source format replace it. */
 function requestedOutputFormat(prompt: string) {
   const targets = prompt.matchAll(
-    /\b(?:create|generate|produce|make|write|export|deliver|crie|cria|criar|gere|gera|gerar|faça|faz|monte|escreva|exporte|entregue|quero|want|need|preciso)(?:\s+(?:um|uma|o|a|an|the|new|novo|nova|short|breve|one-page|arquivo|file|documento|document|resumo|summary|resultado|result|em|in|as|de)){0,8}\s+(pdf|docx|xlsx|pptx|txt|csv)\b/gi,
+    /\b(?:create|generate|produce|make|write|export|deliver|crie|cria|criar|gere|gera|gerar|faça|faz|monte|escreva|exporte|entregue|quero|want|need|preciso)(?:\s+(?:um|uma|o|a|an|the|new|novo|nova|short|breve|one-page|arquivo|file|documento|document|resumo|summary|resultado|result|em|in|as|de)){0,8}\s+(pdf|docx|xlsx|pptx|txt|csv|mp3|[aá]udio)\b/gi,
   );
   for (const target of targets) {
     const prefix =
@@ -237,7 +238,7 @@ function requestedOutputFormat(prompt: string) {
         prefix,
       )
     )
-      return target[1];
+      return /^(mp3|[aá]udio)$/i.test(target[1]) ? "mp3" : target[1];
   }
   return undefined;
 }
@@ -388,7 +389,12 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
     /\b(?:draft|rascunho|write|compose|escreve|escreva|escrever|redija|prepare|responde|responda|responder|reply)\b/i.test(
       prompt,
     );
-  const namedOutput = requestedOutputFormat(prompt);
+  const namedOutput =
+    requestedOutputFormat(prompt) ??
+    (/\b(?:leia|read|narre|narrate)\b.{0,100}\b(?:voz\s+alta|aloud)\b/i.test(prompt) &&
+    !/\b(?:n[aã]o|not|como|how)\b/i.test(prompt.split(/[.!?]/)[0])
+      ? "mp3"
+      : undefined);
   const formatPrompt = namedOutput ?? prompt;
   const format = /\bpdf\b/i.test(formatPrompt)
     ? "application/pdf"
@@ -401,7 +407,15 @@ export function taskCriteria(task: Pick<AgentTask, "kind" | "prompt">): Completi
           : /\btxt\b/i.test(formatPrompt)
             ? "text/plain"
             : undefined;
-  if (task.kind === "document")
+  if (namedOutput === "mp3")
+    criteria.push({
+      id: "requested-audio",
+      kind: "file",
+      description: "The requested spoken audio exists as a valid MP3 attachment",
+      format: "audio/mpeg",
+      requiredItems: content,
+    });
+  else if (task.kind === "document")
     criteria.push({
       id: "filled-document",
       kind: "file",
@@ -1252,6 +1266,22 @@ export class TaskVerification {
                   }
                 } else if (file.mimeType.startsWith("image/")) {
                   if (rasterMime(bytes) !== file.mimeType) continue;
+                } else if (file.mimeType === "audio/mpeg") {
+                  inspectMp3(bytes);
+                  if (criterion.requiredItems.length) {
+                    const generation = (
+                      await this.db.list<{ fileId?: string; sha256?: string; text: string }>(
+                        owner,
+                        "speech-generations",
+                      )
+                    ).find(
+                      (entry) =>
+                        entry.fileId === id &&
+                        entry.sha256 === createHash("sha256").update(bytes).digest("hex"),
+                    );
+                    if (!generation) continue;
+                    content = generation.text;
+                  }
                 } else continue;
                 if (
                   criterion.requiredItems.every((item) =>
