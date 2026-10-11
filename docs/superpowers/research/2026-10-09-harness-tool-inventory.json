@@ -325,13 +325,19 @@
         "actual UI cancellation of a background Python command interrupts its owned process; original PIDs disappear and no late final file appears",
         "cancelled host primitive autonomously reconciles from the verified physical receipt without changing original native operation records"
       ],
-      "pending": ["broader Hermes/OpenClaw tool parity and performance acceptance"],
+      "pending": [
+        "broader Hermes/OpenClaw tool parity and performance acceptance"
+      ],
       "acceptanceApproved": false,
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
     },
     {
-      "tools": ["image_generate", "web_search", "web_extract"],
+      "tools": [
+        "image_generate",
+        "web_search",
+        "web_extract"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "verified": [
@@ -341,11 +347,19 @@
         "original image delivered in 89.029 seconds and inspected in the published viewer",
         "independent pixels confirm legibility, three examples and the source footer"
       ],
-      "pending": ["broader media/task coverage and sustained physical-device performance"],
+      "pending": [
+        "broader media/task coverage and sustained physical-device performance"
+      ],
       "acceptanceApproved": false
     },
     {
-      "tools": ["create_document", "inspect_document", "memory", "skill_manage", "execute_code"],
+      "tools": [
+        "create_document",
+        "inspect_document",
+        "memory",
+        "skill_manage",
+        "execute_code"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "6b5500353b731449cd53bbf59566f956a1463659",
       "verified": [
@@ -364,8 +378,14 @@
       "acceptanceApproved": false
     },
     {
-      "tools": ["text_to_speech", "transcribe"],
-      "upstreamCapability": ["Hermes text_to_speech", "OpenClaw Microsoft tts provider"],
+      "tools": [
+        "text_to_speech",
+        "transcribe"
+      ],
+      "upstreamCapability": [
+        "Hermes text_to_speech",
+        "OpenClaw Microsoft tts provider"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "d733ef64b97b2cc3cabecedecdef93eb2715931b",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72",
@@ -466,7 +486,7 @@
         "runtime ec3dff39 is included in source e2610f4c, published through a 21.2-second drained API-only handoff; unchanged ordinary composer request resubmitted at 04:05:11.715 UTC without tool hints"
       ],
       "pending": [
-        "Publish the explicit optional-review configuration correction and independently verify the ordinary request, actual file, facts and latency."
+        "Complete-source recovery and uninduced ordinary factual acceptance. The optional-review setting fix is now published, but the latest faster file still selects an ineligible free course."
       ],
       "acceptanceApproved": false,
       "failed": [
@@ -485,26 +505,46 @@
         "trusted dispatcher and scoped tool integration",
         "attachment preservation and full completion-contract validation",
         "all fifteen upstream kanban tools and actual ordinary harness use",
-        "Large child collections and continuation APIs before full tool exposure."
+        "Remaining prior-run continuation and model/dispatcher/tool/attachment contracts before full parity."
       ],
       "acceptanceApproved": false,
       "localVerified": [
-        "Ten real-PGlite lifecycle/context checks pass, including bounded SQL discovery, parent handoffs and incremental authored comments ordered by committed revision."
+        "Commit 427e77dc passes twelve real-PGlite lifecycle/context tests, including bounded SQL discovery, parent handoffs, prior-run context, incremental authored comments, cursor traversal of 211 cards and continuation of 205 children. It is not yet published or connected to the model tool/dispatcher/UI surfaces."
       ]
     },
     {
       "surface": "research.optional-review-setting",
-      "caseAcceptance": "committed-locally-verified-not-published",
+      "caseAcceptance": "published-physical-delivery-factual-acceptance-failed",
       "apiSource": "f2e239ae",
       "verified": [
         "Disabled/enabled actual-worker PDF regressions reproduce the ignored flag and pass after honoring it.",
         "114 distinct focused checks pass: 61 research/review, 43 document/effect and ten local kanban checks; root TypeScript and server/copied-harness build pass.",
         "Native file, visual, approval and effect verification remain mandatory.",
-        "Own failed QA cleanup retires twelve presentation rows, preserving 1739 other scoped records, three simultaneous Google accounts, companions and real user data."
+        "Own failed QA cleanup retires twelve presentation rows, preserving 1739 other scoped records, three simultaneous Google accounts, companions and real user data.",
+        "Published f2e239ae through a clean 19.71-second API-only handoff, preserving database, environment and browser.",
+        "The identical ordinary composer request delivered a real 51350-byte three-page PDF in 89.133 seconds, with 14 Luna responses and no independent semantic review. PDF text, pixels, four source URLs and published three-page navigation were inspected."
       ],
       "pending": [
-        "Publication and uninduced ordinary Luna research/PDF acceptance.",
-        "Independent fact and elapsed-time checks; no whole-harness parity claim."
+        "Publish the conditional incomplete-FAQ recovery and repeat the ordinary task with independent factual verification.",
+        "Whole-harness and sustained mobile performance acceptance remain false."
+      ],
+      "acceptanceApproved": false,
+      "failed": [
+        "The selected Coursera course is described as free although its exact official FAQ requires payment or financial aid for full access. Some certificate/language fields remain unconfirmed.",
+        "The original provider source contains FAQ question headings without answers and is incorrectly marked readable. Fresh basic/advanced probes both returned complete content, so an unconditional depth change is not proven."
+      ]
+    },
+    {
+      "surface": "research.incomplete-faq-extraction",
+      "implementationSource": "fd9906c3",
+      "caseAcceptance": "committed-locally-verified-not-published",
+      "verified": [
+        "The three original recovery/partial/browser-rescue regressions fail on the original implementation and pass after the change.",
+        "Structurally missing FAQ answers trigger one bounded advanced retry; complete reads retain the single basic request. Failed retries preserve observed partial text and metadata for existing renderer rescue; cancellation still propagates.",
+        "49 integration/public-extract/web-fetch cases and twelve kanban cases pass in the final focused 61-test invocation on Node 24.16.0. TypeScript and final server/copied-harness build pass."
+      ],
+      "pending": [
+        "Publication and unchanged ordinary factual/latency acceptance."
       ],
       "acceptanceApproved": false
     }
@@ -539,7 +579,9 @@
         "kanban_unblock",
         "kanban_link"
       ],
-      "additionalRegisteredToolsOutsideCoreList": ["kanban_schedule"],
+      "additionalRegisteredToolsOutsideCoreList": [
+        "kanban_schedule"
+      ],
       "schedulingContract": "kanban_schedule parks the owned current run until an orchestrator unblocks it; it creates no timer and cannot bypass a goal-mode completion judge.",
       "note": "The pinned module registers fifteen kanban tools; kanban_schedule is outside the literal Hermes core list and remains in the required contract audit. Todo lists and child delegation do not implement dispatcher ownership, compare-and-swap run transitions, review/change states, structured handoffs, dependency routing, scheduling and attachments."
     },
