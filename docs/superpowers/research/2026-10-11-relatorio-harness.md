@@ -1,6 +1,46 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-## Estado atual — conferência das 18:47 UTC
+## Estado atual — conferência das 19:30 UTC
+
+**Ainda não terminou. A inicialização foi corrigida e medida na VPS. O último
+pedido normal concluiu sozinho e entregou um PDF com Luna, mas levou mais de
+dez minutos e deixou campos sem comprovação suficiente. Isso não atende ao
+critério de entrega do harness completo.**
+
+| Frente | Feito e comprovado | Pendência / limite |
+| --- | --- | --- |
+| Código e publicação | Correções `e331b56c` e `73a633cf` na main local/remota. API publicada em `73a633cf`, imagem `5d076f4f`; seis hashes compilados conferidos e 13 comparações de preservação passaram. Publicação em **24,88s**. | Web permanece no release `harness80-20261011-e1fd91f9`. Navegador e executor físico mantidos. Nenhum APK novo. |
+| Inicialização: causa e correção | A recuperação do desktop relia e reescrevia visualizadores já encerrados. Agora o banco seleciona apenas casos que precisam de recuperação, incluindo entradas incertas. Na VPS, essa etapa caiu de **60,580s para 1,300s**. HTTP começou em **18,784s**, antes eram **79,188s**. | Uma comparação entre duas inicializações reais. O preparo do harness ainda levou **10,110s**. Não comprova rapidez do chat, celular ou estabilidade sustentada. |
+| Imagens no histórico | Screenshots/previews históricos eram anexados depois de revisões e reparos posteriores em cada requisição. Agora a imagem acompanha o recibo que a produziu, preservando a ordem das ferramentas e mensagens seguintes. | Quatro reproduções falharam antes da correção. Isso comprova o defeito de transporte, sem atribuir toda a repetição de pesquisa a ele. |
+| Verificação local | **40/40** testes relacionados à visão/documentos/executor copiado e **19/19** de recuperação do desktop/execução nativa/inbox passaram, sem falhas, cancelamentos ou ignorados. TypeScript e builds passaram; lint sem erros, com avisos preexistentes. | Grupos sobrepostos não foram somados. Não representam aprovação de todas as ferramentas ou do produto. |
+| Pedido normal pelo chat | Uma mensagem comum em conversa nova, sem citar ferramentas: pesquisar três cursos gratuitos e entregar comparação em PDF. **38 respostas somente de Luna**, zero perguntas/direções do operador, três versões e uma conclusão bem-sucedida. Entregou **um PDF de 47.308 bytes e duas páginas**, com quatro links de fontes. | **605,348s (10min05,348s)** da criação da tarefa até o resultado. Entrega física e autonomia aprovadas neste caso; rapidez e comprovação factual integral reprovadas. Idioma da página não comprova idioma do curso; o preço da credencial IBM não ficou demonstrado integralmente. |
+| Leitor PDF publicado | O arquivo final apareceu na conversa, abriu e mostrou as duas páginas com pixels distintos. Na segunda página, quatro links das fontes renderizados e clicáveis. Bytes e SHA-256 conferidos. | Celular físico não testado nesta rodada. Uma captura prematura da segunda página foi descartada e refeita após a renderização dos links. O visual do PDF ainda merece ajuste. |
+| Limpeza do app | Recolhidos **dez registros próprios do teste**: seis arquivos/previews, tarefa, conversa, notificação e inbox. **1.914 registros fora da seleção ficaram iguais**. Inspector fechado, hooks removidos, navegador temporário encerrado e seu dispositivo revogado. | Limpeza da apresentação, preservando recibos canônicos e bytes de evidência. Nenhum procedimento novo precisou ser arquivado; os 35 anteriores mantiveram suas versões. |
+| Dados reais / memória | **13 comparações finais passaram** após publicação e limpeza. Preservados companions/perfil, duas conversas reais, **58 arquivos**, **três memórias**, **35 procedimentos** e **três contas Google simultâneas**. Aprendizado habilitado, sem erro na conferência. | Memória/proatividade completas continuam sem aprovação. A última cobertura proativa de e-mails e tarefas foi parcial. As 44 operações históricas incertas continuam preservadas para reconciliação. |
+| Armazenamento | Removidas **duas imagens antigas da API**, dois contextos e dois archives, após conferência de conteúdo. Aumento medido de espaço livre: **1.625.141.248 bytes (~1,51 GiB)** na VPS. Também removidos localmente os mesmos dois archives obsoletos, **106.929.582 bytes**, com hashes conferidos contra a VPS. | API atual e recuperação imediata, versões do navegador, web, APK publicado, volumes, perfis e dados reais preservados. Os 12 APKs antigos retirados anteriormente estão no histórico; nenhum novo APK foi removido nesta rodada. |
+| Disponibilidade / consumo | Às **19:30 UTC**, página e `/api/health` públicos HTTP 200 por curl, tanto da estação quanto da VPS. API, navegador e OpenBao saudáveis; manutenção desligada e seis contadores de trabalho ativo em zero. Amostra: API **916,6 MiB / 17,65% CPU**, navegador **380,4 MiB / 0,61% CPU**. | Conferências pontuais, não medição de pico ou carga sustentada. Python com seu user-agent padrão recebeu Cloudflare 403/1010 na mesma origem pública; essa observação não é uma queda dos containers nem aprovação de acesso de todos os clientes. RAM, GPU e celular ainda precisam investigação. |
+| Workspace / equivalência de ferramentas | Casos anteriores conferiram Drive com nome aproximado, Gmail/labels/arquivo/rascunho/card/envio, Docs/Sheets/Slides, agenda e exclusão após aprovação. Principal continua Luna, com alternativa MiMo. | **Workspace completo e equivalência integral Hermes/OpenClaw continuam sem aprovação.** Não foi feito novo teste completo dessas integrações nesta rodada. |
+
+A origem do tempo do novo QA é a criação da tarefa no servidor. O observador
+inicial procurava a rota errada; a mensagem já tinha sido aceita e **não foi
+reenviada**. Portanto, esse tempo não é a medição exata do clique de envio e
+não deve ser comparado diretamente ao tempo de cliente da rodada anterior.
+A diferença entre entregar um arquivo, comprovar seus fatos e fazê-lo com
+rapidez permanece explícita.
+
+[Correção da ordem das imagens e teste normal](2026-10-11-vision-history-chronology.md).
+[Causa e redução medida da inicialização](2026-10-11-desktop-startup-recovery.md).
+[Inventário de contratos ainda pendentes](2026-10-09-harness-tool-inventory.json).
+**32 evidências privadas** desta rodada copiadas da VPS, com SHA-256
+remoto/local conferido. Ficam fora do Git, com diretório 0700 e arquivos
+0600. Capturas do leitor e comprovantes locais estão registrados separadamente.
+
+A meta permanece ativa. Falta reduzir chamadas e regenerações na pesquisa,
+comprovar os campos solicitados sem confundir língua da página com língua do
+curso, validar desempenho em celular/carga e completar os contratos de
+ferramentas, Google Workspace, memória, proatividade e UX.
+
+## Histórico — conferência das 18:47 UTC
 
 **Ainda não terminou. API e web foram atualizados, o leitor PDF funciona no
 app publicado e a limpeza desta rodada foi concluída. O pedido normal de

@@ -14,7 +14,7 @@ lia suas tarefas e operações e tentava liberar permissões de execução
 novamente, em cada reinicialização. O custo do loop foi medido; a divisão
 do tempo entre cada consulta individual ainda não foi medida.
 
-## Reprodução e correção local
+## Reprodução e correção
 
 Uma reprodução com o banco real e 50 visualizadores fechados/tarefas
 encerradas falhou antes da correção: houve 100 comandos de escrita
@@ -49,6 +49,31 @@ Logs privados em `artifacts/harness-parity-20261009/`:
 `round81-desktop-native-suite.log`, `round81-desktop-native-final.log`,
 `round81-desktop-typecheck-final.log` e `round81-desktop-biome.log`.
 
-**A redução na VPS ainda precisa ser medida depois da publicação.**
-Essa correção não comprova desempenho de pesquisa, GPU, celular ou carga
-sustentada. O aceite integral do harness continua pendente.
+## Publicação e medição na VPS
+
+`73a633cf` está na main local/remota e na API publicada, imagem `5d076f4f`.
+Seis hashes compilados conferidos; 13 comparações de preservação passaram.
+Publicação em **24,88s**, com parada limpa e manutenção encerrada.
+
+| Checkpoint | Antes: `e331b56c` | Depois: `73a633cf` |
+| --- | --- | --- |
+| Recuperação do desktop | 60.580 ms | **1.300 ms** |
+| Inicialização do agente | 16 ms | 18 ms |
+| Inicialização do inbox | 3 ms | 2 ms |
+| Preparo do harness | 10.190 ms | 10.110 ms |
+| HTTP escutando desde o início do processo | 79.188 ms | **18.784 ms** |
+
+A conferência das 19:30 UTC encontrou os três containers saudáveis e os
+endpoints públicos HTTP 200 por curl. Companions, contas, arquivos,
+memórias e conversas reais permaneceram iguais após a limpeza. Não houve
+replay de operações incertas para produzir essa melhora.
+
+São duas inicializações observadas, sem alegação de benchmark repetido.
+O preparo do harness continua em cerca de dez segundos. A amostra final da
+API foi **916,6 MiB / 17,65% CPU**; não é pico nem prova de consumo reduzido
+em todas as tarefas. Pesquisa, GPU, celular e carga sustentada permanecem
+pendentes. O aceite integral do harness continua pendente.
+
+Recibos privados: `deployment-harness82.json`,
+`harness82-startup-observation.json`, `harness82-final-production.json` e
+`harness81-final-preservation.json`.
