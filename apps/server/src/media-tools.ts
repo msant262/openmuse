@@ -20,6 +20,7 @@ import {
 } from "../../../packages/integrations/src/document-model.ts";
 import { createDocumentPptx } from "../../../packages/integrations/src/document-pptx.ts";
 import {
+  DocumentRenderError,
   documentRendererVersion,
   renderDocument,
 } from "../../../packages/integrations/src/document-render.ts";
@@ -914,6 +915,9 @@ export function mediaTools(
             }
             return {
               error: error instanceof Error ? error.message : "Media processing failed",
+              ...(name === "inspect_document" && error instanceof DocumentRenderError
+                ? { errorStatus: error.status, errorCode: error.code }
+                : {}),
               ...(name === "text_to_speech" &&
               error &&
               typeof error === "object" &&

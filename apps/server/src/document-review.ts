@@ -218,7 +218,14 @@ export class DocumentReview {
 
   async check(owner: string, scope: DocumentReviewScope, fileId: string, sha256: string) {
     if (hash(await this.files.bytes(owner, fileId)) !== sha256)
-      return { passed: false, pageCount: 0, missingPages: [], receiptIds: [] };
+      return {
+        passed: false,
+        pageCount: 0,
+        missingPages: [],
+        receiptIds: [],
+        issues: [],
+        pendingAssessments: [],
+      };
     const receipts = (await this.db.list<Inspection>(owner, "document-inspections"))
       .filter(
         (entry) =>
@@ -242,6 +249,8 @@ export class DocumentReview {
     );
     const missingPages: number[] = [],
       receiptIds = new Set<string>();
+    const unresolved = new Map<string, Inspection>();
+    const issues = new Set<string>();
     for (let page = 1; page <= pageCount; page++) {
       const receipt = latest.get(page),
         review = receipt && reviews.get(receipt.id);
@@ -255,15 +264,36 @@ export class DocumentReview {
         review.revision !== scope.revision
       ) {
         missingPages.push(page);
+        if (receipt) {
+          unresolved.set(receipt.id, receipt);
+          for (const issue of review?.issues ?? []) issues.add(issue);
+        }
         continue;
       }
       receiptIds.add(receipt.id);
+    }
+    const pendingAssessments: Array<{ receiptId: string; pages: number[] }> = [];
+    for (const receipt of unresolved.values()) {
+      if (reviews.has(receipt.id)) continue;
+      const seen = await this.db.get<{
+        scope: string;
+        revision: number;
+        previewSha256: string;
+      }>(owner, "document-image-observations", receipt.id);
+      if (
+        seen?.scope === scope.scope &&
+        seen.revision === scope.revision &&
+        seen.previewSha256 === receipt.previewSha256
+      )
+        pendingAssessments.push({ receiptId: receipt.id, pages: receipt.pages });
     }
     return {
       passed: pageCount > 0 && missingPages.length === 0,
       pageCount,
       missingPages,
       receiptIds: [...receiptIds],
+      issues: [...issues],
+      pendingAssessments,
     };
   }
 }

@@ -7,6 +7,19 @@ import { type Canvas, createCanvas, DOMMatrix, ImageData, Path2D } from "@napi-r
 import { inspectPdf, PdfError } from "./pdf.ts";
 
 export const documentRendererVersion = "openmuse-document-render-v2";
+
+/** Runtime failures are distinct from invalid document content or page arguments. */
+export class DocumentRenderError extends Error {
+  readonly status = 503;
+  constructor(
+    message: string,
+    readonly code: "DOCUMENT_RENDER_UNAVAILABLE" | "DOCUMENT_RENDER_TIMEOUT",
+  ) {
+    super(message);
+    this.name = "DocumentRenderError";
+  }
+}
+
 let renderQueue: Promise<unknown> = Promise.resolve();
 const maxPdfBytes = 10 * 1024 * 1024,
   maxOfficeBytes = 25 * 1024 * 1024;
@@ -92,7 +105,13 @@ async function officePdf(bytes: Uint8Array, format: "docx" | "pptx", signal?: Ab
         }
       };
       const timeout = setTimeout(
-        () => stop(new PdfError("Office document rendering exceeded 120 seconds")),
+        () =>
+          stop(
+            new DocumentRenderError(
+              "Office document rendering exceeded 120 seconds",
+              "DOCUMENT_RENDER_TIMEOUT",
+            ),
+          ),
         120000,
       );
       const abort = () => stop(new PdfError("Document rendering was cancelled"));
@@ -104,7 +123,12 @@ async function officePdf(bytes: Uint8Array, format: "docx" | "pptx", signal?: Ab
       };
       child.on("error", () => {
         cleanup();
-        reject(new PdfError("Office renderer unavailable; install LibreOffice Writer and Impress"));
+        reject(
+          new DocumentRenderError(
+            "Office renderer unavailable; install LibreOffice Writer and Impress",
+            "DOCUMENT_RENDER_UNAVAILABLE",
+          ),
+        );
       });
       child.on("close", (code) => {
         cleanup();
@@ -161,7 +185,13 @@ export async function renderDocument(
     signal?.throwIfAborted();
     const deadline = new AbortController();
     timeout = setTimeout(
-      () => deadline.abort(new PdfError("Document rendering exceeded 120 seconds")),
+      () =>
+        deadline.abort(
+          new DocumentRenderError(
+            "Document rendering exceeded 120 seconds",
+            "DOCUMENT_RENDER_TIMEOUT",
+          ),
+        ),
       120000,
     );
     signal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;

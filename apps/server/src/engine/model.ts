@@ -689,7 +689,88 @@ export async function executeModelTask(
             (criterion) => criterion.id === check.criterionId && criterion.kind === "file",
           ),
       );
-      const observations = researchObservations(await service.journal.operations(owner, task.id));
+      const operations = await service.journal.operations(owner, task.id);
+      const externalGap = completion.checks.some(
+        (check) =>
+          !check.passed &&
+          !check.criterionId.startsWith("document-design-review:") &&
+          check.criterionId !== "requested-outcome" &&
+          !task.criteria?.some(
+            (criterion) => criterion.id === check.criterionId && criterion.kind === "file",
+          ),
+      );
+      const documentReviews = [];
+      if (!externalGap)
+        for (const fileId of selected.length ? selected : task.artifactIds) {
+          const authored = operations.some(
+            (operation) =>
+              operation.toolName === "create_document" &&
+              operation.status === "succeeded" &&
+              (operation.receipt as { fileId?: string; designReview?: { required?: boolean } })
+                ?.fileId === fileId &&
+              (operation.receipt as { designReview?: { required?: boolean } })?.designReview
+                ?.required === true,
+          );
+          if (!authored) continue;
+          const file = await service.files.get(owner, fileId);
+          const bytes = await service.files.bytes(owner, fileId);
+          const review = await documentReview.check(
+            owner,
+            { scope: `task:${task.id}`, revision },
+            fileId,
+            createHash("sha256").update(bytes).digest("hex"),
+          );
+          if (review.passed) continue;
+          const lastInspection = operations.findLast(
+            (operation) =>
+              /^(primitive\.)?inspect_document$/.test(operation.toolName) &&
+              operation.revision === revision &&
+              ((operation.args as { fileId?: string } | undefined)?.fileId === fileId ||
+                (operation.receipt as { documentFileId?: string })?.documentFileId === fileId),
+          );
+          // A known runtime failure can justify a partial result; invalid page
+          // arguments or an unattempted review still have an available repair.
+          if (
+            lastInspection?.status === "failed" &&
+            ["DOCUMENT_RENDER_UNAVAILABLE", "DOCUMENT_RENDER_TIMEOUT"].includes(
+              (lastInspection.receipt as { errorCode?: string })?.errorCode ?? "",
+            )
+          )
+            continue;
+          documentReviews.push({
+            fileId,
+            name: file.name,
+            status: review.issues.length
+              ? "correction_required"
+              : review.pendingAssessments.length
+                ? "assessment_required"
+                : "inspection_required",
+            issues: review.issues,
+            missingPages: review.missingPages,
+            pendingAssessments: review.pendingAssessments,
+          });
+        }
+      if (documentReviews.length) {
+        task = await ctx.checkpoint({
+          completion,
+          state: {
+            ...task.state,
+            deliveryCandidateArtifactIds: undefined,
+            completionFollowup: documentReviews.map(
+              (review) => `Complete ${review.status} for the existing document ${review.fileId}.`,
+            ),
+          },
+        });
+        return {
+          complete: false,
+          repairable: true,
+          continuation: "document_review",
+          documentReviews,
+          instruction:
+            "The requested documents already exist. Complete the specific step in documentReviews before finishing, including when reporting a partial outcome. For inspection_required, call inspect_document with the existing fileId and review the returned pixels. For assessment_required, assess the observed pages and call confirm_document_review with the exact pending receiptId. For correction_required, reassess the recorded issues against the original request and current evidence, repair only material defects with replaceFileId and a fresh operationId, then inspect the new bytes. These are prior model assessments, not additional user requirements. Do not regenerate an unchanged file or restart public research for an inspection or layout gap. Research only concrete unsupported facts identified in the issues; reuse saved source observations. Finish with the actual final file IDs after their pages pass. An unattempted inspection is remaining work, not a source or runtime blocker.",
+        };
+      }
+      const observations = researchObservations(operations);
       const availableLinks = unreadSourceLinks(observations);
       // Continue on changed evidence, rather than imposing one research attempt
       // per user revision. Duplicate reads and timestamps do not create progress.

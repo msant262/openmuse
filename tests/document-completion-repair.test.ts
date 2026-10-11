@@ -109,15 +109,23 @@ test("rejected finish and prose continuations share the unchanged cumulative bud
   assert.equal(fixture.requests.length, 4, "no inference resumes without a budget extension");
 });
 
-for (const mode of ["missing", "failed", "prose"] as const)
+for (const mode of [
+  "missing",
+  "failed",
+  "prose",
+  "partial",
+  "partial-failed",
+  "invalid-range",
+] as const)
   test(`a ${mode} document review keeps completion repairable until the actual final bytes pass`, async (t) => {
     let server: Awaited<ReturnType<typeof taskRuntime>>;
     let taskId = "",
       firstFileId = "",
       finalFileId = "";
-    const actions =
-      mode === "failed"
-        ? ["create", "inspect", "reject", "finish", "replace", "inspect", "approve", "finish"]
+    const actions = mode.includes("failed")
+      ? ["create", "inspect", "reject", "finish", "replace", "inspect", "approve", "finish"]
+      : mode === "invalid-range"
+        ? ["create", "invalid-inspect", "finish", "inspect", "approve", "finish"]
         : ["create", mode === "prose" ? "prose" : "finish", "inspect", "approve", "finish"];
     const fixture = await modelFixture(
       t,
@@ -127,7 +135,7 @@ for (const mode of ["missing", "failed", "prose"] as const)
         const saved = await server.agent.getTask("owner", taskId);
         if (!firstFileId) firstFileId = saved.artifactIds[0];
         finalFileId = saved.artifactIds[0];
-        if (action === "inspect") {
+        if (action === "inspect" || action === "invalid-inspect") {
           assert.equal(saved.status, "running");
           assert.equal(
             await server.db.get("owner", "thread-publications", `task:${taskId}`),
@@ -136,7 +144,11 @@ for (const mode of ["missing", "failed", "prose"] as const)
           );
           return {
             name: "inspect_document",
-            arguments: { fileId: finalFileId, startPage: 1, pageCount: 4 },
+            arguments: {
+              fileId: finalFileId,
+              startPage: action === "invalid-inspect" ? 99 : 1,
+              pageCount: 4,
+            },
           };
         }
         if (action === "approve" || action === "reject") {
@@ -163,6 +175,18 @@ for (const mode of ["missing", "failed", "prose"] as const)
         if (action === "replace") {
           assert.equal(saved.status, "running");
           assert.match(fixture.requests[index].body, /repairable/);
+          const finish = (await server.agent.journal.operations("owner", taskId)).findLast(
+            (operation) => operation.toolName === "finish_task",
+          );
+          const receipt = finish?.receipt as {
+            documentReviews?: Array<{ fileId: string; issues: string[] }>;
+            unreadSourceLinks?: unknown;
+          };
+          assert.deepEqual(
+            receipt.documentReviews?.map(({ fileId, issues }) => ({ fileId, issues })),
+            [{ fileId: firstFileId, issues: ["Shorten the body before delivering."] }],
+          );
+          assert.equal(receipt.unreadSourceLinks, undefined);
           return {
             name: "create_document",
             arguments: {
@@ -177,7 +201,14 @@ for (const mode of ["missing", "failed", "prose"] as const)
         if (action === "finish")
           return {
             name: "finish_task",
-            arguments: { summary: "O PDF revisado está pronto e anexado." },
+            arguments: {
+              summary: "O PDF revisado está pronto e anexado.",
+              outcome:
+                (mode.startsWith("partial") || mode === "invalid-range") &&
+                index !== actions.length - 1
+                  ? "partial"
+                  : "completed",
+            },
           };
         return undefined;
       },
@@ -212,7 +243,7 @@ for (const mode of ["missing", "failed", "prose"] as const)
     assert.equal(saved.completion?.status, "verified");
     assert.equal(fixture.requests.length, actions.length);
     assert.deepEqual(saved.artifactIds, [finalFileId]);
-    if (mode === "failed") assert.notEqual(finalFileId, firstFileId);
+    if (mode.includes("failed")) assert.notEqual(finalFileId, firstFileId);
     const publication = await server.db.get("owner", "thread-publications", `task:${taskId}`);
     assert.equal(publication?.status, "posted");
     const finishes = (await server.agent.journal.operations("owner", taskId)).filter(
@@ -225,3 +256,64 @@ for (const mode of ["missing", "failed", "prose"] as const)
       assert.equal((finishes[1].receipt as { complete: boolean }).complete, true);
     }
   });
+
+test("an observed unavailable Office renderer can end partial without pretending the document was reviewed", async (t) => {
+  let server: Awaited<ReturnType<typeof taskRuntime>>;
+  let taskId = "";
+  const fixture = await modelFixture(t, async (index) => {
+    if (index === 0)
+      return {
+        name: "create_document",
+        arguments: { ...documentArgs, name: "Guia.docx", format: "docx" },
+      };
+    if (index === 1) {
+      const task = await server.agent.getTask("owner", taskId);
+      return { name: "inspect_document", arguments: { fileId: task.artifactIds[0] } };
+    }
+    return {
+      name: "finish_task",
+      arguments: {
+        outcome: "partial",
+        summary: "O renderizador de documentos não está disponível.",
+      },
+    };
+  });
+  server = await taskRuntime(t, {
+    agentBackend: "model",
+    model: "openai/fixture",
+    modelProviders: providers(),
+  });
+  // Exercise the actual failed Office spawn through the native tool and journal.
+  const inspect = server.agent.media.inspectDocument.bind(server.agent.media);
+  server.agent.media.inspectDocument = async (...args) => {
+    const originalPath = process.env.PATH;
+    process.env.PATH = server.directory;
+    try {
+      return await inspect(...args);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  };
+  const task = await server.agent.createTask("owner", { prompt: "Crie um documento DOCX." });
+  taskId = task.id;
+  await server.agent.worker.tick();
+  const saved = await server.agent.getTask("owner", task.id);
+  assert.equal(saved.status, "failed");
+  assert.equal(saved.completion?.status, "partial");
+  assert.equal(
+    fixture.requests.length,
+    3,
+    "an observed runtime blocker does not force a repair loop",
+  );
+  const operation = (await server.agent.journal.operations("owner", task.id)).find(
+    (operation) => operation.toolName === "inspect_document",
+  );
+  assert.equal(operation?.status, "failed");
+  assert.deepEqual(
+    operation?.receipt && {
+      errorStatus: (operation.receipt as { errorStatus?: number }).errorStatus,
+      errorCode: (operation.receipt as { errorCode?: string }).errorCode,
+    },
+    { errorStatus: 503, errorCode: "DOCUMENT_RENDER_UNAVAILABLE" },
+  );
+});

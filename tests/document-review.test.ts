@@ -160,11 +160,21 @@ test("document review needs image dispatch, exact scope/revision, full page cove
     /image|observ/i,
   );
   await review.recordObserved("owner", { ...scope, revision: 1 }, preview.id);
+  assert.deepEqual(
+    (await review.check("owner", scope, document.id, sha256)).pendingAssessments,
+    [],
+    "a preview observed for another revision cannot become a pending assessment",
+  );
   await assert.rejects(
     review.confirm("owner", scope, { receiptId: first.receiptId, passed: true, issues: [] }),
     /image|observ/i,
   );
   await review.recordObserved("owner", scope, preview.id);
+  assert.deepEqual(
+    (await review.check("owner", scope, document.id, sha256)).pendingAssessments,
+    [{ receiptId: first.receiptId, pages: [1, 2] }],
+    "repair carries the exact observed receipt rather than asking to recreate the file",
+  );
   await assert.rejects(
     review.confirm("other-owner", scope, { receiptId: first.receiptId, passed: true, issues: [] }),
   );
@@ -176,6 +186,10 @@ test("document review needs image dispatch, exact scope/revision, full page cove
     ),
   );
   await review.confirm("owner", scope, { receiptId: first.receiptId, passed: true, issues: [] });
+  assert.deepEqual(
+    (await review.check("owner", scope, document.id, sha256)).pendingAssessments,
+    [],
+  );
   assert.equal(
     await review.pendingAssessment("owner", scope, preview.id, [document.id]),
     undefined,
