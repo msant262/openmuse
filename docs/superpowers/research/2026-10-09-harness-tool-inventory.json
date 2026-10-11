@@ -755,9 +755,9 @@
     },
     {
       "surface": "research.replacement-prior-rejection-context-round65",
-      "caseAcceptance": "local-validation-publication-and-normal-acceptance-pending",
+      "caseAcceptance": "published-focused-validation-ordinary-delivery-failed",
       "acceptanceApproved": false,
-      "productionEnabled": false,
+      "productionEnabled": true,
       "implementationSource": "0a9fd8e5d3efaeb325f8811b5ed7a4f00d4265d3",
       "verified": [
         "Red-before-fix mandatory replacement context lacks actual earlier rejected issue; final regression now retains exact model-visible file reference and actual prior issue.",
@@ -766,11 +766,42 @@
         "No new model or independent review inference; immutable implementation/source/log hashes retained."
       ],
       "pending": [
-        "Publish and verify actual ordinary Luna behavior; context controls do not prove factual completeness or improved latency."
+        "Ordinary repeat timed out without autonomous final delivery; preserve actual prior-issue context proof separately from factual/conclusion acceptance."
+      ],
+      "apiSource": "505e4f2f031e855d1c0939e86d6b42736d04fb19",
+      "failed": [
+        "After replacement, executor approved the obsolete original PDF; current replacement review remained failing and research resumed."
+      ]
+    },
+    {
+      "surface": "research.search-batch-and-ordinary-pdf-round65",
+      "caseAcceptance": "published-runtime-boundary-failure-and-owned-qa-timeout",
+      "acceptanceApproved": false,
+      "productionEnabled": true,
+      "apiSource": "505e4f2f031e855d1c0939e86d6b42736d04fb19",
+      "verified": [
+        "22 focused server controls, one actual Chromium extraction regression, TypeScript and builds passed; real runtime boundary below was not covered.",
+        "Actual native browser stale at 628bc99b; six expected file differences reviewed, focused 19/5/25 controls passed, API/browser clean handoff 39.6 seconds.",
+        "Unchanged ordinary published composer prompt, only Luna, no tool hints or operator answers/repair before timeout.",
+        "65700-byte two-page diagnostic PDF downloaded and text inspected, hash 3ffc8d2ec375155d94308f928fe71f7957d08d003a888ef991c88422a4be7542; no final/viewer acceptance.",
+        "Seven own presentation records retired, 1824 other scoped records identical; three accounts/memories, 58 protected files and 33 prior procedure versions unchanged.",
+        "Twelve private remote evidence files hash-matched; healthy zero-restart containers, work idle, 44 historical uncertain operations unchanged."
+      ],
+      "failed": [
+        "Eleven of thirteen real search calls included query and queries; schema refinement was not enforced and execute dropped every queries entry in these calls.",
+        "Still running after 618.699 seconds and 64 Luna responses, with two documents and repeated reviews/searches. Operator cancelled only owned QA through normal task control.",
+        "No complete factual/final-delivery acceptance; current Google item language left unconfirmed, different badge track cited.",
+        "API point samples reached 1.067 GiB during QA and 1.143 GiB after cleanup; cause not established or fixed."
+      ],
+      "pending": [
+        "Validate the actual dispatch boundary and preserve every supplied search intent.",
+        "Correct repeated research/review and factual completion; repeat unchanged normal Luna request after justified repair.",
+        "Establish allocation/latency causes and measure sustained physical-mobile performance.",
+        "Whole Hermes/OpenClaw and Google Workspace acceptance remains open."
       ]
     }
   ],
-  "updatedAt": "2026-10-11",
+  "updatedAt": "2026-10-11T09:50:22.372337Z",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
