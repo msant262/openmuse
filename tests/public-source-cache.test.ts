@@ -307,6 +307,7 @@ test("the native source tool advertises batch search, resolves its offered refer
         name: "read_web_source",
         arguments: {
           fileId: reference,
+          query: "Original full lesson",
           queries: ["Original full lesson", "Missing phrase"],
           limit: 300,
         },
@@ -434,6 +435,17 @@ test("a batch whose excerpt budget is too small retains the found match and a re
   );
   assert.equal(
     publicSourceReadSchema.safeParse({ fileId: file.id, query: terms[0], queries: terms }).success,
-    false,
+    true,
   );
+  const combined = await readPublicSource(
+    f.files,
+    "owner",
+    publicSourceReadSchema.parse({
+      fileId: file.id,
+      query: terms[0],
+      queries: [terms[1]],
+      limit: 500,
+    }),
+  );
+  assert.ok(combined.text.includes(terms[0]) && combined.text.includes(terms[1]));
 });
