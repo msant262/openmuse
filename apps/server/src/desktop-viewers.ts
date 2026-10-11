@@ -215,9 +215,10 @@ export class DesktopViewers {
     return { closed: true };
   }
   async recover() {
-    for (const { owner, value } of await this.agent.db.scan<ViewerRecord>(
-      "desktop-viewer-sessions",
-    )) {
+    for (const {
+      owner,
+      value,
+    } of await this.agent.db.desktopViewerRecoveryCandidates<ViewerRecord>()) {
       await this.agent.db.compareAndSwap(
         owner,
         "desktop-viewer-sessions",

@@ -1188,6 +1188,34 @@ export class Store {
     );
     return (result.rows[0]?.data as T | undefined) ?? null;
   }
+  /** Restart work excludes settled viewer history, but never skips an
+   * unresolved native input or a retained admission merely because it closed. */
+  async desktopViewerRecoveryCandidates<T>() {
+    const result =
+      await this.db.query(`SELECT jsonb_build_object('owner',viewer.owner,'value',viewer.data) AS data
+      FROM records viewer
+      LEFT JOIN records viewer_task ON viewer_task.owner=viewer.owner
+        AND viewer_task.kind='tasks' AND viewer_task.id=viewer.id
+      LEFT JOIN records admission ON admission.owner='__runtime__'
+        AND admission.kind='work-admissions' AND admission.id=viewer.id
+      WHERE viewer.kind='desktop-viewer-sessions' AND (
+        viewer.data->>'closed' IS DISTINCT FROM 'true'
+        OR viewer_task.data->>'status' NOT IN ('succeeded','cancelled','failed')
+        OR viewer_task.data->'state'->>'nativeAdmissionPending'='true'
+        OR viewer_task.data->'state'->>'nativeCleanupPending'='true'
+        OR admission.id IS NOT NULL
+        OR EXISTS (
+          SELECT 1 FROM records operation
+          WHERE operation.owner=viewer.owner AND operation.kind='task-operations'
+            AND operation.data->>'taskId'=viewer.id
+            AND jsonb_typeof(operation.data->'nativeEnvelope')='object'
+            AND operation.data->>'effect'='true'
+            AND COALESCE(operation.data->>'status','') NOT IN ('succeeded','failed','rejected_not_dispatched','superseded')
+            AND operation.data->'receipt'->'data'->>'cleanupConfirmed' IS DISTINCT FROM 'true'
+        )
+      ) ORDER BY viewer.updated_at,viewer.owner,viewer.id`);
+    return result.rows.map((row) => row.data as unknown as { owner: string; value: T });
+  }
   async taskMaintenanceCandidates<T>(phase: "recovery" | "native" | "computer") {
     const condition =
       phase === "native"
