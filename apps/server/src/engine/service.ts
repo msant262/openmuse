@@ -83,6 +83,7 @@ import {
 } from "./computer-jobs.ts";
 import { ContextBudget, type ContextModelResolver } from "./context-budget.ts";
 import { delegatedContext } from "./delegated-context.ts";
+import { ExecutionProfiles } from "./execution-profiles.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
 import { MonitorObservations, type MonitorPage } from "./monitor-observations.ts";
@@ -164,6 +165,7 @@ export class AgentService {
   readonly playbooks: Playbooks;
   readonly procedureMaintenance: ProcedureMaintenance;
   readonly profiles: AgentProfile;
+  readonly executionProfiles: ExecutionProfiles;
   readonly avatars: AvatarService;
   readonly interactions: InteractionRequests;
   readonly worker: TaskWorker;
@@ -297,6 +299,7 @@ export class AgentService {
     this.timing = new TaskTimingService(db, config.routineTimezone ?? "Europe/Berlin");
     this.verification = new TaskVerification(db, files, this.journal);
     this.profiles = new AgentProfile(db);
+    this.executionProfiles = new ExecutionProfiles(db);
     this.playbooks = new Playbooks(this);
     this.procedureMaintenance = new ProcedureMaintenance(this);
     this.interactions = new InteractionRequests(db);

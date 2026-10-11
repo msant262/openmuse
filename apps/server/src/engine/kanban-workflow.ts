@@ -141,7 +141,13 @@ export class KanbanWorkflow {
         card: KanbanCard,
         handoff: Handoff,
         requestId: string,
-      ) => Promise<void | { handoff: Handoff; attachments: KanbanAttachment[] }>;
+      ) => Promise<void | {
+        handoff: Handoff;
+        attachments: KanbanAttachment[];
+        /** Host-owned CAS checks and proof storage committed atomically with
+         * the board transition. Never supplied by tool arguments. */
+        mutations?: Mutation[];
+      }>;
       storeAttachment?: (
         card: KanbanCard,
         scope: KanbanScope,
@@ -872,8 +878,11 @@ export class KanbanWorkflow {
     const preserved = await this.options.beforeHandoff?.(card, input, requestId);
     return {
       handoff: preserved?.handoff ?? input,
-      extra:
-        preserved?.attachments.map((attachment) => this.attachmentMutation(card, attachment)) ?? [],
+      extra: [
+        ...(preserved?.attachments.map((attachment) => this.attachmentMutation(card, attachment)) ??
+          []),
+        ...(preserved?.mutations ?? []),
+      ],
     };
   }
   async complete(scope: KanbanScope, input: Handoff, requestId: string) {

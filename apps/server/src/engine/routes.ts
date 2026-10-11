@@ -52,6 +52,14 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
   app.route("/avatars", avatarRoutes(service.avatars));
   app.route("/proactivity", proactivityRoutes(service));
   app.route("/playbooks", playbookRoutes(service.playbooks));
+  app.get("/execution-profiles/:name", async (c) =>
+    c.json(await service.executionProfiles.get(c.get("owner"), c.req.param("name"))),
+  );
+  app.put("/execution-profiles/:name", async (c) =>
+    c.json(
+      await service.executionProfiles.set(c.get("owner"), c.req.param("name"), await c.req.json()),
+    ),
+  );
   app.get("/", async (c) => {
     const owner = c.get("owner");
     const etag = await workspaceReadEtag(service.db, owner, "agent");

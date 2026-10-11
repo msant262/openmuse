@@ -25,6 +25,7 @@ import {
   taskAttachedFileIds,
 } from "./file-references.ts";
 import { activeTodoContext, type Todo, writeTodos } from "./hermes/todo-store.ts";
+import { kanbanTaskTools } from "./kanban-tools.ts";
 import {
   consumePlanCompletionCheck,
   PLAN_COMPLETION_FOLLOWUP,
@@ -414,6 +415,7 @@ export async function executeModelTask(
     return { ...review, factsKey, sourceFactsKey, attempts, repairAttempts, stalledAttempts };
   };
   let outcome: Partial<AgentTask> | undefined;
+  let kanbanDelivery: Awaited<ReturnType<typeof kanbanTaskTools>>["deliver"];
   let providerCheckpoint: ProviderContinuationCheckpoint | undefined;
   const waitForReview = async (
     error: ResearchReviewUnavailableError,
@@ -875,6 +877,10 @@ export async function executeModelTask(
             ? "Repair these specific gaps using available observed sources. A partial outcome does not bypass viable recovery."
             : "The observed sources suffice. Apply the listed corrections to the actual selected deliverable, preserving the original requested content and format. Changing the completion summary does not update an existing file. Create the corrected version, inspect it and select only final deliverables with artifactIds. Do not repeat finish without correcting the listed gaps.",
       };
+    }
+    if (kanbanDelivery && deliveryOutcome === "completed") {
+      const delivered = await kanbanDelivery({ summary, artifacts: selected });
+      return { complete: true, completion: delivered.completion };
     }
     const finished = await service.finish(
       task,
@@ -2468,6 +2474,33 @@ export async function executeModelTask(
     ),
   ];
   const workflowCatalog = new SkillCatalog(config, service.playbooks);
+  const kanban = await kanbanTaskTools(service, owner, task, tool, {
+    signal,
+    currentTask: () => task,
+    guard: () => ctx.guard(),
+    transition: async (card, verification) => {
+      if (card.status === "done" || card.status === "review") {
+        if (!verification)
+          throw new Error("A kanban handoff requires the native completion verdict");
+        outcome = {
+          status: "succeeded",
+          result: card.handoff?.summary ?? card.handoff?.result,
+          artifactIds: card.handoff?.artifacts ?? [],
+          completion: verification.completion,
+          state: { ...task.state, verificationRevision: verification.revision },
+        };
+      } else if (["blocked", "triage"].includes(card.status)) {
+        outcome = {
+          status: "waiting_input",
+          question: card.reason ?? "The board’s recorded blocker requires an answer.",
+        };
+      } else {
+        outcome = { status: "paused", result: card.reason ?? undefined };
+      }
+    },
+  });
+  tools.push(...kanban.tools);
+  kanbanDelivery = kanban.deliver;
   tools.push(
     ...withInstructions(
       designReferenceTools(undefined, {
@@ -2905,7 +2938,10 @@ export async function executeModelTask(
           execute,
           call.name === "inspect_document" ||
             (!googleWorkspaceReadTool(call.name, call.args) &&
-              !/^(execute_code$|web_fetch$|web_extract$|search_web$|search_saved_files$|search_files$|search_tools$|describe_tools$|search_app_tools$|design_references$|skills_(list|search|read)$|confirm_document_review$|image_generation_status$|view_file$|read_|inspect_|get_|list_|computer_status|desktop_observe|browser_(research|snapshot|screenshot|get_images)|set_plan|todo_list|ask_user|finish_task|AGUI)/.test(
+              // Board control is durable local coordination, like set_plan and
+              // finish_task. Business effects remain separate journal entries;
+              // a handoff must verify those, not count itself as pending work.
+              !/^(kanban_|execute_code$|web_fetch$|web_extract$|search_web$|search_saved_files$|search_files$|search_tools$|describe_tools$|search_app_tools$|design_references$|skills_(list|search|read)$|confirm_document_review$|image_generation_status$|view_file$|read_|inspect_|get_|list_|computer_status|desktop_observe|browser_(research|snapshot|screenshot|get_images)|set_plan|todo_list|ask_user|finish_task|AGUI)/.test(
                 call.name,
               )),
         );
@@ -3229,8 +3265,10 @@ export async function executeModelTask(
     };
   // A complete text response can itself be the requested plan delivery. Use
   // the same owned artifact and evidence checks as an explicit finish call.
-  if (!outcome && textPlanDelivery(task, text))
-    outcome = await service.finish(task, ctx, text, owner);
+  if (!outcome && textPlanDelivery(task, text)) {
+    if (kanbanDelivery) await deliver(text, "completed");
+    else outcome = await service.finish(task, ctx, text, owner);
+  }
   if (outcome)
     return { ...outcome, state: { ...task.state, ...outcome.state, providerCheckpoint: null } };
   if (text.trim()) {

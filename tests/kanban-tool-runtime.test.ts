@@ -1,0 +1,503 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { defineTool } from "@copilotkit/runtime/v2";
+import { bindingHash } from "../apps/server/src/conversation-inbox.ts";
+import { kanbanTaskTools } from "../apps/server/src/engine/kanban-tools.ts";
+import { KanbanWorkflow } from "../apps/server/src/engine/kanban-workflow.ts";
+import { ToolDiscovery } from "../apps/server/src/engine/tool-discovery.ts";
+import { modelFixture } from "./helpers/model.ts";
+import { taskRuntime } from "./helpers/task-runtime.ts";
+
+test("a saved explicit kanban opt-in reaches native discovery and creates an owner-scoped card", async (t) => {
+  let cardId = "";
+  const fixture = await modelFixture(t, (index) => {
+    if (index === 0)
+      return { name: "search_tools", arguments: { query: "kanban create workflow" } };
+    // The unimplemented surface must fail the state assertion below, rather
+    // than making the fake provider call a tool it was never offered.
+    if (!fixture.requests.at(-1)?.body.includes("kanban_create"))
+      return {
+        name: "finish_task",
+        arguments: { summary: "No workflow capability was available." },
+      };
+    return [
+      undefined,
+      { name: "describe_tools", arguments: { names: ["kanban_create", "kanban_show"] } },
+      {
+        name: "kanban_create",
+        arguments: {
+          title: "Research",
+          body: "Find current sources",
+          assignee: "default",
+          idempotency_key: "research",
+        },
+      },
+      { name: "kanban_show", arguments: { task_id: cardId } },
+      { name: "finish_task", arguments: { summary: "The research card is recorded." } },
+    ][index];
+  });
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  await f.db.put("owner", "execution-profiles", {
+    id: "default",
+    revision: 1,
+    toolsets: ["kanban"],
+    board: "pipeline",
+  });
+  const task = await f.agent.createTask("owner", {
+    prompt: "Record a research workflow card with the source-finding specification.",
+  });
+  const put = f.db.durableMutation.bind(f.db);
+  t.mock.method(f.db, "durableMutation", async (...args: Parameters<typeof put>) => {
+    const result = await put(...args);
+    const created = args[3].find((mutation) => mutation.kind === "kanban-cards:pipeline");
+    if (created && result.status === "applied") cardId = created.id;
+    return result;
+  });
+  await f.agent.worker.tick();
+  const cards = await f.db.list<{ id: string; title: string; createdBy: string }>(
+    "owner",
+    "kanban-cards:pipeline",
+  );
+  assert.equal(cards.length, 1, "the discovered native tool must mutate the actual board");
+  assert.equal(cards[0].title, "Research");
+  assert.equal(cards[0].createdBy, "default");
+  assert.equal((await f.db.list("another-owner", "kanban-cards:pipeline")).length, 0);
+  const operations = await f.agent.journal.operations("owner", task.id);
+  assert.ok(
+    operations.some(
+      (operation) => operation.toolName === "kanban_create" && operation.status === "succeeded",
+    ),
+  );
+  assert.ok(
+    operations.some(
+      (operation) => operation.toolName === "kanban_show" && operation.status === "succeeded",
+    ),
+  );
+  const first = JSON.parse(fixture.requests[0].body);
+  assert.ok(
+    !first.tools.some((tool: { name: string }) => tool.name === "kanban_create"),
+    "full schemas stay deferred",
+  );
+});
+
+test("delegated children cannot borrow the parent's saved kanban opt-in or a model-provided run identity", async (t) => {
+  const fixture = await modelFixture(t, (index) =>
+    index === 0
+      ? { name: "search_tools", arguments: { query: "kanban" } }
+      : { name: "finish_task", arguments: { summary: "Findings returned to the parent." } },
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  await f.db.put("owner", "execution-profiles", {
+    id: "default",
+    revision: 1,
+    toolsets: ["kanban"],
+    board: "default",
+  });
+  const parent = await f.agent.createTask(
+    "owner",
+    { prompt: "Coordinate findings." },
+    "parent",
+    true,
+  );
+  const child = await f.agent.createChildTask(
+    "owner",
+    parent,
+    { prompt: "Read the board information and return findings." },
+    "child",
+  );
+  await f.db.compareAndSwapTask(
+    "owner",
+    child.id,
+    { status: "queued" },
+    {
+      input: {
+        ...child.input,
+        kanbanTaskId: "claimed-card",
+        kanbanRunId: "claimed-run",
+        executionProfile: "default",
+      },
+    },
+  );
+  await f.agent.worker.tick();
+  assert.doesNotMatch(fixture.requests[0].body, /kanban_create|kanban_complete/);
+  assert.equal((await f.db.list("owner", "kanban-cards:default")).length, 0);
+});
+
+test("saving tool opt-ins through the authenticated API preserves platform isolation and request binding", async (t) => {
+  const f = await taskRuntime(t);
+  const session = await f.app.request("/api/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const { token } = await session.json();
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const path = "/api/agent/execution-profiles/default";
+  assert.equal((await f.app.request(path)).status, 401);
+  const input = {
+    expectedRevision: 0,
+    requestId: "opt-in",
+    profile: {
+      toolsets: ["file"],
+      platformToolsets: { task: ["kanban"], chat: ["file"] },
+      board: "pipeline",
+    },
+  };
+  const saved = await f.app.request(path, { method: "PUT", headers, body: JSON.stringify(input) });
+  assert.equal(saved.status, 200);
+  const profile = await saved.json();
+  assert.equal(profile.revision, 1);
+  assert.deepEqual(profile.platformToolsets, { task: ["kanban"], chat: ["file"] });
+  const duplicate = await f.app.request(path, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(input),
+  });
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual(await duplicate.json(), profile);
+  const rebound = await f.app.request(path, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ ...input, profile: { toolsets: ["kanban"] } }),
+  });
+  assert.equal(rebound.status, 409);
+});
+
+test("a dispatcher-bound worker completes the real card with native completion evidence and cannot route the board", async (t) => {
+  let cardId = "";
+  const url = "https://sources.example/finding";
+  const fixture = await modelFixture(
+    t,
+    (index) =>
+      [
+        { name: "web_fetch", arguments: { url } },
+        {
+          name: "describe_tools",
+          arguments: { names: ["kanban_comment", "kanban_heartbeat", "kanban_complete"] },
+        },
+        {
+          name: "kanban_comment",
+          arguments: { task_id: cardId, body: "The observed source supports the finding." },
+        },
+        { name: "kanban_heartbeat", arguments: { note: "Source checked." } },
+        { name: "kanban_complete", arguments: { summary: "The observed finding is recorded." } },
+      ][index],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async () => ({
+    url,
+    contentType: "text/html",
+    body: "<main>The observed source supports the finding.</main>",
+  }));
+  const board = new KanbanWorkflow(f.db, "owner", "pipeline", {
+    profileExists: (name) => name === "default",
+  });
+  const card = await board.create(
+    { role: "orchestrator", profile: "default" },
+    { title: "Record findings", assignee: "default" },
+    "card",
+  );
+  cardId = card.id;
+  const claim = await board.claim(card.id, "default", "claim");
+  const task = await f.agent.createTask("owner", {
+    prompt: `Read ${url} and record the observed finding.`,
+  });
+  // This fixture stamps the host binding after an actual canonical claim.
+  // No model argument or task input grants this ownership.
+  await f.db.put("owner", "kanban-executions", {
+    id: task.id,
+    board: "pipeline",
+    cardId: card.id,
+    profile: "default",
+    runId: claim.runId,
+  });
+  await f.agent.worker.tick();
+  const completed = await f.agent.getTask("owner", task.id);
+  if (completed.status !== "succeeded" || completed.completion?.status !== "verified")
+    t.diagnostic(
+      JSON.stringify({
+        status: completed.status,
+        result: completed.result,
+        error: completed.error,
+        completion: completed.completion,
+        card: await board.get(card.id),
+        operations: (await f.agent.journal.operations("owner", task.id)).map(
+          ({ toolName, status, receipt }) => ({ toolName, status, receipt }),
+        ),
+      }),
+    );
+  assert.equal(completed.status, "succeeded");
+  assert.equal(
+    completed.completion?.status,
+    "verified",
+    "kanban completion must retain the native verdict, not just success prose",
+  );
+  assert.equal((await board.get(card.id)).status, "done");
+  assert.equal((await board.get(card.id)).currentRun, null);
+  assert.equal((await board.comments(card.id)).values[0].author, "default");
+  assert.equal((await board.runHistory(card.id)).values[0].outcome, "completed");
+  assert.ok(
+    (await f.agent.journal.operations("owner", task.id)).every(
+      (operation) => operation.status === "succeeded",
+    ),
+  );
+  assert.doesNotMatch(fixture.requests[0].body, /kanban_list|kanban_unblock/);
+});
+
+test("discovered handoff schemas describe the actual host artifact and authority contracts", async (t) => {
+  const f = await taskRuntime(t);
+  await f.agent.executionProfiles.set("owner", "default", {
+    expectedRevision: 0,
+    requestId: "opt-in",
+    profile: { toolsets: ["kanban"] },
+  });
+  const task = await f.agent.createTask(
+    "owner",
+    { prompt: "Coordinate the findings." },
+    "task",
+    true,
+  );
+  const surface = await kanbanTaskTools(
+    f.agent,
+    "owner",
+    task,
+    (name, description, parameters, execute) =>
+      defineTool({
+        name,
+        description,
+        parameters,
+        execute: (args) => execute(parameters.parse(args)),
+      }),
+  );
+  const discovery = new ToolDiscovery(surface.tools);
+  const described = JSON.stringify(
+    discovery.describe([
+      "kanban_complete",
+      "kanban_request_review",
+      "kanban_attach",
+      "kanban_attachments",
+    ]),
+  );
+  assert.doesNotMatch(described, /~\/\.hermes\/cache|HERMES_KANBAN_TASK|HERMES_KANBAN_DB/);
+  assert.match(described, /absolute native \/workspace/);
+  assert.match(described, /file ID/);
+});
+
+test("ordinary native finish closes its assigned card through the same handoff gate", async (t) => {
+  const url = "https://sources.example/finding";
+  await modelFixture(
+    t,
+    (index) =>
+      [
+        { name: "web_fetch", arguments: { url } },
+        { name: "finish_task", arguments: { summary: "The observed finding is recorded." } },
+      ][index],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async () => ({
+    url,
+    contentType: "text/html",
+    body: "<main>The observed source supports the finding.</main>",
+  }));
+  const board = new KanbanWorkflow(f.db, "owner", "pipeline", { profileExists: () => true });
+  const card = await board.create(
+    { role: "orchestrator", profile: "default" },
+    { title: "Read findings", assignee: "default" },
+    "card",
+  );
+  const claim = await board.claim(card.id, "default", "claim");
+  const task = await f.agent.createTask("owner", {
+    prompt: `Read ${url} and record the observed finding.`,
+  });
+  await f.db.put("owner", "kanban-executions", {
+    id: task.id,
+    board: "pipeline",
+    cardId: card.id,
+    profile: "default",
+    runId: claim.runId,
+  });
+  await f.agent.worker.tick();
+  assert.equal((await f.agent.getTask("owner", task.id)).status, "succeeded");
+  assert.equal((await f.agent.getTask("owner", task.id)).completion?.status, "verified");
+  assert.equal(
+    (await board.get(card.id)).status,
+    "done",
+    "the normal finish tool must not leave its assigned card running",
+  );
+});
+
+for (const contract of ["goal", "pr"] as const) {
+  test(`ordinary native finish cannot bypass the assigned ${contract} completion gate`, async (t) => {
+    const url = "https://sources.example/finding";
+    await modelFixture(
+      t,
+      (index) =>
+        [
+          { name: "web_fetch", arguments: { url } },
+          { name: "finish_task", arguments: { summary: "The observed finding is recorded." } },
+        ][index],
+    );
+    const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+    t.mock.method(f.agent.web, "document", async () => ({
+      url,
+      contentType: "text/html",
+      body: "<main>The observed source supports the finding.</main>",
+    }));
+    const board = new KanbanWorkflow(f.db, "owner", "pipeline", { profileExists: () => true });
+    const card = await board.create(
+      { role: "orchestrator", profile: "default" },
+      {
+        title: "Read findings",
+        assignee: "default",
+        ...(contract === "goal"
+          ? { goalMode: true }
+          : { completionContract: "https://github.com/okami/research/pull/7" }),
+      },
+      "card",
+    );
+    const claim = await board.claim(card.id, "default", "claim");
+    const task = await f.agent.createTask("owner", {
+      prompt: `Read ${url} and record the observed finding.`,
+    });
+    await f.db.put("owner", "kanban-executions", {
+      id: task.id,
+      board: "pipeline",
+      cardId: card.id,
+      profile: "default",
+      runId: claim.runId,
+    });
+    await f.agent.worker.tick();
+    assert.notEqual(
+      (await f.agent.getTask("owner", task.id)).status,
+      "succeeded",
+      "normal delivery cannot replace the required board gate",
+    );
+    assert.equal((await board.get(card.id)).status, "running");
+    assert.equal((await board.get(card.id)).currentRun?.id, claim.runId);
+  });
+}
+
+test("a direction accepted during handoff verification cannot complete the old card or task", async (t) => {
+  const url = "https://sources.example/finding";
+  await modelFixture(
+    t,
+    (index) =>
+      [
+        { name: "web_fetch", arguments: { url } },
+        { name: "describe_tools", arguments: { names: ["kanban_complete"] } },
+        { name: "kanban_complete", arguments: { summary: "The observed finding is recorded." } },
+      ][index],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async () => ({
+    url,
+    contentType: "text/html",
+    body: "<main>The observed source supports the finding.</main>",
+  }));
+  const board = new KanbanWorkflow(f.db, "owner", "pipeline", { profileExists: () => true });
+  const card = await board.create(
+    { role: "orchestrator", profile: "default" },
+    { title: "Read findings", assignee: "default" },
+    "card",
+  );
+  const claim = await board.claim(card.id, "default", "claim");
+  const task = await f.agent.createTask("owner", {
+    prompt: `Read ${url} and record the observed finding.`,
+  });
+  await f.db.put("owner", "kanban-executions", {
+    id: task.id,
+    board: "pipeline",
+    cardId: card.id,
+    profile: "default",
+    runId: claim.runId,
+  });
+  const assess = f.agent.verification.assess.bind(f.agent.verification);
+  let revised = false;
+  t.mock.method(f.agent.verification, "assess", async (...args: Parameters<typeof assess>) => {
+    const proof = await assess(...args);
+    if (args[1] === task.id && proof.status === "verified" && !revised) {
+      revised = true;
+      await f.agent.mailbox.enqueue("owner", task.id, {
+        clientMessageId: "new-direction",
+        text: "Also read the second source before concluding.",
+        expectedRevision: 0,
+      });
+    }
+    return proof;
+  });
+  await f.agent.worker.tick();
+  assert.ok(revised, "the direction must race after a real passing assessment");
+  assert.equal(
+    (await board.get(card.id)).status,
+    "running",
+    "a stale native proof must not close the board run",
+  );
+  assert.equal((await board.get(card.id)).currentRun?.id, claim.runId);
+  assert.notEqual((await f.agent.getTask("owner", task.id)).status, "succeeded");
+});
+
+test("kanban completion keeps an unrelated uncertain business effect pending", async (t) => {
+  const url = "https://sources.example/finding";
+  await modelFixture(
+    t,
+    (index) =>
+      [
+        { name: "web_fetch", arguments: { url } },
+        { name: "describe_tools", arguments: { names: ["kanban_complete"] } },
+        { name: "kanban_complete", arguments: { summary: "The observed finding is recorded." } },
+      ][index],
+  );
+  const f = await taskRuntime(t, { agentBackend: "model", model: "openai/fixture" });
+  t.mock.method(f.agent.web, "document", async () => ({
+    url,
+    contentType: "text/html",
+    body: "<main>The observed source supports the finding.</main>",
+  }));
+  const board = new KanbanWorkflow(f.db, "owner", "pipeline", { profileExists: () => true });
+  const card = await board.create(
+    { role: "orchestrator", profile: "default" },
+    { title: "Read findings", assignee: "default" },
+    "card",
+  );
+  const claim = await board.claim(card.id, "default", "claim");
+  const task = await f.agent.createTask("owner", {
+    prompt: `Read ${url} and record the observed finding.`,
+  });
+  await f.db.put("owner", "kanban-executions", {
+    id: task.id,
+    board: "pipeline",
+    cardId: card.id,
+    profile: "default",
+    runId: claim.runId,
+  });
+  const operation = await f.agent.journal.prepare("owner", {
+    id: "prior-business-effect",
+    taskId: task.id,
+    revision: 0,
+    bindingHash: bindingHash({ effect: "send" }),
+    executorId: "task",
+    executorEpoch: 1,
+    resourceFence: 0,
+    status: "outcome_unknown",
+    toolName: "send_email",
+    args: {},
+    effect: true,
+    runToken: "previous-run",
+    resourceLeaseIds: [],
+    createdAt: new Date().toISOString(),
+  });
+  await f.agent.worker.tick();
+  assert.equal((await board.get(card.id)).status, "running");
+  assert.equal((await board.get(card.id)).currentRun?.id, claim.runId);
+  assert.notEqual((await f.agent.getTask("owner", task.id)).status, "succeeded");
+  const operations = await f.agent.journal.operations("owner", task.id);
+  assert.equal(operations.find((entry) => entry.id === operation.id)?.status, "outcome_unknown");
+  assert.ok(
+    operations.some(
+      (entry) =>
+        entry.toolName === "kanban_complete" &&
+        entry.status === "failed" &&
+        /uncertain result/.test(JSON.stringify(entry.receipt)),
+    ),
+  );
+});
