@@ -8,7 +8,10 @@ import { completedMessages, publicJournalValue } from "./task-history.ts";
  * Historical receipts retain provenance; they never grant new effect authority. */
 export function delegatedContext(
   messages: Message[],
-  tasks: AgentTask[],
+  tasks: Pick<
+    AgentTask,
+    "id" | "prompt" | "result" | "status" | "updatedAt" | "artifactIds" | "evidence"
+  >[],
   originMessageId?: string,
 ) {
   const boundary = originMessageId ? messages.findIndex((m) => m.id === originMessageId) : -1;

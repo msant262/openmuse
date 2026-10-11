@@ -2356,9 +2356,7 @@ export async function executeModelTask(
       "Wait for this task's unfinished child tasks. Releases this task's work slot and resumes automatically when all children settle.",
       z.object({}).strict(),
       async () => {
-        const children = (await service.db.list<AgentTask>(owner, "tasks")).filter(
-          (child) => child.state.parentTaskId === task.id,
-        );
+        const children = await service.db.taskChildren(owner, task.id);
         if (!children.length) return { children: [], waiting: false };
         if (children.every((child) => ["succeeded", "failed", "cancelled"].includes(child.status)))
           return {

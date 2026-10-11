@@ -786,10 +786,7 @@ export class AgentService {
     const existing = await this.db.get<AgentTask>(owner, "tasks", id);
     if (existing) return existing;
     if (!held) await this.runtimePause.assertResumed(owner);
-    if (
-      (await this.db.list<AgentTask>(owner, "tasks")).filter((t) => !terminal.has(t.status))
-        .length >= 100
-    )
+    if ((await this.db.unfinishedTaskCount(owner)) >= 100)
       throw new AppError("Finish or cancel some tasks before adding more", 409);
     const task = await this.taskRecord(
       owner,
@@ -895,9 +892,9 @@ export class AgentService {
           ? {
               conversationContext: delegatedContext(
                 conversationMessages,
-                (await this.db.list<AgentTask>(owner, "tasks"))
-                  .filter((t) => t.originThreadId === input.originThreadId)
-                  .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+                input.originThreadId
+                  ? await this.db.delegatedTaskResults(owner, input.originThreadId)
+                  : [],
                 input.originMessageId,
               ),
             }
@@ -924,11 +921,8 @@ export class AgentService {
     input: { prompt: string; title?: string },
     key: string,
   ) {
-    const children = (await this.db.list<AgentTask>(owner, "tasks")).filter(
-      (task) => task.state.parentTaskId === parent.id && !terminal.has(task.status),
-    );
-    if (children.length >= 4)
-      throw new AppError("This task already has four unfinished child tasks", 409);
+    // Fan-out queues work; the shared root budget and actual work admission
+    // govern execution. Four running slots do not limit a task to four children.
     const rootTaskId =
       typeof parent.state.rootTaskId === "string" ? parent.state.rootTaskId : parent.id;
     return this.createTask(owner, { ...input, kind: "plan", timing: parent.timing }, key, false, {
@@ -950,24 +944,9 @@ export class AgentService {
     });
   }
   async cancelThreadTasks(owner: string, threadId: string) {
-    const tasks = await this.db.list<AgentTask>(owner, "tasks");
-    const ids = new Set(
-      tasks.filter((task) => task.originThreadId === threadId).map((task) => task.id),
-    );
-    for (let changed = true; changed; ) {
-      changed = false;
-      for (const task of tasks)
-        if (
-          typeof task.state.parentTaskId === "string" &&
-          ids.has(task.state.parentTaskId) &&
-          !ids.has(task.id)
-        ) {
-          ids.add(task.id);
-          changed = true;
-        }
-    }
+    const tasks = await this.db.conversationTaskFamily(owner, threadId);
     for (const task of tasks)
-      if (ids.has(task.id) && !terminal.has(task.status) && !task.deletedAt) {
+      if (!terminal.has(task.status) && !task.deletedAt) {
         try {
           await this.control(owner, task.id, "cancel");
         } catch (error) {
@@ -984,9 +963,7 @@ export class AgentService {
     // Fence the parent's writer before enumerating children so it cannot launch
     // another child while its existing children are being removed.
     if (!terminal.has(task.status)) task = await this.control(owner, id, "cancel");
-    const children = (await this.db.list<AgentTask>(owner, "tasks")).filter(
-      (child) => child.state.parentTaskId === id && !child.deletedAt,
-    );
+    const children = (await this.db.taskChildren(owner, id)).filter((child) => !child.deletedAt);
     if (!cancelActive && children.some((child) => !terminal.has(child.status)))
       throw new AppError("Confirm stopping this task before removing it.", 409);
     for (const child of children) await this.removeTask(owner, child.id, cancelActive);
@@ -1001,14 +978,12 @@ export class AgentService {
     return { removed: true, id };
   }
   async clearFinishedTasks(owner: string) {
-    const tasks = (await this.db.list<AgentTask>(owner, "tasks")).filter(
-      (task) => !task.deletedAt && terminal.has(task.status),
-    );
+    const taskIds = await this.db.finishedTaskIds(owner);
     const removed: string[] = [];
-    for (const task of tasks) {
+    for (const id of taskIds) {
       try {
-        await this.removeTask(owner, task.id);
-        removed.push(task.id);
+        await this.removeTask(owner, id);
+        removed.push(id);
       } catch (error) {
         if (!(error instanceof AppError && error.status === 409)) throw error;
       }
@@ -2370,9 +2345,7 @@ export class AgentService {
     await this.proactivity.events.task(owner, task);
     if (terminal.has(task.status) && typeof task.state.parentTaskId === "string") {
       const parent = await this.db.get<AgentTask>(owner, "tasks", task.state.parentTaskId);
-      const children = (await this.db.list<AgentTask>(owner, "tasks")).filter(
-        (child) => child.state.parentTaskId === task.state.parentTaskId,
-      );
+      const children = await this.db.taskChildren(owner, task.state.parentTaskId);
       if (
         parent?.status === "waiting_children" &&
         children.length &&

@@ -5,6 +5,7 @@ import pg from "pg";
 import type {
   AgentMemory,
   AgentNotification,
+  AgentTask,
   RevisionEntry,
 } from "../../../packages/domain/src/agent.ts";
 import type { ActionLogEntry } from "../../../packages/domain/src/index.ts";
@@ -760,6 +761,79 @@ export class Store {
       [owner, threadId],
     );
     return result.rows.map((row) => row.data);
+  }
+  /** Count admission backlog without transferring model checkpoints or transcripts. */
+  async unfinishedTaskCount(owner: string): Promise<number> {
+    const result = await this.db.query(
+      "SELECT jsonb_build_object('count',count(*)::int) AS data FROM records WHERE owner=$1 AND kind='tasks' AND COALESCE(data->>'status','') NOT IN ('succeeded','failed','cancelled')",
+      [owner],
+    );
+    return Number(result.rows[0].data.count);
+  }
+  /** The delegated turn needs actual prior outcomes, not earlier model execution state. */
+  async delegatedTaskResults(owner: string, threadId: string) {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('id',id,'prompt',data->'prompt','status',data->'status',
+        'result',left(data->>'result',8000),'updatedAt',data->'updatedAt',
+        'artifactIds',COALESCE(data->'artifactIds','[]'::jsonb),
+        'evidence',COALESCE(data->'evidence','[]'::jsonb)) AS data
+       FROM records WHERE owner=$1 AND kind='tasks' AND data->>'originThreadId'=$2
+        AND data->>'deletedAt' IS NULL AND data->>'historyHiddenAt' IS NULL
+        AND data->'input'->>'internalActivity' IS DISTINCT FROM 'true'
+        AND data->'input'->>'proactivityCycleId' IS NULL
+        AND (COALESCE(length(data->>'result'),0)>0 OR jsonb_array_length(COALESCE(data->'evidence','[]'::jsonb))>0)
+       ORDER BY data->>'createdAt' DESC,id DESC LIMIT 6`,
+      [owner, threadId],
+    );
+    return result.rows
+      .map(
+        (row) =>
+          row.data as unknown as Pick<
+            AgentTask,
+            "id" | "prompt" | "status" | "result" | "updatedAt" | "artifactIds" | "evidence"
+          >,
+      )
+      .reverse();
+  }
+  /** Lifecycle callers need child results/status; large private execution state stays stored. */
+  async taskChildren(owner: string, parentId: string) {
+    const result = await this.db.query(
+      `SELECT jsonb_build_object('id',id,'title',data->'title','status',data->'status',
+        'result',data->'result','completion',data->'completion',
+        'artifactIds',COALESCE(data->'artifactIds','[]'::jsonb),'deletedAt',data->'deletedAt') AS data
+       FROM records WHERE owner=$1 AND kind='tasks' AND data->'state'->>'parentTaskId'=$2 ORDER BY id`,
+      [owner, parentId],
+    );
+    return result.rows.map(
+      (row) =>
+        row.data as unknown as Pick<
+          AgentTask,
+          "id" | "title" | "status" | "result" | "completion" | "artifactIds" | "deletedAt"
+        >,
+    );
+  }
+  /** Include all owned descendants, even below a retired root; UNION contains malformed cycles. */
+  async conversationTaskFamily(owner: string, threadId: string) {
+    const result = await this.db.query(
+      `WITH RECURSIVE family(id) AS (
+        SELECT id FROM records WHERE owner=$1 AND kind='tasks' AND data->>'originThreadId'=$2
+        UNION
+        SELECT child.id FROM records child JOIN family ON child.data->'state'->>'parentTaskId'=family.id
+          WHERE child.owner=$1 AND child.kind='tasks'
+       ) SELECT jsonb_build_object('id',r.id,'status',r.data->'status','deletedAt',r.data->'deletedAt') AS data
+         FROM records r JOIN family ON family.id=r.id WHERE r.owner=$1 AND r.kind='tasks' ORDER BY r.id`,
+      [owner, threadId],
+    );
+    return result.rows.map(
+      (row) => row.data as unknown as Pick<AgentTask, "id" | "status" | "deletedAt">,
+    );
+  }
+  async finishedTaskIds(owner: string): Promise<string[]> {
+    const result = await this.db.query(
+      "SELECT jsonb_build_object('id',id) AS data FROM records WHERE owner=$1 AND kind='tasks' AND data->>'deletedAt' IS NULL AND data->>'status' IN ('succeeded','failed','cancelled') ORDER BY id",
+      [owner],
+    );
+    return result.rows.map((row) => row.data.id as string);
   }
   /** Presentation archive keeps canonical records available to receipts and reconciliation. */
   async visibleRecords<T>(owner: string, kind: string): Promise<T[]> {
@@ -1832,6 +1906,15 @@ export async function createStore(
   );
   await database.query(
     "CREATE INDEX IF NOT EXISTS records_kind_updated ON records(kind,updated_at,id)",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS task_parent_lookup ON records(owner,(data->'state'->>'parentTaskId'),id) WHERE kind='tasks'",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS unfinished_task_admission ON records(owner,id) WHERE kind='tasks' AND COALESCE(data->>'status','') NOT IN ('succeeded','failed','cancelled')",
+  );
+  await database.query(
+    "CREATE INDEX IF NOT EXISTS task_conversation_history ON records(owner,(data->>'originThreadId'),(data->>'createdAt') DESC,id DESC) WHERE kind='tasks'",
   );
   await database.query(
     "CREATE INDEX IF NOT EXISTS task_operation_task_created ON records(owner,(data->>'taskId'),(data->>'createdAt'),id) WHERE kind='task-operations'",
