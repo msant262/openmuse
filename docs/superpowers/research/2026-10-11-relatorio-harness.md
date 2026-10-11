@@ -2,6 +2,14 @@
 
 **O trabalho completo ainda não está entregue.** A API publicada está em `c0c2c9ec`. O último pedido normal de pesquisa concluiu sozinho em **1min38,617s**, com um PDF real, usando **14 respostas somente de Luna**. O arquivo abriu no app e a navegação nas duas páginas funcionou. A comprovação factual de todos os campos ainda não passou; a integração completa do Workspace, a equivalência integral com Hermes/OpenClaw e a performance sustentada também continuam abertas.
 
+## Estado conferido às 12:56 UTC
+
+- **Código:** main local e main no GitHub conferidas em `3beefbf7e08fcbba36c3f3469c3afe61b41aa455` antes desta atualização documental. Esse é o último commit de implementação. As correções locais de posse, workspace, perfis e prazo de execução descritas abaixo estão commitadas e enviadas, mas ainda não foram publicadas no servidor ou no executor físico.
+- **Produção:** às **12:56:33 UTC**, página inicial e `/api/health` responderam **HTTP 200**. API, navegador do agente e OpenBao estavam em execução e saudáveis. As imagens continuam `b2d6cdaa`, `6bab849f` e `6d2b9385`, respectivamente. Esta conferência de disponibilidade não prova que o consumo ou as quedas intermitentes estejam corrigidos.
+- **Última etapa implementada:** **77/77 testes de integração e 85/85 testes nativos passaram**. TypeScript e builds passaram; lint sem erros, com seis avisos. São verificações locais de escopo definido, não aprovação integral do produto.
+- **Etapa atual incompleta:** foram escritos quatro testes para despacho automático, entrega à conversa de origem, retomada de falhas e preservação de operações incertas. **0/4 passou:** todos interrompem a verificação porque o ciclo automático ainda não cria a execução do card. Os cenários posteriores de entrega e recuperação, portanto, ainda não foram comprovados por esses testes. O arquivo `tests/kanban-auto-dispatch.test.ts` está em desenvolvimento, fora do último commit de implementação; os resultados estão em `artifacts/harness-parity-20261009/round73-auto-red.log`.
+- **Sem nova publicação nesta etapa:** não houve nova execução pelo chat publicado, novo APK ou nova imagem Docker. A entrega completa continua pendente.
+
 ## O que foi corrigido e publicado
 
 | Problema observado | Correção e validação |
@@ -50,7 +58,7 @@ A rodada anterior ficou **11min39,539s** sem entrega autônoma, com 54 respostas
 ## Publicação, limpeza e preservação
 
 - **API:** `c0c2c9ec`, imagem `b2d6cdaa`. Publicação em **22,59 segundos**, com parada limpa e conferência dos artefatos compilados. Banco, configuração e identidade do navegador preservados.
-- **Navegador do agente:** `505e4f2f`, imagem `6bab849f`; **web:** `d8882335`. Não houve novo APK nesta rodada. Main local/remota contém `c0c2c9ec` e a fundação de vínculo kanban descrita abaixo; essa fundação ainda não está publicada.
+- **Navegador do agente:** `505e4f2f`, imagem `6bab849f`; **web:** `d8882335`. Não houve novo APK nesta rodada. Main local/remota está em `3beefbf7` antes da atualização deste relatório e contém as correções locais descritas abaixo; elas ainda não estão publicadas.
 - **QA atual:** retirados **seis registros de apresentação**: dois arquivos, uma tarefa, uma conversa, uma notificação e uma entrada de inbox. **1.840 registros fora da seleção ficaram idênticos**. Os 33 registros anteriores de versões de procedimentos não mudaram. Inspector fechado, hooks removidos e recibos canônicos preservados.
 - **Preservação conferida:** companions e perfil, **58 arquivos protegidos**, duas conversas reais, três tarefas reais, duas ações, cinco atividades, **três memórias** e **três contas Google simultâneas**. Não houve procedimento novo de QA para arquivar.
 - **Docker nesta rodada:** retiradas **oito imagens antigas sem referência em containers**; aumento observado de espaço livre de **1.607.122.944 bytes**. Preservadas API atual e recuperação, navegador atual e recuperação, OpenBao, volumes, perfis e backups. Retirados também **oito diretórios de build e seus arquivos de release**, após conferir **95.051 hashes de arquivos**; essa etapa liberou mais **1.696.251.904 bytes** na VPS. Containers, mounts, ambiente e imagens retidas permaneceram iguais. A soma dos aumentos observados nas duas etapas é cerca de **3,30 GB**; não é a soma dos tamanhos nominais das imagens com camadas compartilhadas.
@@ -75,7 +83,7 @@ A etapa local posterior integrou o tempo declarado no card/perfil ao worker e ao
 ## Pendências que impedem declarar a entrega
 
 1. Garantir comprovação dos campos pedidos no item correto, sem aproveitar informação de outro curso/documento. O contrato atual de conclusão física ainda não garante isso.
-2. Completar e verificar o uso autônomo dos contratos restantes de Hermes/OpenClaw: dispatcher, perfis/worktrees, objetivos, CI, ferramentas kanban e execução programática do navegador. Schemas e código presentes não comprovam equivalência completa.
+2. Integrar o despacho automático dos cards ao ciclo existente, devolver a entrega à conversa correta e tratar falhas sem repetir operações cujo resultado esteja incerto. Completar e verificar os demais contratos de Hermes/OpenClaw: perfis/worktrees no executor publicado, objetivos, CI, ferramentas kanban e execução programática do navegador. Schemas e código presentes não comprovam equivalência completa.
 3. Ampliar os testes normais pelo chat de todas as operações do Google Workspace, incluindo alterações, exclusões e cards. Os casos acima são aprovações específicas.
 4. Corrigir a causa do consumo alto e medir celular sob uso repetido. Na última amostra o servidor usava **1.005 MiB** e o navegador **421,2 MiB**, ainda com aproximadamente 7% e 8,5% de CPU sem tarefa ativa. **A causa não está estabelecida nem corrigida.**
 5. Concluir a revisão ampla das ações/resumos e reconciliar as operações históricas incertas.
