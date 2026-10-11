@@ -67,6 +67,94 @@ class PythonKernelTests(unittest.TestCase):
             tools={"browser_harness_rpc": callback}, should_continue=lambda: True,
             timeout_seconds=5, **options)
 
+    def local_browser_cell(self, code, callback, **options):
+        self.assertIn("local_browser", inspect.signature(self.kernels.execute).parameters,
+                      "Browser driver commands must stay local instead of using the host-tool quota")
+        def wrong_transport(_):
+            self.fail("An internal browser command used the ordinary host-tool transport")
+        return self.kernels.execute(self.scope, code, fresh=True, browser_session="research",
+            tools={"browser_harness_rpc": wrong_transport}, local_browser=callback,
+            should_continue=options.pop("should_continue", lambda: True), timeout_seconds=5, **options)
+
+    def test_local_browser_types_long_text_without_consuming_tool_calls_or_retaining_text(self):
+        requests = []
+        text = "a" * 120
+        def callback(args):
+            requests.append(args)
+            request = args["request"]
+            if request.get("method") == "Browser.getVersion":
+                return {"result": {"userAgent": "Linux"}}
+            if request.get("method") == "Runtime.evaluate":
+                return {"result": {"result": {"type": "boolean", "value": True}}}
+            return {"result": {}}
+        result = self.local_browser_cell(f"fill_input('#message', {text!r})\nprint('typed')",
+                                        callback, max_tool_calls=1)
+        self.assertEqual(result["status"], "ok", result)
+        self.assertEqual(result["stdout"], "typed\n")
+        self.assertGreater(len(requests), 200)
+        self.assertEqual(result["tool_calls"], [])
+        self.assertEqual(result["browser_commands"], {
+            "dispatched": len(requests), "settled": len(requests), "failed": 0,
+        })
+        self.assertNotIn(text, json.dumps(result))
+        self.assertTrue(result["cleanup_confirmed"])
+
+    def test_local_browser_does_not_expand_the_ordinary_tool_budget(self):
+        self.assertIn("local_browser", inspect.signature(self.kernels.execute).parameters)
+        calls = []
+        result = self.kernels.execute(self.scope,
+            "for _ in range(20):\n    goto_url('https://example.org')\n"
+            "tools.call('ordinary', {})\ntools.call('ordinary', {})", fresh=True,
+            browser_session="research", local_browser=lambda args: {"result": {}},
+            tools={"browser_harness_rpc": lambda args: self.fail("Used host transport"),
+                   "ordinary": lambda args: calls.append(args)},
+            should_continue=lambda: True, timeout_seconds=5, max_tool_calls=1)
+        self.assertEqual(result["status"], "error", result)
+        self.assertIn("tool call budget", result["traceback"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(result["tool_calls"]), 1)
+        self.assertEqual(result["browser_commands"]["settled"], 20)
+
+    def test_local_browser_rejects_foreign_session_before_driver_dispatch(self):
+        calls = []
+        result = self.local_browser_cell("tools.call('browser_harness_rpc', "
+            "{'session': 'foreign', 'request': {'method': 'Page.navigate'}, 'timeoutMs': 5000})",
+            lambda args: calls.append(args))
+        self.assertEqual(result["status"], "error", result)
+        self.assertEqual(calls, [])
+        self.assertIn("bound browser session", result["traceback"])
+
+    def test_local_browser_inflight_command_blocks_replacement_after_cancellation(self):
+        self.assertIn("local_browser", inspect.signature(self.kernels.execute).parameters)
+        started, release, active = threading.Event(), threading.Event(), threading.Event()
+        active.set()
+        def callback(args):
+            started.set()
+            release.wait(3)
+            return {"result": {}}
+        results = []
+        thread = threading.Thread(target=lambda: results.append(self.local_browser_cell(
+            "goto_url('https://example.org')\nprint('must not resume')", callback,
+            should_continue=active.is_set)))
+        thread.start()
+        try:
+            self.assertTrue(started.wait(2))
+            active.clear()
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+            self.assertNotIn("must not resume", results[0]["stdout"])
+            self.assertTrue(results[0]["host_call_pending"])
+            self.assertTrue(results[0]["cleanup_confirmed"])
+            with self.assertRaisesRegex(RuntimeError, "still pending"):
+                self.fresh_cell("print('replacement must not start')")
+        finally:
+            release.set()
+            thread.join(3)
+        deadline = time.monotonic() + 2
+        while self.kernels.pending_scopes and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertEqual(self.kernels.pending_scopes, {})
+
     def test_browser_helpers_are_preimported_and_use_the_current_owned_host_rpc(self):
         requests = []
         def callback(args):

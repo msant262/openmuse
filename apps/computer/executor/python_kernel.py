@@ -151,10 +151,17 @@ class _Kernel:
 
 
 class _Authority:
-    def __init__(self, tools, should_continue, maximum):
+    def __init__(self, tools, should_continue, maximum, browser_session=None, local_browser=None):
         self.tools, self.should_continue, self.maximum = dict(tools), should_continue, maximum
+        self.browser_session, self.local_browser = browser_session, local_browser
+        # CDP/key events are internal commands of one source program, not model
+        # tool calls. Keep only bounded aggregate diagnostics, never typed text,
+        # screenshots or an unbounded command/result transcript.
+        self.browser_commands = {"dispatched": 0, "settled": 0, "failed": 0}
+        self.browser_outcome_unknown = False
         self.context = contextvars.copy_context()
         self.active, self.inflight, self.calls = True, False, []
+        self.local_inflight = False
         self.lock = threading.Lock()
 
     def retire(self):
@@ -298,7 +305,7 @@ class PythonKernels:
 
     def execute(self, scope, code, *, tools, should_continue, timeout_seconds=300,
                 max_tool_calls=100, reset=False, output_bytes=131072, cwd="/workspace", fresh=False,
-                browser_session=None):
+                browser_session=None, local_browser=None):
         if not isinstance(code, str) or not 1 <= len(code) <= 200000:
             raise ValueError("Python cell code must contain 1–200000 characters")
         if (not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool)
@@ -312,8 +319,10 @@ class PythonKernels:
             validate_browser_session(browser_session)
             if not fresh or RPC_TOOL not in tools:
                 raise ValueError("Browser helpers require a fresh source call with its owned browser RPC")
+        if local_browser is not None and (not callable(local_browser) or browser_session is None or not fresh):
+            raise ValueError("Local browser commands require a trusted receiver and a fresh bound session")
         kernel, state_reset = self._acquire(scope, reset or fresh, python_workspace(cwd))
-        authority = _Authority(tools, should_continue, max_tool_calls)
+        authority = _Authority(tools, should_continue, max_tool_calls, browser_session, local_browser)
         identity = secrets.token_hex(24)
         start = time.monotonic()
         result = dict(reused=False, state_reset=state_reset, state_lost=False,
@@ -420,11 +429,15 @@ class PythonKernels:
             with authority.lock:
                 result["tool_calls"] = [dict(item) for item in authority.calls]
                 result["host_call_pending"] = authority.inflight
+                if authority.local_browser is not None:
+                    result["browser_commands"] = dict(authority.browser_commands)
+                    result["browser_outcome_unknown"] = authority.browser_outcome_unknown or authority.local_inflight
             result["duration_seconds"] = round(time.monotonic() - start, 3)
             self._release(kernel)
 
     def _dispatch(self, kernel, authority, identity, frame):
         name, args, call_id = frame.get("name"), frame.get("args"), frame.get("id")
+        local = name == RPC_TOOL and authority.local_browser is not None
         error = None
         with authority.lock:
             if not authority.active or not authority.should_continue():
@@ -433,18 +446,25 @@ class PythonKernels:
                 error = "Tool is not available in this cell"
             elif not isinstance(args, dict) or not isinstance(call_id, str) or not 1 <= len(call_id) <= 128:
                 error = "Invalid Python tool call"
+            elif local and args.get("session") != authority.browser_session:
+                error = "Python RPC does not match its bound browser session"
             elif authority.inflight:
                 error = "Another tool call is still pending in this cell"
-            elif len(authority.calls) >= authority.maximum:
+            elif not local and len(authority.calls) >= authority.maximum:
                 error = "Python tool call budget reached for this cell"
             if error is None:
                 # Exact args/results belong in the ordinary host journal, not
                 # a second unbounded in-memory transcript. Python still receives
                 # the full result through the private reply below.
-                preview = json.dumps(args, ensure_ascii=False)[:500]
-                entry = dict(id=call_id, name=name, args_preview=preview, status="running")
-                authority.calls.append(entry)
+                entry = None
+                if local:
+                    authority.browser_commands["dispatched"] += 1
+                else:
+                    preview = json.dumps(args, ensure_ascii=False)[:500]
+                    entry = dict(id=call_id, name=name, args_preview=preview, status="running")
+                    authority.calls.append(entry)
                 authority.inflight = True
+                authority.local_inflight = local
         if error is not None:
             kernel.send(dict(kind="rpc_reply", cell_id=identity, id=call_id, error=error))
             return
@@ -458,13 +478,20 @@ class PythonKernels:
                 def execute():
                     if not authority.active or not authority.should_continue():
                         raise RuntimeError("Python cell authority retired before dispatch")
-                    return authority.tools[name](args)
+                    return authority.local_browser(args) if local else authority.tools[name](args)
                 value = authority.context.run(execute)
+                if local and not isinstance(value, dict):
+                    raise ValueError("Native browser returned an invalid helper response")
                 # Bound the transport before claiming the host result was sent.
                 encoded = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
+                if len(encoded) > MAX_WIRE_BYTES - 1024:
+                    raise ValueError("Host tool output exceeds the Python transport; recover the ordinary preserved tool output")
                 with authority.lock:
-                    entry.update(status="settled", result_preview=encoded[:1000].decode(errors="ignore"))
-                    if not authority.should_continue():
+                    if local:
+                        authority.browser_commands["settled"] += 1
+                    else:
+                        entry.update(status="settled", result_preview=encoded[:1000].decode(errors="ignore"))
+                    if not local and not authority.should_continue():
                         if len(encoded) <= 16384:
                             entry["result"] = value
                         else:
@@ -474,16 +501,24 @@ class PythonKernels:
                                     if key in ("status", "paused", "actionId", "taskId", "operationId", "outcomeUnknown", "dispatched")
                                     and isinstance(item, (str, int, bool, type(None)))
                                     and (not isinstance(item, str) or len(item) <= 2000)}
-                if len(encoded) > MAX_WIRE_BYTES - 1024:
-                    raise ValueError("Host tool output exceeds the Python transport; recover the ordinary preserved tool output")
                 response["result"] = value
             except Exception as error:
                 with authority.lock:
-                    entry.update(status="error", error=str(error)[:2000])
+                    if local:
+                        authority.browser_commands["failed"] += 1
+                        # A lost native reply may follow an effect. Stopping the
+                        # interpreter or catching this exception in source never
+                        # proves that browser input/navigation was not applied.
+                        if (getattr(error, "dispatched", True) is not False
+                                and getattr(error, "cleanup_confirmed", False) is not True):
+                            authority.browser_outcome_unknown = True
+                    else:
+                        entry.update(status="error", error=str(error)[:2000])
                 response["error"] = str(error)[:2000]
             finally:
                 with authority.lock:
                     authority.inflight = False
+                    authority.local_inflight = False
                 with self.registry.lock:
                     self.pending_scopes[kernel.scope] -= 1
                     if self.pending_scopes[kernel.scope] == 0:

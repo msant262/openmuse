@@ -152,6 +152,17 @@ export const pythonResultSchema = z
     execution_count: z.number().int().nonnegative().optional(),
     duration_seconds: z.number().min(0).max(1800),
     host_call_pending: z.boolean(),
+    /** Internal local driver commands: bounded totals, no page/input transcript. */
+    browser_commands: z
+      .object({
+        dispatched: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        settled: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        failed: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      })
+      .strict()
+      .refine((value) => value.settled + value.failed <= value.dispatched)
+      .optional(),
+    browser_outcome_unknown: z.boolean().optional(),
     error: z.string().max(4000).optional(),
     tool_calls: z
       .array(

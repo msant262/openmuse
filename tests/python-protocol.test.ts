@@ -50,6 +50,38 @@ test("native Unicode previews and replacement-decoded raw bytes remain bounded v
   );
 });
 
+test("local browser command totals do not expand or replace ordinary host-call limits", () => {
+  const result = {
+    status: "ok",
+    reused: false,
+    state_reset: false,
+    state_lost: true,
+    cleanup_confirmed: true,
+    stdout: "typed\n",
+    stderr: "",
+    duration_seconds: 1,
+    host_call_pending: false,
+    tool_calls: [],
+    browser_commands: { dispatched: 364, settled: 364, failed: 0 },
+  };
+  assert.deepEqual(pythonResultSchema.parse(result), result);
+  for (const browser_commands of [
+    { dispatched: 1, settled: 2, failed: 0 },
+    { dispatched: 1, settled: 1, failed: 1 },
+    { dispatched: -1, settled: 0, failed: 0 },
+    { dispatched: 1.5, settled: 1, failed: 0 },
+    { dispatched: 1, settled: 1, failed: 0, text: "do not retain typed text" },
+  ])
+    assert.equal(pythonResultSchema.safeParse({ ...result, browser_commands }).success, false);
+  assert.throws(() =>
+    parsePythonRpc({
+      sequence: 201,
+      json: JSON.stringify({ name: "ordinary", args: {} }),
+      sha256: "a".repeat(64),
+    }),
+  );
+});
+
 test("native Python requests cannot select a shell, account, background launch or recursive catalog", () => {
   const args = {
     command: "Python cell",

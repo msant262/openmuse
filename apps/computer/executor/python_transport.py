@@ -25,6 +25,12 @@ def _integer(value, low, high):
     return type(value) is int and low <= value <= high
 
 
+class LocalBrowserRejected(ValueError):
+    """A private program command rejected before the browser receiver ran."""
+    dispatched = False
+    cleanup_confirmed = True
+
+
 def validate_cell(operation):
     version = operation.get("capabilityVersion", 1)
     if not _integer(version, 1, 3):
@@ -100,10 +106,14 @@ class _Cell:
 
 class NativePythonJobs:
     def __init__(self, executor_id, journal, *, guard, consume, launch_factory,
-                 publish=lambda: None, stopped_scope=lambda scope: True, idle_seconds=1800, max_sessions=4):
+                 publish=lambda: None, stopped_scope=lambda scope: True, idle_seconds=1800, max_sessions=4,
+                 local_browser=None):
+        if local_browser is not None and not callable(local_browser):
+            raise ValueError("Local browser transport requires a trusted receiver")
         self.executor_id, self.journal, self.guard, self.consume = executor_id, journal, guard, consume
         self.launch_factory, self.publish = launch_factory, publish
         self.stopped_scope = stopped_scope
+        self.local_browser = local_browser
         self.idle_seconds, self.max_sessions = idle_seconds, max_sessions
         self.active, self.controllers, self.last_scope_job = {}, {}, {}
         self.lock = threading.RLock()
@@ -175,7 +185,9 @@ class NativePythonJobs:
                 should_continue=lambda: self._continue(job), timeout_seconds=job.operation["args"]["timeoutMs"] / 1000,
                 reset=cell["reset"], max_tool_calls=cell["maxToolCalls"], output_bytes=cell["outputBytes"],
                 cwd=job.operation["args"]["cwd"], fresh=cell.get("fresh", False),
-                browser_session=cell.get("browserSession"))
+                browser_session=cell.get("browserSession"),
+                local_browser=(lambda args: self._local_browser(job, args))
+                    if cell.get("browserSession") is not None and self.local_browser is not None else None)
             # An accepted host review/input reply intentionally stops the cell.
             # Known containment is a failed/stopped program, not an ambiguous
             # source effect. Any separate uncertain host tool stays uncertain in
@@ -183,7 +195,8 @@ class NativePythonJobs:
             # gain this classification and must still prevent blind replay.
             stopped_by_host = (job.paused and not job.cancelled.is_set()
                 and result["status"] == "paused" and result.get("cleanup_confirmed") is True)
-            status = ("succeeded" if result["status"] == "ok" else "failed" if result["status"] in ("error", "not_started") or stopped_by_host
+            status = ("outcome_unknown" if result.get("browser_outcome_unknown") is True
+                      else "succeeded" if result["status"] == "ok" else "failed" if result["status"] in ("error", "not_started") or stopped_by_host
                       else "outcome_unknown")
             self._record(job, status, {"result": result, "cellSettled": True,
                 "stoppedByHost": stopped_by_host,
@@ -199,6 +212,37 @@ class NativePythonJobs:
             with self.lock:
                 job.finished = True
                 if job.pending: job.pending["event"].set()
+
+    def _local_browser(self, job, args):
+        """Private native command transport, never a durable/API host-tool RPC.
+
+        The trusted receiver owns browser generation, targets, control and effect
+        authorization. It receives the unchanged canonical parent operation;
+        interpreter fields cannot create a new task/resource authority.
+        """
+        try:
+            self.guard(job.operation)
+        except Exception as error:
+            raise LocalBrowserRejected("Local browser program authority changed before dispatch") from error
+        session = job.operation["args"]["pythonCell"].get("browserSession")
+        if (not session or args.get("session") != session
+                or set(args) != {"session", "request", "timeoutMs"}
+                or not isinstance(args["request"], dict)
+                or not _integer(args["timeoutMs"], 1, 1800000)):
+            raise LocalBrowserRejected("Local browser command differs from its bound program")
+        try:
+            raw = json.dumps(args, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        except (TypeError, ValueError) as error:
+            raise LocalBrowserRejected("Local browser command has invalid private JSON") from error
+        if len(raw.encode()) > MAX_WIRE_BYTES - 1024:
+            raise LocalBrowserRejected("Local browser request exceeds the private transport budget")
+        if job.cancelled.is_set() or job.paused or job.pending:
+            raise LocalBrowserRejected("Local browser program authority retired")
+        value = self.local_browser(job.operation, args)
+        self.guard(job.operation)
+        if job.cancelled.is_set() or job.paused:
+            raise ValueError("Local browser program authority retired after dispatch")
+        return value
 
     def _rpc(self, job, name, args):
         self.guard(job.operation)

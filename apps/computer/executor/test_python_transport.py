@@ -5,6 +5,7 @@ These tests do not prove Google effects, actual UI decisions or app acceptance.
 """
 import copy
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -82,6 +83,69 @@ class PythonTransportTests(unittest.TestCase):
             if receipt and receipt["status"] != "running": return receipt
             time.sleep(.01)
         self.fail("Native cell did not settle")
+
+    def test_browser_commands_stay_local_without_per_key_receipts_or_api_replies(self):
+        self.assertIn("local_browser", inspect.signature(NativePythonJobs).parameters,
+                      "The root coordinator needs a private local browser command receiver")
+        calls, records = [], []
+        original_receipt = self.journal.receipt
+        def receipt(identity, data):
+            records.append(data)
+            return original_receipt(identity, data)
+        self.journal.receipt = receipt
+        def browser(operation, args):
+            self.assertEqual(operation["id"], "local-browser")
+            self.assertEqual(args["session"], "documents")
+            calls.append(args)
+            if args["request"].get("method") == "Browser.getVersion":
+                return {"result": {"userAgent": "Linux"}}
+            if args["request"].get("method") == "Runtime.evaluate":
+                return {"result": {"result": {"type": "boolean", "value": True}}}
+            return {"result": {}}
+        self.jobs.local_browser = browser
+        parent = self.operation("local-browser", "fill_input('#message', 'x' * 120)\nprint('typed')",
+            ["browser_harness_rpc"], version=3, received=False)
+        parent["args"]["pythonCell"].update(fresh=True, browserSession="documents", maxToolCalls=1)
+        self.journal.receive(parent)
+        self.jobs.start(parent)
+        observed = self.final(parent)
+        self.assertEqual(observed["status"], "succeeded", observed)
+        self.assertGreater(len(calls), 200)
+        self.assertEqual(observed["data"]["result"]["stdout"], "typed\n")
+        self.assertEqual(observed["data"]["result"]["tool_calls"], [])
+        self.assertEqual(self.consumed, [])
+        self.assertEqual(len(records), 2, "Only program start and terminal receipt belong in this journal")
+        self.assertTrue(all("pythonRpc" not in item.get("data", {}) for item in records))
+
+    def test_caught_local_transport_failure_cannot_be_reported_as_success(self):
+        def browser(operation, args):
+            raise TimeoutError("Local command reply was lost after dispatch")
+        self.jobs.local_browser = browser
+        parent = self.operation("local-browser-unknown",
+            "try:\n    goto_url('https://example.org')\nexcept RuntimeError:\n    print('caught')",
+            ["browser_harness_rpc"], version=3, received=False)
+        parent["args"]["pythonCell"].update(fresh=True, browserSession="documents")
+        self.journal.receive(parent)
+        self.jobs.start(parent)
+        observed = self.final(parent)
+        self.assertEqual(observed["status"], "outcome_unknown", observed)
+        self.assertTrue(observed["data"]["result"]["browser_outcome_unknown"])
+        self.assertTrue(observed["data"]["cleanupConfirmed"], "Interpreter cleanup does not prove browser effects")
+
+    def test_invalid_local_command_is_known_not_dispatched(self):
+        calls = []
+        self.jobs.local_browser = lambda operation, args: calls.append(args)
+        parent = self.operation("local-browser-invalid",
+            "tools.call('browser_harness_rpc', {'session':'documents', "
+            "'request':{'method':'Page.navigate'}, 'timeoutMs':0})",
+            ["browser_harness_rpc"], version=3, received=False)
+        parent["args"]["pythonCell"].update(fresh=True, browserSession="documents")
+        self.journal.receive(parent)
+        self.jobs.start(parent)
+        observed = self.final(parent)
+        self.assertEqual(observed["status"], "failed", observed)
+        self.assertFalse(observed["data"]["result"]["browser_outcome_unknown"])
+        self.assertEqual(calls, [])
 
     def pending(self, operation):
         deadline = time.monotonic() + 2
