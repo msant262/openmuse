@@ -7,19 +7,20 @@ de aceite exigido pelo usuário permanece aberto.
 
 ## Publicação conferida
 
-Em **11/10 às 22:24 UTC**, página e API públicas responderam HTTP 200.
+Em **11/10 às 23:11 UTC**, página e API públicas responderam HTTP 200.
 API, navegador e OpenBao estavam saudáveis. Isso comprova disponibilidade
 nesse instante; estabilidade sob carga e desempenho no celular continuam
 pendentes.
 
 - API publicada: implementação `b5043529`, imagem `780569c1`.
 - Web: release `harness80-20261011-e1fd91f9`.
-- Main local e remota conferidas iguais em `189dce56`, antes desta atualização
-  do relatório. Esse commit liga o receptor local ao broker e à autoridade do
-  desktop; o protocolo completo dos helpers ainda falta no worker.
+- Main local e remota conferidas iguais em `a433878f`, antes desta atualização
+  do relatório. Incluem o receptor local, o vínculo com a autoridade do desktop,
+  o driver CDP e a descoberta de iframes. A conexão do driver ao gerenciador do
+  navegador e ao handler do worker nativo ainda não foi implementada.
 - Não foi publicado APK novo nesta etapa.
-- A nova base de execução Python e seu receptor local estão na **main, sem publicação**.
-  Não representa uma ferramenta de navegador já disponível.
+- A nova base de execução Python, o receptor local e o driver estão na
+  **main, sem publicação**. `browser_exec` ainda não está disponível no catálogo.
 
 ## Correções publicadas e efeitos observados
 
@@ -74,7 +75,7 @@ revisão inconsistente permanecem problemas a corrigir.
 - Mantidos imagens atual/de recuperação, volumes, perfis, OpenBao e backups.
   As 44 operações históricas sem resultado confirmado permanecem para
   reconciliação; não foram marcadas como sucesso nem apagadas.
-- Espaço livre observado às 22:24 UTC: **45.469.429.760 bytes**, cerca de
+- Espaço livre observado às 23:11 UTC: **45.468.635.136 bytes**, cerca de
   **42,35 GiB**. Esse é o espaço disponível, não o total liberado.
 - Conferência posterior recolheu sete processos de um navegador de QA local
   aberto desde 09:30. Corrigido o encerramento do helper de testes e confirmado
@@ -86,12 +87,15 @@ O contrato original do Hermes `browser_exec` exige um processo Python novo
 por chamada, mantendo as abas e o workspace. O executor existente retinha
 o processo. A base na main cria e encerra o processo, confirma parada dos
 descendentes e carrega os helpers originais copiados, com sessão vinculada.
-Esse trabalho **não implementa sozinho `browser_exec`**: falta o transporte
-local e a ligação completa ao navegador, incluindo abas e controles de acesso.
+O transporte local e o driver de abas foram implementados depois dessa base.
+Esse trabalho **ainda não implementa `browser_exec` no app**: falta conectar o
+driver ao gerenciador e ao handler nativo, com controles de acesso, uploads,
+proteção de credenciais e aprovações.
 
-Verificação final desta base: **159 testes do executor, 32 do desktop, 42 de
-Python/API e 22 dos fluxos gráficos passaram**, além de TypeScript, build e lint/formatação sem
-erros. Inclui processo filho real, chamada ao host, pausa, cancelamento,
+Nas rodadas anteriores registradas, **159 testes do executor, 32 do desktop,
+42 de Python/API e 22 dos fluxos gráficos passaram**, além de TypeScript, build
+e lint/formatação sem erros. Esses conjuntos não foram repetidos nesta
+conferência de status. Incluem processo filho real, chamada ao host, pausa, cancelamento,
 compatibilidade com executor antigo e bloqueio de repetição de efeitos.
 São testes controlados; não substituem um pedido comum com o modelo nem
 o teste de todas as ferramentas no app publicado.
@@ -106,10 +110,27 @@ efeito não é marcada como sucesso, mesmo se o script captura o erro.
 
 O receptor foi ligado ao broker **na main, sem publicação**, com vínculo e
 reservas do desktop/perfil, controle humano e validação do envelope canônico.
-**Falta o protocolo completo no worker**, incluindo abas, redaction e
-aprovações. O backend atual é recusado antes do comando; a ferramenta continua
-indisponível no catálogo. Esses tempos são do teste de digitação, sem modelo,
-e não de tarefas no app; [implementação, evidência e pendências](2026-10-11-browser-script-bootstrap.md).
+O driver usa o pipe CDP e separa abas, sessões, eventos e iframes por conversa.
+Não expõe uma porta de controle nem credenciais ao processo Python.
+
+Nesta conferência de status, os **10 testes do driver passaram novamente**,
+com zero falhas, cancelamentos ou casos ignorados. O teste com Chromium e os
+helpers Python originais digitou texto, abriu e alternou abas, capturou um PNG
+real e leu um iframe em outro processo. O programa levou **1,614s**; todo o
+conjunto levou **2,358s**. É QA local, sem modelo e com hooks controlados de
+autorização; não comprova proteção ou desempenho no app publicado.
+
+Um novo teste de integração, ainda local e não commitado, **falhou** porque
+`BrowserManager.script` não existe. A falha identifica a ligação que continua
+pendente. Também faltam uploads e as políticas reais de proteção de imagens,
+redaction e aprovação no worker. O backend atual é recusado antes do comando;
+a ferramenta continua indisponível no catálogo. Nenhuma dessas rodadas
+publicou uma nova API, web, versão do executor físico ou APK.
+
+Evidências desta conferência: `round92-status-driver-tests.log`,
+`round92-manager-red.log` e `round92-status-report-production.json`.
+A [documentação da implementação](2026-10-11-browser-script-bootstrap.md)
+registra as rodadas e os limites de cada teste.
 
 Os seguintes pontos impedem declarar a entrega:
 
