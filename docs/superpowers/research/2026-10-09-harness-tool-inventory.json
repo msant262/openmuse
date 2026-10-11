@@ -611,7 +611,8 @@
       ],
       "failed": [
         "Languages unconfirmed for all three options. Google path duration, freely accessible course content and certificate conditions unproven.",
-        "No further targeted recovery of missing fields or proof of three distinct underlying curricula."
+        "No further targeted recovery of missing fields or proof of three distinct underlying curricula.",
+        "Actual canonical task criteria require only a valid PDF, with empty requiredItems; the verified verdict does not prove the requested comparative fields or source-backed semantic completeness. Evidence saved in round61-factual-criterion-gap.json; no factual closure fix yet."
       ],
       "pending": [
         "Correct factual closure and validate an unchanged ordinary request after a justified fix; native physical completion does not establish semantic correctness.",
@@ -645,20 +646,23 @@
         "Ten controlled-provider runtime cases pass: configured orchestrator create/show, delegated-child isolation including forged input identity, authenticated configuration, native worker completion, host artifact schemas, ordinary native finish, goal/PR gate rejection, concurrent direction and unrelated uncertain business effect preservation.",
         "Expanded group: 68/68 pass, zero failures/cancellations/skips; final root TypeScript and server/copied-harness build pass.",
         "Board transition and native completion proof share the same durable transaction with exact task state and lease checks; a direction accepted after assessment leaves the card running.",
-        "Whole suite started in separate fixed tree 03c32e21527a5232597c083133d7e596cb2e17cb; terminal result pending, not approved."
+        "Fixed tree 03c32e21527a5232597c083133d7e596cb2e17cb terminated with 2015/2015 passing, zero failures/cancellations/skips, in 1424652.507936 milliseconds. Eight source hashes matched commit 4de7d575315d35afc9fb316167eb7461986e1dd2 pushed to main; excludes later recovery code. Log SHA-256 048b8b82370941ac2db8f5b29029cc7bdb0b8ad0b2faa914daf40f6648a3bfc9.",
+        "Three reproduced saved-delivery recovery cases now pass through the native handoff/journal, with no new source read or inference; earlier ordinary task recovery ordering retained and four image/document recovery cases pass.",
+        "Two actual worker interruptions after durable commit and recovery acknowledgment pass: original handoff/result restored from the bound immutable receipt and atomic native proof, with no repeated board mutation or model turn. Prior receipts retained; ended-card prose without native proof rejected.",
+        "Current focused group: 73/73 passing in 86895.456658 milliseconds; root TypeScript and server/copied-harness build pass; lint has zero errors and four existing warnings.",
+        "New complete suite started in fixed tree 902116b0535e7e2cc50e73ba39034d447baa16a0, including the recovery corrections. No terminal result yet; prior fixed tree 03c32e2 excludes these corrections.",
+        "A profile disabled after assigned work was observed no longer bypasses its native gate. Current focused group with attachments: 78/78 pass in 97116.095104 milliseconds; final root TypeScript and server/harness build pass. Current source tree a94f3ff0cd2d2016cabd3104e7d2ac3cc59a457f recorded; running full 902116b0 excludes this last guard. Twenty local logs preserved with hashes."
       ],
-      "failed": [
-        "Three added controlled pending-delivery recovery cases fail: ordinary resume leaves the assigned card running, and goal/PR resumes bypass required completion gates. Root cause: pendingResearchDelivery executes before native kanban initialization. Not fixed; added after the running fixed-tree suite snapshot."
-      ],
+      "failed": [],
       "pending": [
-        "No autonomous Luna acceptance or complete fifteen-tool behavior proof; native integration is uncommitted and unpublished.",
-        "Validate recovery after interruption, lost acknowledgments and pending delivery; complete original offline lifecycle and full opt-in fidelity.",
+        "No autonomous Luna acceptance or complete fifteen-tool behavior proof. Foundation is committed/pushed in 4de7d575 but not deployed; later recovery/configuration corrections remain uncommitted and unpublished.",
+        "Complete remaining interruption recovery, original offline lifecycle and full opt-in fidelity; controlled recovery cases do not establish autonomous acceptance or all fifteen tool behaviors.",
         "Complete dispatcher/profile/workspace execution, goal and exact-head CI gates; validate actual chat-platform availability.",
         "Observe the complete fixed-tree suite terminal result before claiming full regression approval."
       ]
     }
   ],
-  "updatedAt": "2026-10-11T07:10:33.627718+00:00",
+  "updatedAt": "2026-10-11T07:33:43.714834+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
