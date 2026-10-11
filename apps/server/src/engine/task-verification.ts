@@ -835,6 +835,62 @@ function observedNativePython(op: JournalOperation, operations: JournalOperation
   );
 }
 
+/** A transcript is an observation only after the matching physical media job
+ * completed. Tool metadata or a script's own text cannot establish that job. */
+function observedNativeTranscription(op: JournalOperation, operations: JournalOperation[]) {
+  const parsed = commandReceiptSchema.safeParse(op.receipt);
+  if (!parsed.success || op.toolName !== "transcribe" || op.status !== "succeeded") return false;
+  const receipt = parsed.data;
+  if (
+    receipt.kind !== "transcribe" ||
+    receipt.status !== "succeeded" ||
+    receipt.exitCode !== 0 ||
+    receipt.outcomeUnknown ||
+    receipt.cleanupConfirmed !== true ||
+    receipt.truncated ||
+    receipt.result?.truncated ||
+    !receipt.completedAt ||
+    !receipt.result?.text?.trim() ||
+    !(Number(receipt.result.duration) > 0)
+  )
+    return false;
+  const native = operations.find((entry) => entry.id === receipt.id);
+  if (
+    native?.status !== "succeeded" ||
+    native.toolName !== "native.media" ||
+    native.taskId !== op.taskId ||
+    native.revision !== op.revision ||
+    native.nativeEnvelope?.kind !== "media" ||
+    native.nativeEnvelope.capability !== "transcribe" ||
+    native.nativeEnvelope.inspection === true
+  )
+    return false;
+  const parent = operations.find((entry) => entry.id === native.parentOperationId);
+  if (
+    parent?.id !== op.id &&
+    !(
+      parent?.parentOperationId === op.id &&
+      parent.toolName === "primitive.transcribe" &&
+      parent.status === "succeeded"
+    )
+  )
+    return false;
+  const delivered = object(native.receipt);
+  const physical = commandReceiptSchema.safeParse(delivered?.data);
+  const args = object(native.args),
+    parameters = object(args?.parameters);
+  return (
+    delivered?.status === "succeeded" &&
+    physical.success &&
+    bindingHash(physical.data) === bindingHash(receipt) &&
+    args?.mediaKind === "transcribe" &&
+    parameters !== undefined &&
+    parameters.textPath === receipt.result.textPath &&
+    typeof parameters.path === "string" &&
+    (typeof object(op.args)?.path !== "string" || object(op.args)?.path === parameters.path)
+  );
+}
+
 function operationMatches(
   criterion: CompletionCriterion,
   op: JournalOperation,
@@ -1414,7 +1470,7 @@ export class TaskVerification {
                   if (
                     op.revision !== revision ||
                     op.status !== "succeeded" ||
-                    !/^(execute_code$|execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|search_files$|run_computer_command$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot|get_images|console|cdp)$)/.test(
+                    !/^(execute_code$|transcribe$|execute_app_tool$|execute_google_workspace_tool$|search_mail$|search_drive$|search_files$|run_computer_command$|web_fetch$|read_|skills_read$|computer_status$|browser_(research|navigate|snapshot|screenshot|get_images|console|cdp)$)/.test(
                       op.toolName,
                     ) ||
                     !useful(op.receipt) ||
@@ -1422,6 +1478,8 @@ export class TaskVerification {
                   )
                     return false;
                   if (op.toolName === "execute_code" && !observedNativePython(op, ops))
+                    return false;
+                  if (op.toolName === "transcribe" && !observedNativeTranscription(op, ops))
                     return false;
                   if (op.toolName === "search_mail") {
                     const result = op.receipt as { account?: unknown; matches?: unknown };

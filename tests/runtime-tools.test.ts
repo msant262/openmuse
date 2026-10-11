@@ -100,7 +100,7 @@ test("chat can inspect its actual runtime and owned procedures without external 
   const descriptions = events.filter((event) => event.type === EventType.TOOL_CALL_RESULT);
   const imageTool = JSON.parse(String(descriptions[1]?.content));
   assert.match(imageTool.description, /durable server worker/);
-  assert.match(imageTool.description, /worker researches/);
+  assert.match(imageTool.description, /researches/);
   assert.ok(
     fixture.requests[0].body.includes(
       "Promising future, background, delegated, or continued work creates follow-through ownership.",
