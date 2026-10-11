@@ -2901,7 +2901,7 @@ export async function executeModelTask(
       const assessment = await documentReview.pendingAssessment(
         owner,
         { scope: `task:${task.id}`, revision: Number(task.state.appliedRevision ?? 0) },
-        image.id,
+        await fileReferences.resolveId(image.id),
         task.artifactIds,
       );
       if (!assessment) return undefined;

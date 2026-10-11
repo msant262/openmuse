@@ -23,7 +23,7 @@ export function browserImageReference(messages: readonly unknown[]): ImageRefere
     if (
       metadata?.fileImage === true &&
       typeof metadata.fileId === "string" &&
-      /^(?:[a-f0-9]{64}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/.test(metadata.fileId)
+      /^(?:app_file_[a-f0-9]{12}|[a-f0-9]{64}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/.test(metadata.fileId)
     ) {
       latest = {
         id: metadata.fileId,
