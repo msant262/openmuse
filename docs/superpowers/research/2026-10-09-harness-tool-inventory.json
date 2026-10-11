@@ -362,6 +362,30 @@
         "general Hermes/OpenClaw parity and performance"
       ],
       "acceptanceApproved": false
+    },
+    {
+      "tools": ["text_to_speech", "transcribe"],
+      "upstreamCapability": ["Hermes text_to_speech", "OpenClaw Microsoft tts provider"],
+      "caseAcceptance": "verified",
+      "apiSource": "d058c85dac96d791ac2a5f22c83e90b5a30952c0",
+      "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72",
+      "verified": [
+        "actual free Microsoft Edge synthesis with bounded worker cancellation and one rejected-handshake clock correction",
+        "ordinary published Luna request delivers a valid 117216-byte Portuguese MP3 in 23.664 seconds",
+        "independent decoding and actual published browser playback confirm the delivered audio",
+        "ordinary new conversation finds the saved audio by name and physically transcribes it using CPU/int8 Whisper small",
+        "322-byte TXT matches the native transcript and completes in 33.478 seconds with native-bound evidence",
+        "original provider and transcription-verification failures remain preserved; no manual result or memory injection",
+        "20 owned QA presentation records and four native files retired while protected user data and all three accounts remain unchanged",
+        "obsolete images, archive-verified source trees and exact unused cache records retired with current/recovery releases preserved"
+      ],
+      "pending": [
+        "background transcription completion verification",
+        "long and multilingual speech, broader media provider coverage",
+        "physical mobile playback and sustained workload performance",
+        "general Hermes/OpenClaw parity"
+      ],
+      "acceptanceApproved": false
     }
   ],
   "updatedAt": "2026-10-11"
