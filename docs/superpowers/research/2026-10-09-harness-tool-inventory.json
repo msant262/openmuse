@@ -537,20 +537,20 @@
     {
       "surface": "research.incomplete-faq-extraction",
       "implementationSource": "841f4bf4",
-      "caseAcceptance": "shared-http-recovery-tests-pass-image-built-publication-pending",
+      "caseAcceptance": "shared-http-recovery-published-factual-acceptance-pending",
       "verified": [
         "Four regression failures reproduced before the shared HTTP/renderer metadata and batch cached-source rescue correction; the complete-FAQ control already passed.",
         "70 focused checks pass on Node 24.16.0; TypeScript and server build pass. Lint has no errors. This is not a complete release suite.",
         "Direct real Coursera HTTP read at 2026-10-11T05:45:04Z returns 7616 characters, identifies three missing FAQ answers, and marks the representation partial before excerpt slicing.",
-        "Exact main/origin source 841f4bf4 Docker image built successfully; production still runs 8a8de0d0."
+        "Exact 841f4bf4 image published through a clean 18.54-second API-only handoff, preserving database, environment, browser and 44 uncertain operations.",
+        "Bounded workspace suite terminated with 1996/1996 passing, no failures/cancellations/skips; includes prior unpublished kanban-create work, not immutable release approval or later local changes."
       ],
       "pending": [
-        "Publish the built image after validation and normal drain; repeat the unchanged ordinary composer request with Luna.",
-        "Verify actual free access, distinct options and all requested comparison fields using the real delivered PDF and observed primary sources. Latest completed ordinary QA58 remains factually failed.",
-        "Complete workspace suite has no terminal result and includes unpublished local kanban-create work; do not represent it as immutable release approval."
+        "The normal QA59 request delivered a real PDF, but requested language, duration/access/certification fields and three distinct curricula remain unproven. This run does not establish that shared FAQ recovery executed.",
+        "Whole-harness, full Workspace and sustained physical-mobile acceptance remain false."
       ],
       "acceptanceApproved": false,
-      "apiSource": "8a8de0d0"
+      "apiSource": "841f4bf4"
     },
     {
       "surface": "kanban.native-artifact-preservation",
@@ -597,9 +597,45 @@
       "pending": [
         "Determine and prove the actual terminal outcome or confirmed containment for each applicable operation; stopped-writer backup readiness remains false."
       ]
+    },
+    {
+      "surface": "research.normal-composer-round59",
+      "apiSource": "841f4bf4",
+      "caseAcceptance": "published-physical-delivery-factual-failure",
+      "acceptanceApproved": false,
+      "verified": [
+        "Identical ordinary composer request delivered a 59247-byte three-page PDF in 83.352 seconds, with eleven Luna responses and zero failed operations; no operator hints or repairs.",
+        "Actual PDF bytes/hash, text, all three page images, three distinct source URLs and published navigation through all pages checked.",
+        "Own six QA presentation records retired; 1771 nonselected scoped rows remained identical. Three simultaneous accounts, companions, real data, 31 procedures and 44 uncertain canonical operations preserved.",
+        "Thirteen private evidence files copied from VPS with matching hashes; published UI reloaded with composer visible in 529 milliseconds and QA absent."
+      ],
+      "failed": [
+        "Languages unconfirmed for all three options. Google path duration, freely accessible course content and certificate conditions unproven.",
+        "No further targeted recovery of missing fields or proof of three distinct underlying curricula."
+      ],
+      "pending": [
+        "Correct factual closure and validate an unchanged ordinary request after a justified fix; native physical completion does not establish semantic correctness.",
+        "Whole-harness, full Workspace and sustained physical-mobile acceptance remain false."
+      ]
+    },
+    {
+      "surface": "Hermes.kanban-create-unpublished",
+      "caseAcceptance": "local-contract-foundation-partial",
+      "acceptanceApproved": false,
+      "productionEnabled": false,
+      "verified": [
+        "29 focused checks passed after project inheritance, workspace-path metadata, concurrent-key convergence, initial-status and ownership-expiry handling."
+      ],
+      "failed": [
+        "Latest creation group: 10/12 pass; deduplicated request acknowledgment is unstable after later card mutation, and its request ID can be rebound to different input."
+      ],
+      "pending": [
+        "Fix and verify durable deduplicated acknowledgments; local code and tests are uncommitted and unpublished.",
+        "Create physical workspaces, execute runtime overrides, register model tools with explicit profile scope and wire the dispatcher and exact-head CI gate."
+      ]
     }
   ],
-  "updatedAt": "2026-10-11T06:00:33.265435Z",
+  "updatedAt": "2026-10-11T06:21:44.211312Z",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
