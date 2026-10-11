@@ -439,16 +439,48 @@
     },
     {
       "surface": "research.partial-quote-and-source-reference-contract",
-      "caseAcceptance": "committed-locally-verified-not-published",
+      "caseAcceptance": "published-ordinary-delivery-verified-latency-unapproved",
       "verified": [
         "partial reviewer quote repair retains the unresolved other option and request requirements even if the correction reply accidentally approves them; focused test passes",
         "real copied-harness worker regression exposes the actual offered short reference and advertised source schema mismatch; old pattern fails own offered ID assertion, corrected pattern passes and journal retains canonical owner-scoped ID",
         "complete affected group passes 85/85 with zero failures, cancellations or skips in 171.516 seconds; final source-reference check passes; root TypeScript and changed-file Biome pass",
-        "final server/copied-harness build passes; runtime fixes committed as 1ccb9e45 while production remains dff49510"
+        "server/copied-harness build passes; runtime 1ccb9e45 is published through an 18.85-second drained API-only handoff with database, environment and browser preserved",
+        "same ordinary composer request completes in 522.779 seconds with 49 Luna responses and five reviews, without operator answers or manual repair",
+        "actual 53802-byte two-page PDF, extracted text, pixels, three actual PDF link annotations and published viewer checked; SHA-256 2b17473bc3c23da3d4f5ce8dc0d9a48057888ce0d6ecf913ed5149a0acd0b258",
+        "eight own QA presentation rows hidden; 1727 unselected scoped rows unchanged; protected Beatriz/companion data, memories, procedure versions and three accounts remain intact"
       ],
       "pending": [
-        "publish runtime 1ccb9e45",
-        "ordinary published small-model research repetition and latency measurement"
+        "research/review latency remains unapproved",
+        "course languages are distinguished from the consulted page language but not separately verified",
+        "remove duplicate local-draft model gates and verify the ordinary published request"
+      ],
+      "acceptanceApproved": false
+    },
+    {
+      "surface": "research.local-draft-with-final-review",
+      "caseAcceptance": "published-ordinary-validation-running",
+      "verified": [
+        "no pre-render model calls for local draft creation; the actual selected files retain a final evidence-bound factual check",
+        "old runtime fails the rendered-before-review regression and the changed runtime passes",
+        "59/59 research and draft cases pass in six isolated groups; 43/43 document/effect delivery checks pass; TypeScript passes",
+        "runtime ec3dff39 is included in source e2610f4c, published through a 21.2-second drained API-only handoff; unchanged ordinary composer request resubmitted at 04:05:11.715 UTC without tool hints"
+      ],
+      "pending": [
+        "independently verify the unchanged ordinary Luna research result, file delivery and elapsed time"
+      ],
+      "acceptanceApproved": false
+    },
+    {
+      "surface": "Hermes.kanban-lifecycle-foundation",
+      "caseAcceptance": "published-core-only-not-integrated",
+      "verified": [
+        "seven real-PGlite lifecycle checks pass, including claim expiry, dependency cycles, review handback, ACK-loss replay and fencing stale workers creating new follow-ups",
+        "committed core e2610f4c is included in production, without exposing unfinished kanban tools"
+      ],
+      "pending": [
+        "trusted dispatcher and scoped tool integration",
+        "attachment preservation and full completion-contract validation",
+        "all fifteen upstream kanban tools and actual ordinary harness use"
       ],
       "acceptanceApproved": false
     }
