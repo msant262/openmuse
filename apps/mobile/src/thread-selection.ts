@@ -3,6 +3,16 @@ export type SavedThreadSelection = {
   selection: { id: string; existing: boolean };
   visited: { id: string; existing: boolean }[];
 };
+export function unsavedThreadVisits(
+  visited: SavedThreadSelection["visited"],
+  savedIds: readonly string[],
+  mainId: string,
+) {
+  const saved = new Set(savedIds);
+  return visited.filter(
+    (thread) => !thread.existing && thread.id !== mainId && !saved.has(thread.id),
+  );
+}
 export function parseThreadSelection(raw: string | null): SavedThreadSelection | null {
   if (!raw) return null;
   try {

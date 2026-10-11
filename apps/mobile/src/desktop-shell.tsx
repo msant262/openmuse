@@ -48,8 +48,8 @@ import { useAvatarPresentation } from "./avatar-presentation";
 import { CompanionHeading } from "./companion-heading";
 import { cachedConversationTitle, isEmptyConversationCache } from "./conversation-label";
 import { desktopStyles as createDesktopStyles } from "./desktop-shell-styles";
-import { useI18n } from "./i18n";
 import { GoogleActionsScreen } from "./google-actions-screen";
+import { useI18n } from "./i18n";
 import { MemorySettings } from "./memory-settings";
 import { messageStorage } from "./message-storage";
 import { isProductTask, productNotifications, taskPreview } from "./muse-surfaces-model";
@@ -58,6 +58,7 @@ import { ClearFinishedTasksButton, TaskRemoveButton } from "./task-removal";
 import { TaskStatusBadge } from "./task-status";
 import { useThemedStyles } from "./theme";
 import { ThreadActions } from "./thread-actions";
+import { unsavedThreadVisits } from "./thread-selection";
 import { type Selection, useMuseThread } from "./threads";
 import { Button, Card, CheckRow, ErrorNotice, HeaderFade, Mascot, useUI } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -205,12 +206,13 @@ export function DesktopShell({
   const saved = threads.threads.filter(
     (thread) => thread.id !== mainId && thread.archived === archivedChats,
   );
-  const drafts = visited.filter(
-    (thread) =>
-      !archivedChats &&
-      thread.id !== mainId &&
-      !threads.threads.some((item) => item.id === thread.id),
-  );
+  const drafts = archivedChats
+    ? []
+    : unsavedThreadVisits(
+        visited,
+        threads.threads.map((thread) => thread.id),
+        mainId,
+      );
   const identityKey = api.identityKey;
   const [labels, setLabels] = useState<{
     identityKey: string;
