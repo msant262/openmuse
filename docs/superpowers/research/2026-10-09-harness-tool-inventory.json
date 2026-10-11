@@ -325,13 +325,19 @@
         "actual UI cancellation of a background Python command interrupts its owned process; original PIDs disappear and no late final file appears",
         "cancelled host primitive autonomously reconciles from the verified physical receipt without changing original native operation records"
       ],
-      "pending": ["broader Hermes/OpenClaw tool parity and performance acceptance"],
+      "pending": [
+        "broader Hermes/OpenClaw tool parity and performance acceptance"
+      ],
       "acceptanceApproved": false,
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
     },
     {
-      "tools": ["image_generate", "web_search", "web_extract"],
+      "tools": [
+        "image_generate",
+        "web_search",
+        "web_extract"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "verified": [
@@ -341,11 +347,19 @@
         "original image delivered in 89.029 seconds and inspected in the published viewer",
         "independent pixels confirm legibility, three examples and the source footer"
       ],
-      "pending": ["broader media/task coverage and sustained physical-device performance"],
+      "pending": [
+        "broader media/task coverage and sustained physical-device performance"
+      ],
       "acceptanceApproved": false
     },
     {
-      "tools": ["create_document", "inspect_document", "memory", "skill_manage", "execute_code"],
+      "tools": [
+        "create_document",
+        "inspect_document",
+        "memory",
+        "skill_manage",
+        "execute_code"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "6b5500353b731449cd53bbf59566f956a1463659",
       "verified": [
@@ -364,8 +378,14 @@
       "acceptanceApproved": false
     },
     {
-      "tools": ["text_to_speech", "transcribe"],
-      "upstreamCapability": ["Hermes text_to_speech", "OpenClaw Microsoft tts provider"],
+      "tools": [
+        "text_to_speech",
+        "transcribe"
+      ],
+      "upstreamCapability": [
+        "Hermes text_to_speech",
+        "OpenClaw Microsoft tts provider"
+      ],
       "caseAcceptance": "verified",
       "apiSource": "d733ef64b97b2cc3cabecedecdef93eb2715931b",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72",
@@ -826,9 +846,35 @@
         "Establish high-resident-memory causes and sustained physical-mobile performance.",
         "Complete all Workspace operations and actual Hermes/OpenClaw contract acceptance."
       ]
+    },
+    {
+      "surface": "research.educational-credential-and-ordinary-pdf-round67",
+      "caseAcceptance": "published-boundary-repair-autonomous-physical-delivery-with-incomplete-source-attribution",
+      "acceptanceApproved": false,
+      "productionEnabled": true,
+      "apiSource": "c0c2c9ec632e6794991fdc6656cf6b412309a992",
+      "verified": [
+        "Educational-credential display text accepted by real worker/storage/form binding; genuine auth inputs still rejected; 26/26 focused controls and TypeScript/server/assets/harness build pass; lint has two prior warnings.",
+        "API-only clean handoff 22.59 seconds, compiled artifact/source hashes matched; native browser505/webD888 unchanged.",
+        "Unchanged normal public-composer prompt submitted once; autonomous conclusion in 98.617 seconds, 14 completed Luna responses and no fallback/operator answers/manual repair.",
+        "44467-byte two-page PDF downloaded, text/pixels inspected and both pages opened in actual published viewer; SHA b75eaab09432a4224bcec638240a9a3e8205bb32301c495da6c5a798a2185743.",
+        "Six owned QA presentation records retired; 1840 nonselected rows and 33 original procedure versions unchanged; no active learned QA procedure; actual UI reload confirms QA absent.",
+        "Protected companions/profile, 58 files, three memories/accounts and all real thread/task/action/activity rows unchanged; 16 private files hash-matched.",
+        "Eight unreferenced Docker images and eight build trees/archives retired after 95051 source-file hashes; current/recovery API/browser and OpenBao retained; VPS retirement deltas 1607122944 and 1696251904 bytes, local archive delta 425938944 allocated bytes."
+      ],
+      "failed": [
+        "Full factual coverage remains unapproved: selected Bradesco course language/certificate price not explicit; free-certificate literals in same source belong to related-course recommendations. Claims not proved false, source attribution incomplete.",
+        "Latest idle sample approximately 1005 MiB API and 421.2 MiB browser; high-memory/idle-CPU cause remains unestablished and unfixed."
+      ],
+      "pending": [
+        "General factual completion and non-repetitive research across normal tasks.",
+        "Complete remaining Workspace and Hermes/OpenClaw contracts through ordinary chat with real result verification.",
+        "Sustained physical-mobile performance, memory allocation cause and wider action UX.",
+        "Reconcile 44 historical uncertain operations without inventing results."
+      ]
     }
   ],
-  "updatedAt": "2026-10-11T10:23:55.711162Z",
+  "updatedAt": "2026-10-11T10:49:00Z",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
@@ -858,7 +904,9 @@
         "kanban_unblock",
         "kanban_link"
       ],
-      "additionalRegisteredToolsOutsideCoreList": ["kanban_schedule"],
+      "additionalRegisteredToolsOutsideCoreList": [
+        "kanban_schedule"
+      ],
       "schedulingContract": "kanban_schedule parks the owned current run until an orchestrator unblocks it; it creates no timer and cannot bypass a goal-mode completion judge.",
       "note": "The pinned module registers fifteen kanban tools; kanban_schedule is outside the literal Hermes core list and remains in the required contract audit. Todo lists and child delegation do not implement dispatcher ownership, compare-and-swap run transitions, review/change states, structured handoffs, dependency routing, scheduling and attachments."
     },

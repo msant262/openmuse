@@ -1,148 +1,73 @@
 # Relatório do harness, publicação e limpeza — 11/10/2026
 
-**Ainda não está entregue.** Há correções publicadas e casos reais aprovados, mas o último pedido normal voltou a fazer buscas e revisões sem concluir. Encerrei somente esse teste de QA após **11min39,539s**, preservando sua evidência e retirando seus registros de apresentação. A execução usou Luna e também Grok por fallback; não comprova funcionamento apenas com modelos pequenos. Pesquisa autônoma completa, cobertura integral do Google Workspace, performance sustentada e equivalência com Hermes/OpenClaw continuam sem aprovação.
+**O trabalho completo ainda não está entregue.** A API publicada está em `c0c2c9ec`. O último pedido normal de pesquisa concluiu sozinho em **1min38,617s**, com um PDF real, usando **14 respostas somente de Luna**. O arquivo abriu no app e a navegação nas duas páginas funcionou. A comprovação factual de todos os campos ainda não passou; a integração completa do Workspace, a equivalência integral com Hermes/OpenClaw e a performance sustentada também continuam abertas.
 
-## Estado da publicação e do código
+## O que foi corrigido e publicado
 
-| Estado | O que está nessa versão |
+| Problema observado | Correção e validação |
 | --- | --- |
-| API publicada: `b1ce9f19` | Corrige a perda de consultas no dispatcher real e rejeita a aprovação de um documento antigo substituído. Troca da API em **19,74 segundos**, com parada limpa; inclui as correções anteriores. |
-| Navegador do agente publicado: `505e4f2f` | Corrige a defasagem da imagem anterior, que ainda estava em `628bc99b`. Inclui a classificação de diálogo bloqueado antes do envio de uma entrada, sem tratá-lo como uma alteração já possivelmente executada, e o limite de resultados da busca atualizado. |
-| Frontend web publicado: `d8882335` | Inclui `6b295f52`: conversa salva ausente da página recebida deixa de ser recriada como rascunho. Os hashes do HTML e do JavaScript conferem no endereço público. A barra lateral publicada foi conferida após a limpeza: a conversa real permaneceu e as conversas de QA retiradas não reapareceram. |
-| Branch local e main remota | Código `b1ce9f19` sincronizado. Este relatório registra a publicação e a reprovação do pedido normal; uma atualização documental não altera os containers publicados. |
+| Consultas de busca descartadas | `b1ce9f19`: o dispatcher real valida os argumentos e preserva as consultas de `query` e `queries`, sem perder intenções. Uma execução publicada conferiu cinco consultas preservadas. |
+| Aprovação de PDF antigo depois de criar um substituto | `b1ce9f19`: a confirmação da inspeção antiga é rejeitada. As duas correções passaram em **23/23 controles focados**, incluindo o worker real e Code Mode. |
+| Pergunta sobre certificado/credencial educacional bloqueada como senha | `c0c2c9ec`: distingue texto apresentado ao usuário de identificadores de campos secretos. Aplicado às perguntas, opções, nomes de campos de formulários e rótulos de procedimentos. Identificadores de senha/token e pedidos reais de autenticação continuam protegidos. **26/26 controles focados** passaram, incluindo reproduções das falhas anteriores. |
+| Modelo de fronteira usado como fallback automático | Retirado `grok/grok-4.6` do fallback automático. Principal: `chatgpt/gpt-6-luna`; alternativa: `mimo/mimo-v2.5-pro`. O último pedido usou apenas Luna. Não houve substituição do principal por Astra. |
+| Conversa salva reaparecia como rascunho depois da limpeza | Correção `6b295f52`, incluída no web `d8882335`. A recarga atual confirmou compositor disponível e ausência da conversa, tarefa e PDF de QA retirados. |
+| Aprendizado automático falhava na fila de Code Mode | Falha reproduzida e corrigida em rodada anterior. Revisão de conversa em **10,789s** e aprendizado de procedimento em **15,166s** nos casos verificados. As três memórias reais permanecem salvas. Na conferência atual, aprendizado habilitado, sem revisão ativa e sem erro. |
 
-A publicação do código preservou banco, configuração, identidade do navegador e contas. API atual: `sha256:c77fcad4ae447f28535af11837104dae4b05efba9e4a0a326a91d842b8827eb7`. Navegador atual: `sha256:6bab849f0420c05cbccc93a217429c3c1ca263e08edbb232b752a9baaf205ccd`. A API `505e4f2f` foi mantida para recuperação. O web segue em `d8882335`; o APK não foi atualizado nesta rodada.
+TypeScript do projeto, build do servidor, assets e harness passaram para `c0c2c9ec`. Lint terminou sem erros, com **dois avisos preexistentes**. Os grupos de testes têm escopos próprios; não são uma nova aprovação da suíte completa ou de todo o produto.
 
-Na conferência de **11/10/2026 às 10:20 UTC**, após a limpeza da rodada 66, API, navegador e OpenBao estavam saudáveis, sem tarefas, conversas, solicitações HTTP ou entregas nativas ativas. Permanecem **44 operações históricas incertas**, sem alteração artificial de resultado. Essa fotografia não comprova disponibilidade ou desempenho sustentados.
+## Último pedido normal pelo chat publicado
 
-Depois de encerrar e limpar o QA, foi retirado **`grok/grok-4.6` do fallback automático**, mantendo `chatgpt/gpt-6-luna` como principal e `mimo/mimo-v2.5-pro` como alternativa. Mudou apenas `MODEL_FALLBACKS`; mesma imagem, source pin, banco e identidade do navegador. A troca da API levou **16,78 segundos**, com saída limpa, contas e memórias idênticas e manutenção encerrada. A primeira tentativa de guarda recebeu 403 ao consultar contas com a credencial restrita de manutenção e parou antes de qualquer alteração; a guarda corrigida usou o canal autenticado do app. Isso corrige a configuração, mas **não aprova uma nova execução de pesquisa só com modelos pequenos**. A evidência privada está em `small-model-fallback66-receipt.json`; o backup de configuração contém segredos e não é publicado.
-
-## Último teste real — rodada 66: busca corrigida, conclusão reprovada
-
-Pedido enviado uma única vez pelo compositor público, em conversa nova, sem citar ferramentas, dar dicas, responder ao agente ou reparar manualmente a tarefa:
+Enviado uma única vez em conversa nova, sem citar ferramentas, orientar o agente, responder a perguntas ou reparar a tarefa manualmente:
 
 > Pesquise três cursos gratuitos para começar em IA generativa e me entregue um PDF comparando conteúdo, idioma, duração e se o certificado é pago. Coloque os links das fontes.
 
-| Medida | Resultado observado |
+| Verificação | Resultado |
 | --- | --- |
-| Tempo | Envio às 10:07:56,587 UTC; ainda executando às 10:19:36,126. **11min39,539s**, antes do cancelamento pelo operador somente desse QA. |
-| Modelos | **54 respostas concluídas**, com `chatgpt/gpt-6-luna` e `grok/grok-4.6`. A configuração tinha Grok como primeiro fallback automático e MiMo como segundo. Não é prova de aceitação apenas com modelos pequenos. |
-| Busca | A chamada real com `query` e `queries` preservou **cinco consultas**. A perda de consultas observada na rodada 65 foi corrigida na execução real. |
-| Execução | 27 buscas, seis chamadas de extração HTTP e uma de fetch, dois PDFs, duas inspeções e duas confirmações de revisão. Operações primitivas têm recibos próprios e não são novos pedidos do agente. |
-| Documento diagnóstico | Último PDF com **59.842 bytes e duas páginas**, baixado antes da limpeza; bytes e texto conferidos. SHA-256 `2ed08dea7452bdc131d4ab449b99aeb1e283d7d181e2cbaeee29b92c768894cc`. Não houve entrega final autônoma nem aprovação do visualizador. |
-| Revisão | Persistiram lacunas de idioma e condições/custo de credenciais; o agente substituiu IBM por Databricks, mas retomou a pesquisa após nova reprovação. Não foi forçada uma aprovação. |
-| Falha nova | `ask_user` bloqueou uma pergunta sobre **credencial educacional/certificado** como se pedisse credenciais de autenticação. O erro aparece no recibo real. A correção dessa classificação está pendente. A necessidade daquela pergunta também não está aprovada. |
-| Resultado | **Reprovado por demora e ausência de conclusão.** Cancelamento pelo operador, não sucesso autônomo. |
+| Tempo | Envio às **10:37:29,849 UTC**; conclusão às **10:39:08,466 UTC**: **98,617 segundos**. |
+| Modelo | **14 respostas concluídas de Luna**, sem fallback concluído ou modelo de fronteira. |
+| Pesquisa | Duas buscas, uma extração de três páginas e dois fetches. Uma página FGV bloqueada foi substituída por uma fonte utilizável. |
+| Entrega física | PDF de **44.467 bytes**, duas páginas. SHA-256 `b75eaab09432a4224bcec638240a9a3e8205bb32301c495da6c5a798a2185743`. Bytes, texto, pixels e navegação no visualizador publicado conferidos. |
+| Conteúdo | Compara três cursos, com conteúdo, idioma, duração e certificado. Os dois cursos Egov têm idioma, duração e informações de gratuidade/certificação explícitos nas páginas selecionadas. |
+| Limite factual | Para o curso Bradesco, a seção específica lida comprova quatro horas, prazo de 60 dias, conteúdo e aprovação com 70%. Não declara explicitamente idioma nem preço do certificado. As declarações literais de certificado gratuito na mesma resposta pertencem a cursos relacionados. Isso **não prova que as afirmações do PDF sejam falsas**, mas deixa a atribuição incompleta. |
+| Aceite | **Entrega física, conclusão sem intervenção e navegação aprovadas neste caso. Comprovação factual integral não aprovada.** |
 
-As duas falhas de `b1ce9f19` foram reproduzidas antes da correção e passaram em **23/23 controles focados** depois, incluindo o worker real, chamada direta e chamada via `execute_code`. A aprovação de inspeção antiga depois da substituição passou a falhar no recibo canônico. TypeScript, build do servidor, assets, harness e lint passaram; lint manteve dois avisos preexistentes. Esses controles não equivalem à aprovação integral do produto. A primeira guarda de publicação usou um caminho de fonte ausente na imagem compilada e parou antes da troca; a guarda corrigida conferiu os artefatos compilados e a publicação terminou.
+A rodada anterior ficou **11min39,539s** sem entrega autônoma, com 54 respostas de Luna e Grok; somente aquele teste foi cancelado pelo operador. A melhora atual é uma observação de um novo caso, com cursos e sequência de execução diferentes. Não atribuo toda a redução de tempo à última correção nem considero a latência de todos os pedidos resolvida.
 
-Quatorze arquivos privados foram copiados da VPS com hashes conferidos, incluindo execução, PDF, publicação, consumo e limpeza. Estão em `artifacts/harness-parity-20261009/private-round66-vps`, com `round66-private-evidence-manifest.json`. O aceite registra explicitamente `ordinaryDeliveryAccepted: false` e `wholeHarnessApproved: false`.
+## Integrações já verificadas e seu alcance
 
-## Rodada 65 — histórico da perda de consultas
-
-Pedido enviado uma única vez pelo compositor do app publicado, em conversa nova, sem ferramentas citadas, dicas, respostas ao agente ou reparo manual da tarefa:
-
-> Pesquise três cursos gratuitos para começar em IA generativa e me entregue um PDF comparando conteúdo, idioma, duração e se o certificado é pago. Coloque os links das fontes.
-
-| Medida | Resultado observado na rodada 65 |
+| Fluxo | O que foi observado no app publicado |
 | --- | --- |
-| Tempo e modelo | Envio às 09:38:08,540 UTC; ainda executando às 09:48:27,239. **10min18,699s e 64 respostas de `chatgpt/gpt-6-luna`**, sem revisor independente ou modelo de fronteira. O número de respostas é uma medida observada; o teste foi cancelado pelo operador por demora. |
-| Execução real | 13 chamadas de busca, 20 de leitura HTTP, dois documentos, duas inspeções e três confirmações de revisão. Quatro tentativas de finalizar não concluíram a entrega. As operações primitivas têm recibos próprios e não devem ser somadas como novos pedidos do agente. |
-| Documento diagnóstico | PDF válido de **65.700 bytes e duas páginas**; bytes e texto conferidos. SHA-256 `3ffc8d2ec375155d94308f928fe71f7957d08d003a888ef991c88422a4be7542`. Foi preservado para diagnóstico; **não houve entrega final autônoma nem aprovação de navegação no visualizador**. |
-| Revisão | A primeira revisão recusou, entre outros pontos, espaço vazio e mistura de fontes Microsoft. Depois de criar o substituto, o agente aprovou novamente o arquivo antigo. A revisão do substituto recusou quebra de palavra, apresentação de URLs e a descrição da credencial IBM; o agente voltou a pesquisar. A revisão obrigatória do arquivo atual continuou pendente. |
-| Conteúdo | O documento declara o idioma do curso Google como não confirmado e usa o anúncio de uma trilha/badge diferente. Não há aprovação de completude factual dos campos pedidos. |
-| Resultado | **Reprovado por ausência de conclusão e demora.** Cancelei somente essa execução de QA pelo controle normal do app. Não transformei a interrupção em sucesso. |
+| Drive com nome aproximado | “MOVING DE” encontrou `MovingDE` entre as três contas; travessia de **508 arquivos e 15 subpastas**, em 18 páginas. Não comprova leitura integral dos documentos nem conclusão da renovação de vistos. |
+| Gmail: rascunho e envio | Pedido natural criou rascunho na conta de teste, com card automático. Envio executado e mensagem encontrada posteriormente por outra conversa. |
+| Gmail: labels e arquivo | Dois e-mails de teste receberam a label e saíram de `INBOX`, confirmado por releitura. Não aprova limpeza em massa. |
+| Docs, Sheets e Slides | Criações/alterações de teste confirmadas por releitura, incluindo fórmula em planilha e conteúdo de dois slides. Não cobrem todas as operações. |
+| Agenda | Evento conferido às 15h–15h30 de 11/10, `Europe/Berlin` (+02:00), com lembrete dez minutos antes. Uma falha de reconexão limita a prova de autonomia desse caso. |
+| Exclusão com aprovação | E-mail de teste só foi para `TRASH` depois da aprovação no card; alteração confirmada no Google e tarefa retomada. |
+| Imagem conectada | Pedido normal com Luna usou **`codex/gpt-image-2`**, com entrega em **89,029s**; fonte e pixels conferidos. |
+| Histórico/carregamento | Coordenação limitada à conversa e resumos paginados. Amostras de recarga de **529/534 ms** para o compositor; não equivalem a um teste sustentado em celular físico. |
+| Cards/ações | Card de rascunho aparece automaticamente e fica compacto depois do envio. A revisão ampla de UX e a divergência de contador permanecem abertas. |
 
-Foi descoberta uma falha concreta na implementação de busca em lote: **11 das 13 chamadas** enviaram `query` junto de `queries`. O executor aceitou os argumentos, apesar da exclusividade declarada no schema, e pesquisou apenas `query`, descartando as consultas de `queries`. A proteção foi testada somente no parse isolado do schema e não cobriu esse caminho real do dispatcher. **Essa fronteira foi corrigida e publicada em `b1ce9f19`**, com regressão no worker real e prova da chamada mista na rodada 66; a repetição de pesquisa e a conclusão continuam reprovadas.
+## Publicação, limpeza e preservação
 
-A busca em lote e o limite de até 100 resultados por consulta foram publicados em `505e4f2f`. Houve **22/22 controles focados** no servidor e um controle do extrator Chromium, além de TypeScript e builds aprovados. Isso comprova os limites e a sobreposição HTTP nas condições testadas; **não aprova o uso autônomo da ferramenta**, reprovado acima. Consultas HTTP independentes em lote são uma extensão do Okami. O [código Hermes examinado](https://github.com/NousResearch/hermes-agent/blob/e0550c97bbd916cd5ff8fa0450e6291c31921b94/tools/web_tools.py) suporta limite 100, mas não esse schema de lote.
+- **API:** `c0c2c9ec`, imagem `b2d6cdaa`. Publicação em **22,59 segundos**, com parada limpa e conferência dos artefatos compilados. Banco, configuração e identidade do navegador preservados.
+- **Navegador do agente:** `505e4f2f`, imagem `6bab849f`; **web:** `d8882335`. Não houve novo APK nesta rodada. Main local/remota contém `c0c2c9ec`; o commit deste relatório é documental.
+- **QA atual:** retirados **seis registros de apresentação**: dois arquivos, uma tarefa, uma conversa, uma notificação e uma entrada de inbox. **1.840 registros fora da seleção ficaram idênticos**. Os 33 registros anteriores de versões de procedimentos não mudaram. Inspector fechado, hooks removidos e recibos canônicos preservados.
+- **Preservação conferida:** companions e perfil, **58 arquivos protegidos**, duas conversas reais, três tarefas reais, duas ações, cinco atividades, **três memórias** e **três contas Google simultâneas**. Não houve procedimento novo de QA para arquivar.
+- **Docker nesta rodada:** retiradas **oito imagens antigas sem referência em containers**; aumento observado de espaço livre de **1.607.122.944 bytes**. Preservadas API atual e recuperação, navegador atual e recuperação, OpenBao, volumes, perfis e backups. Retirados também **oito diretórios de build e seus arquivos de release**, após conferir **95.051 hashes de arquivos**; essa etapa liberou mais **1.696.251.904 bytes** na VPS. Containers, mounts, ambiente e imagens retidas permaneceram iguais. A soma dos aumentos observados nas duas etapas é cerca de **3,30 GB**; não é a soma dos tamanhos nominais das imagens com camadas compartilhadas.
+- **Releases locais nesta rodada:** oito arquivos obsoletos removidos após conferir hashes contra os recibos da VPS, liberando **425.938.944 bytes alocados**. Versões atuais e de recuperação preservadas.
+- **Espaço livre após a limpeza:** **32.380.198.912 bytes** na VPS, aproximadamente **30,16 GiB**. É a fotografia final, não uma medida de disponibilidade sustentada.
+- **Limpeza anterior:** três imagens API e seus diretórios/arquivos de release retirados, com cerca de **1,31 GB** de liberação líquida na VPS; três arquivos locais de release liberaram **159.584.256 bytes alocados**. **12 APKs obsoletos** retirados anteriormente, liberando **811.757.568 bytes alocados**. Não houve nova remoção de APK nesta rodada.
 
-Na defasagem do navegador, a comparação dos arquivos reais das imagens identificou seis diferenças previstas: busca, tratamento de erro nativo e dois acréscimos de tipos. A primeira guarda interrompeu a publicação antes de qualquer troca. Após revisar essas diferenças, passaram grupos focados de **19/19**, **5/5** e **25/25**, e as duas imagens foram publicadas. São grupos com escopos próprios, sem soma nem aprovação integral do desktop.
+API, navegador e OpenBao estavam saudáveis na conferência. Sem tarefas, conversas ou solicitações HTTP ativas; manutenção desligada. Permanecem **44 operações históricas incertas**, preservadas para reconciliação com evidência. Não foram apagadas ou marcadas como sucesso para esconder erros.
 
-Doze arquivos privados de execução, publicação, consumo e limpeza foram copiados com hashes iguais aos da VPS; estão em `artifacts/harness-parity-20261009/private-round65-vps`, com manifesto em `round65-private-evidence-manifest.json`. Os testes anteriores abaixo mantêm seu alcance histórico.
+## Pendências que impedem declarar a entrega
 
-## Performance: consumo medido, causa ainda aberta
+1. Garantir comprovação dos campos pedidos no item correto, sem aproveitar informação de outro curso/documento. O contrato atual de conclusão física ainda não garante isso.
+2. Completar e verificar o uso autônomo dos contratos restantes de Hermes/OpenClaw: dispatcher, perfis/worktrees, objetivos, CI, ferramentas kanban e execução programática do navegador. Schemas e código presentes não comprovam equivalência completa.
+3. Ampliar os testes normais pelo chat de todas as operações do Google Workspace, incluindo alterações, exclusões e cards. Os casos acima são aprovações específicas.
+4. Corrigir a causa do consumo alto e medir celular sob uso repetido. Na última amostra o servidor usava **1.005 MiB** e o navegador **421,2 MiB**, ainda com aproximadamente 7% e 8,5% de CPU sem tarefa ativa. **A causa não está estabelecida nem corrigida.**
+5. Concluir a revisão ampla das ações/resumos e reconciliar as operações históricas incertas.
 
-Na rodada 66, a API consumia **918,6 MiB** na amostra anterior ao envio e **1,089 GiB** às 10:15:28, com 35,76% de CPU naquela amostra. O navegador passou de aproximadamente 96 MiB antes do envio para 500,4 MiB durante a execução. A medição do processo API foi separada do pequeno processo launcher; RSS foi 1.027.248 kB às 10:09:39. São amostras, sem prova de pico contínuo, vazamento ou consumo do celular. **A causa do consumo alto ainda não está corrigida.**
+**16 arquivos privados da VPS foram copiados com hashes conferidos**, incluindo publicação, resultado, PDF, integridade e limpeza. Evidência privada atual em `artifacts/harness-parity-20261009/private-round67-vps`, fora do Git. O [histórico técnico](2026-10-09-harness-parity.md) e a [matriz de ferramentas](2026-10-09-harness-tool-inventory.json) preservam os resultados e limites de cada rodada.
 
-A API usou aproximadamente **963–978 MiB** nas primeiras amostras e **1,067 GiB** na amostra das 09:43:59 UTC, com **103,07% de CPU** nessa amostra. Às 09:50:22 UTC, depois da limpeza de QA, a API ainda usava **1,143 GiB**, com 5,55% de CPU; o navegador ficou perto de 49–50 MiB. Os containers estavam saudáveis, sem reinício ou OOM observado. São fotografias da execução, não máximos medidos continuamente nem consumo do celular.
-
-Uma leitura do processo às 09:40:54 UTC mostrou RSS de 1.076.641.792 bytes, heap JavaScript usado de 359.931.608 bytes e memória externa de 227.862.065 bytes. O inspector foi fechado depois da leitura; não houve coleta de lixo forçada ou alteração da tarefa. **A origem do consumo elevado não foi estabelecida nem corrigida.** O loop de pesquisa/revisão aumenta o trabalho observado, mas não explica sozinho toda a memória residente.
-
-## Rodada anterior: PDF entregue, pesquisa reprovada
-
-Pedido enviado pelo compositor do app publicado, em conversa nova, sem citar ferramentas, responder ao agente ou reparar a tarefa:
-
-> Pesquise três cursos gratuitos para começar em IA generativa e me entregue um PDF comparando conteúdo, idioma, duração e se o certificado é pago. Coloque os links das fontes.
-
-| Medida | Resultado observado |
-| --- | --- |
-| Tempo desde o envio | **5min33,319s**; de 09:03:59,047 a 09:09:32,366 UTC. |
-| Modelo executor | **40 respostas de `chatgpt/gpt-6-luna`**, sem revisor independente ou modelo de fronteira. |
-| Documento | PDF real de **52.399 bytes e três páginas**, `cursos-gratuitos-ia-generativa.pdf`; bytes, texto e imagens das três páginas conferidos. |
-| Entrega física | Aprovada. SHA-256 `35c7e39ed4005bf92eb7386d0d12dadb282990e13ff777d8c8a06d19092bc421`. Não foi completada a navegação pelo visualizador publicado antes da retirada dos dados de QA. |
-| Operações canônicas | Nenhuma operação falhou; houve dois documentos e duas revisões. |
-| Pesquisa e conclusão | **Reprovadas**. A tarefa foi encerrada com fatos pedidos sem comprovação suficiente. O tempo piorou em relação aos 4min20s da rodada anterior. |
-
-A primeira revisão do próprio executor recusou o PDF porque os cursos Google não tinham idioma e gratuidade suficientemente confirmados. O agente consultou o plano Google e as páginas IBM, trocou uma opção e criou um PDF substituto. A segunda revisão aprovou, mas os campos Google ainda derivam idioma da página/material consultado, sem evidência do idioma do curso completo. A capa e a nota final afirmam acesso e credencial gratuitos enquanto remetem ao usuário a confirmação das condições dos labs. A ausência de preço anunciado não comprova credencial sem taxa.
-
-Houve progresso verificável: a página da **credencial IBM selecionada** informa expressamente os quatro idiomas e a duração de três horas. As fontes dos cursos Google informam 45 minutos e uma hora. O plano Starter Google existe sem custo e oferece créditos mensais limitados; essa política geral não prova as condições completas de cada curso/badge escolhido.
-
-O contrato canônico de conclusão ainda exige apenas um PDF válido, com `requiredItems` vazio. A revisão do executor não estabelece uma verificação suficiente de completude factual. A correção agora publicada preserva as falhas anteriores no contexto obrigatório da revisão; **isso não substitui uma verificação factual suficiente nem prova que o modelo corrigirá o resultado**.
-
-A evidência está em `artifacts/harness-parity-20261009/research64-acceptance.json` e `private-round64-vps`, fora do Git. Onze arquivos privados de execução, publicação e limpeza foram copiados com hashes iguais aos da VPS, conforme `round64-private-evidence-manifest.json`.
-
-Corrigi também a interpretação de uma evidência anterior: não chamar `read_web_source` explicitamente não prova que o modelo recebeu só um trecho, porque a projeção do executor pode expandir automaticamente o cache elegível. A requisição real do provedor não foi capturada nessa rodada. A correção foi registrada separadamente, preservando os recibos originais; as lacunas factuais continuam reprovadas.
-
-## Causas corrigidas e validação
-
-| Causa | Correção e limite da prova |
-| --- | --- |
-| Leitura HTTP considerava FAQ sem respostas como completa | `841f4bf4`, já publicada: classifica a representação como parcial e permite recuperação. Quatro falhas reproduzidas antes; 70/70 controles depois. |
-| Política permitia encerrar campo pedido após uma leitura | `201b48df`, publicada: mantém o requisito enquanto houver detalhe, recuperação ou alternativa útil. Três falhas reproduzidas; 62/62 controles. Os pedidos normais posteriores continuaram reprovados factualmente. |
-| Revisão obrigatória conferia só aparência | `4f8163da`, publicada na imagem atual: inclui pedido real, orientações atuais, fontes observadas e total de páginas. 74 controles anteriores à paginação; nove controles finais de revisão/paginação, TypeScript e builds aprovados. Os grupos não são uma nova suíte completa da release. |
-| Workflow realmente carregado ainda contradizia a política geral | `59721605`, publicada: orienta `read_web_source` com `spill.fileId` para recuperar trechos preservados, evita inferir idioma do item pela interface e mantém pesquisa/substituição úteis. A falha foi reproduzida no workflow entregue ao modelo; **17/17 controles** passaram, mais uma repetição final do caso de contexto. TypeScript, cópia dos assets e build do harness aprovados. Publicação e novo pedido normal concluídos; a pesquisa continua reprovada factualmente. |
-| Cache de conversa salva era classificado como rascunho | `6b295f52`, publicada no web: só visitas ainda não salvas entram como rascunhos. Falha reproduzida antes; **5/5 controles**, TypeScript do projeto e mobile aprovados. Lint final sem erros, com dois avisos preexistentes. Não apaga cache nem dados do usuário. A interface publicada foi conferida após a limpeza, sem reconstruir as conversas de QA retiradas. Não aprova toda a UX. |
-
-A correção `0a9fd8e5` reproduziu a ausência dos problemas anteriores no contexto obrigatório da revisão substituta. **12/12 controles focados** passaram, com TypeScript, build do servidor, assets e harness aprovados. Lint sem erros, com dois avisos preexistentes. Está publicada em `505e4f2f`, sem outro modelo ou revisão externa. A repetição normal acima **não aprovou a conclusão autônoma**.
-
-A integração nativa de kanban contém quinze schemas originais e contratos de journal/posse/retomada. A recuperação `820c880b` está publicada, com 78 controles focados. A suíte de **2.021 testes** pertence à árvore fixa C e exclui a última proteção de perfil e mudanças posteriores; não é uma aprovação completa da versão atual. Dispatcher real, execução física de worktrees/perfis, objetivos e CI do commit exato continuam pendentes.
-
-## Casos anteriores verificados pelo chat publicado
-
-| Fluxo | Evidência e alcance |
-| --- | --- |
-| Drive com nome aproximado | “MOVING DE” encontrou `MovingDE` entre as três contas; travessia conferiu **508 arquivos e 15 subpastas**, em 18 páginas. Não comprova leitura integral dos documentos nem conclusão da renovação de vistos. |
-| Gmail: rascunho e envio | Pedido natural criou rascunho real na conta de teste, com card automático. Enviar realizou o envio; outra conversa encontrou a mensagem. |
-| Gmail: labels e arquivo | Dois e-mails de teste receberam a label e saíram da caixa de entrada; leitura posterior confirmou `Label_29` e ausência de `INBOX`. Não aprova limpeza em massa. |
-| Docs, Sheets e Slides | Criações/alterações de documentos de teste verificadas por releitura; inclui fórmula na planilha e conteúdo de dois slides. Não é cobertura de todas as operações. |
-| Agenda | Evento conferido para 11/10, 15h–15h30, `Europe/Berlin` (+02:00), com lembrete dez minutos antes. Uma falha de reconexão limita a prova de autonomia desse caso. |
-| Exclusão com aprovação | Um e-mail de teste só foi para `TRASH` depois da aprovação no card; Google confirmou a alteração e o agente retomou. |
-| Imagem conectada | Infográfico normal com Luna usou **`codex/gpt-image-2`** e foi entregue em **89,029s**, com fonte e pixels conferidos. |
-| Memória e aprendizado | Bloqueio da fila de Code Mode reproduzido e corrigido. Revisão de conversa em **10,789s** e aprendizado de procedimento em **15,166s** nos casos verificados. Três memórias reais preservadas; procedimento de QA arquivado. |
-| Histórico/carregamento | Consultas de coordenação limitadas à conversa, sem carregar todo o histórico de tarefas. Amostras de recarga de **529/534 ms** para o compositor; não medem GPU/RAM sustentadas no celular. |
-| Cards/ações | Rascunho aparece automaticamente e fica compacto após envio. A revisão ampla de UX e a divergência de contador permanecem abertas. |
-
-Os casos têm resultados próprios; não representam aprovação integral do Workspace ou do produto. O histórico técnico e a comparação dos contratos estão em [harness-parity](2026-10-09-harness-parity.md) e na [matriz de ferramentas](2026-10-09-harness-tool-inventory.json).
-
-## Limpeza e preservação
-
-- Rodada 66: **sete registros de apresentação de QA** retirados — quatro arquivos, uma tarefa, uma conversa e uma entrada de inbox. **1.835 registros fora da seleção ficaram idênticos**; as 33 versões anteriores de procedimentos não mudaram. Nenhum procedimento novo de QA precisou ser arquivado. Inspector fechado e hooks removidos. Os dados reais e recibos canônicos foram preservados.
-- Rodada 65: **sete registros de apresentação de QA** retirados — quatro arquivos, uma tarefa, uma conversa e uma entrada de inbox. **1.824 registros fora da seleção ficaram idênticos**. Os recibos canônicos e a evidência da falha foram preservados; o inspector e os hooks de limpeza foram removidos.
-- Os **33 registros de versões de procedimentos existentes** ficaram iguais. A rodada 65 não criou um novo procedimento de QA. Aprendizado habilitado, sem revisão ativa e sem erro na conferência após a limpeza.
-- Na rodada 64, foram retirados oito registros de apresentação e arquivado um procedimento de QA; 1.804 registros fora daquela seleção e 32 versões anteriores ficaram iguais. São rodadas distintas, não contagens contraditórias.
-- Companions, dados reais da Beatriz, **três contas Google simultâneas**, três memórias e 58 arquivos protegidos foram preservados. A conferência também preservou duas conversas, três tarefas, duas ações e cinco atividades reais que já existiam antes do teste.
-- VPS, limpeza anterior: removidas **três imagens API obsoletas** e seus três diretórios/arquivos de release, após conferir referências dos containers e **35.644 hashes de arquivos**. Liberação líquida observada de aproximadamente **1,31 GB**. Volumes, backups, perfis nativos e recibos permaneceram intactos. A imagem atual e a recuperação continuam preservadas.
-- Local: três arquivos de release obsoletos removidos após conferência de hashes, liberando **159.584.256 bytes alocados**.
-- Rodadas anteriores: **12 APKs obsoletos** retirados, liberando **811.757.568 bytes alocados**, além de conversas, ações, revisões e documentos identificados como testes. Não houve nova retirada de APK nesta rodada.
-- Após a publicação `b1ce9f19` e a limpeza da rodada 66, **30.148.067.328 bytes livres na VPS**, aproximadamente 28,1 GiB. Os 31.263.707.136 bytes eram da rodada 65 e os 32.345.411.584 bytes da rodada 64, antes dos novos builds; a diferença não é uma nova liberação de espaço.
-
-## Trabalho ainda necessário
-
-1. Corrigir a repetição de pesquisa/revisão, a conclusão que aceita lacunas factuais e o falso bloqueio de perguntas sobre certificados educacionais. Perda de consultas e aprovação do arquivo substituído já têm correção publicada; a rodada 66 continua reprovada. Repetir a aceitação sem fallback para modelo de fronteira.
-2. Completar os contratos restantes de Hermes/OpenClaw e validar seu uso autônomo, incluindo dispatcher, perfis/worktrees, objetivos, CI e execução programática do navegador. Nomes e schemas não bastam.
-3. Ampliar os testes pelo chat de todas as operações do Workspace, especialmente alterações/exclusões e os cards correspondentes. Os casos já aprovados não cobrem todas as ações possíveis.
-4. Medir performance sustentada no celular e sob uso repetido, incluindo consumo de RAM/GPU, carregamento incremental e crescimento das conversas.
-5. Concluir a revisão de UX das ações e reconciliar os registros históricos incertos com evidência do resultado. Esses registros não foram apagados para simular um sistema sem erros.
-
-**O objetivo permanece ativo. Não há evidência suficiente para declarar o harness completo, perfeito ou entregue.**
+**O objetivo permanece ativo. Não há aprovação integral do harness, do Workspace ou da performance.**
