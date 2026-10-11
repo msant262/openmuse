@@ -325,19 +325,13 @@
         "actual UI cancellation of a background Python command interrupts its owned process; original PIDs disappear and no late final file appears",
         "cancelled host primitive autonomously reconciles from the verified physical receipt without changing original native operation records"
       ],
-      "pending": [
-        "broader Hermes/OpenClaw tool parity and performance acceptance"
-      ],
+      "pending": ["broader Hermes/OpenClaw tool parity and performance acceptance"],
       "acceptanceApproved": false,
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72"
     },
     {
-      "tools": [
-        "image_generate",
-        "web_search",
-        "web_extract"
-      ],
+      "tools": ["image_generate", "web_search", "web_extract"],
       "caseAcceptance": "verified",
       "apiSource": "1bda54afbe31eb1ed880379cd9cd3eaec032be1c",
       "verified": [
@@ -347,19 +341,11 @@
         "original image delivered in 89.029 seconds and inspected in the published viewer",
         "independent pixels confirm legibility, three examples and the source footer"
       ],
-      "pending": [
-        "broader media/task coverage and sustained physical-device performance"
-      ],
+      "pending": ["broader media/task coverage and sustained physical-device performance"],
       "acceptanceApproved": false
     },
     {
-      "tools": [
-        "create_document",
-        "inspect_document",
-        "memory",
-        "skill_manage",
-        "execute_code"
-      ],
+      "tools": ["create_document", "inspect_document", "memory", "skill_manage", "execute_code"],
       "caseAcceptance": "verified",
       "apiSource": "6b5500353b731449cd53bbf59566f956a1463659",
       "verified": [
@@ -378,14 +364,8 @@
       "acceptanceApproved": false
     },
     {
-      "tools": [
-        "text_to_speech",
-        "transcribe"
-      ],
-      "upstreamCapability": [
-        "Hermes text_to_speech",
-        "OpenClaw Microsoft tts provider"
-      ],
+      "tools": ["text_to_speech", "transcribe"],
+      "upstreamCapability": ["Hermes text_to_speech", "OpenClaw Microsoft tts provider"],
       "caseAcceptance": "verified",
       "apiSource": "d733ef64b97b2cc3cabecedecdef93eb2715931b",
       "nativeSource": "c7fa614f78ae59496466f38a01f1c3fe66190f72",
@@ -612,7 +592,7 @@
       "failed": [
         "Languages unconfirmed for all three options. Google path duration, freely accessible course content and certificate conditions unproven.",
         "No further targeted recovery of missing fields or proof of three distinct underlying curricula.",
-        "Actual canonical task criteria require only a valid PDF, with empty requiredItems; the verified verdict does not prove the requested comparative fields or source-backed semantic completeness. Evidence saved in round61-factual-criterion-gap.json; no factual closure fix yet."
+        "Actual canonical task criteria require only a valid PDF, with empty requiredItems; the verified verdict does not prove the requested comparative fields or source-backed semantic completeness. Evidence saved in round61-factual-criterion-gap.json; conflicting executor/reviewer field policy corrected and published in 201b48df, but factual closure is still unproven."
       ],
       "pending": [
         "Correct factual closure and validate an unchanged ordinary request after a justified fix; native physical completion does not establish semantic correctness.",
@@ -625,14 +605,14 @@
       "acceptanceApproved": false,
       "productionEnabled": false,
       "verified": [
-        "Creation and stable durable acknowledgments committed and pushed to main in a194088a3a5eed0c9163b3432d4908f4df76ab70; production remains 841f4bf4.",
+        "Creation and stable durable acknowledgments committed in a194088a and now included in published 201b48df. Full profile/workspace execution remains incomplete.",
         "32/32 focused checks, root TypeScript and server/copied-harness build pass.",
         "Fixed source tree e39225a788f8c193e2fbfe98d2971e3e49055182 terminated with 2005/2005 passing, zero failures/cancellations/skips, in 1374015.081356 milliseconds; excludes later native integration.",
         "Fixed-tree suite log SHA-256 c3be7e141374edabfc571d9f1d120e79813a4982361dd9a0586eb74fd2f115d0 and source manifest preserved."
       ],
       "failed": [],
       "pending": [
-        "Creation code is on main, not deployed; physical workspace and runtime parameter execution remain incomplete.",
+        "Creation core is published; physical workspace and runtime parameter execution remain incomplete.",
         "Wire the actual dispatcher, native goal verification and exact-head CI gate."
       ]
     },
@@ -650,19 +630,63 @@
         "Three reproduced saved-delivery recovery cases now pass through the native handoff/journal, with no new source read or inference; earlier ordinary task recovery ordering retained and four image/document recovery cases pass.",
         "Two actual worker interruptions after durable commit and recovery acknowledgment pass: original handoff/result restored from the bound immutable receipt and atomic native proof, with no repeated board mutation or model turn. Prior receipts retained; ended-card prose without native proof rejected.",
         "Current focused group: 73/73 passing in 86895.456658 milliseconds; root TypeScript and server/copied-harness build pass; lint has zero errors and four existing warnings.",
-        "New complete suite started in fixed tree 902116b0535e7e2cc50e73ba39034d447baa16a0, including the recovery corrections. No terminal result yet; prior fixed tree 03c32e2 excludes these corrections.",
-        "A profile disabled after assigned work was observed no longer bypasses its native gate. Current focused group with attachments: 78/78 pass in 97116.095104 milliseconds; final root TypeScript and server/harness build pass. Current source tree a94f3ff0cd2d2016cabd3104e7d2ac3cc59a457f recorded; running full 902116b0 excludes this last guard. Twenty local logs preserved with hashes."
+        "A profile disabled after assigned work was observed no longer bypasses its native gate. Current focused group with attachments: 78/78 pass in 97116.095104 milliseconds; final root TypeScript and server/harness build pass. Current source tree a94f3ff0cd2d2016cabd3104e7d2ac3cc59a457f recorded; completed full 902116b0 excludes this last guard. Twenty local logs preserved with hashes.",
+        "Fixed C tree 902116b0535e7e2cc50e73ba39034d447baa16a0 terminated with 2021/2021 passing, zero failures/cancellations/skips, in 1451258.849098 ms. Log SHA-256 67747ea20b0955cf3584cc22e88c8b4070f7fdfefd3fae087d560486c6f3f251. Excludes later D guard and field policy; those have separate focused evidence. Immutable Git ref retained; completed disposable source removed after all hashes matched, freeing 262619136 allocated bytes.",
+        "Recovery C/D committed and pushed in 820c880b; four staged native files exactly match the source of 78 focused approvals. Base 4de7d575 is included in published 201b48df, but later C/D recovery is not yet deployed. Actual dispatcher and autonomous fifteen-tool acceptance remain unproven."
       ],
       "failed": [],
       "pending": [
-        "No autonomous Luna acceptance or complete fifteen-tool behavior proof. Foundation is committed/pushed in 4de7d575 but not deployed; later recovery/configuration corrections remain uncommitted and unpublished.",
+        "No autonomous Luna acceptance or complete fifteen-tool behavior proof. Base is published in 201b48df under explicit opt-in; later recovery/configuration corrections are on main 820c880b but not deployed.",
         "Complete remaining interruption recovery, original offline lifecycle and full opt-in fidelity; controlled recovery cases do not establish autonomous acceptance or all fifteen tool behaviors.",
-        "Complete dispatcher/profile/workspace execution, goal and exact-head CI gates; validate actual chat-platform availability.",
-        "Observe the complete fixed-tree suite terminal result before claiming full regression approval."
+        "Complete dispatcher/profile/workspace execution, goal and exact-head CI gates; validate actual chat-platform availability."
       ]
+    },
+    {
+      "surface": "research.field-scope-policy-round62",
+      "apiSource": "201b48df",
+      "caseAcceptance": "published-physical-delivery-factual-failure",
+      "acceptanceApproved": false,
+      "verified": [
+        "Old actual executor requests included an instruction allowing unknown requested fields after one provider read. Three scope/regression assertions reproduced the conflict before the fix.",
+        "Requested fields now stay open while useful detail/recovery/replacement paths remain; genuinely unpublished or inapplicable facts and known fees with unpublished amounts stay distinct. No silent independent review enablement.",
+        "62/62 focused checks pass in 170493.75009 ms; configured-off review keeps five executor responses and zero extra reviews on a documented course. Root TypeScript and server/copied-harness build passed in recorded current tree 8f58096d0ae3778fa4c63cfa3894a91e76a19a5c; not a new whole release suite.",
+        "API-only publication took 25.51 seconds; image sha256:3e359482f7e25281c5b5d1a2182071c3dfc2a3bde49ec6afc4ec9aed5c5a6bbb, environment/database/browser and 44 uncertain historical operations preserved.",
+        "Unchanged ordinary composer request submitted 2026-10-11T07:52:28.500Z and completed at 07:55:37.542Z in 189.042 seconds with 26 Luna responses, no independent reviewer, zero failed operations and no operator hints, replies or repairs. Actual 47509-byte two-page PDF, text, both page images, four hyperlink annotations and published page navigation checked.",
+        "Own eight QA presentation records retired; 1776 nonselected records remained identical. QA-derived procedure archived through versioned API; 31 old procedures unchanged. Companions, real data, three memories and three simultaneous Google accounts preserved; learning enabled/idle without errors and all three service containers healthy. VPS free bytes 33239736320; 44 uncertain canonical operations preserved."
+      ],
+      "failed": [
+        "Google free content access is not established by its actual read; only title, description, 45 minutes, badge and Preview are present.",
+        "Google English is inferred from page language; actual course-language field is not established.",
+        "IBM Portuguese-Brazil is a catalogue language filter, not evidence that this particular course is translated; the delivered PDF asks the person to confirm.",
+        "Credential billing conditions stay unknown; relevant provider credential/detail links were not read and no specific fee recovery query was made.",
+        "Microsoft source is truncated from 54031 to 29991 characters; no read_web_source recovery occurred before claiming absence of certificate details.",
+        "The canonical completion still checks only a valid PDF with requiredItems empty."
+      ],
+      "pending": [
+        "Publish justified required-assessment correction, repeat the identical normal composer request and verify all fields against actual source facts and final PDF.",
+        "The canonical task still requires only a physically valid PDF with empty requiredItems; model assessment is not an independent semantic proof. Whole-harness, full Workspace and sustained mobile acceptance remain false."
+      ]
+    },
+    {
+      "surface": "research.required-document-assessment-round63",
+      "caseAcceptance": "local-controlled-validation-normal-acceptance-pending",
+      "acceptanceApproved": false,
+      "productionEnabled": false,
+      "verified": [
+        "Mandatory assessment previously checked page appearance alone; two request/source assertions reproduced this conflict. The existing executor assessment now checks actual original request, current directions and source-backed claims without adding a separate reviewer.",
+        "74/74 controlled-provider checks passed before pagination refinement, with root TypeScript and server/harness build. Exact earlier tree 0d7d4d1a23cf94e1f27a2d808b85a90c4dbba67b and logs retained; excludes final pagination metadata/guard.",
+        "Three pagination assertions reproduced missing total-page metadata and incorrect whole-document scope. Final 9/9 focused controls pass with zero failures/cancellations/skips, including nine pages in five batches. Required assessment receives total pageCount; display batches remain distinct from whole-document completeness.",
+        "Final source root TypeScript, server build, copied assets, embedded harness build and lint completed with exit codes zero recorded in round63-final-validation.json.",
+        "Final immutable tree d59ad9f5e81f44394db57a51cad650d8df1bbfa8 committed in 4f8163da5413f4b87a10a00a5af5ec137564fb93; nine final controls passed in 24097.137258 ms. Exact source/log hashes retained in round63-final-source.json."
+      ],
+      "pending": [
+        "Publish committed correction 4f8163da and run a normal unchanged Luna request; no factual acceptance exists for this correction.",
+        "Native semantic completion contract remains incomplete; approving page appearance or model assessment does not prove all requested facts."
+      ],
+      "localSource": "4f8163da5413f4b87a10a00a5af5ec137564fb93"
     }
   ],
-  "updatedAt": "2026-10-11T07:33:43.714834+00:00",
+  "updatedAt": "2026-10-11T08:23:25.476336+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
@@ -692,9 +716,7 @@
         "kanban_unblock",
         "kanban_link"
       ],
-      "additionalRegisteredToolsOutsideCoreList": [
-        "kanban_schedule"
-      ],
+      "additionalRegisteredToolsOutsideCoreList": ["kanban_schedule"],
       "schedulingContract": "kanban_schedule parks the owned current run until an orchestrator unblocks it; it creates no timer and cannot bypass a goal-mode completion judge.",
       "note": "The pinned module registers fifteen kanban tools; kanban_schedule is outside the literal Hermes core list and remains in the required contract audit. Todo lists and child delegation do not implement dispatcher ownership, compare-and-swap run transitions, review/change states, structured handoffs, dependency routing, scheduling and attachments."
     },
