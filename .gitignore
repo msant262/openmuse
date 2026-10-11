@@ -25,3 +25,4 @@ apps/mobile/google-services.json
 
 # Reproducible local PDF runtime/worker assets, generated before web export.
 apps/mobile/public/pdf-reader/
+apps/mobile/public/_expo/static/pdf-reader/

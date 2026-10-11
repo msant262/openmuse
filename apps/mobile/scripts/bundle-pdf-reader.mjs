@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 export async function bundlePdfReader({
-  publicRoot = fileURLToPath(new URL("../public/pdf-reader", import.meta.url)),
+  publicRoot = fileURLToPath(new URL("../public/_expo/static/pdf-reader", import.meta.url)),
   manifestPath = fileURLToPath(new URL("../src/pdf-reader-assets.ts", import.meta.url)),
 } = {}) {
   const require = createRequire(import.meta.url);
@@ -35,7 +35,7 @@ export async function bundlePdfReader({
     .update(worker)
     .digest("hex")
     .slice(0, 16);
-  const prefix = `/pdf-reader/${version}-${id}/`;
+  const prefix = `/_expo/static/pdf-reader/${version}-${id}/`;
   const output = join(publicRoot, `${version}-${id}`);
   await rm(publicRoot, { recursive: true, force: true });
   await mkdir(output, { recursive: true });

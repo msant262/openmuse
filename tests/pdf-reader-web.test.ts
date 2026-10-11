@@ -27,7 +27,7 @@ test("web PDF reader shows actual pages without a browser plugin and reuses its 
   };
   const { PDF_READER_ASSET_ROOT } = await import("../apps/mobile/src/pdf-reader-assets.ts");
   const assets = await bundlePdfReader({
-    publicRoot: join(temporary, "pdf-reader"),
+    publicRoot: join(temporary, "_expo/static/pdf-reader"),
     manifestPath: null,
   });
   assert.equal(
@@ -134,7 +134,7 @@ test("web PDF reader shows actual pages without a browser plugin and reuses its 
       res.end(bundle.outputFiles[0].text);
       return;
     }
-    if (req.url?.startsWith("/pdf-reader/") && !req.url.includes("..")) {
+    if (req.url?.startsWith(PDF_READER_ASSET_ROOT) && !req.url.includes("..")) {
       try {
         const file = await readFile(resolve(temporary, req.url.slice(1)));
         res.setHeader("Content-Type", req.url.endsWith(".css") ? "text/css" : "text/javascript");
