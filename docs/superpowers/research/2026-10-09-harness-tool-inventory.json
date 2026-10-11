@@ -872,9 +872,30 @@
         "Sustained physical-mobile performance, memory allocation cause and wider action UX.",
         "Reconcile 44 historical uncertain operations without inventing results."
       ]
+    },
+    {
+      "surface": "kanban.native-claim-task-binding-round68",
+      "caseAcceptance": "local-host-binding-foundation-not-automatic-dispatcher",
+      "acceptanceApproved": false,
+      "productionEnabled": false,
+      "published": false,
+      "verified": [
+        "Canonical claim and native task/binding atomically committed under owner scope, authenticated profile CAS and final pause fence.",
+        "Fixture provider uses real worker, source receipt and finish handoff without manual execution-binding insertion; acknowledged outcome replay creates no extra run.",
+        "Seven new cases in final 56/56 focused kanban group; root TypeScript/server/assets/harness build pass; final lint has four preexisting warnings.",
+        "Original host-entry and claim-preparation defects reproduced; source/log hashes frozen in local manifest."
+      ],
+      "pending": [
+        "Worker-loop automatic dispatch and bounded candidate selection.",
+        "Ownership renewal, waiting approval/input, interrupted worker and restart reconciliation.",
+        "Physical scratch/dir/worktree provisioning, tool path binding and artifact preservation.",
+        "Declared model/provider, skills and budgets; goal/PR/exact-commit CI completion gates.",
+        "Conversation/subscriber delivery provenance and a natural public-chat acceptance run.",
+        "Publication and whole-harness/Workspace/performance acceptance."
+      ]
     }
   ],
-  "updatedAt": "2026-10-11T10:49:00Z",
+  "updatedAt": "2026-10-11T11:04:00Z",
   "contractAudit": [
     {
       "surface": "Hermes kanban",

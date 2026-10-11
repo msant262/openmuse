@@ -50,7 +50,7 @@ A rodada anterior ficou **11min39,539s** sem entrega autônoma, com 54 respostas
 ## Publicação, limpeza e preservação
 
 - **API:** `c0c2c9ec`, imagem `b2d6cdaa`. Publicação em **22,59 segundos**, com parada limpa e conferência dos artefatos compilados. Banco, configuração e identidade do navegador preservados.
-- **Navegador do agente:** `505e4f2f`, imagem `6bab849f`; **web:** `d8882335`. Não houve novo APK nesta rodada. Main local/remota contém `c0c2c9ec`; o commit deste relatório é documental.
+- **Navegador do agente:** `505e4f2f`, imagem `6bab849f`; **web:** `d8882335`. Não houve novo APK nesta rodada. Main local/remota contém `c0c2c9ec` e a fundação de vínculo kanban descrita abaixo; essa fundação ainda não está publicada.
 - **QA atual:** retirados **seis registros de apresentação**: dois arquivos, uma tarefa, uma conversa, uma notificação e uma entrada de inbox. **1.840 registros fora da seleção ficaram idênticos**. Os 33 registros anteriores de versões de procedimentos não mudaram. Inspector fechado, hooks removidos e recibos canônicos preservados.
 - **Preservação conferida:** companions e perfil, **58 arquivos protegidos**, duas conversas reais, três tarefas reais, duas ações, cinco atividades, **três memórias** e **três contas Google simultâneas**. Não houve procedimento novo de QA para arquivar.
 - **Docker nesta rodada:** retiradas **oito imagens antigas sem referência em containers**; aumento observado de espaço livre de **1.607.122.944 bytes**. Preservadas API atual e recuperação, navegador atual e recuperação, OpenBao, volumes, perfis e backups. Retirados também **oito diretórios de build e seus arquivos de release**, após conferir **95.051 hashes de arquivos**; essa etapa liberou mais **1.696.251.904 bytes** na VPS. Containers, mounts, ambiente e imagens retidas permaneceram iguais. A soma dos aumentos observados nas duas etapas é cerca de **3,30 GB**; não é a soma dos tamanhos nominais das imagens com camadas compartilhadas.
@@ -59,6 +59,10 @@ A rodada anterior ficou **11min39,539s** sem entrega autônoma, com 54 respostas
 - **Limpeza anterior:** três imagens API e seus diretórios/arquivos de release retirados, com cerca de **1,31 GB** de liberação líquida na VPS; três arquivos locais de release liberaram **159.584.256 bytes alocados**. **12 APKs obsoletos** retirados anteriormente, liberando **811.757.568 bytes alocados**. Não houve nova remoção de APK nesta rodada.
 
 API, navegador e OpenBao estavam saudáveis na conferência. Sem tarefas, conversas ou solicitações HTTP ativas; manutenção desligada. Permanecem **44 operações históricas incertas**, preservadas para reconciliação com evidência. Não foram apagadas ou marcadas como sucesso para esconder erros.
+
+## Avanço local posterior — vínculo do dispatcher
+
+Identificada a ausência do despacho automático de cards. Os testes anteriores inseriam o vínculo de execução manualmente. O host agora tem um caminho que grava card, run, tarefa e vínculo juntos, com proteção contra concorrência, revogação do perfil, pausa e perda de confirmação. **56/56 controles focados**, TypeScript, builds e lint passaram. O provedor usado nesse grupo é de teste; não constitui aceitação normal com Luna. Despacho automático, renovação de posse, provisionamento físico e entrega à conversa correta ainda precisam integração. **Esse avanço não foi publicado.** Detalhes no [registro do dispatcher](2026-10-11-kanban-dispatch.md).
 
 ## Pendências que impedem declarar a entrega
 
