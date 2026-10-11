@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { ModelFileReferences } from "../apps/server/src/engine/file-references.ts";
 import {
   ResearchReviewUnavailableError,
   reviewResearchDelivery,
@@ -200,12 +201,13 @@ test("an incomplete access audit exposes every unknown selection even when its r
 
 test("an existing unselected PDF is recovered by its actual ID without another generation or bypassing its review", async (t) => {
   let fileId = "",
+    recoveredReference = "",
     receiptId = "",
     generations = 0;
   const url = "https://courses.example/open";
   const fixture = await modelFixture(
     t,
-    (i) => {
+    async (i) => {
       if (i === 5) {
         const messages = JSON.parse(fixture.requests[i].body).input;
         const output = JSON.parse(
@@ -213,8 +215,15 @@ test("an existing unselected PDF is recovered by its actual ID without another g
             .output,
         );
         assert.equal(output.continuation, "artifact_selection");
+        recoveredReference = output.availableFiles[0].fileId;
+        assert.match(recoveredReference, /^app_file_[a-f0-9]{12}$/);
+        const references = new ModelFileReferences(f.files, "owner", `task:${task.id}:0`);
         assert.deepEqual(
-          output.availableFiles.map((file: { fileId: string }) => file.fileId),
+          await Promise.all(
+            output.availableFiles.map((file: { fileId: string }) =>
+              references.resolveId(file.fileId),
+            ),
+          ),
           [fileId],
         );
         assert.equal(output.availableFiles[0].mimeType, "application/pdf");
@@ -247,7 +256,10 @@ test("an existing unselected PDF is recovered by its actual ID without another g
         },
         {
           name: "finish_task",
-          arguments: { summary: "The comparison PDF is attached.", artifactIds: [fileId] },
+          arguments: {
+            summary: "The comparison PDF is attached.",
+            artifactIds: [recoveredReference],
+          },
         },
       ][i];
     },

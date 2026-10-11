@@ -409,7 +409,52 @@
         "general Hermes/OpenClaw parity"
       ],
       "acceptanceApproved": false
+    },
+    {
+      "surface": "task-coordination.history-and-fanout",
+      "caseAcceptance": "local-service-worker-verified-publication-pending",
+      "apiSource": "e4947a32c31d8673ba0ffe76eb70e05907ce282d",
+      "verified": [
+        "actual database/service regressions reproduce 18.76 MB unrelated history hydration on delegation and approximately 8.7 MB on settlement/cancellation",
+        "scoped outcome/status queries retain useful conversation results and owner isolation without transferring execution state",
+        "actual worker runs four children and admits the fifth queued child after slots release",
+        "nested cancellation and finished descendant retirement preserve foreign owners and canonical receipt records",
+        "twelve focused continuity, authority and maintenance regressions pass; root TypeScript and server build pass"
+      ],
+      "pending": [
+        "complete local suite",
+        "ordinary published Luna research and actual document verification",
+        "normal model delegation and broader coordination coverage",
+        "Hermes dispatcher kanban lifecycle, review/change states, handoffs, dependency routing and attachments"
+      ],
+      "acceptanceApproved": false
     }
   ],
-  "updatedAt": "2026-10-11"
+  "updatedAt": "2026-10-11",
+  "contractAudit": [
+    {
+      "surface": "Hermes kanban",
+      "status": "pending",
+      "upstream": "e0550c97bbd916cd5ff8fa0450e6291c31921b94",
+      "readSources": [
+        "tools/kanban_tools.py",
+        "tools/kanban_tools_schemas.py",
+        "tools/kanban_toolset_context.py",
+        "tests/tools/test_kanban_tools.py",
+        "tests/tools/test_kanban_toolset_opt_in.py"
+      ],
+      "note": "Todo lists and child delegation do not implement dispatcher ownership, compare-and-swap run transitions, review/change states, structured handoffs, dependency routing and attachments."
+    },
+    {
+      "surface": "Hermes browser_exec",
+      "status": "pending",
+      "upstream": "e0550c97bbd916cd5ff8fa0450e6291c31921b94",
+      "readSources": [
+        "tools/browser_use_cli.py",
+        "tools/browser_tool.py",
+        "tools/browser_vault_tool.py"
+      ],
+      "note": "Backend-gated Python browser helpers, named daemon/tab isolation, vault-aware output redaction, physical timeout containment and browser-session routing require their own contract verification; existing Python host callbacks are not full parity evidence."
+    }
+  ]
 }
