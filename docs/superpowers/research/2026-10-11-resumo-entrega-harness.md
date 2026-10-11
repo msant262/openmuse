@@ -7,14 +7,16 @@ de aceite exigido pelo usuário permanece aberto.
 
 ## Publicação conferida
 
-Em **11/10 às 21:21 UTC**, página e API públicas responderam HTTP 200.
+Em **11/10 às 21:46 UTC**, página e API públicas responderam HTTP 200.
 API, navegador e OpenBao estavam saudáveis. Isso comprova disponibilidade
 nesse instante; estabilidade sob carga e desempenho no celular continuam
 pendentes.
 
 - API publicada: implementação `b5043529`, imagem `780569c1`.
 - Web: release `harness80-20261011-e1fd91f9`.
-- Main local e remota conferidas iguais em `3183604c`, antes deste relatório.
+- Main local e remota conferidas iguais em `2be27b35`, antes desta atualização
+  do relatório. A implementação mais recente é `a404b96d`; os commits
+  posteriores registram testes, limites encontrados e limpeza.
 - Não foi publicado APK novo nesta etapa.
 - A nova base de execução Python está na **main em `a404b96d`, sem publicação**.
   Não representa uma ferramenta de navegador já disponível.
@@ -72,7 +74,7 @@ revisão inconsistente permanecem problemas a corrigir.
 - Mantidos imagens atual/de recuperação, volumes, perfis, OpenBao e backups.
   As 44 operações históricas sem resultado confirmado permanecem para
   reconciliação; não foram marcadas como sucesso nem apagadas.
-- Espaço livre observado às 21:21 UTC: **45.471.838.208 bytes**, cerca de
+- Espaço livre observado às 21:46 UTC: **45.470.896.128 bytes**, cerca de
   **42,35 GiB**. Esse é o espaço disponível, não o total liberado.
 - Conferência posterior recolheu sete processos de um navegador de QA local
   aberto desde 09:30. Corrigido o encerramento do helper de testes e confirmado
