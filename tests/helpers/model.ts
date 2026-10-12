@@ -223,6 +223,10 @@ export async function modelFixture(
       !offeredHostTools(body).includes("finish_task")
     )
       call.arguments = { acknowledgment: null, reaction: null, ...call.arguments };
+    // Direct-only host controls keep their advertised native prefix. Dispatching
+    // them through the deferred catalog invents a provider call the schema rejects.
+    if (call && !offeredNames.includes(call.name) && offeredNames.includes(`okami_${call.name}`))
+      call = { ...call, name: `okami_${call.name}` };
     if (call && offeredNames.includes("tool_call") && !offeredNames.includes(call.name)) {
       call =
         call.name === "describe_tools" || call.name === "search_tools"

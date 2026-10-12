@@ -45,6 +45,7 @@ for (const finishFirst of [false, true])
             [
               [
                 "The selected course duration is unconfirmed. Read a relevant source or select another qualifying course.",
+                "Course duration: The selected course duration is unconfirmed. Read a relevant source or select another qualifying course.",
               ],
             ],
           );
@@ -88,6 +89,39 @@ for (const finishFirst of [false, true])
           arguments: {
             receiptId,
             passed: action === "approve",
+            requestAudit:
+              action === "reject"
+                ? [
+                    {
+                      requirement: "Course duration",
+                      satisfied: false,
+                      evidence:
+                        "The selected course duration is unconfirmed. Read a relevant source or select another qualifying course.",
+                    },
+                  ]
+                : [
+                    {
+                      requirement: "Free course content",
+                      satisfied: true,
+                      evidence: "The alternative source explicitly states free lessons.",
+                    },
+                    {
+                      requirement: "Course language",
+                      satisfied: true,
+                      evidence: "The alternative source explicitly states Portuguese.",
+                    },
+                    {
+                      requirement: "Course duration",
+                      satisfied: true,
+                      evidence: "The alternative source explicitly states two hours.",
+                    },
+                    {
+                      requirement: "Certificate price",
+                      satisfied: true,
+                      evidence:
+                        "The alternative source explicitly states an optional certificate costs €20.",
+                    },
+                  ],
             issues:
               action === "reject"
                 ? [
@@ -199,6 +233,19 @@ for (const reviewState of ["private-input", "replaced-draft", "no-draft"] as con
           arguments: {
             receiptId: inspection.id,
             passed: false,
+            requestAudit: [
+              {
+                requirement:
+                  reviewState === "private-input"
+                    ? "User's fixed work hours"
+                    : "Course content, language and duration",
+                satisfied: reviewState !== "private-input",
+                evidence:
+                  reviewState === "private-input"
+                    ? "The requested personal schedule lacks the user's fixed work hours."
+                    : "The observed course source states free lessons, two hours, in Portuguese.",
+              },
+            ],
             issues:
               reviewState === "private-input"
                 ? ["The requested personal schedule lacks the user's fixed work hours."]
