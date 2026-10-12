@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { BrowserContext, Frame, Page } from "playwright";
+import type { BrowserContext, CDPSession, Frame, Page } from "playwright";
 import {
   browserCdpInputSchema,
   browserConsoleInputSchema,
@@ -14,8 +14,13 @@ import { browserUploadSchema } from "../../../packages/domain/src/browser-file.t
 import { browserImagesInputSchema } from "../../../packages/domain/src/browser-images.ts";
 import { defaultSearchEndpoint, searchInputSchema } from "../../../packages/domain/src/search.ts";
 import { AgentPage, browserAction } from "./agent-page.ts";
-import { BrowserDiagnostics } from "./browser-diagnostics.ts";
+import { BrowserDiagnostics, BrowserSecretRedactor } from "./browser-diagnostics.ts";
 import { BrowserDialogs } from "./browser-dialogs.ts";
+import {
+  BrowserHarnessDriver,
+  type BrowserHarnessScope,
+  browserHarnessRequestSchema,
+} from "./browser-harness-driver.ts";
 import { BrowserChallenge } from "./challenge.ts";
 import {
   type CredentialLoginInput,
@@ -46,18 +51,28 @@ export interface Session {
   updatedAt: string;
   control?: "agent" | "human";
 }
-type Running = {
+type Surface = {
   publicData: ReturnType<typeof observePublicDataRequests>;
-  context: BrowserContext;
   page: Page;
-  touched: number;
-  pending: Set<Promise<void>>;
-  downloadError?: boolean;
   agent: AgentPage;
   challenge: BrowserChallenge;
   diagnostics: BrowserDiagnostics;
   dialogs: BrowserDialogs;
   captchaActive?: boolean;
+  navigation?: Promise<void>;
+};
+type Running = Surface & {
+  context: BrowserContext;
+  touched: number;
+  pending: Set<Promise<void>>;
+  downloadError?: boolean;
+  surfaces: Map<Page, Surface>;
+  surfacePending: Set<Promise<void>>;
+  secrets: BrowserSecretRedactor;
+  script?: BrowserHarnessDriver;
+  scriptCdp?: CDPSession;
+  scriptPageCreation?: Promise<Page>;
+  scriptValidatedUrls: Map<Page, string>;
   interruptions: {
     popupsBlocked: number;
     dialogsDismissed: number;
@@ -96,6 +111,14 @@ export async function createBrowserManager(options: {
   idleTimeoutMs?: number;
   native?: NativeBrowserConfig;
   beforeEffect?: () => void;
+  /** Host-only scope/effect policy. Without this hook scripts fail before launch.
+   * The native host must supply its actual approvals and upload grants. */
+  scriptPolicy?: (
+    scope: BrowserHarnessScope,
+    page: Page | undefined,
+    method: string,
+    params: Record<string, unknown>,
+  ) => Promise<void>;
   /** Trusted constructor configuration only; callers cannot select an index URL. */
   searchEndpoint?: string;
   protect?: (
@@ -196,6 +219,8 @@ export async function createBrowserManager(options: {
     return session;
   }
   async function observation(id: string, instance: Running) {
+    const owned = instance.surfaces.get(instance.page);
+    if (!instance.dialogs.pending) await owned?.navigation;
     const snapshot = await instance.dialogs.observe(() => instance.agent.snapshot());
     await refresh(id);
     const dialog = instance.dialogs.observation();
@@ -291,6 +316,234 @@ export async function createBrowserManager(options: {
       await validatePublicUrl(frame.url());
     }
   }
+  function surface(
+    id: string,
+    page: Page,
+    getInstance: () => Running,
+    secrets: BrowserSecretRedactor,
+  ): Surface {
+    page.setDefaultTimeout(10_000);
+    const diagnostics = new BrowserDiagnostics(page, secrets);
+    let agent: AgentPage;
+    const dialogs = new BrowserDialogs(
+      page,
+      (text) => secrets.redact(text),
+      () => {
+        void agent.invalidate();
+      },
+    );
+    agent = new AgentPage(
+      page,
+      options.protect
+        ? async (masks, state) => {
+            // Background reads must not remove the foreground tab's physical masks.
+            if (getInstance().page === page) await options.protect?.(masks, state);
+          }
+        : undefined,
+      (label) => dialogs.setOpener(label),
+    );
+    page.on("download", (download) => {
+      const instance = getInstance();
+      const pending = downloads(id).then((saved) =>
+        capturePdfDownload({
+          directory: directory(id),
+          tempDirectory: join("/tmp", `openmuse-downloads-${id}`),
+          download,
+          limitReached: saved.length + instance.pending.size > 20,
+        }),
+      );
+      instance.pending.add(pending);
+      void pending.then(
+        () => instance.pending.delete(pending),
+        () => {
+          instance.downloadError = true;
+          instance.pending.delete(pending);
+        },
+      );
+    });
+    page.on("close", () => {
+      const instance = getInstance();
+      instance.surfaces.delete(page);
+      instance.scriptValidatedUrls.delete(page);
+      void agent.invalidate();
+    });
+    return {
+      page,
+      agent,
+      dialogs,
+      diagnostics,
+      challenge: new BrowserChallenge(page),
+      publicData: observePublicDataRequests(page),
+    };
+  }
+  function selectSurface(instance: Running, page: Page | undefined) {
+    const selected = page && instance.surfaces.get(page);
+    if (!selected || page === instance.page || page?.isClosed()) return;
+    const previous = instance.surfaces.get(instance.page);
+    if (previous) previous.captchaActive = instance.captchaActive;
+    Object.assign(instance, selected, { captchaActive: selected.captchaActive });
+  }
+  async function validateScriptPage(instance: Running, page: Page) {
+    if (instance.unsafeSurface)
+      throw new WorkerError(
+        "BROWSER_SURFACE_UNSAFE",
+        "An unexpected browser surface could not be contained",
+        409,
+      );
+    const urls = page.frames().map((frame) => frame.url());
+    const signature = JSON.stringify(urls);
+    if (instance.scriptValidatedUrls.get(page) === signature) return;
+    await Promise.all(
+      urls
+        .filter((url) => !["about:blank", "about:srcdoc"].includes(url))
+        .map((url) => validatePublicUrl(url)),
+    );
+    // Network sockets and new routes remain checked by the egress proxy. This
+    // cache avoids a DNS trip for every internal key event on the same document.
+    instance.scriptValidatedUrls.set(page, signature);
+  }
+  function redactScript(instance: Running, value: unknown): unknown {
+    if (typeof value === "string") return instance.secrets.redact(value);
+    if (Array.isArray(value)) return value.map((item) => redactScript(instance, item));
+    if (value && typeof value === "object")
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [
+          key,
+          /^(authorization|cookie|set-cookie|password|access[_-]?token|refresh[_-]?token)$/i.test(
+            key,
+          )
+            ? "[redacted]"
+            : redactScript(instance, item),
+        ]),
+      );
+    return value;
+  }
+  async function scriptDriver(id: string, instance: Running) {
+    if (instance.script) return instance.script;
+    const browser = instance.context.browser();
+    if (!browser)
+      throw new WorkerError("BROWSER_SCRIPT_UNAVAILABLE", "Browser CDP pipe is unavailable", 503);
+    const cdp = await browser.newBrowserCDPSession();
+    instance.scriptCdp = cdp;
+    instance.script = new BrowserHarnessDriver({
+      cdp,
+      guard: () => guardAgent(id),
+      createPage: async () => {
+        guardAgent(id);
+        const created = instance.context.newPage();
+        instance.scriptPageCreation = created;
+        let page: Page | undefined;
+        try {
+          page = await created;
+          guardAgent(id);
+          const owned = surface(id, page, () => instance, instance.secrets);
+          instance.surfaces.set(page, owned);
+          const probe = await instance.context.newCDPSession(page);
+          try {
+            const { targetInfo } = await probe.send("Target.getTargetInfo");
+            return { page, targetId: targetInfo.targetId };
+          } finally {
+            await probe.detach();
+          }
+        } catch (error) {
+          await page?.close().catch(() => {});
+          throw error;
+        } finally {
+          if (instance.scriptPageCreation === created) instance.scriptPageCreation = undefined;
+        }
+      },
+      authorize: async (scope, page, method, params) => {
+        guardAgent(id);
+        await options.scriptPolicy?.(scope, page, method, params);
+        if (
+          (method === "Page.navigate" || method === "Target.createTarget") &&
+          params.url !== undefined &&
+          params.url !== "about:blank"
+        )
+          await validatePublicUrl(String(params.url));
+        if (page) {
+          const owned = instance.surfaces.get(page);
+          if (!owned)
+            throw new WorkerError(
+              "BROWSER_SCRIPT_FOREIGN_TARGET",
+              "Browser page is not owned by this profile",
+              403,
+            );
+          if (owned.dialogs.pending && method !== "Page.handleJavaScriptDialog")
+            throw new WorkerError(
+              "BROWSER_DIALOG_PENDING",
+              "Respond to the exact pending browser dialog before continuing",
+              409,
+            );
+          if (/^(Runtime|DOM)\./.test(method)) await owned.navigation;
+          await validateScriptPage(instance, page);
+          if (/^(Runtime|DOM)\./.test(method)) await owned.agent.prepareProgrammaticObservation();
+          if (method === "Page.navigate") {
+            // Observe this one dispatch; never repeat it after a loading failure.
+            owned.navigation = page
+              .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 60_000 })
+              .then(() => {});
+            void owned.navigation.catch(() => {});
+          }
+        }
+        guardAgent(id);
+      },
+      screenshot: async (_scope, page, params) => {
+        const owned = instance.surfaces.get(page);
+        if (!owned)
+          throw new WorkerError(
+            "BROWSER_SCRIPT_FOREIGN_TARGET",
+            "Protected page is unavailable",
+            403,
+          );
+        if (params.format !== undefined && params.format !== "png" && params.format !== "jpeg")
+          throw new WorkerError(
+            "INVALID_SCREENSHOT",
+            "Use PNG or JPEG for protected screenshots",
+            422,
+          );
+        selectSurface(instance, page);
+        await owned.navigation;
+        await owned.agent.prepareObservation();
+        guardAgent(id);
+        const bytes = await page.screenshot({
+          type: params.format === "jpeg" ? "jpeg" : "png",
+          fullPage: params.captureBeyondViewport === true,
+          mask: page
+            .frames()
+            .map((frame) =>
+              frame.locator('input[type="password"], [data-openmuse-credential-sensitive="true"]'),
+            ),
+          maskColor: "#000000",
+          timeout: 10_000,
+        });
+        guardAgent(id);
+        if (bytes.length > 8 * 1024 ** 2)
+          throw new WorkerError(
+            "SCREENSHOT_TOO_LARGE",
+            "The screenshot exceeds the private transport's image capacity",
+            413,
+          );
+        return { data: bytes.toString("base64") };
+      },
+      execute: async (_scope, page, method, params) => {
+        if (method !== "Page.handleJavaScriptDialog") return undefined;
+        const owned = instance.surfaces.get(page);
+        const dialog = owned?.dialogs.observation();
+        if (!owned || !dialog)
+          throw new WorkerError("STALE_DIALOG", "There is no pending browser dialog", 409);
+        const checked = browserDialogInputSchema.parse({
+          dialogId: dialog.id,
+          accept: params.accept,
+          ...(params.promptText !== undefined ? { promptText: params.promptText } : {}),
+        });
+        await owned.dialogs.respond(checked, () => guardAgent(id));
+        return {};
+      },
+      redact: (value) => redactScript(instance, value),
+    });
+    return instance.script;
+  }
   async function closeSession(id: string) {
     const instance = running.get(id);
     const stored = sessions.get(id);
@@ -307,11 +560,17 @@ export async function createBrowserManager(options: {
       } finally {
         // A failed state save must still release Chromium and the profile lock.
         try {
+          try {
+            await instance.script?.close();
+            await instance.scriptCdp?.detach();
+          } catch {
+            failed = true;
+          }
           await instance.context.close();
         } catch {
           failed = true;
         }
-        await Promise.allSettled(instance.pending);
+        await Promise.allSettled([...instance.pending, ...instance.surfacePending]);
         running.delete(id);
         await rm(`${statePath}.tmp`, { force: true }).catch(() => {});
       }
@@ -342,11 +601,13 @@ export async function createBrowserManager(options: {
     if (instance) closeFailures.delete(id);
     return result;
   }
-  async function createSession(id: string, url: string, agent = true) {
+  async function createSession(id: string, url: string, agent = true, blank = false) {
     if (agent) guardAgent(id);
-    await validatePublicUrl(url);
+    if (!(blank && url === "about:blank")) await validatePublicUrl(url);
     const closed = running.get(id);
     if (closed?.page.isClosed()) {
+      await closed.script?.close();
+      await closed.scriptCdp?.detach();
       await closed.agent.invalidate();
       await closed.context.close();
       await Promise.allSettled(closed.pending);
@@ -434,55 +695,41 @@ export async function createBrowserManager(options: {
       const oldPages = context.pages();
       const page = await context.newPage();
       for (const old of oldPages) await old.close();
-      page.setDefaultTimeout(10_000);
-      const diagnostics = new BrowserDiagnostics(page);
       let instance: Running;
-      const dialogs = new BrowserDialogs(
-        page,
-        (text) => diagnostics.redact(text),
-        () => {
-          void instance.agent.invalidate();
-        },
-      );
+      const secrets = new BrowserSecretRedactor();
+      const initialSurface = surface(id, page, () => instance, secrets);
       instance = {
-        publicData: observePublicDataRequests(page),
+        ...initialSurface,
         context,
-        page,
         touched: Date.now(),
         pending: new Set(),
-        agent: new AgentPage(page, options.protect, (label) => dialogs.setOpener(label)),
-        challenge: new BrowserChallenge(page),
-        diagnostics,
-        dialogs,
+        surfaces: new Map([[page, initialSurface]]),
+        surfacePending: new Set(),
+        secrets,
+        scriptValidatedUrls: new Map(),
         interruptions: { popupsBlocked: 0, dialogsDismissed: 0 },
       };
       running.set(id, instance);
       context.on("page", (popup) => {
-        instance.interruptions.popupsBlocked = Math.min(
-          1000,
-          instance.interruptions.popupsBlocked + 1,
-        );
-        instance.interruptions.last = "POPUP_BLOCKED";
-        void instance.agent.invalidate();
-        void popup.close().catch(() => {
-          instance.unsafeSurface = true;
-        });
-      });
-      page.on("download", (download) => {
-        const pending = downloads(id).then((saved) =>
-          capturePdfDownload({
-            directory: directory(id),
-            tempDirectory,
-            download,
-            limitReached: saved.length + instance.pending.size > 20,
-          }),
-        );
-        instance.pending.add(pending);
+        const expected = instance.scriptPageCreation;
+        const pending = (async () => {
+          if (expected && (await expected.catch(() => undefined)) === popup) return;
+          instance.interruptions.popupsBlocked = Math.min(
+            1000,
+            instance.interruptions.popupsBlocked + 1,
+          );
+          instance.interruptions.last = "POPUP_BLOCKED";
+          await instance.agent.invalidate();
+          await popup.close().catch(() => {
+            instance.unsafeSurface = true;
+          });
+        })();
+        instance.surfacePending.add(pending);
         void pending.then(
-          () => instance.pending.delete(pending),
+          () => instance.surfacePending.delete(pending),
           () => {
-            instance.downloadError = true;
-            instance.pending.delete(pending);
+            instance.surfacePending.delete(pending);
+            instance.unsafeSurface = true;
           },
         );
       });
@@ -496,7 +743,7 @@ export async function createBrowserManager(options: {
       };
       sessions.set(id, initial);
       await persist(initial);
-      return await navigate(id, url, agent);
+      return blank && url === "about:blank" ? await refresh(id) : await navigate(id, url, agent);
     } catch (error) {
       await context.close().catch(() => {});
       await Promise.allSettled(running.get(id)?.pending ?? []);
@@ -527,11 +774,58 @@ export async function createBrowserManager(options: {
   sweeper.unref();
   return {
     list: () => [...sessions.values()],
+    script: (id: string, scope: BrowserHarnessScope, raw: unknown, timeoutMs = 5000) =>
+      serial(id, async () => {
+        directory(id);
+        if (!options.scriptPolicy)
+          throw new WorkerError(
+            "BROWSER_SCRIPT_UNAVAILABLE",
+            "Browser script host policy is unavailable",
+            503,
+          );
+        if (
+          !scope.owner ||
+          !scope.conversation ||
+          !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(scope.name)
+        )
+          throw new WorkerError(
+            "INVALID_BROWSER_SCRIPT_SCOPE",
+            "Owned browser program scope is required",
+            422,
+          );
+        const request = browserHarnessRequestSchema.parse(raw);
+        guardAgent(id);
+        await options.scriptPolicy(
+          scope,
+          undefined,
+          request.method ?? `meta.${request.meta}`,
+          request.params ?? {},
+        );
+        guardAgent(id);
+        if (!running.has(id)) await createSession(id, "about:blank", true, true);
+        const instance = running.get(id);
+        if (!instance)
+          throw new WorkerError("SESSION_CLOSED", "Browser program profile is unavailable", 409);
+        instance.touched = Date.now();
+        const driver = await scriptDriver(id, instance);
+        if (request.meta === "drain_events")
+          for (const page of driver.ownedPages(scope))
+            await instance.surfaces.get(page)?.agent.prepareProgrammaticObservation();
+        try {
+          return await driver.handle(scope, request, timeoutMs);
+        } finally {
+          selectSurface(instance, driver.currentPage(scope));
+        }
+      }),
     resetInput: async (id: string) => {
       const instance = running.get(id);
       if (!instance) return;
-      await instance.agent.invalidate();
-      await resetBrowserInput(instance.page);
+      await Promise.all(
+        [...instance.surfaces.values()].map(async (owned) => {
+          await owned.agent.invalidate();
+          await resetBrowserInput(owned.page);
+        }),
+      );
     },
     create: (id: string, url: string, agent = true) => {
       const session = sessions.get(id);

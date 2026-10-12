@@ -14,23 +14,9 @@ type Entry = {
   recordedAt: string;
   truncated: boolean;
 };
-/** Bounded per-page diagnostics; no polling, JS-handle retention or disk log. */
-export class BrowserDiagnostics {
-  private entries: Entry[] = [];
-  private sequence = 0;
-  private bytes = 0;
-  private dropped = 0;
-  private cdpSession?: Promise<CDPSession>;
+/** Credential redaction follows the profile, including after its entry tab closes. */
+export class BrowserSecretRedactor {
   private secrets = new Set<string>();
-  private readonly page: Page;
-  constructor(page: Page) {
-    this.page = page;
-    page.on("console", (message) => this.append("console", message.type(), message.text()));
-    page.on("pageerror", (error) => this.append("exception", "error", error.message));
-    page.on("framenavigated", (frame) => {
-      if (frame === page.mainFrame()) this.clear();
-    });
-  }
   protectSecrets(values: string[]) {
     const merged = new Set([...this.secrets, ...values.filter(Boolean)]);
     if ([...merged].reduce((bytes, value) => bytes + Buffer.byteLength(value), 0) > 1024 * 1024)
@@ -46,6 +32,31 @@ export class BrowserDiagnostics {
   redact(text: string) {
     for (const value of this.secrets) text = text.split(value).join("[redacted]");
     return text.replace(/\bBearer\s+[^\s"'<>]+/gi, "Bearer [redacted]");
+  }
+}
+/** Bounded per-page diagnostics; no polling, JS-handle retention or disk log. */
+export class BrowserDiagnostics {
+  private entries: Entry[] = [];
+  private sequence = 0;
+  private bytes = 0;
+  private dropped = 0;
+  private cdpSession?: Promise<CDPSession>;
+  private readonly page: Page;
+  private readonly secrets: BrowserSecretRedactor;
+  constructor(page: Page, secrets = new BrowserSecretRedactor()) {
+    this.page = page;
+    this.secrets = secrets;
+    page.on("console", (message) => this.append("console", message.type(), message.text()));
+    page.on("pageerror", (error) => this.append("exception", "error", error.message));
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) this.clear();
+    });
+  }
+  protectSecrets(values: string[]) {
+    this.secrets.protectSecrets(values);
+  }
+  redact(text: string) {
+    return this.secrets.redact(text);
   }
   private append(source: Entry["source"], level: string, raw: string) {
     const text = this.redact(raw),

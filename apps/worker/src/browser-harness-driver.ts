@@ -16,7 +16,7 @@ type State = {
   eventBytes: number;
   dialog?: unknown;
 };
-const requestSchema = z
+export const browserHarnessRequestSchema = z
   .object({
     meta: z.string().min(1).max(64).optional(),
     method: z
@@ -34,6 +34,25 @@ const requestSchema = z
  * Session IDs are opaque references to targets owned by one task conversation.
  * Mandatory host hooks retain policy, protected screenshots and redaction.
  * This driver alone does not declare backend availability or tool registration. */
+type DriverOptions = {
+  cdp: CDPSession;
+  createPage: (scope: BrowserHarnessScope) => Promise<{ page: Page; targetId: string }>;
+  guard: (scope: BrowserHarnessScope) => void;
+  authorize: (
+    scope: BrowserHarnessScope,
+    page: Page | undefined,
+    method: string,
+    params: Params,
+  ) => Promise<void>;
+  screenshot: (scope: BrowserHarnessScope, page: Page, params: Params) => Promise<Params>;
+  execute?: (
+    scope: BrowserHarnessScope,
+    page: Page,
+    method: string,
+    params: Params,
+  ) => Promise<Params | undefined>;
+  redact: (value: unknown) => unknown;
+};
 export class BrowserHarnessDriver {
   private states = new Map<string, State>();
   private wires = new Map<string, Session>();
@@ -46,21 +65,9 @@ export class BrowserHarnessDriver {
   >();
   private sequence = 0;
   private closed = false;
-  constructor(
-    private readonly options: {
-      cdp: CDPSession;
-      createPage: (scope: BrowserHarnessScope) => Promise<{ page: Page; targetId: string }>;
-      guard: (scope: BrowserHarnessScope) => void;
-      authorize: (
-        scope: BrowserHarnessScope,
-        page: Page | undefined,
-        method: string,
-        params: Params,
-      ) => Promise<void>;
-      screenshot: (scope: BrowserHarnessScope, page: Page, params: Params) => Promise<Params>;
-      redact: (value: unknown) => unknown;
-    },
-  ) {
+  private readonly options: DriverOptions;
+  constructor(options: DriverOptions) {
+    this.options = options;
     options.cdp.on("Target.receivedMessageFromTarget", this.received);
     options.cdp.on("Target.detachedFromTarget", this.detached);
   }
@@ -315,7 +322,7 @@ export class BrowserHarnessDriver {
         "Browser command deadline is invalid",
         422,
       );
-    const request = requestSchema.parse(raw),
+    const request = browserHarnessRequestSchema.parse(raw),
       state = await this.state(scope, timeoutMs);
     if (request.meta) {
       switch (request.meta) {
@@ -410,13 +417,15 @@ export class BrowserHarnessDriver {
     if (method === "Target.createTarget") {
       const created = await this.create(state);
       // Helpers create blank, attach, then navigate. Never race target creation and navigation.
-      if (params.url && params.url !== "about:blank")
+      if (params.url && params.url !== "about:blank") {
+        await this.options.authorize(scope, created.page, "Page.navigate", { url: params.url });
         await this.send(
           await this.attach(state, created, timeoutMs),
           "Page.navigate",
           { url: params.url },
           timeoutMs,
         );
+      }
       return { result: { targetId: created.targetId } };
     }
     if (method === "Target.attachToTarget")
@@ -462,6 +471,9 @@ export class BrowserHarnessDriver {
       this.guard(scope);
       return { result };
     }
+    const intercepted = await this.options.execute?.(scope, current.target.page, method, params);
+    this.guard(scope);
+    if (intercepted !== undefined) return { result: this.options.redact(intercepted) };
     if (method.startsWith("Browser."))
       return { result: this.options.redact(await this.browser(scope, method, params)) };
     return this.send(current, method, params, timeoutMs);
@@ -474,6 +486,22 @@ export class BrowserHarnessDriver {
     state.sessions.clear();
     state.events.length = 0;
     state.eventBytes = 0;
+  }
+  currentPage(scope: BrowserHarnessScope): Page | undefined {
+    return this.states.get(JSON.stringify([scope.owner, scope.conversation, scope.name]))?.current
+      ?.target.page;
+  }
+  ownedPages(scope: BrowserHarnessScope): Page[] {
+    const state = this.states.get(JSON.stringify([scope.owner, scope.conversation, scope.name]));
+    return state
+      ? [
+          ...new Set(
+            [...state.targets.values()]
+              .filter((target) => !target.page.isClosed())
+              .map((target) => target.page),
+          ),
+        ]
+      : [];
   }
   async close() {
     if (this.closed) return;
