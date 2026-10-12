@@ -6,7 +6,7 @@
   "scripts": {
     "start": "expo start --dev-client",
     "web": "expo start --web --port 8081",
-    "build:web": "node scripts/bundle-pdf-reader.mjs && expo export --platform web --output-dir dist/web --clear",
+    "build:web": "node scripts/bundle-pdf-reader.mjs && EXPO_PUBLIC_WEB_SAME_ORIGIN=true expo export --platform web --output-dir dist/web --clear",
     "build:pdf-reader": "node scripts/bundle-pdf-reader.mjs",
     "build:ios": "expo export --platform ios --output-dir dist/ios",
     "build:android": "expo export --platform android --output-dir dist/android",
