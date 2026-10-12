@@ -14,6 +14,9 @@ pendentes.
 
 - API publicada: implementação `b5043529`, imagem `780569c1`.
 - Web: release `harness80-20261011-e1fd91f9`.
+- Em **12/10 às 00:24 UTC**, a página pública respondeu HTTP 200 em 0,112s. Essa
+  requisição não mede o carregamento do chat, a saúde atual dos containers
+  nem o desempenho no celular.
 - O gerenciador do navegador foi integrado em `6bab34fc`; os cenários de teste
   foram alinhados ao esquema atual em `728e305b`. O handler nativo continua
   pendente. Esses commits não representam uma publicação no app.
@@ -31,7 +34,7 @@ pendentes.
 | Agenda e exclusão | Evento conferido em `Europe/Berlin`, com lembrete. Exclusão de e-mail só ocorreu após aprovação no card e foi confirmada no Google. | A reconexão limitou a prova de autonomia do caso da agenda. Todos os fluxos, inclusive remoção de evento, ainda não têm aprovação integral. |
 | Imagem conectada | Pedido comum com Luna chamou `codex/gpt-image-2` e entregou em 89,029s; fonte e pixels conferidos. | Esse caso não aprova todas as tarefas de infográfico. |
 | Pesquisa e conclusão | Consultas preservadas pelo dispatcher, leitura de vários campos na mesma fonte, rejeição de revisão de PDF antigo e continuação de reparos sem perguntas dispensáveis. A revisão factual agora valida o esquema exigido. | Revisão ainda pode avaliar fatos incorretamente; declarar conclusão não basta para aprovar o conteúdo. |
-| Contexto de pesquisa | Fontes repetidas no agregado e nas consultas passaram a usar tabela com referências na representação enviada ao modelo. Quatro recibos reais passaram de 164.343 para 86.199 bytes: **47,6% de redução**. A correção passou em 42 testes relacionados, TypeScript e build. | A redução é dos resultados medidos, não de todo o contexto, tokens ou tempo da tarefa. Não houve novo pedido comum após essa publicação. |
+| Contexto de pesquisa | Fontes repetidas no agregado e nas consultas passaram a usar tabela com referências na representação enviada ao modelo. Quatro recibos reais passaram de 164.343 para 86.199 bytes: **47,6% de redução**. A correção passou em 42 testes relacionados, TypeScript e build. | A redução é dos resultados medidos, não de todo o contexto, tokens ou tempo da tarefa. O pedido comum posterior, na rodada 94, reprovou rapidez, custo e conclusão. |
 | Inicialização | Recuperação do desktop medida em 60,580s → 1,300s; início do HTTP em 79,188s → 18,784s. | Estabilidade sustentada, consumo em pico e celular físico. |
 | Chat, cards e arquivos | Histórico limitado por conversa e resumos paginados; compositor observado em recargas de 529/534ms. Rascunho mostra card automaticamente e fica compacto após envio. Leitor PDF publicado exibe páginas, texto e links; navegação reutiliza o download. | Carregamento e rolagem no celular, divergências de contadores e revisão ampla de UI/UX seguem sem aprovação. |
 | Modelos | Principal Luna; alternativa MiMo. Retirado o fallback automático de fronteira. O último teste de pesquisa usou apenas Luna. | Uso eficiente e confiável com os demais modelos pequenos. |
@@ -84,7 +87,7 @@ quantidade de chamadas precisam ser corrigidos e medidos novamente.
 ## Limpeza e preservação
 
 - Retirados registros próprios de testes, incluindo conversas, tarefas,
-  arquivos/previews, notificações e inbox. Na última rodada, 12 registros
+  arquivos/previews, notificações e inbox. Em uma rodada anterior, 12 registros
   foram recolhidos e **1.929 registros fora da seleção ficaram iguais**.
 - Retirados imagens Docker, contextos, releases e cache antigos. A limpeza
   maior documentada liberou aproximadamente **25,44 GiB**; a última etapa
