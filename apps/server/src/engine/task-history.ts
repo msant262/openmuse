@@ -7,30 +7,34 @@ import { modelAdmissionSchema } from "../providers/admission-diagnostics.ts";
 /** Public tool history only: credentials, model thinking, media bytes and metadata
  * are deliberately absent. Images are reacquired by owned reference when needed. */
 export function publicJournalValue(value: unknown, maxStringCharacters = 32000): unknown {
-  if (Array.isArray(value))
-    return value.slice(0, 1000).map((item) => publicJournalValue(item, maxStringCharacters));
-  if (value && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(
-          ([key]) =>
-            !/password|senha|secret|segredo|credential|credencial|(?:access|refresh|auth|api)[_-]?(?:token|key)|cookie|authorization|thinking|reasoning|base64/i.test(
-              key,
-            ),
-        )
-        .map(([key, item]) => [key, publicJournalValue(item, maxStringCharacters)]),
-    );
-  if (typeof value !== "string") return value;
-  let text = value.slice(0, maxStringCharacters);
-  for (const [key, secret] of Object.entries(process.env)) {
-    if (
-      secret &&
-      secret.length >= 8 &&
-      /password|secret|(?:access|refresh|auth|api)[_-]?(?:token|key)|computer_token/i.test(key)
-    )
-      text = text.replaceAll(secret, "[redacted]");
-  }
-  return text.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, "Bearer [redacted]");
+  // Capture current secrets once per projection, including rotations. Enumerating
+  // the process environment for every string made large source receipts costly.
+  const secrets = Object.entries(process.env).flatMap(([key, secret]) =>
+    secret &&
+    secret.length >= 8 &&
+    /password|secret|(?:access|refresh|auth|api)[_-]?(?:token|key)|computer_token/i.test(key)
+      ? [secret]
+      : [],
+  );
+  const visit = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.slice(0, 1000).map(visit);
+    if (item && typeof item === "object")
+      return Object.fromEntries(
+        Object.entries(item)
+          .filter(
+            ([key]) =>
+              !/password|senha|secret|segredo|credential|credencial|(?:access|refresh|auth|api)[_-]?(?:token|key)|cookie|authorization|thinking|reasoning|base64/i.test(
+                key,
+              ),
+          )
+          .map(([key, child]) => [key, visit(child)]),
+      );
+    if (typeof item !== "string") return item;
+    let text = item.slice(0, maxStringCharacters);
+    for (const secret of secrets) text = text.replaceAll(secret, "[redacted]");
+    return text.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, "Bearer [redacted]");
+  };
+  return visit(value);
 }
 /** Only local document authoring accepts a 120k source. Other argument strings
  * retain their existing bound; source text still receives normal secret scrubbing. */

@@ -591,6 +591,13 @@ test("public journal values omit model thinking, credentials and configured secr
     assert.ok(!serialized.includes("private reasoning"));
     assert.ok(!serialized.includes("private refresh token"));
     assert.ok(serialized.includes("/workspace/report.txt"));
+    process.env.JOURNAL_TEST_API_KEY = "rotated-secret-with-at-least-eight-bytes";
+    assert.deepEqual(
+      publicJournalValue({ rows: [{ text: "Output rotated-secret-with-at-least-eight-bytes" }] }),
+      { rows: [{ text: "Output [redacted]" }] },
+      "a new projection must observe credential rotation without a process restart",
+    );
+    process.env.JOURNAL_TEST_API_KEY = "configured-secret-with-at-least-eight-bytes";
     const checkpoint = providerContinuationCheckpointSchema.parse({
       version: 1,
       messages: [

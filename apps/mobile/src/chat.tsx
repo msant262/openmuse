@@ -770,7 +770,11 @@ export function ChatScreen({
   useEffect(() => {
     if (!durableChat || !active) return;
     const poll = () => {
-      if (AppState.currentState !== "background" && AppState.currentState !== "inactive")
+      if (
+        AppState.currentState !== "background" &&
+        AppState.currentState !== "inactive" &&
+        (Platform.OS !== "web" || typeof document === "undefined" || !document.hidden)
+      )
         void syncReplay().catch((cause) => setHistoryError(String(cause)));
     };
     poll();
@@ -784,11 +788,15 @@ export function ChatScreen({
     });
     if (Platform.OS === "web" && typeof window !== "undefined")
       window.addEventListener("online", poll);
+    if (Platform.OS === "web" && typeof document !== "undefined")
+      document.addEventListener("visibilitychange", poll);
     return () => {
       clearInterval(timer);
       subscription.remove();
       if (Platform.OS === "web" && typeof window !== "undefined")
         window.removeEventListener("online", poll);
+      if (Platform.OS === "web" && typeof document !== "undefined")
+        document.removeEventListener("visibilitychange", poll);
     };
   }, [active, durableChat, queue, syncReplay]);
   const seenRoutinePost = useRef("");
