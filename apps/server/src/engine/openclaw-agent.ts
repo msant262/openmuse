@@ -1353,7 +1353,36 @@ export function openclawAgent(options: Options) {
                 : converted.messages;
             // Reuse the original session/compaction tree only when the authoritative
             // app transcript matches it; changed history is seeded afresh.
-            for (const message of nativeMessages(added)) await manager.appendMessageAsync(message);
+            const seeded = nativeMessages(added);
+            const existing = manager.buildSessionContext().messages;
+            const normalized = copied
+              .sanitizeToolCallIdsForCloudCodeAssist([...existing, ...seeded])
+              .slice(existing.length);
+            for (const [index, message] of seeded.entries()) {
+              if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+              const normalizedParts = normalized[index]?.content;
+              if (!Array.isArray(normalizedParts)) continue;
+              for (const [partIndex, part] of message.content.entries()) {
+                if (
+                  part.type !== "toolCall" ||
+                  !part.id ||
+                  !registry.has(publicName(part.name ?? ""))
+                )
+                  continue;
+                const receipt = {
+                  id: part.id,
+                  name: publicName(part.name ?? ""),
+                  args: part.arguments,
+                };
+                receipts.set(part.id, receipt);
+                const alias = normalizedParts[partIndex]?.id;
+                if (alias) receipts.set(alias, receipt);
+              }
+            }
+            // Native normalization also applies to restored history. Keep its
+            // exact host identity, just as for freshly dispatched calls, so a
+            // later journal checkpoint does not import the same operation again.
+            for (const message of normalized) await manager.appendMessageAsync(message);
             emit({ type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId });
             emit({
               type: EventType.CUSTOM,
