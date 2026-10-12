@@ -5,6 +5,7 @@ Transporte interno adicional: **`fa3ef6cffa0921a9c23b41bab4aff8b273d07376`**.
 Composição com autoridade do desktop e broker: **`189dce56a60d7d6e11ab121b5972088057d821dd`**.
 Driver CDP/meta com helpers reais: **`1fc7cb6b`**.
 Iframes separados por conversa, incluindo OOP: **`7d044174`**.
+Gerenciador integrado, observações protegidas e controle: **`6bab34fc`**.
 Não publicada na API ou no executor físico. **`browser_exec` continua sem
 registro no catálogo; seu contrato completo permanece pendente.**
 
@@ -206,6 +207,52 @@ Evidências da rodada: `round91-owned-iframe-red.log`,
 `round91-oop-ancestry-red.log`, `round91-real-iframe-helper.log`,
 `round91-real-iframe-diagnostic.json`, `round91-iframe-tests-clean.log`,
 `round91-typecheck.log` e `round91-biome-final.log`.
+
+## Gerenciador e políticas existentes — rodada 93, 12/10
+
+O driver está conectado a `BrowserManager.script` em `6bab34fc`, sem publicação.
+O gerenciador exige uma política fornecida pelo host; a ausência ou recusa dessa
+política impede abrir uma sessão. Cada comando passa pelo controle de entrada.
+Abas criadas pelo driver são reconhecidas pela identidade da página retornada;
+popups inesperados continuam fechados. A página selecionada é compartilhada
+com os métodos existentes de observação, credenciais e diálogo.
+
+Capturas passam pelo hook de proteção, e campos sensíveis são cobertos no PNG.
+Um pixel dentro do campo de credencial foi conferido como preto, além da
+assinatura e dos bytes do arquivo. DOM/Runtime são recusados em páginas com
+credenciais. O redactor pertence ao perfil e continua ativo depois de fechar
+a aba que recebeu a credencial. Eventos são verificados apenas nas páginas
+da conversa correspondente; uma página protegida de outra conversa não
+bloqueia o fluxo atual. Respostas de diálogo usam o guard existente: confirmação
+de exclusão sem aprovação é recusada e o conteúdo permanece intacto.
+
+A navegação é observada uma vez antes do envio; observações seguintes aguardam
+a transição iniciada, sem repetir o comando. Downloads das abas dos helpers
+usam o armazenamento existente, e a devolução de controle solta as teclas e o
+mouse em todas as páginas. Foram removidas parameter properties dos imports
+novos para manter compatibilidade com o Node em strip-only mode do worker.
+
+Passaram **68/68 testes de navegador**: nove novos casos do gerenciador, dez
+casos do driver/helpers e 49 casos existentes. O programa Python real usou
+os helpers copiados para digitar 120 caracteres, alternar abas e salvar PNG,
+com mais de 200 comandos internos, zero chamadas externas e zero filhos vivos
+ao terminar. A política de efeitos do host usada nesse QA é controlada.
+TypeScript raiz/worker, build do servidor/harness e Biome passaram.
+
+A suíte geral executou **2.162 casos: 2.158 passaram e quatro falharam**.
+Os quatro cenários enviavam confirmação de documento sem o `requestAudit`
+obrigatório, deixando a revisão pendente. Em `728e305b`, os testes receberam
+evidências literais do seu HTML controlado, mantendo as mesmas verificações
+de reparo e pergunta privada. Esses cinco cenários e seis casos de protocolo
+passaram: **11/11**. A suíte geral inteira não foi repetida depois das alterações
+apenas nos testes; não se afirma aqui uma nova execução geral sem falhas.
+
+**Ainda faltam handler nativo, grants de upload, aprovações completas e prova
+no executor físico.** `browserScriptVersion: 1` permanece ausente, `browser_exec`
+não foi registrado e nenhum pedido comum usou esse novo caminho publicado.
+Evidências: `round93-browser-final.log`, `round93-project-tests.log`,
+`round93-fixture-recovery-audit.log`, `round93-typecheck-final2.log`,
+`round93-worker-typecheck-final2.log` e `round93-format-all-final.log`.
 
 1. Integrar o driver CDP/meta ao worker e concluir seu protocolo, recebendo o
    envelope canônico pela composição privada já criada. Autoridade Python, desktop,

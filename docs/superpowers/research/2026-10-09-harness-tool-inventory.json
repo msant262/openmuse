@@ -1621,9 +1621,57 @@
       "wholeBrowserExecApproved": false,
       "wholeHarnessApproved": false,
       "acceptanceApproved": false
+    },
+    {
+      "surface": "browser.manager-owned-helper-integration",
+      "source": "6bab34fceb1a77fab6a759c15d944905f06cd86c",
+      "published": false,
+      "browserManagerIntegrated": true,
+      "nativeHandlerIntegrated": false,
+      "hostPolicyRequiredBeforeLaunch": true,
+      "ownedTabIdentityAndPopupContainment": true,
+      "selectedPageReusedByExistingBrowserTools": true,
+      "profileRedactionSurvivesEntryTabClose": true,
+      "protectedPngPixelVerified": true,
+      "humanControlPreemptsCommands": true,
+      "privateNavigationRejected": true,
+      "foreignConversationTargetRejected": true,
+      "foreignCredentialPageDoesNotBlockOwnedEvents": true,
+      "destructiveDialogWithoutReviewRejected": true,
+      "originalPythonHelpersRealTypingTabsPng": true,
+      "ordinaryExternalToolCallsInHelperTest": 0,
+      "newManagerTests": 9,
+      "browserRegressionTests": {
+        "total": 68,
+        "passed": 68,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "rootSuiteFirstPass": {
+        "total": 2162,
+        "passed": 2158,
+        "failed": 4,
+        "outdatedDocumentAuditFixtures": 4
+      },
+      "correctedFixtureProtocolAndRecoveryTests": {
+        "total": 11,
+        "passed": 11,
+        "failed": 0
+      },
+      "fullRootSuiteRerunAfterTestOnlyCorrections": false,
+      "typescriptRootAndWorkerPassed": true,
+      "serverBuildPassed": true,
+      "nativeHostPolicyProof": false,
+      "uploadGrantsImplemented": false,
+      "completeEffectApprovalsImplemented": false,
+      "naturalBrowserExecTask": false,
+      "wholeBrowserExecApproved": false,
+      "wholeHarnessApproved": false,
+      "acceptanceApproved": false
     }
   ],
-  "updatedAt": "2026-10-11T22:59:45.823578+00:00",
+  "updatedAt": "2026-10-12T00:15:45.608217+00:00",
   "contractAudit": [
     {
       "surface": "Hermes kanban",
@@ -1683,7 +1731,7 @@
         "screenshots": "A newly captured screenshot path is resolved to actual native image output",
         "desktopControl": "Bot Desktop routes use the same human-control lease fence as built-in browser tools"
       },
-      "note": "browser_exec remains unregistered. The isolated CDP driver now supports named owned pages and OOP iframe ancestry, verified with unchanged Python helpers against real Chromium. Cross-conversation targets remain rejected. Manager/native-handler integration, uploads, actual redaction/protected-image/destructive-approval/control policies, publication and ordinary model tasks still do not prove full parity.",
+      "note": "browser_exec remains unregistered. BrowserManager now integrates the owned CDP driver, copied Python helpers, profile redaction, protected screenshots, selected tabs and existing dialog/control guards. Nine new manager cases and 68 browser cases passed. Native handler, upload grants, complete native effect approvals, physical policy proof, publication and ordinary model selection remain pending.",
       "registeredInApp": false,
       "revalidatedAt": "2026-10-11T21:40:19.501087+00:00",
       "implementationEvidence": {
@@ -1844,6 +1892,54 @@
           "buildPassed": true,
           "lintErrors": 0,
           "lintWarnings": 0,
+          "wholeBrowserExecApproved": false,
+          "wholeHarnessApproved": false,
+          "acceptanceApproved": false
+        },
+        "ownedBrowserManager": {
+          "surface": "browser.manager-owned-helper-integration",
+          "source": "6bab34fceb1a77fab6a759c15d944905f06cd86c",
+          "published": false,
+          "browserManagerIntegrated": true,
+          "nativeHandlerIntegrated": false,
+          "hostPolicyRequiredBeforeLaunch": true,
+          "ownedTabIdentityAndPopupContainment": true,
+          "selectedPageReusedByExistingBrowserTools": true,
+          "profileRedactionSurvivesEntryTabClose": true,
+          "protectedPngPixelVerified": true,
+          "humanControlPreemptsCommands": true,
+          "privateNavigationRejected": true,
+          "foreignConversationTargetRejected": true,
+          "foreignCredentialPageDoesNotBlockOwnedEvents": true,
+          "destructiveDialogWithoutReviewRejected": true,
+          "originalPythonHelpersRealTypingTabsPng": true,
+          "ordinaryExternalToolCallsInHelperTest": 0,
+          "newManagerTests": 9,
+          "browserRegressionTests": {
+            "total": 68,
+            "passed": 68,
+            "failed": 0,
+            "cancelled": 0,
+            "skipped": 0
+          },
+          "rootSuiteFirstPass": {
+            "total": 2162,
+            "passed": 2158,
+            "failed": 4,
+            "outdatedDocumentAuditFixtures": 4
+          },
+          "correctedFixtureProtocolAndRecoveryTests": {
+            "total": 11,
+            "passed": 11,
+            "failed": 0
+          },
+          "fullRootSuiteRerunAfterTestOnlyCorrections": false,
+          "typescriptRootAndWorkerPassed": true,
+          "serverBuildPassed": true,
+          "nativeHostPolicyProof": false,
+          "uploadGrantsImplemented": false,
+          "completeEffectApprovalsImplemented": false,
+          "naturalBrowserExecTask": false,
           "wholeBrowserExecApproved": false,
           "wholeHarnessApproved": false,
           "acceptanceApproved": false

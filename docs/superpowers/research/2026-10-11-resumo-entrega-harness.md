@@ -1,4 +1,4 @@
-# Relatório do trabalho e pendências — 11/10/2026
+# Relatório do trabalho e pendências — atualizado em 12/10/2026
 
 **O harness completo ainda não está entregue.** Há correções publicadas e
 testes reais com efeitos confirmados, mas o pedido comum de pesquisa mais
@@ -7,17 +7,16 @@ de aceite exigido pelo usuário permanece aberto.
 
 ## Publicação conferida
 
-Em **11/10 às 23:11 UTC**, página e API públicas responderam HTTP 200.
+Em **12/10 às 00:11 UTC**, página e API públicas responderam HTTP 200.
 API, navegador e OpenBao estavam saudáveis. Isso comprova disponibilidade
 nesse instante; estabilidade sob carga e desempenho no celular continuam
 pendentes.
 
 - API publicada: implementação `b5043529`, imagem `780569c1`.
 - Web: release `harness80-20261011-e1fd91f9`.
-- Main local e remota conferidas iguais em `a433878f`, antes desta atualização
-  do relatório. Incluem o receptor local, o vínculo com a autoridade do desktop,
-  o driver CDP e a descoberta de iframes. A conexão do driver ao gerenciador do
-  navegador e ao handler do worker nativo ainda não foi implementada.
+- O gerenciador do navegador foi integrado em `6bab34fc`; os cenários de teste
+  foram alinhados ao esquema atual em `728e305b`. O handler nativo continua
+  pendente. Esses commits não representam uma publicação no app.
 - Não foi publicado APK novo nesta etapa.
 - A nova base de execução Python, o receptor local e o driver estão na
   **main, sem publicação**. `browser_exec` ainda não está disponível no catálogo.
@@ -38,7 +37,7 @@ pendentes.
 | Modelos | Principal Luna; alternativa MiMo. Retirado o fallback automático de fronteira. O último teste de pesquisa usou apenas Luna. | Uso eficiente e confiável com os demais modelos pequenos. |
 | Memória | Falha da fila de aprendizado reproduzida e corrigida. Casos anteriores concluíram revisão de conversa e aprendizado de procedimento. Última conferência registrada: aprendizado habilitado e sem erro; três memórias e 35 procedimentos preservados. | Aprendizado automático e proatividade completos ainda não estão aprovados. |
 
-## Último teste comum pelo chat: reprovado no aceite completo
+## Teste anterior pelo chat — rodada 85
 
 Pedido enviado uma vez em conversa nova, sem indicar ferramentas, orientar
 o agente ou responder perguntas:
@@ -56,6 +55,31 @@ Bytes, texto, pixels e oito destinos de fontes foram conferidos.
 completude factual não passaram.** Idioma, preços de credenciais e duração
 de alguns cursos ficaram sem confirmação. O retrabalho de composição e a
 revisão inconsistente permanecem problemas a corrigir.
+
+## Novo teste no app publicado — rodada 94, reprovado
+
+O mesmo pedido foi enviado uma vez pelo compositor da URL pública, em conversa
+nova e sessão de navegador isolada. Não houve instrução de ferramentas, resposta
+a pergunta ou resgate do operador. O modelo utilizado foi somente Luna.
+
+O teste foi encerrado pelo operador após **28min24s e 83 respostas**, sem
+conclusão, para impedir mais consumo de um caso já reprovado. Foram gerados
+**três PDFs reais**, com bytes e hashes conferidos. A própria revisão detectou
+um curso pago entre os gratuitos, depois lacunas de idioma/certificado e por
+fim um problema de redação sobre disponibilidade de certificado. Houve
+**14 chamadas a `finish_task`**, com retomada do trabalho; o PDF ainda não
+recebeu aceite final. Criar um arquivo não comprova concluir a tarefa.
+
+Uma amostra intermediária de **23 respostas com usage preservado** reportou
+**8.007.468 tokens**, dos quais 8.003.402 de entrada. Essa amostra não é o total
+das 83 respostas e não estima preço. A entrada chegou a **401.770 tokens**
+em uma resposta. O histórico armazenado continha recibos aparentemente
+repetidos com IDs normalizados diferentes; ainda é preciso conferir a árvore
+ativa e o payload enviado antes de atribuir a inflação a uma duplicação efetiva.
+
+**A redução anterior de 47,6% em quatro recibos não resolveu o problema geral.**
+Seleção de opções elegíveis, reparos de conteúdo, retomada do contexto e
+quantidade de chamadas precisam ser corrigidos e medidos novamente.
 
 ## Limpeza e preservação
 
@@ -75,8 +99,13 @@ revisão inconsistente permanecem problemas a corrigir.
 - Mantidos imagens atual/de recuperação, volumes, perfis, OpenBao e backups.
   As 44 operações históricas sem resultado confirmado permanecem para
   reconciliação; não foram marcadas como sucesso nem apagadas.
-- Espaço livre observado às 23:11 UTC: **45.468.635.136 bytes**, cerca de
-  **42,35 GiB**. Esse é o espaço disponível, não o total liberado.
+- Nesta rodada, foram recolhidos nove registros próprios: conversa, tarefa,
+  inbox e seis arquivos/previews. **1.960 registros fora da seleção ficaram
+  iguais**, e as 13 verificações finais de preservação passaram. Os 35
+  procedimentos não mudaram. O dispositivo de login isolado foi revogado;
+  não restaram processos do helper de navegador ou do runner Python local.
+- Espaço livre observado às 00:11 UTC: **45.172.842.496 bytes**, cerca de
+  **42,07 GiB**. Esse é o espaço disponível, não o total liberado.
 - Conferência posterior recolheu sete processos de um navegador de QA local
   aberto desde 09:30. Corrigido o encerramento do helper de testes e confirmado
   exit code zero em 0,064s. Essa limpeza ocorreu no computador de desenvolvimento.
@@ -89,8 +118,8 @@ o processo. A base na main cria e encerra o processo, confirma parada dos
 descendentes e carrega os helpers originais copiados, com sessão vinculada.
 O transporte local e o driver de abas foram implementados depois dessa base.
 Esse trabalho **ainda não implementa `browser_exec` no app**: falta conectar o
-driver ao gerenciador e ao handler nativo, com controles de acesso, uploads,
-proteção de credenciais e aprovações.
+driver ao handler nativo e completar grants de upload e políticas de efeitos.
+O gerenciador já foi conectado e utiliza as proteções e os diálogos existentes.
 
 Nas rodadas anteriores registradas, **159 testes do executor, 32 do desktop,
 42 de Python/API e 22 dos fluxos gráficos passaram**, além de TypeScript, build
@@ -120,12 +149,19 @@ real e leu um iframe em outro processo. O programa levou **1,614s**; todo o
 conjunto levou **2,358s**. É QA local, sem modelo e com hooks controlados de
 autorização; não comprova proteção ou desempenho no app publicado.
 
-Um novo teste de integração, ainda local e não commitado, **falhou** porque
-`BrowserManager.script` não existe. A falha identifica a ligação que continua
-pendente. Também faltam uploads e as políticas reais de proteção de imagens,
-redaction e aprovação no worker. O backend atual é recusado antes do comando;
-a ferramenta continua indisponível no catálogo. Nenhuma dessas rodadas
-publicou uma nova API, web, versão do executor físico ou APK.
+Esse teste que falhava por ausência de `BrowserManager.script` passou depois
+da integração. Passaram **68 testes de navegador**, incluindo nove novos casos
+do gerenciador, com helpers Python reais, proteção conferida nos pixels,
+controle humano, segregação por conversa, redaction e recusa de diálogo de
+exclusão. Os hooks de autorização externa usados nesses casos são controlados;
+o handler nativo, uploads e aprovações completas continuam pendentes.
+
+A suíte geral teve 2.158 sucessos e quatro falhas em 2.162 casos. Os quatro
+testes antigos omitiam a auditoria factual agora obrigatória; foram alinhados
+ao esquema e passaram na reexecução de 11 casos relacionados. A suíte inteira
+não foi repetida depois dessa alteração apenas nos testes. O backend atual
+continua recusado antes do comando; a ferramenta permanece indisponível no
+catálogo. Não foi publicada nova API, web, versão do executor físico ou APK.
 
 Evidências desta conferência: `round92-status-driver-tests.log`,
 `round92-manager-red.log` e `round92-status-report-production.json`.
