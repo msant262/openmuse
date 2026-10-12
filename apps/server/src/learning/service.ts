@@ -402,7 +402,7 @@ export class PersonalLearning {
       defineTool({
         name: "learn_procedure",
         description:
-          "Save a verified reusable method, or update an existing automatically learned procedure. Source task and tools must have successful receipts; user-owned procedures are protected.",
+          "Save a verified reusable method, or update an existing automatically learned procedure. Source task and tools must have successful receipts; user-owned procedures are protected. requiredTools uses successfulTools names. Google method IDs belong in dispatcher arguments; execute_google_workspace_tool is their registered tool.",
         parameters: procedureInputSchema.safeExtend({
           sourceTaskId: z
             .string()

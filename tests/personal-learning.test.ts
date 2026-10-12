@@ -26,6 +26,69 @@ async function source(server: Awaited<ReturnType<typeof taskRuntime>>, id: strin
   });
 }
 
+test("learned Google method requirements retain the actual verified dispatcher", async (t) => {
+  const server = await taskRuntime(t);
+  const taskId = "verified-google-calendar";
+  const task = await server.agent.taskRecord(
+    "owner",
+    { title: "Read the calendar timezone", prompt: "Read the calendar timezone" },
+    taskId,
+  );
+  await server.db.put("owner", "tasks", {
+    ...task,
+    status: "succeeded",
+    completion: { status: "verified", checks: [], remaining: [] },
+  });
+  await server.db.put("owner", "task-operations", {
+    id: "calendar-read",
+    taskId,
+    toolName: "execute_google_workspace_tool",
+    args: { toolId: "calendar.calendars.get" },
+    status: "succeeded",
+    receipt: { status: "succeeded", toolId: "calendar.calendars.get" },
+  });
+  const input = {
+    sourceTaskId: taskId,
+    title: "Read the calendar timezone",
+    steps: ["Read calendar.calendars.get using the native Google Workspace dispatcher."],
+    verification: ["Preserve the returned named timezone."],
+    requiredTools: ["calendar.calendars.get", "execute_google_workspace_tool"],
+    requestId: "learn-calendar-dispatch",
+  };
+  const saved = await server.agent.playbooks.saveLearned("owner", input, [taskId]);
+  assert.deepEqual(saved.requiredTools, ["execute_google_workspace_tool"]);
+  assert.deepEqual(saved.sourceOperationIds, ["calendar-read"]);
+  await assert.rejects(
+    server.agent.playbooks.saveLearned(
+      "owner",
+      { ...input, requestId: "unobserved-delete", requiredTools: ["calendar.events.delete"] },
+      [taskId],
+    ),
+    /successful receipts/,
+  );
+  for (const receipt of [
+    { status: "failed", toolId: "calendar.calendars.get" },
+    { status: "succeeded", toolId: "calendar.events.get" },
+  ]) {
+    await server.db.put("owner", "task-operations", {
+      id: "calendar-read",
+      taskId,
+      toolName: "execute_google_workspace_tool",
+      args: { toolId: "calendar.calendars.get" },
+      status: "succeeded",
+      receipt,
+    });
+    await assert.rejects(
+      server.agent.playbooks.saveLearned(
+        "owner",
+        { ...input, requestId: `invalid-${receipt.status}-${receipt.toolId}` },
+        [taskId],
+      ),
+      /successful receipts/,
+    );
+  }
+});
+
 test("learning Code Mode can await its own catalog call without blocking the dispatch queue", async (t) => {
   const fixture = await modelFixture(t, (i) =>
     i === 0

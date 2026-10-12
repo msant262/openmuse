@@ -275,14 +275,35 @@ export class Playbooks {
     const operations = (await this.service.journal.operations(owner, input.sourceTaskId)).filter(
       (operation) => operation.status === "succeeded",
     );
+    // A Google method is an argument to the registered dispatcher, not a
+    // separately registered tool. Resolve only methods bound to actual receipts.
+    const requiredTools = [
+      ...new Set(
+        input.requiredTools.map((name) => {
+          if (operations.some((operation) => operation.toolName === name)) return name;
+          const observed = operations.find((operation) => {
+            const args = operation.args as Record<string, unknown> | undefined;
+            const receipt = operation.receipt as Record<string, unknown> | undefined;
+            return (
+              operation.toolName === "execute_google_workspace_tool" &&
+              args?.toolId === name &&
+              receipt?.toolId === name &&
+              receipt.status === "succeeded"
+            );
+          });
+          return observed?.toolName ?? name;
+        }),
+      ),
+    ];
     if (
       !operations.length ||
-      input.requiredTools.some(
-        (name) => !operations.some((operation) => operation.toolName === name),
-      )
+      requiredTools.some((name) => !operations.some((operation) => operation.toolName === name))
     )
-      throw new AppError("Learn only tools with successful receipts in the verified work", 422);
-    return this.save(owner, input, undefined, {
+      throw new AppError(
+        `Learn only tools with successful receipts in the verified work. Available tools: ${[...new Set(operations.map((operation) => operation.toolName))].join(", ")}`,
+        422,
+      );
+    return this.save(owner, { ...input, requiredTools }, undefined, {
       learned: true,
       sourceOperationIds: operations.map((operation) => operation.id),
     });
