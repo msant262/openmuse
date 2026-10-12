@@ -6,6 +6,97 @@ import { taskRuntime } from "./helpers/task-runtime.ts";
 
 const resolve = async () => [{ address: "93.184.216.34", family: 4 }];
 
+test("JSON-LD retains each named subject's factual properties instead of substituting page language", async () => {
+  const { PublicWeb } = await import("../apps/server/src/public-web.ts");
+  const graph = {
+    "@context": "https://schema.org",
+    "@graph": [
+      { "@type": "WebPage", name: "Catalogue", inLanguage: "fr" },
+      {
+        "@type": "Course",
+        name: "Generative AI",
+        inLanguage: "en",
+        offers: { "@type": "Offer", category: "Free" },
+        hasCourseInstance: { "@type": "CourseInstance", courseWorkload: "PT2H" },
+      },
+    ],
+  };
+  const web = new PublicWeb({
+    resolve,
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: `<title>Catalogue</title><main>Generative AI course overview.</main><script type="application/ld+json">${JSON.stringify(graph)}</script><script>throw Error('EXECUTABLE-MUST-NOT-RUN')</script>`,
+    }),
+  });
+  const page = await web.read("https://academy.example/course");
+  assert.ok(
+    page.text.includes(JSON.stringify(graph)),
+    "the named course and page must keep their own properties and relationships",
+  );
+  assert.match(page.text, /JSON-LD.*untrusted/);
+  assert.doesNotMatch(page.text, /EXECUTABLE-MUST-NOT-RUN/);
+  assert.equal(page.truncated, false);
+});
+
+test("JSON-LD facts beyond an internal metadata cutoff remain recoverable without refetching", async (t) => {
+  const { preservePublicSource } = await import("../apps/server/src/public-web.ts");
+  const { readPublicSource } = await import("../apps/server/src/public-source-cache.ts");
+  const f = await taskRuntime(t);
+  let reads = 0;
+  const value = {
+    "@type": "Course",
+    name: "Generative AI",
+    description: "Published overview. ".repeat(1000),
+    inLanguage: "pt-BR",
+    timeRequired: "PT3H",
+  };
+  t.mock.method(f.agent.web, "document", async (url: string) => {
+    reads++;
+    return {
+      url,
+      contentType: "text/html",
+      body: `<title>Course</title><main>Generative AI overview.</main><script type="application/ld+json">${JSON.stringify(value)}</script>`,
+    };
+  });
+  const page = await f.agent.web.read("https://academy.example/course", undefined, {
+    maxChars: 1000,
+    spill: preservePublicSource(f.files, "owner"),
+  });
+  assert.ok("spill" in page && page.spill);
+  assert.equal(page.spill.truncated, false, "the saved source must contain all published metadata");
+  const recovered = await readPublicSource(f.files, "owner", {
+    fileId: page.spill.fileId,
+    query: "inLanguage",
+    offset: 0,
+    limit: 1000,
+  });
+  assert.match(recovered.text, /"inLanguage":"pt-BR"/);
+  assert.match(recovered.text, /"timeRequired":"PT3H"/);
+  assert.equal(reads, 1);
+});
+
+test("JSON-LD after many executable scripts is retained and malformed metadata does not block the page", async () => {
+  const { PublicWeb } = await import("../apps/server/src/public-web.ts");
+  const value = {
+    "@type": "Event",
+    name: "AI workshop",
+    startDate: "2026-11-02T09:00:00+01:00",
+    location: { name: "Bruchsal" },
+  };
+  const web = new PublicWeb({
+    resolve,
+    request: async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: `<main>Public workshop.</main>${"<script>window.analytics=true;</script>".repeat(90)}<script type="application/ld+json">{broken</script><script type="application/ld+json">${JSON.stringify(value)}</script>`,
+    }),
+  });
+  const page = await web.read("https://events.example/workshop");
+  assert.ok(page.text.includes(JSON.stringify(value)));
+  assert.doesNotMatch(page.text, /analytics=true|\{broken/);
+});
+
 test("embedded page data cannot hide course facts beyond an internal text cutoff or prevent source recovery", async (t) => {
   const { preservePublicSource } = await import("../apps/server/src/public-web.ts");
   const { readPublicSource } = await import("../apps/server/src/public-source-cache.ts");

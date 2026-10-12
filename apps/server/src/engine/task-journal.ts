@@ -17,6 +17,7 @@ import { nativePythonParentForCall } from "./python-call-scope.ts";
 import { ResourceBusyError } from "./resource-leases.ts";
 import { RuntimePause, RuntimePausedError } from "./runtime-pause.ts";
 import { completedMessages, publicJournalValue, publicToolArguments } from "./task-history.ts";
+import { restoreJournalIdentities } from "./task-history-repair.ts";
 import { TaskValidityExpiredError } from "./task-timing.ts";
 import { LostLeaseError } from "./worker.ts";
 
@@ -532,9 +533,14 @@ export class TaskJournal {
     operations?: JournalOperation[],
   ): Promise<Message[]> {
     const checkpoint = await this.db.get<TaskCheckpoint>(owner, "task-checkpoints", taskId);
-    const messages = checkpoint ? completedMessages(checkpoint.messages) : [];
+    const canonical = operations ?? (await this.operations(owner, taskId));
+    const messages = checkpoint
+      ? completedMessages(
+          restoreJournalIdentities(completedMessages(checkpoint.messages), canonical),
+        )
+      : [];
     const recorded = new Set(messages.filter((m) => m.role === "tool").map((m) => m.toolCallId));
-    for (const op of operations ?? (await this.operations(owner, taskId))) {
+    for (const op of canonical) {
       if (
         op.parentOperationId ||
         op.nativeEnvelope ||

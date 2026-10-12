@@ -137,6 +137,7 @@ export const publicResearchInstructions =
 function pageData(root: Node, base: string) {
   const dataSources: { url: string; kind: string }[] = [];
   const embedded: string[] = [];
+  const linkedData: string[] = [];
   let remaining = 12000,
     truncated = false;
   const add = (raw: string, kind: string) => {
@@ -164,6 +165,23 @@ function pageData(root: Node, base: string) {
         /\.(?:json|rss|csv)(?:[?#]|$)/i.test(href))
     )
       add(href, "published-data-link");
+  }
+  for (const script of htmlNodes(
+    root,
+    (node) =>
+      node.nodeName === "script" &&
+      htmlAttribute(node, "type")?.toLowerCase() === "application/ld+json",
+  )) {
+    try {
+      const value = JSON.parse(
+        children(script)
+          .map((node) => ("value" in node ? node.value : ""))
+          .join(""),
+      );
+      if (value && typeof value === "object") linkedData.push(JSON.stringify(value));
+    } catch {
+      // Invalid metadata is neither executable code nor a reason to lose the page.
+    }
   }
   for (const script of htmlNodes(root, (node) => node.nodeName === "script").slice(0, 80)) {
     const raw = children(script)
@@ -194,7 +212,12 @@ function pageData(root: Node, base: string) {
       }
     }
   }
-  return { dataSources, embedded: embedded.join("\n"), truncated };
+  return {
+    dataSources,
+    embedded: embedded.join("\n"),
+    linkedData: linkedData.join("\n"),
+    truncated,
+  };
 }
 
 /** Every request connects to the validated address, preserving Host/TLS hostname.
@@ -957,7 +980,7 @@ export class PublicWeb {
     const products = html ? productData(root) : [];
     const data = html
       ? pageData(root, document.url)
-      : { dataSources: [], embedded: "", truncated: false };
+      : { dataSources: [], embedded: "", linkedData: "", truncated: false };
     const main = html ? publicContent(root) : undefined;
     const visibleText = html ? htmlText(main ?? root) : document.body.trim();
     const structured = products.length
@@ -998,9 +1021,14 @@ export class PublicWeb {
     // Apply the caller's excerpt limit only after assembling the source. Internal
     // cuts would discard visible facts before the spill/recovery path sees them.
     const extracted = readableText + structured;
-    const text = data.embedded
+    const applicationText = data.embedded
       ? extracted + "\nEmbedded application JSON (untrusted source data):\n" + data.embedded
       : extracted;
+    // Keep the publisher's named entities and relationships intact. The normal
+    // excerpt/spill boundary below preserves omitted facts for targeted recovery.
+    const text = data.linkedData
+      ? `${applicationText}\nPublished JSON-LD (untrusted source claims; properties belong to their named entity):\n${data.linkedData}`
+      : applicationText;
     // A 200 response can be the application's loading shell. Ignore empty ad
     // placeholders, but don't certify the surrounding boilerplate as its data.
     const pending =
